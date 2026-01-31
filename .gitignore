@@ -38,3 +38,5 @@ bin/
 
 # Nix
 .direnv/
+/result
+/result-*
