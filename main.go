@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -110,6 +111,50 @@ func createSessionDirs(sessionDir string) error {
 		}
 	}
 	return nil
+}
+
+// MessageInfo holds parsed information from a message filename.
+type MessageInfo struct {
+	Timestamp string
+	From      string
+	To        string
+}
+
+// ParseMessageFilename parses a message filename in the format:
+// {timestamp}-from-{sender}-to-{recipient}.md
+// Example: 20260201-022121-from-orchestrator-to-worker.md
+func ParseMessageFilename(filename string) (*MessageInfo, error) {
+	// Remove .md extension
+	if !strings.HasSuffix(filename, ".md") {
+		return nil, fmt.Errorf("invalid filename: missing .md extension: %q", filename)
+	}
+	base := strings.TrimSuffix(filename, ".md")
+
+	// Find "-from-" and "-to-" markers
+	fromIdx := strings.Index(base, "-from-")
+	if fromIdx < 0 {
+		return nil, fmt.Errorf("invalid filename: missing '-from-' marker: %q", filename)
+	}
+
+	rest := base[fromIdx+len("-from-"):]
+	toIdx := strings.Index(rest, "-to-")
+	if toIdx < 0 {
+		return nil, fmt.Errorf("invalid filename: missing '-to-' marker: %q", filename)
+	}
+
+	timestamp := base[:fromIdx]
+	from := rest[:toIdx]
+	to := rest[toIdx+len("-to-"):]
+
+	if timestamp == "" || from == "" || to == "" {
+		return nil, fmt.Errorf("invalid filename: empty field in %q", filename)
+	}
+
+	return &MessageInfo{
+		Timestamp: timestamp,
+		From:      from,
+		To:        to,
+	}, nil
 }
 
 // SessionLock provides flock-based exclusive locking for a postman session.
