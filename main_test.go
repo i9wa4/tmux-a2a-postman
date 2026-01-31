@@ -247,3 +247,63 @@ func TestGetNodeFromProcess_NotSet(t *testing.T) {
 		t.Errorf("expected empty string for non-existent PID, got %q", got)
 	}
 }
+
+func TestDeliverMessage(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Create inbox for known recipient
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Place a message in post/
+	filename := "20260201-030000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify file moved to inbox
+	inboxPath := filepath.Join(recipientInbox, filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Errorf("message not delivered to inbox: %v", err)
+	}
+	// Verify removed from post/
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("message still in post/ after delivery")
+	}
+}
+
+func TestDeliverMessage_InvalidRecipient(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Place a message for unknown recipient
+	filename := "20260201-030000-from-orchestrator-to-unknown-node.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify moved to dead-letter/
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not in dead-letter: %v", err)
+	}
+}

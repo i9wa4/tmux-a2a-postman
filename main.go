@@ -1,13 +1,19 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 var revision string
@@ -65,25 +71,108 @@ func runStart(args []string) error {
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
+	defer func() { _ = os.Remove(pidPath) }()
 
-	fmt.Printf("postman: daemon started (context=%s, pid=%d)\n", *contextID, os.Getpid())
-	fmt.Println("postman: not yet implemented (waiting for fsnotify in Issue #4)")
-	return nil
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	postDir := filepath.Join(sessionDir, "post")
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("creating watcher: %w", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	if err := watcher.Add(postDir); err != nil {
+		return fmt.Errorf("watching post directory: %w", err)
+	}
+
+	// Discover nodes at startup
+	nodes, err := DiscoverNodes()
+	if err != nil {
+		// WARNING: log but continue - nodes can be empty
+		fmt.Fprintf(os.Stderr, "postman: node discovery failed: %v\n", err)
+		nodes = make(map[string]string)
+	}
+
+	fmt.Printf("postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
+		*contextID, os.Getpid(), len(nodes))
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("postman: shutting down")
+			return nil
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			// React to CREATE and RENAME (covers mv into post/)
+			if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+				filename := filepath.Base(event.Name)
+				if strings.HasSuffix(filename, ".md") {
+					// Re-discover nodes before each delivery
+					if freshNodes, err := DiscoverNodes(); err == nil {
+						nodes = freshNodes
+					}
+					if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+						fmt.Fprintf(os.Stderr, "postman: deliver %s: %v\n", filename, err)
+					}
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "postman: watcher error: %v\n", err)
+		}
+	}
 }
 
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient node name (required)")
-	contextID := fs.String("context-id", "", "session context ID")
+	contextID := fs.String("context-id", "", "session context ID (required)")
+	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *to == "" {
 		return fmt.Errorf("--to is required")
 	}
+	if *contextID == "" {
+		return fmt.Errorf("--context-id is required")
+	}
 
-	_ = contextID // NOTE: Will be used in Issue #4 for draft file creation
-	fmt.Printf("postman: create-draft to=%s (not yet implemented)\n", *to)
+	sender := *from
+	if sender == "" {
+		sender = os.Getenv("A2A_NODE")
+	}
+	if sender == "" {
+		return fmt.Errorf("--from is required (or set A2A_NODE)")
+	}
+
+	baseDir := resolveBaseDir()
+	draftDir := filepath.Join(baseDir, *contextID, "draft")
+
+	if err := os.MkdirAll(draftDir, 0o755); err != nil {
+		return fmt.Errorf("creating draft directory: %w", err)
+	}
+
+	now := time.Now()
+	ts := now.Format("20060102-150405")
+	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, *to)
+	draftPath := filepath.Join(draftDir, filename)
+
+	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  timestamp: %s\n---\n\n",
+		*contextID, sender, *to, now.Format("2006-01-02T15:04:05.000000"))
+
+	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("writing draft: %w", err)
+	}
+
+	fmt.Println(draftPath)
 	return nil
 }
 
@@ -111,6 +200,50 @@ func createSessionDirs(sessionDir string) error {
 		}
 	}
 	return nil
+}
+
+// deliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
+func deliverMessage(sessionDir string, filename string, knownNodes map[string]string) error {
+	postPath := filepath.Join(sessionDir, "post", filename)
+
+	info, err := ParseMessageFilename(filename)
+	if err != nil {
+		// Parse error: move to dead-letter/
+		dst := filepath.Join(sessionDir, "dead-letter", filename)
+		return os.Rename(postPath, dst)
+	}
+
+	paneID, found := knownNodes[info.To]
+	if !found {
+		// Unknown recipient: move to dead-letter/
+		dst := filepath.Join(sessionDir, "dead-letter", filename)
+		return os.Rename(postPath, dst)
+	}
+
+	// Ensure recipient inbox subdirectory exists
+	recipientInbox := filepath.Join(sessionDir, "inbox", info.To)
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		return fmt.Errorf("creating recipient inbox: %w", err)
+	}
+
+	dst := filepath.Join(recipientInbox, filename)
+	if err := os.Rename(postPath, dst); err != nil {
+		return fmt.Errorf("moving to inbox: %w", err)
+	}
+
+	// Send tmux notification to the recipient pane
+	if err := notifyNode(paneID, info.From); err != nil {
+		fmt.Fprintf(os.Stderr, "postman: notify %s: %v\n", info.To, err)
+	}
+
+	fmt.Printf("postman: delivered %s -> %s\n", filename, info.To)
+	return nil
+}
+
+// notifyNode sends a non-intrusive tmux display-message to the target pane.
+func notifyNode(paneID string, sender string) error {
+	msg := fmt.Sprintf("Message from %s", sender)
+	return exec.Command("tmux", "display-message", "-t", paneID, msg).Run()
 }
 
 // MessageInfo holds parsed information from a message filename.

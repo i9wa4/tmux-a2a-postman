@@ -19,7 +19,7 @@
           pname = "postman";
           version = "0.1.0";
           src = ./.;
-          vendorHash = null;
+          vendorHash = "sha256-qWQM+DlW/9/JlAv9M7QBUch3wSeOQFVgGxmkIm29yAM=";
         };
         devShells = {
           default = pkgs.mkShell {
