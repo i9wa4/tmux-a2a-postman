@@ -46,6 +46,7 @@ func main() {
 func runStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	contextID := fs.String("context-id", "", "session context ID (required)")
+	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -53,7 +54,12 @@ func runStart(args []string) error {
 		return fmt.Errorf("--context-id is required")
 	}
 
-	baseDir := resolveBaseDir()
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := resolveBaseDir(cfg.BaseDir)
 	sessionDir := filepath.Join(baseDir, *contextID)
 
 	if err := createSessionDirs(sessionDir); err != nil {
@@ -134,6 +140,7 @@ func runCreateDraft(args []string) error {
 	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "session context ID (required)")
 	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
+	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -152,7 +159,12 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("--from is required (or set A2A_NODE)")
 	}
 
-	baseDir := resolveBaseDir()
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := resolveBaseDir(cfg.BaseDir)
 	draftDir := filepath.Join(baseDir, *contextID, "draft")
 
 	if err := os.MkdirAll(draftDir, 0o755); err != nil {
