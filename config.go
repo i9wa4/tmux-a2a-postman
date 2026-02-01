@@ -69,7 +69,7 @@ func DefaultConfig() *Config {
 		NewNodePingDelay:     3.0,
 		ReminderInterval:     0.0,
 		BaseDir:              "",
-		NotificationTemplate: "Message from {{.From}}",
+		NotificationTemplate: "Message from {sender}",
 		PingTemplate:         "PING from postman",
 		DigestTemplate:       "",
 		DraftTemplate:        "",
