@@ -1,11 +1,10 @@
-BIN := postman
+BIN := tmux-a2a-postman
 CURRENT_REVISION := $(shell git rev-parse --short HEAD)
 BUILD_LDFLAGS := "-s -w -X main.revision=$(CURRENT_REVISION)"
 
 .PHONY: build
 build:
-	mkdir -p bin
-	go build -ldflags=$(BUILD_LDFLAGS) -o bin/$(BIN) .
+	go build -ldflags=$(BUILD_LDFLAGS) -o $(BIN) .
 
 .PHONY: test
 test:
@@ -23,4 +22,4 @@ lint:
 .PHONY: clean
 clean:
 	go clean
-	rm -rf bin/
+	rm -f $(BIN)

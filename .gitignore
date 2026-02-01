@@ -32,9 +32,7 @@ go.work.sum
 # .vscode/
 
 # Build output
-bin/
 /tmux-a2a-postman
-/postman_test_bin
 
 # Nix
 .direnv/
