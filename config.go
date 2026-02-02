@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -252,4 +253,47 @@ func SaveConfig(path string, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// resolveContextID resolves the context ID with fallback chain.
+// Priority:
+// 1. explicitID (from --context-id flag)
+// 2. A2A_CONTEXT_ID env var
+// 3. .postman/current-context-{tmux_session} file
+// Returns (contextID, source, error).
+func resolveContextID(explicitID string, baseDir string) (string, string, error) {
+	// 1. Explicit --context-id flag
+	if explicitID != "" {
+		return explicitID, "flag", nil
+	}
+
+	// 2. A2A_CONTEXT_ID env var
+	if envID := os.Getenv("A2A_CONTEXT_ID"); envID != "" {
+		return envID, "env:A2A_CONTEXT_ID", nil
+	}
+
+	// 3. current-context file based on tmux session
+	tmuxSession := getTmuxSessionName()
+	if tmuxSession != "" {
+		contextFile := filepath.Join(baseDir, fmt.Sprintf("current-context-%s", tmuxSession))
+		if data, err := os.ReadFile(contextFile); err == nil {
+			contextID := strings.TrimSpace(string(data))
+			if contextID != "" {
+				return contextID, fmt.Sprintf("file:%s", contextFile), nil
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("no context ID found (tried: flag, A2A_CONTEXT_ID env, current-context file)")
+}
+
+// getTmuxSessionName extracts the tmux session name using tmux command.
+// Returns empty string if not in tmux.
+func getTmuxSessionName() string {
+	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }

@@ -81,12 +81,26 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]string, cfg 
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: postman <command> [options]")
-		fmt.Fprintln(os.Stderr, "commands: start, create-draft, version")
-		os.Exit(1)
+	// Dual-mode: no args or --tui → TUI mode (default interactive)
+	if len(os.Args) == 1 {
+		// No arguments → TUI mode
+		if err := runTUIMain([]string{}); err != nil {
+			fmt.Fprintf(os.Stderr, "postman TUI: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
+	// Check for --tui flag (explicit TUI launch)
+	if os.Args[1] == "--tui" {
+		if err := runTUIMain(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "postman TUI: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Backward compatible CLI mode
 	switch os.Args[1] {
 	case "version":
 		fmt.Printf("postman dev (rev: %s)\n", revision)
@@ -102,8 +116,63 @@ func main() {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "postman: unknown command %q\n", os.Args[1])
+		fmt.Fprintln(os.Stderr, "usage: postman [--tui] [command] [options]")
+		fmt.Fprintln(os.Stderr, "commands: start, create-draft, version")
 		os.Exit(1)
 	}
+}
+
+// runTUIMain runs the TUI mode (create-draft TUI).
+func runTUIMain(args []string) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	contextID := fs.String("context-id", "", "session context ID (optional, fallback to env/file)")
+	configPath := fs.String("config", "", "path to config file (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := resolveBaseDir(cfg.BaseDir)
+
+	// Resolve context ID with fallback chain
+	resolvedContextID, source, err := resolveContextID(*contextID, baseDir)
+	if err != nil {
+		return fmt.Errorf("resolving context ID: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "postman: using context ID from %s\n", source)
+
+	sessionDir := filepath.Join(baseDir, resolvedContextID)
+
+	// Check if daemon is running (check for postman.pid)
+	pidPath := filepath.Join(sessionDir, "postman.pid")
+	if _, err := os.Stat(pidPath); os.IsNotExist(err) {
+		return fmt.Errorf("daemon not running for context %s (start with: postman start --context-id %s)", resolvedContextID, resolvedContextID)
+	}
+
+	// Discover nodes (require daemon to be running)
+	nodes, err := DiscoverNodes()
+	if err != nil {
+		return fmt.Errorf("discovering nodes: %w (is daemon running?)", err)
+	}
+
+	// Get sender node from A2A_NODE env
+	senderNode := os.Getenv("A2A_NODE")
+	if senderNode == "" {
+		return fmt.Errorf("A2A_NODE environment variable not set")
+	}
+
+	// Launch create-draft TUI
+	m := InitialDraftModel(sessionDir, resolvedContextID, senderNode, nodes)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
 }
 
 func runStart(args []string) error {
