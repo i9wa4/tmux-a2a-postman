@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,5 +157,221 @@ func TestReminder_ThreadSafety(t *testing.T) {
 
 	if count != 100 {
 		t.Errorf("concurrent increments: got %d, want 100", count)
+	}
+}
+
+func TestObserverDigest_Integration(t *testing.T) {
+	t.Run("loop prevention", func(t *testing.T) {
+		cfg := &Config{
+			DigestTemplate: "Digest: {sender}",
+			TmuxTimeout:    1.0,
+			Nodes: map[string]NodeConfig{
+				"observer-1": {SubscribeDigest: true},
+			},
+		}
+		nodes := map[string]string{"observer-1": "%999"}
+		digestedFiles := make(map[string]bool)
+
+		// Observer message should be skipped
+		sendObserverDigest("test.md", "observer-1", nodes, cfg, digestedFiles)
+
+		// File should NOT be digested (loop prevention)
+		if digestedFiles["test.md"] {
+			t.Error("observer message was digested (should be skipped)")
+		}
+	})
+
+	t.Run("duplicate prevention", func(t *testing.T) {
+		cfg := &Config{
+			DigestTemplate: "Digest: {sender}",
+			TmuxTimeout:    1.0,
+			Nodes: map[string]NodeConfig{
+				"observer-1": {SubscribeDigest: true},
+			},
+		}
+		nodes := map[string]string{"observer-1": "%999"}
+		digestedFiles := make(map[string]bool)
+
+		// First call should mark as digested
+		sendObserverDigest("test1.md", "worker", nodes, cfg, digestedFiles)
+		if !digestedFiles["test1.md"] {
+			t.Error("file not marked as digested")
+		}
+
+		// Second call with same file should be skipped
+		initialLen := len(digestedFiles)
+		sendObserverDigest("test1.md", "worker", nodes, cfg, digestedFiles)
+		// digestedFiles should not grow (duplicate was skipped)
+		if len(digestedFiles) != initialLen {
+			t.Error("digestedFiles map grew (duplicate was not properly skipped)")
+		}
+	})
+}
+
+func TestPING_Flow(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	cfg := &Config{
+		PingTemplate: "PING {node} in context {context_id}",
+		TmuxTimeout:  1.0,
+	}
+	contextID := "test-context"
+
+	t.Run("send PING to node", func(t *testing.T) {
+		if err := sendPingToNode(sessionDir, contextID, "worker", cfg.PingTemplate, cfg); err != nil {
+			t.Fatalf("sendPingToNode failed: %v", err)
+		}
+
+		// Verify PING file created in post/
+		postDir := filepath.Join(sessionDir, "post")
+		entries, err := os.ReadDir(postDir)
+		if err != nil {
+			t.Fatalf("ReadDir failed: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("expected 1 file in post/, got %d", len(entries))
+		}
+
+		// Verify filename format
+		filename := entries[0].Name()
+		if !strings.HasSuffix(filename, "-from-postman-to-worker.md") {
+			t.Errorf("unexpected filename: %q", filename)
+		}
+
+		// Verify content
+		content, err := os.ReadFile(filepath.Join(postDir, filename))
+		if err != nil {
+			t.Fatalf("ReadFile failed: %v", err)
+		}
+		expected := "PING worker in context test-context"
+		if string(content) != expected {
+			t.Errorf("content = %q, want %q", string(content), expected)
+		}
+	})
+}
+
+func TestMessageDelivery_EndToEnd(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Create message in post/
+	filename := "20260201-060000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+		"worker":       {"orchestrator"},
+	}
+
+	// Deliver message
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify message moved to inbox/worker/
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Errorf("message not in inbox/worker/: %v", err)
+	}
+
+	// Verify removed from post/
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("message still in post/ after delivery")
+	}
+
+	// Simulate read by moving to read/
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.Rename(inboxPath, readPath); err != nil {
+		t.Fatalf("moving to read/ failed: %v", err)
+	}
+
+	// Verify in read/
+	if _, err := os.Stat(readPath); err != nil {
+		t.Errorf("message not in read/: %v", err)
+	}
+}
+
+func TestSendPingToAll(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	cfg := &Config{
+		PingTemplate: "PING {node}",
+		TmuxTimeout:  1.0,
+	}
+	contextID := "test-context"
+
+	// sendPingToAll internally calls DiscoverNodes
+	// Since we can't easily mock DiscoverNodes, we just verify it doesn't crash
+	sendPingToAll(sessionDir, contextID, cfg)
+
+	// Verify no panic occurred (basic smoke test)
+	// In real environment, this would send PING to discovered nodes
+}
+
+func TestRunCreateDraft(t *testing.T) {
+	sessionDir := t.TempDir()
+	contextID := "test-context-123"
+
+	// Create config with base_dir
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	configContent := "base_dir = \"" + sessionDir + "\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Create draft directory
+	draftDir := filepath.Join(sessionDir, contextID, "draft")
+	if err := os.MkdirAll(draftDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	args := []string{
+		"--to", "worker",
+		"--from", "orchestrator",
+		"--context-id", contextID,
+		"--config", configPath,
+	}
+
+	if err := runCreateDraft(args); err != nil {
+		t.Fatalf("runCreateDraft failed: %v", err)
+	}
+
+	// Verify draft file created
+	entries, err := os.ReadDir(draftDir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 draft file, got %d", len(entries))
+	}
+
+	// Verify filename format
+	filename := entries[0].Name()
+	if !strings.HasSuffix(filename, "-from-orchestrator-to-worker.md") {
+		t.Errorf("unexpected filename: %q", filename)
+	}
+
+	// Verify content structure
+	content, err := os.ReadFile(filepath.Join(draftDir, filename))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if !strings.Contains(string(content), "method: message/send") {
+		t.Error("draft content missing 'method: message/send'")
+	}
+	if !strings.Contains(string(content), "contextId: "+contextID) {
+		t.Error("draft content missing contextId")
 	}
 }

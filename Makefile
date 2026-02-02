@@ -10,6 +10,11 @@ build:
 test:
 	go test -v -race ./...
 
+.PHONY: test-coverage
+test-coverage:
+	go test -v -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
 .PHONY: fmt
 fmt:
 	go fmt ./...

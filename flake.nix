@@ -26,6 +26,7 @@
             buildInputs = with pkgs; [
               go_1_24
               gopls
+              golangci-lint
             ];
           };
           ci = pkgs.mkShell {
