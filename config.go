@@ -36,6 +36,9 @@ type Config struct {
 
 	// Node-specific configurations
 	Nodes map[string]NodeConfig `toml:"node"`
+
+	// Compaction detection
+	CompactionDetection CompactionDetectionConfig `toml:"compaction_detection"`
 }
 
 // NodeConfig holds per-node configuration.
@@ -61,6 +64,20 @@ type AgentCard struct {
 	Template        string   `toml:"template"`
 	Role            string   `toml:"role"`
 	SubscribeDigest bool     `toml:"subscribe_digest"`
+}
+
+// CompactionDetectionConfig holds compaction detection configuration.
+type CompactionDetectionConfig struct {
+	Enabled        bool                   `toml:"enabled"`
+	Pattern        string                 `toml:"pattern"`
+	DelaySeconds   float64                `toml:"delay_seconds"`
+	MessageTemplate CompactionMessageTemplate `toml:"message_template"`
+}
+
+// CompactionMessageTemplate holds message template for compaction notifications.
+type CompactionMessageTemplate struct {
+	Type string `toml:"type"`
+	Body string `toml:"body"`
 }
 
 // DefaultConfig returns a Config with sane default values.

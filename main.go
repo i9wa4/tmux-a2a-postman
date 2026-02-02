@@ -286,6 +286,9 @@ func runStart(args []string) error {
 	// Start idle check goroutine
 	startIdleCheck(cfg, adjacency, sessionDir)
 
+	// Start compaction detection goroutine
+	startCompactionCheck(cfg, nodes, sessionDir)
+
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan DaemonEvent, 100)
 	go runDaemonLoop(ctx, baseDir, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
