@@ -122,6 +122,10 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]No
 		fmt.Fprintf(os.Stderr, "postman: notify %s: %v\n", info.To, err)
 	}
 
+	// Update activity timestamps for idle detection
+	UpdateActivity(info.From)
+	UpdateActivity(info.To)
+
 	fmt.Printf("postman: delivered %s -> %s\n", filename, info.To)
 	return nil
 }

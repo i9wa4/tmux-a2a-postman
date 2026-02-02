@@ -40,13 +40,16 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template         string   `toml:"template"`
-	OnJoin           string   `toml:"on_join"`
-	Observes         []string `toml:"observes"`
-	Role             string   `toml:"role"`
-	SubscribeDigest  bool     `toml:"subscribe_digest"`
-	ReminderInterval float64  `toml:"reminder_interval_seconds"`
-	ReminderMessage  string   `toml:"reminder_message"`
+	Template                     string   `toml:"template"`
+	OnJoin                       string   `toml:"on_join"`
+	Observes                     []string `toml:"observes"`
+	Role                         string   `toml:"role"`
+	SubscribeDigest              bool     `toml:"subscribe_digest"`
+	ReminderInterval             float64  `toml:"reminder_interval_seconds"`
+	ReminderMessage              string   `toml:"reminder_message"`
+	IdleTimeoutSeconds           float64  `toml:"idle_timeout_seconds"`
+	IdleReminderMessage          string   `toml:"idle_reminder_message"`
+	IdleReminderCooldownSeconds  float64  `toml:"idle_reminder_cooldown_seconds"`
 }
 
 // AgentCard holds agent card information.
