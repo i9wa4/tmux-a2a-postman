@@ -84,8 +84,12 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Mock nodes (recipient exists)
-	nodes := map[string]string{
-		"worker": "worker-pane-id",
+	nodes := map[string]NodeInfo{
+		"worker": {
+			PaneID:      "worker-pane-id",
+			SessionName: "test-session",
+			SessionDir:  sessionDir,
+		},
 	}
 
 	// Mock adjacency (orchestrator -> worker allowed)

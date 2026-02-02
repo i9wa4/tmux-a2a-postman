@@ -56,7 +56,7 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // Routing rules (DEFAULT DENY):
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-func deliverMessage(sessionDir string, filename string, knownNodes map[string]string, adjacency map[string][]string) error {
+func deliverMessage(sessionDir string, filename string, knownNodes map[string]NodeInfo, adjacency map[string][]string) error {
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	info, err := ParseMessageFilename(filename)
@@ -78,12 +78,13 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]st
 	}
 
 	// Check if recipient exists
-	paneID, found := knownNodes[info.To]
+	nodeInfo, found := knownNodes[info.To]
 	if !found {
 		// Unknown recipient: move to dead-letter/
 		dst := filepath.Join(sessionDir, "dead-letter", filename)
 		return os.Rename(postPath, dst)
 	}
+	paneID := nodeInfo.PaneID
 
 	// Check routing permissions (DEFAULT DENY)
 	// IMPORTANT: sender="postman" is always allowed

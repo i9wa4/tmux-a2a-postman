@@ -114,7 +114,7 @@ func TestReminder(t *testing.T) {
 		TmuxTimeout:      1.0,
 		Nodes:            make(map[string]NodeConfig),
 	}
-	nodes := map[string]string{"worker": "%999"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%999", SessionName: "test", SessionDir: "/tmp/test"}}
 
 	// Increment 3 times to reach threshold
 	for i := 0; i < 3; i++ {
@@ -138,7 +138,7 @@ func TestReminder_ThreadSafety(t *testing.T) {
 		TmuxTimeout:      1.0,
 		Nodes:            make(map[string]NodeConfig),
 	}
-	nodes := map[string]string{"worker": "%999"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%999", SessionName: "test", SessionDir: "/tmp/test"}}
 
 	// Concurrent increments
 	var wg sync.WaitGroup
@@ -169,7 +169,7 @@ func TestObserverDigest_Integration(t *testing.T) {
 				"observer-1": {SubscribeDigest: true},
 			},
 		}
-		nodes := map[string]string{"observer-1": "%999"}
+		nodes := map[string]NodeInfo{"observer-1": {PaneID: "%999", SessionName: "test", SessionDir: "/tmp/test"}}
 		digestedFiles := make(map[string]bool)
 
 		// Observer message should be skipped
@@ -189,7 +189,7 @@ func TestObserverDigest_Integration(t *testing.T) {
 				"observer-1": {SubscribeDigest: true},
 			},
 		}
-		nodes := map[string]string{"observer-1": "%999"}
+		nodes := map[string]NodeInfo{"observer-1": {PaneID: "%999", SessionName: "test", SessionDir: "/tmp/test"}}
 		digestedFiles := make(map[string]bool)
 
 		// First call should mark as digested
@@ -221,7 +221,12 @@ func TestPING_Flow(t *testing.T) {
 	contextID := "test-context"
 
 	t.Run("send PING to node", func(t *testing.T) {
-		if err := sendPingToNode(sessionDir, contextID, "worker", cfg.PingTemplate, cfg); err != nil {
+		nodeInfo := NodeInfo{
+			PaneID:      "%999",
+			SessionName: "test",
+			SessionDir:  sessionDir,
+		}
+		if err := sendPingToNode(nodeInfo, contextID, "worker", cfg.PingTemplate, cfg); err != nil {
 			t.Fatalf("sendPingToNode failed: %v", err)
 		}
 
@@ -266,7 +271,7 @@ func TestMessageDelivery_EndToEnd(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},

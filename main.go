@@ -34,7 +34,7 @@ func NewReminderState() *ReminderState {
 }
 
 // Increment increments the counter for a node and sends reminder if threshold is reached.
-func (r *ReminderState) Increment(nodeName string, nodes map[string]string, cfg *Config) {
+func (r *ReminderState) Increment(nodeName string, nodes map[string]NodeInfo, cfg *Config) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -59,7 +59,7 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]string, cfg 
 
 		// Send reminder if interval is configured
 		if reminderInterval > 0 && count >= int(reminderInterval) {
-			paneID, found := nodes[nodeName]
+			nodeInfo, found := nodes[nodeName]
 			if found && reminderMessage != "" {
 				vars := map[string]string{
 					"node":  nodeName,
@@ -68,7 +68,7 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]string, cfg 
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				content := ExpandTemplate(reminderMessage, vars, timeout)
 
-				if err := exec.Command("tmux", "send-keys", "-t", paneID, content, "Enter").Run(); err != nil {
+				if err := exec.Command("tmux", "send-keys", "-t", nodeInfo.PaneID, content, "Enter").Run(); err != nil {
 					fmt.Fprintf(os.Stderr, "postman: reminder to %s failed: %v\n", nodeName, err)
 				} else {
 					fmt.Printf("postman: reminder sent to %s (count=%d)\n", nodeName, count)
@@ -154,7 +154,7 @@ func runTUIMain(args []string) error {
 	}
 
 	// Discover nodes (require daemon to be running)
-	nodes, err := DiscoverNodes()
+	nodes, err := DiscoverNodes(baseDir)
 	if err != nil {
 		return fmt.Errorf("discovering nodes: %w (is daemon running?)", err)
 	}
@@ -165,8 +165,14 @@ func runTUIMain(args []string) error {
 		return fmt.Errorf("A2A_NODE environment variable not set")
 	}
 
+	// Extract node names for TUI (map[string]NodeInfo -> map[string]string)
+	nodeNames := make(map[string]string)
+	for nodeName, nodeInfo := range nodes {
+		nodeNames[nodeName] = nodeInfo.PaneID
+	}
+
 	// Launch create-draft TUI
-	m := InitialDraftModel(sessionDir, resolvedContextID, senderNode, nodes)
+	m := InitialDraftModel(sessionDir, resolvedContextID, senderNode, nodeNames)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
@@ -247,11 +253,11 @@ func runStart(args []string) error {
 	}
 
 	// Discover nodes at startup
-	nodes, err := DiscoverNodes()
+	nodes, err := DiscoverNodes(baseDir)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
 		fmt.Fprintf(os.Stderr, "postman: node discovery failed: %v\n", err)
-		nodes = make(map[string]string)
+		nodes = make(map[string]NodeInfo)
 	}
 
 	fmt.Printf("postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
@@ -261,7 +267,7 @@ func runStart(args []string) error {
 	if cfg.StartupDelay > 0 {
 		startupDelay := time.Duration(cfg.StartupDelay * float64(time.Second))
 		time.AfterFunc(startupDelay, func() {
-			sendPingToAll(sessionDir, *contextID, cfg)
+			sendPingToAll(baseDir, *contextID, cfg)
 		})
 	}
 
@@ -279,7 +285,7 @@ func runStart(args []string) error {
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan DaemonEvent, 100)
-	go runDaemonLoop(ctx, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
+	go runDaemonLoop(ctx, baseDir, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
 
 	// Send initial status
 	daemonEvents <- DaemonEvent{
@@ -325,12 +331,13 @@ func runStart(args []string) error {
 // runDaemonLoop runs the daemon event loop in a goroutine.
 func runDaemonLoop(
 	ctx context.Context,
+	baseDir string,
 	sessionDir string,
 	contextID string,
 	cfg *Config,
 	watcher *fsnotify.Watcher,
 	adjacency map[string][]string,
-	nodes map[string]string,
+	nodes map[string]NodeInfo,
 	knownNodes map[string]bool,
 	digestedFiles map[string]bool,
 	reminderState *ReminderState,
@@ -367,17 +374,18 @@ func runDaemonLoop(
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						// Re-discover nodes before each delivery
-						if freshNodes, err := DiscoverNodes(); err == nil {
+						if freshNodes, err := DiscoverNodes(baseDir); err == nil {
 							// Detect new nodes and send PING
-							for nodeName := range freshNodes {
+							for nodeName, nodeInfo := range freshNodes {
 								if !knownNodes[nodeName] {
 									knownNodes[nodeName] = true
 									// Send PING after delay
 									if cfg.NewNodePingDelay > 0 {
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 										capturedNode := nodeName
+										capturedNodeInfo := nodeInfo
 										time.AfterFunc(newNodeDelay, func() {
-											if err := sendPingToNode(sessionDir, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
+											if err := sendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
 												events <- DaemonEvent{
 													Type:    "error",
 													Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
@@ -558,7 +566,7 @@ func buildPingMessage(template string, vars map[string]string, timeout time.Dura
 }
 
 // sendPingToNode sends a PING message to a specific node.
-func sendPingToNode(sessionDir, contextID, nodeName, template string, cfg *Config) error {
+func sendPingToNode(nodeInfo NodeInfo, contextID, nodeName, template string, cfg *Config) error {
 	vars := map[string]string{
 		"context_id": contextID,
 		"node":       nodeName,
@@ -569,26 +577,32 @@ func sendPingToNode(sessionDir, contextID, nodeName, template string, cfg *Confi
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, nodeName)
-	postPath := filepath.Join(sessionDir, "post", filename)
+	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
+
+	// Ensure post directory exists for this node's session
+	postDir := filepath.Join(nodeInfo.SessionDir, "post")
+	if err := os.MkdirAll(postDir, 0o755); err != nil {
+		return fmt.Errorf("creating post directory: %w", err)
+	}
 
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing PING message: %w", err)
 	}
 
-	fmt.Printf("postman: PING sent to %s\n", nodeName)
+	fmt.Printf("postman: PING sent to %s (session: %s)\n", nodeName, nodeInfo.SessionName)
 	return nil
 }
 
 // sendPingToAll sends PING messages to all discovered nodes.
-func sendPingToAll(sessionDir, contextID string, cfg *Config) {
-	nodes, err := DiscoverNodes()
+func sendPingToAll(baseDir, contextID string, cfg *Config) {
+	nodes, err := DiscoverNodes(baseDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "postman: PING: node discovery failed: %v\n", err)
 		return
 	}
 
-	for nodeName := range nodes {
-		if err := sendPingToNode(sessionDir, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
+	for nodeName, nodeInfo := range nodes {
+		if err := sendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "postman: PING to %s failed: %v\n", nodeName, err)
 		}
 	}
@@ -597,7 +611,7 @@ func sendPingToAll(sessionDir, contextID string, cfg *Config) {
 // sendObserverDigest sends digest notification to observers with subscribe_digest=true.
 // Loop prevention: skip if sender starts with "observer".
 // Duplicate prevention: track digested files in digestedFiles map.
-func sendObserverDigest(filename string, sender string, nodes map[string]string, cfg *Config, digestedFiles map[string]bool) {
+func sendObserverDigest(filename string, sender string, nodes map[string]NodeInfo, cfg *Config, digestedFiles map[string]bool) {
 	// Loop prevention: skip observer messages
 	if strings.HasPrefix(sender, "observer") {
 		return
@@ -614,7 +628,7 @@ func sendObserverDigest(filename string, sender string, nodes map[string]string,
 		if !nodeConfig.SubscribeDigest {
 			continue
 		}
-		paneID, found := nodes[nodeName]
+		nodeInfo, found := nodes[nodeName]
 		if !found {
 			continue
 		}
@@ -628,7 +642,7 @@ func sendObserverDigest(filename string, sender string, nodes map[string]string,
 		content := ExpandTemplate(cfg.DigestTemplate, vars, timeout)
 
 		// Send directly to pane via tmux send-keys
-		if err := exec.Command("tmux", "send-keys", "-t", paneID, content, "Enter").Run(); err != nil {
+		if err := exec.Command("tmux", "send-keys", "-t", nodeInfo.PaneID, content, "Enter").Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "postman: digest to %s failed: %v\n", nodeName, err)
 		} else {
 			fmt.Printf("postman: digest sent to %s (message from %s)\n", nodeName, sender)

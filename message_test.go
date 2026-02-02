@@ -97,7 +97,7 @@ func TestDeliverMessage(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
@@ -130,7 +130,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 	}
@@ -164,7 +164,7 @@ func TestRouting_Allowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// Define edge: orchestrator <-> worker
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
@@ -204,7 +204,7 @@ func TestRouting_Denied(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined between orchestrator and worker
 	adjacency := map[string][]string{}
 
@@ -242,7 +242,7 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined for postman
 	adjacency := map[string][]string{}
 
@@ -275,7 +275,7 @@ func TestPONG_Handling(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]string{"worker": "%1"}
+	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{}
 
 	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {

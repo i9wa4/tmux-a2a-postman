@@ -40,11 +40,14 @@
 # =============================================================================
 
 # Base directory for postman sessions
-base_dir = ".postman"
+# Defaults to XDG_STATE_HOME/postman/ (or ~/.local/state/postman/)
+# Uncomment to override:
+# base_dir = "~/.local/state/postman"
+base_dir = ""
 
 # Timing settings
 scan_interval_seconds = 1.0
-enter_delay_seconds = 0.7
+enter_delay_seconds = 1.5
 tmux_timeout_seconds = 30.0
 startup_delay_seconds = 10.0
 new_node_ping_delay_seconds = 3.0
