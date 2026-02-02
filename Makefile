@@ -24,6 +24,11 @@ fmt:
 lint:
 	golangci-lint run ./...
 
+.PHONY: security
+security:
+	go vet ./...
+	govulncheck ./...
+
 .PHONY: clean
 clean:
 	go clean

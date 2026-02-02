@@ -33,6 +33,7 @@
             buildInputs = with pkgs; [
               go_1_24
               golangci-lint
+              go-tools # provides govulncheck
             ];
           };
         };
