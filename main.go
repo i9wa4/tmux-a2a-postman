@@ -151,6 +151,7 @@ func runStart(args []string) error {
 	defer cancel()
 
 	postDir := filepath.Join(sessionDir, "post")
+	inboxDir := filepath.Join(sessionDir, "inbox")
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -160,6 +161,20 @@ func runStart(args []string) error {
 
 	if err := watcher.Add(postDir); err != nil {
 		return fmt.Errorf("watching post directory: %w", err)
+	}
+	if err := watcher.Add(inboxDir); err != nil {
+		return fmt.Errorf("watching inbox directory: %w", err)
+	}
+
+	// Watch config file if exists
+	resolvedConfigPath := *configPath
+	if resolvedConfigPath == "" {
+		resolvedConfigPath = resolveConfigPath()
+	}
+	if resolvedConfigPath != "" {
+		if err := watcher.Add(resolvedConfigPath); err != nil {
+			fmt.Fprintf(os.Stderr, "postman: warning: could not watch config: %v\n", err)
+		}
 	}
 
 	// Discover nodes at startup
@@ -195,7 +210,7 @@ func runStart(args []string) error {
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan DaemonEvent, 100)
-	go runDaemonLoop(ctx, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents)
+	go runDaemonLoop(ctx, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
 
 	// Send initial status
 	daemonEvents <- DaemonEvent{
@@ -204,6 +219,29 @@ func runStart(args []string) error {
 		Details: map[string]interface{}{
 			"node_count": len(nodes),
 		},
+	}
+
+	// Send initial edges
+	edgeList := make([]Edge, len(cfg.Edges))
+	for i, e := range cfg.Edges {
+		edgeList[i] = Edge{Raw: e}
+	}
+	daemonEvents <- DaemonEvent{
+		Type: "config_update",
+		Details: map[string]interface{}{
+			"edges": edgeList,
+		},
+	}
+
+	// Send initial inbox messages (worker node)
+	if nodeName := os.Getenv("A2A_NODE"); nodeName != "" {
+		msgList := scanInboxMessages(filepath.Join(inboxDir, nodeName))
+		daemonEvents <- DaemonEvent{
+			Type: "inbox_update",
+			Details: map[string]interface{}{
+				"messages": msgList,
+			},
+		}
 	}
 
 	// Start TUI
@@ -228,8 +266,15 @@ func runDaemonLoop(
 	digestedFiles map[string]bool,
 	reminderState *ReminderState,
 	events chan<- DaemonEvent,
+	configPath string,
 ) {
 	defer close(events)
+
+	// Debounce timers for different paths
+	var inboxTimer *time.Timer
+	var configTimer *time.Timer
+	postDir := filepath.Join(sessionDir, "post")
+	inboxDir := filepath.Join(sessionDir, "inbox")
 
 	for {
 		select {
@@ -243,61 +288,135 @@ func runDaemonLoop(
 			if !ok {
 				return
 			}
-			// React to CREATE and RENAME (covers mv into post/)
-			if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
-				filename := filepath.Base(event.Name)
-				if strings.HasSuffix(filename, ".md") {
-					// Re-discover nodes before each delivery
-					if freshNodes, err := DiscoverNodes(); err == nil {
-						// Detect new nodes and send PING
-						for nodeName := range freshNodes {
-							if !knownNodes[nodeName] {
-								knownNodes[nodeName] = true
-								// Send PING after delay
-								if cfg.NewNodePingDelay > 0 {
-									newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
-									capturedNode := nodeName
-									time.AfterFunc(newNodeDelay, func() {
-										if err := sendPingToNode(sessionDir, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
-											events <- DaemonEvent{
-												Type:    "error",
-												Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
+
+			// Path-based routing
+			eventPath := event.Name
+
+			// Handle post/ directory events
+			if strings.HasPrefix(eventPath, postDir) {
+				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+					filename := filepath.Base(eventPath)
+					if strings.HasSuffix(filename, ".md") {
+						// Re-discover nodes before each delivery
+						if freshNodes, err := DiscoverNodes(); err == nil {
+							// Detect new nodes and send PING
+							for nodeName := range freshNodes {
+								if !knownNodes[nodeName] {
+									knownNodes[nodeName] = true
+									// Send PING after delay
+									if cfg.NewNodePingDelay > 0 {
+										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
+										capturedNode := nodeName
+										time.AfterFunc(newNodeDelay, func() {
+											if err := sendPingToNode(sessionDir, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
+												events <- DaemonEvent{
+													Type:    "error",
+													Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
+												}
 											}
-										}
-									})
+										})
+									}
+								}
+							}
+							nodes = freshNodes
+							// Update node count
+							events <- DaemonEvent{
+								Type:    "status_update",
+								Message: "Running",
+								Details: map[string]interface{}{
+									"node_count": len(nodes),
+								},
+							}
+						}
+						if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+							events <- DaemonEvent{
+								Type:    "error",
+								Message: fmt.Sprintf("deliver %s: %v", filename, err),
+							}
+						} else {
+							// Send message received event
+							events <- DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("Delivered: %s", filename),
+							}
+							// Send observer digest on successful delivery
+							if info, err := ParseMessageFilename(filename); err == nil {
+								sendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
+								// Increment reminder counter for recipient
+								if info.To != "postman" {
+									reminderState.Increment(info.To, nodes, cfg)
 								}
 							}
 						}
-						nodes = freshNodes
-						// Update node count
+					}
+				}
+			}
+
+			// Handle inbox/ directory events (with debounce)
+			if strings.HasPrefix(eventPath, inboxDir) {
+				// Debounce inbox updates (200ms)
+				if inboxTimer != nil {
+					inboxTimer.Stop()
+				}
+				inboxTimer = time.AfterFunc(200*time.Millisecond, func() {
+					// Scan inbox for current node
+					if nodeName := os.Getenv("A2A_NODE"); nodeName != "" {
+						msgList := scanInboxMessages(filepath.Join(inboxDir, nodeName))
 						events <- DaemonEvent{
-							Type:    "status_update",
-							Message: "Running",
+							Type: "inbox_update",
 							Details: map[string]interface{}{
-								"node_count": len(nodes),
+								"messages": msgList,
 							},
 						}
 					}
-					if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-						events <- DaemonEvent{
-							Type:    "error",
-							Message: fmt.Sprintf("deliver %s: %v", filename, err),
+				})
+			}
+
+			// Handle config file events (with debounce)
+			if configPath != "" && eventPath == configPath {
+				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+					// Debounce config updates (200ms)
+					if configTimer != nil {
+						configTimer.Stop()
+					}
+					configTimer = time.AfterFunc(200*time.Millisecond, func() {
+						// Reload config
+						newCfg, err := LoadConfig(configPath)
+						if err != nil {
+							events <- DaemonEvent{
+								Type:    "error",
+								Message: fmt.Sprintf("config reload failed: %v", err),
+							}
+							return
 						}
-					} else {
-						// Send message received event
+						// Update adjacency
+						newAdjacency, err := ParseEdges(newCfg.Edges)
+						if err != nil {
+							events <- DaemonEvent{
+								Type:    "error",
+								Message: fmt.Sprintf("edge parsing failed: %v", err),
+							}
+							return
+						}
+						// Update shared state
+						cfg = newCfg
+						adjacency = newAdjacency
+						// Send config update event
+						edgeList := make([]Edge, len(newCfg.Edges))
+						for i, e := range newCfg.Edges {
+							edgeList[i] = Edge{Raw: e}
+						}
+						events <- DaemonEvent{
+							Type: "config_update",
+							Details: map[string]interface{}{
+								"edges": edgeList,
+							},
+						}
 						events <- DaemonEvent{
 							Type:    "message_received",
-							Message: fmt.Sprintf("Delivered: %s", filename),
+							Message: "Config reloaded",
 						}
-						// Send observer digest on successful delivery
-						if info, err := ParseMessageFilename(filename); err == nil {
-							sendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
-							// Increment reminder counter for recipient
-							if info.To != "postman" {
-								reminderState.Increment(info.To, nodes, cfg)
-							}
-						}
-					}
+					})
 				}
 			}
 		case err, ok := <-watcher.Errors:
@@ -446,4 +565,27 @@ func sendObserverDigest(filename string, sender string, nodes map[string]string,
 			fmt.Printf("postman: digest sent to %s (message from %s)\n", nodeName, sender)
 		}
 	}
+}
+
+// scanInboxMessages scans the inbox directory and returns a list of MessageInfo.
+func scanInboxMessages(inboxPath string) []MessageInfo {
+	var messages []MessageInfo
+
+	entries, err := os.ReadDir(inboxPath)
+	if err != nil {
+		return messages
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		info, err := ParseMessageFilename(entry.Name())
+		if err != nil {
+			continue
+		}
+		messages = append(messages, *info)
+	}
+
+	return messages
 }

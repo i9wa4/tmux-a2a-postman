@@ -127,8 +127,8 @@ func TestTUI_View(t *testing.T) {
 		t.Error("view missing Message 2")
 	}
 
-	// Verify quit instruction
-	if !strings.Contains(view, "Press 'q' or 'ctrl+c' to quit") {
+	// Verify quit instruction (updated for Issue #12)
+	if !strings.Contains(view, "q (quit)") {
 		t.Error("view missing quit instruction")
 	}
 }
@@ -165,5 +165,143 @@ func TestTUI_MessageTruncation(t *testing.T) {
 
 	if len(m.messages) != 10 {
 		t.Errorf("message truncation: got %d messages, want 10", len(m.messages))
+	}
+}
+
+func TestTUI_MessageList_Update(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch)
+
+	// Send inbox_update event
+	msgList := []MessageInfo{
+		{Timestamp: "20260201-120000", From: "orchestrator", To: "worker"},
+		{Timestamp: "20260201-130000", From: "observer", To: "worker"},
+	}
+	event := DaemonEventMsg{
+		Type: "inbox_update",
+		Details: map[string]interface{}{
+			"messages": msgList,
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if len(m.messageList) != 2 {
+		t.Errorf("messageList length: got %d, want 2", len(m.messageList))
+	}
+	if m.messageList[0].From != "orchestrator" {
+		t.Errorf("first message from: got %q, want %q", m.messageList[0].From, "orchestrator")
+	}
+}
+
+func TestTUI_RoutingView_AddEdge(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch)
+	m.currentView = ViewRouting
+
+	// Send config_update event with edges
+	edgeList := []Edge{
+		{Raw: "orchestrator -- worker"},
+		{Raw: "worker -- observer"},
+	}
+	event := DaemonEventMsg{
+		Type: "config_update",
+		Details: map[string]interface{}{
+			"edges": edgeList,
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if len(m.edges) != 2 {
+		t.Errorf("edges length: got %d, want 2", len(m.edges))
+	}
+	if m.edges[0].Raw != "orchestrator -- worker" {
+		t.Errorf("first edge: got %q, want %q", m.edges[0].Raw, "orchestrator -- worker")
+	}
+}
+
+func TestTUI_RoutingView_RemoveEdge(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch)
+	m.currentView = ViewRouting
+	m.edges = []Edge{
+		{Raw: "orchestrator -- worker"},
+		{Raw: "worker -- observer"},
+	}
+	m.selectedEdge = 0
+
+	// Send config_update event with one edge removed
+	edgeList := []Edge{
+		{Raw: "worker -- observer"},
+	}
+	event := DaemonEventMsg{
+		Type: "config_update",
+		Details: map[string]interface{}{
+			"edges": edgeList,
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if len(m.edges) != 1 {
+		t.Errorf("edges length after removal: got %d, want 1", len(m.edges))
+	}
+	if m.selectedEdge != 0 {
+		t.Errorf("selectedEdge clamping: got %d, want 0", m.selectedEdge)
+	}
+}
+
+func TestTUI_HotReload(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch)
+
+	// Initial edges
+	edgeList1 := []Edge{
+		{Raw: "A -- B"},
+	}
+	event1 := DaemonEventMsg{
+		Type: "config_update",
+		Details: map[string]interface{}{
+			"edges": edgeList1,
+		},
+	}
+	newModel, _ := m.Update(event1)
+	m = newModel.(Model)
+
+	if len(m.edges) != 1 {
+		t.Errorf("initial edges length: got %d, want 1", len(m.edges))
+	}
+
+	// Hot reload with new edges
+	edgeList2 := []Edge{
+		{Raw: "A -- B"},
+		{Raw: "B -- C"},
+	}
+	event2 := DaemonEventMsg{
+		Type: "config_update",
+		Details: map[string]interface{}{
+			"edges": edgeList2,
+		},
+	}
+	newModel, _ = m.Update(event2)
+	m = newModel.(Model)
+
+	if len(m.edges) != 2 {
+		t.Errorf("hot reloaded edges length: got %d, want 2", len(m.edges))
+	}
+	if m.edges[1].Raw != "B -- C" {
+		t.Errorf("second edge after reload: got %q, want %q", m.edges[1].Raw, "B -- C")
 	}
 }

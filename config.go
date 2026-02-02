@@ -237,3 +237,19 @@ func createSessionDirs(sessionDir string) error {
 	}
 	return nil
 }
+
+// SaveConfig saves the configuration to a TOML file.
+// NOTE: This will remove comments from the TOML file.
+func SaveConfig(path string, cfg *Config) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating config file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := toml.NewEncoder(f).Encode(cfg); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+
+	return nil
+}
