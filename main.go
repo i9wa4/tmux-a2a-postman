@@ -634,9 +634,11 @@ func sendObserverDigest(filename string, sender string, nodes map[string]NodeInf
 		}
 
 		// Build digest message
+		digestItem := fmt.Sprintf("- Message: %s\n  From: %s", filename, sender)
 		vars := map[string]string{
-			"sender":   sender,
-			"filename": filename,
+			"sender":       sender,
+			"filename":     filename,
+			"digest_items": digestItem,
 		}
 		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 		content := ExpandTemplate(cfg.DigestTemplate, vars, timeout)
