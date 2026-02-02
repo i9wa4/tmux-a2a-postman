@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +18,66 @@ import (
 )
 
 var revision string
+
+// ReminderState manages per-node message counters for reminder feature.
+type ReminderState struct {
+	mu       sync.Mutex
+	counters map[string]int
+}
+
+// NewReminderState creates a new ReminderState.
+func NewReminderState() *ReminderState {
+	return &ReminderState{
+		counters: make(map[string]int),
+	}
+}
+
+// Increment increments the counter for a node and sends reminder if threshold is reached.
+func (r *ReminderState) Increment(nodeName string, nodes map[string]string, cfg *Config) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.counters[nodeName]++
+	count := r.counters[nodeName]
+
+	// Check if reminder should be sent
+	if cfg.ReminderInterval > 0 && count >= int(cfg.ReminderInterval) {
+		// Get node-specific reminder settings
+		nodeConfig, hasNodeConfig := cfg.Nodes[nodeName]
+		reminderInterval := cfg.ReminderInterval
+		reminderMessage := cfg.ReminderMessage
+
+		if hasNodeConfig {
+			if nodeConfig.ReminderInterval > 0 {
+				reminderInterval = nodeConfig.ReminderInterval
+			}
+			if nodeConfig.ReminderMessage != "" {
+				reminderMessage = nodeConfig.ReminderMessage
+			}
+		}
+
+		// Send reminder if interval is configured
+		if reminderInterval > 0 && count >= int(reminderInterval) {
+			paneID, found := nodes[nodeName]
+			if found && reminderMessage != "" {
+				vars := map[string]string{
+					"node":  nodeName,
+					"count": strconv.Itoa(count),
+				}
+				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+				content := ExpandTemplate(reminderMessage, vars, timeout)
+
+				if err := exec.Command("tmux", "send-keys", "-t", paneID, content, "Enter").Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "postman: reminder to %s failed: %v\n", nodeName, err)
+				} else {
+					fmt.Printf("postman: reminder sent to %s (count=%d)\n", nodeName, count)
+				}
+			}
+			// Reset counter after sending reminder
+			r.counters[nodeName] = 0
+		}
+	}
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -110,6 +172,26 @@ func runStart(args []string) error {
 	fmt.Printf("postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
 		*contextID, os.Getpid(), len(nodes))
 
+	// Send PING to all nodes after startup delay
+	if cfg.StartupDelay > 0 {
+		startupDelay := time.Duration(cfg.StartupDelay * float64(time.Second))
+		time.AfterFunc(startupDelay, func() {
+			sendPingToAll(sessionDir, *contextID, cfg)
+		})
+	}
+
+	// Track known nodes for new node detection
+	knownNodes := make(map[string]bool)
+	for nodeName := range nodes {
+		knownNodes[nodeName] = true
+	}
+
+	// Track digested files for observer digest (duplicate prevention)
+	digestedFiles := make(map[string]bool)
+
+	// Reminder state for per-node message counters
+	reminderState := NewReminderState()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,10 +207,35 @@ func runStart(args []string) error {
 				if strings.HasSuffix(filename, ".md") {
 					// Re-discover nodes before each delivery
 					if freshNodes, err := DiscoverNodes(); err == nil {
+						// Detect new nodes and send PING
+						for nodeName := range freshNodes {
+							if !knownNodes[nodeName] {
+								knownNodes[nodeName] = true
+								// Send PING after delay
+								if cfg.NewNodePingDelay > 0 {
+									newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
+									capturedNode := nodeName
+									time.AfterFunc(newNodeDelay, func() {
+										if err := sendPingToNode(sessionDir, *contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
+											fmt.Fprintf(os.Stderr, "postman: PING to new node %s failed: %v\n", capturedNode, err)
+										}
+									})
+								}
+							}
+						}
 						nodes = freshNodes
 					}
 					if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
 						fmt.Fprintf(os.Stderr, "postman: deliver %s: %v\n", filename, err)
+					} else {
+						// Send observer digest on successful delivery
+						if info, err := ParseMessageFilename(filename); err == nil {
+							sendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
+							// Increment reminder counter for recipient
+							if info.To != "postman" {
+								reminderState.Increment(info.To, nodes, cfg)
+							}
+						}
 					}
 				}
 			}
@@ -191,4 +298,88 @@ func runCreateDraft(args []string) error {
 
 	fmt.Println(draftPath)
 	return nil
+}
+
+// buildPingMessage constructs a PING message using the template.
+func buildPingMessage(template string, vars map[string]string, timeout time.Duration) string {
+	return ExpandTemplate(template, vars, timeout)
+}
+
+// sendPingToNode sends a PING message to a specific node.
+func sendPingToNode(sessionDir, contextID, nodeName, template string, cfg *Config) error {
+	vars := map[string]string{
+		"context_id": contextID,
+		"node":       nodeName,
+	}
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	content := buildPingMessage(template, vars, timeout)
+
+	now := time.Now()
+	ts := now.Format("20060102-150405")
+	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, nodeName)
+	postPath := filepath.Join(sessionDir, "post", filename)
+
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("writing PING message: %w", err)
+	}
+
+	fmt.Printf("postman: PING sent to %s\n", nodeName)
+	return nil
+}
+
+// sendPingToAll sends PING messages to all discovered nodes.
+func sendPingToAll(sessionDir, contextID string, cfg *Config) {
+	nodes, err := DiscoverNodes()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "postman: PING: node discovery failed: %v\n", err)
+		return
+	}
+
+	for nodeName := range nodes {
+		if err := sendPingToNode(sessionDir, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "postman: PING to %s failed: %v\n", nodeName, err)
+		}
+	}
+}
+
+// sendObserverDigest sends digest notification to observers with subscribe_digest=true.
+// Loop prevention: skip if sender starts with "observer".
+// Duplicate prevention: track digested files in digestedFiles map.
+func sendObserverDigest(filename string, sender string, nodes map[string]string, cfg *Config, digestedFiles map[string]bool) {
+	// Loop prevention: skip observer messages
+	if strings.HasPrefix(sender, "observer") {
+		return
+	}
+
+	// Duplicate prevention: skip if already digested
+	if digestedFiles[filename] {
+		return
+	}
+	digestedFiles[filename] = true
+
+	// Find nodes with subscribe_digest=true
+	for nodeName, nodeConfig := range cfg.Nodes {
+		if !nodeConfig.SubscribeDigest {
+			continue
+		}
+		paneID, found := nodes[nodeName]
+		if !found {
+			continue
+		}
+
+		// Build digest message
+		vars := map[string]string{
+			"sender":   sender,
+			"filename": filename,
+		}
+		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+		content := ExpandTemplate(cfg.DigestTemplate, vars, timeout)
+
+		// Send directly to pane via tmux send-keys
+		if err := exec.Command("tmux", "send-keys", "-t", paneID, content, "Enter").Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "postman: digest to %s failed: %v\n", nodeName, err)
+		} else {
+			fmt.Printf("postman: digest sent to %s (message from %s)\n", nodeName, sender)
+		}
+	}
 }

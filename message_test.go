@@ -261,3 +261,44 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		t.Error("message should not be in dead-letter/ (postman is always allowed)")
 	}
 }
+
+func TestPONG_Handling(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Place a PONG message (to postman)
+	filename := "20260201-050000-from-worker-to-postman.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("PONG"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	adjacency := map[string][]string{}
+
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify moved to read/ (not inbox or dead-letter)
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if _, err := os.Stat(readPath); err != nil {
+		t.Errorf("PONG not in read/: %v", err)
+	}
+	// Verify removed from post/
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("message still in post/ after delivery")
+	}
+	// Verify NOT in inbox/
+	inboxPath := filepath.Join(sessionDir, "inbox", "postman", filename)
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Error("PONG should not be in inbox/")
+	}
+	// Verify NOT in dead-letter/
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Error("PONG should not be in dead-letter/")
+	}
+}

@@ -66,6 +66,17 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]st
 		return os.Rename(postPath, dst)
 	}
 
+	// PONG handling: messages to "postman" are PONG responses
+	// Move directly to read/ (skip inbox delivery)
+	if info.To == "postman" {
+		dst := filepath.Join(sessionDir, "read", filename)
+		if err := os.Rename(postPath, dst); err != nil {
+			return fmt.Errorf("moving PONG to read: %w", err)
+		}
+		fmt.Printf("postman: PONG received from %s\n", info.From)
+		return nil
+	}
+
 	// Check if recipient exists
 	paneID, found := knownNodes[info.To]
 	if !found {
