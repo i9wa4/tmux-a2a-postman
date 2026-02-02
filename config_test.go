@@ -23,27 +23,6 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 	})
 
-	t.Run("backward compat: .postman exists", func(t *testing.T) {
-		t.Setenv("POSTMAN_HOME", "")
-		t.Setenv("XDG_STATE_HOME", "")
-		tmpDir := t.TempDir()
-		origWd, err := os.Getwd()
-		if err != nil {
-			t.Fatalf("Getwd failed: %v", err)
-		}
-		defer func() { _ = os.Chdir(origWd) }()
-
-		if err := os.Chdir(tmpDir); err != nil {
-			t.Fatalf("Chdir failed: %v", err)
-		}
-		if err := os.Mkdir(".postman", 0o755); err != nil {
-			t.Fatalf("Mkdir failed: %v", err)
-		}
-
-		if got := resolveBaseDir(""); got != ".postman" {
-			t.Errorf(".postman exists: got %q, want %q", got, ".postman")
-		}
-	})
 
 	t.Run("XDG_STATE_HOME", func(t *testing.T) {
 		t.Setenv("POSTMAN_HOME", "")
@@ -65,7 +44,7 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 	})
 
-	t.Run("fallback to .postman", func(t *testing.T) {
+	t.Run("fallback to postman (when HOME unavailable)", func(t *testing.T) {
 		t.Setenv("POSTMAN_HOME", "")
 		t.Setenv("XDG_STATE_HOME", "")
 		t.Setenv("HOME", "")
@@ -79,10 +58,10 @@ func TestResolveBaseDir(t *testing.T) {
 		if err := os.Chdir(tmpDir); err != nil {
 			t.Fatalf("Chdir failed: %v", err)
 		}
-		// NOTE: .postman does NOT exist in CWD, HOME is empty
+		// NOTE: HOME is empty, so UserHomeDir() fails
 
-		if got := resolveBaseDir(""); got != ".postman" {
-			t.Errorf("fallback: got %q, want %q", got, ".postman")
+		if got := resolveBaseDir(""); got != "postman" {
+			t.Errorf("fallback: got %q, want %q", got, "postman")
 		}
 	})
 }

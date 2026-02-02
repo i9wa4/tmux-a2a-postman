@@ -191,9 +191,7 @@ func GetTalksTo(adjacency map[string][]string, nodeName string) []string {
 // Priority:
 // 1. POSTMAN_HOME env var (explicit override)
 // 2. configBaseDir (if non-empty, from config file)
-// 3. .postman/ in CWD if it exists (backward compat)
-// 4. XDG_STATE_HOME/postman/ (or ~/.local/state/postman/)
-// 5. .postman (fallback)
+// 3. XDG_STATE_HOME/postman/ (or ~/.local/state/postman/)
 func resolveBaseDir(configBaseDir string) string {
 	// 1. Explicit override
 	if v := os.Getenv("POSTMAN_HOME"); v != "" {
@@ -203,11 +201,7 @@ func resolveBaseDir(configBaseDir string) string {
 	if configBaseDir != "" {
 		return configBaseDir
 	}
-	// 3. Backward compat: .postman/ exists in CWD
-	if info, err := os.Stat(".postman"); err == nil && info.IsDir() {
-		return ".postman"
-	}
-	// 4. XDG_STATE_HOME
+	// 3. XDG_STATE_HOME (enforced)
 	stateHome := os.Getenv("XDG_STATE_HOME")
 	if stateHome == "" {
 		home, err := os.UserHomeDir()
@@ -215,11 +209,7 @@ func resolveBaseDir(configBaseDir string) string {
 			stateHome = filepath.Join(home, ".local", "state")
 		}
 	}
-	if stateHome != "" {
-		return filepath.Join(stateHome, "postman")
-	}
-	// 5. Fallback
-	return ".postman"
+	return filepath.Join(stateHome, "postman")
 }
 
 // createSessionDirs creates the session directory structure.
