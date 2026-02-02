@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -192,14 +193,55 @@ func runStart(args []string) error {
 	// Reminder state for per-node message counters
 	reminderState := NewReminderState()
 
+	// Start daemon loop in goroutine
+	daemonEvents := make(chan DaemonEvent, 100)
+	go runDaemonLoop(ctx, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents)
+
+	// Send initial status
+	daemonEvents <- DaemonEvent{
+		Type:    "status_update",
+		Message: "Running",
+		Details: map[string]interface{}{
+			"node_count": len(nodes),
+		},
+	}
+
+	// Start TUI
+	p := tea.NewProgram(InitialModel(daemonEvents))
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
+}
+
+// runDaemonLoop runs the daemon event loop in a goroutine.
+func runDaemonLoop(
+	ctx context.Context,
+	sessionDir string,
+	contextID string,
+	cfg *Config,
+	watcher *fsnotify.Watcher,
+	adjacency map[string][]string,
+	nodes map[string]string,
+	knownNodes map[string]bool,
+	digestedFiles map[string]bool,
+	reminderState *ReminderState,
+	events chan<- DaemonEvent,
+) {
+	defer close(events)
+
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("postman: shutting down")
-			return nil
+			events <- DaemonEvent{
+				Type:    "status_update",
+				Message: "Shutting down",
+			}
+			return
 		case event, ok := <-watcher.Events:
 			if !ok {
-				return nil
+				return
 			}
 			// React to CREATE and RENAME (covers mv into post/)
 			if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
@@ -216,18 +258,37 @@ func runStart(args []string) error {
 									newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 									capturedNode := nodeName
 									time.AfterFunc(newNodeDelay, func() {
-										if err := sendPingToNode(sessionDir, *contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
-											fmt.Fprintf(os.Stderr, "postman: PING to new node %s failed: %v\n", capturedNode, err)
+										if err := sendPingToNode(sessionDir, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
+											events <- DaemonEvent{
+												Type:    "error",
+												Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
+											}
 										}
 									})
 								}
 							}
 						}
 						nodes = freshNodes
+						// Update node count
+						events <- DaemonEvent{
+							Type:    "status_update",
+							Message: "Running",
+							Details: map[string]interface{}{
+								"node_count": len(nodes),
+							},
+						}
 					}
 					if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-						fmt.Fprintf(os.Stderr, "postman: deliver %s: %v\n", filename, err)
+						events <- DaemonEvent{
+							Type:    "error",
+							Message: fmt.Sprintf("deliver %s: %v", filename, err),
+						}
 					} else {
+						// Send message received event
+						events <- DaemonEvent{
+							Type:    "message_received",
+							Message: fmt.Sprintf("Delivered: %s", filename),
+						}
 						// Send observer digest on successful delivery
 						if info, err := ParseMessageFilename(filename); err == nil {
 							sendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
@@ -241,9 +302,12 @@ func runStart(args []string) error {
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				return nil
+				return
 			}
-			fmt.Fprintf(os.Stderr, "postman: watcher error: %v\n", err)
+			events <- DaemonEvent{
+				Type:    "error",
+				Message: fmt.Sprintf("watcher error: %v", err),
+			}
 		}
 	}
 }
