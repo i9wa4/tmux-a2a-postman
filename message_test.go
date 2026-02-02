@@ -98,7 +98,11 @@ func TestDeliverMessage(t *testing.T) {
 	}
 
 	nodes := map[string]string{"worker": "%1"}
-	if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+		"worker":       {"orchestrator"},
+	}
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
 		t.Fatalf("deliverMessage failed: %v", err)
 	}
 
@@ -127,7 +131,10 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	}
 
 	nodes := map[string]string{"worker": "%1"}
-	if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+	}
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
 		t.Fatalf("deliverMessage failed: %v", err)
 	}
 
@@ -135,5 +142,122 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
+	}
+}
+
+func TestRouting_Allowed(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Create inbox for worker
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Place a message in post/
+	filename := "20260201-040000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	// Define edge: orchestrator <-> worker
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+		"worker":       {"orchestrator"},
+	}
+
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify delivered to inbox
+	inboxPath := filepath.Join(recipientInbox, filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Errorf("message not delivered to inbox: %v", err)
+	}
+	// Verify removed from post/
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("message still in post/ after delivery")
+	}
+	// Verify NOT in dead-letter/
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Error("message should not be in dead-letter/ (routing was allowed)")
+	}
+}
+
+func TestRouting_Denied(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Place a message in post/
+	filename := "20260201-040000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	// No edge defined between orchestrator and worker
+	adjacency := map[string][]string{}
+
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify moved to dead-letter/
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not in dead-letter: %v", err)
+	}
+	// Verify removed from post/
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("message still in post/ after delivery")
+	}
+}
+
+func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := createSessionDirs(sessionDir); err != nil {
+		t.Fatalf("createSessionDirs failed: %v", err)
+	}
+
+	// Create inbox for worker
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Place a message from "postman"
+	filename := "20260201-040000-from-postman-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]string{"worker": "%1"}
+	// No edge defined for postman
+	adjacency := map[string][]string{}
+
+	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("deliverMessage failed: %v", err)
+	}
+
+	// Verify delivered to inbox (postman is always allowed)
+	inboxPath := filepath.Join(recipientInbox, filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Errorf("message not delivered to inbox: %v", err)
+	}
+	// Verify NOT in dead-letter/
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Error("message should not be in dead-letter/ (postman is always allowed)")
 	}
 }

@@ -135,7 +135,7 @@ func resolveConfigPath() string {
 }
 
 // ParseEdges parses edge definitions into an adjacency map.
-// Edge format: "A -> B" (one-way) or "A <-> B" (bidirectional).
+// Edge format: "A -- B -- C" (chain syntax, creates bidirectional edges A↔B, B↔C).
 // Returns error for invalid formats.
 func ParseEdges(edges []string) (map[string][]string, error) {
 	result := make(map[string][]string)
@@ -146,42 +146,44 @@ func ParseEdges(edges []string) (map[string][]string, error) {
 			continue
 		}
 
-		// Check for bidirectional edge
-		if strings.Contains(edge, "<->") {
-			parts := strings.Split(edge, "<->")
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("invalid edge format: %q", edge)
-			}
-			from := strings.TrimSpace(parts[0])
-			to := strings.TrimSpace(parts[1])
-			if from == "" || to == "" {
+		// Split by "--" separator
+		parts := strings.Split(edge, "--")
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("invalid edge format (missing '--'): %q", edge)
+		}
+
+		// Trim all parts
+		nodes := make([]string, 0, len(parts))
+		for _, p := range parts {
+			node := strings.TrimSpace(p)
+			if node == "" {
 				return nil, fmt.Errorf("invalid edge format (empty node): %q", edge)
 			}
+			nodes = append(nodes, node)
+		}
+
+		// Create bidirectional edges between adjacent nodes
+		for i := 0; i < len(nodes)-1; i++ {
+			from := nodes[i]
+			to := nodes[i+1]
 			result[from] = append(result[from], to)
 			result[to] = append(result[to], from)
-			continue
 		}
-
-		// Check for one-way edge
-		if strings.Contains(edge, "->") {
-			parts := strings.Split(edge, "->")
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("invalid edge format: %q", edge)
-			}
-			from := strings.TrimSpace(parts[0])
-			to := strings.TrimSpace(parts[1])
-			if from == "" || to == "" {
-				return nil, fmt.Errorf("invalid edge format (empty node): %q", edge)
-			}
-			result[from] = append(result[from], to)
-			continue
-		}
-
-		// No valid arrow found
-		return nil, fmt.Errorf("invalid edge format (missing arrow): %q", edge)
 	}
 
 	return result, nil
+}
+
+// GetTalksTo returns the list of nodes that the specified node can communicate with.
+// Returns nodes that have an edge to the specified node in the adjacency map.
+func GetTalksTo(adjacency map[string][]string, nodeName string) []string {
+	if neighbors, ok := adjacency[nodeName]; ok {
+		// Return a copy to avoid external modification
+		result := make([]string, len(neighbors))
+		copy(result, neighbors)
+		return result
+	}
+	return []string{}
 }
 
 // resolveBaseDir returns the base directory for postman sessions.

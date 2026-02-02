@@ -59,6 +59,12 @@ func runStart(args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// Parse edge definitions for routing
+	adjacency, err := ParseEdges(cfg.Edges)
+	if err != nil {
+		return fmt.Errorf("parsing edges: %w", err)
+	}
+
 	baseDir := resolveBaseDir(cfg.BaseDir)
 	sessionDir := filepath.Join(baseDir, *contextID)
 
@@ -121,7 +127,7 @@ func runStart(args []string) error {
 					if freshNodes, err := DiscoverNodes(); err == nil {
 						nodes = freshNodes
 					}
-					if err := deliverMessage(sessionDir, filename, nodes); err != nil {
+					if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
 						fmt.Fprintf(os.Stderr, "postman: deliver %s: %v\n", filename, err)
 					}
 				}

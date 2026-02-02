@@ -274,49 +274,55 @@ func TestParseEdges(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:  "one-way edge",
-			edges: []string{"orchestrator -> worker"},
+			name:  "simple bidirectional edge",
+			edges: []string{"orchestrator -- worker"},
 			want: map[string][]string{
 				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
 			},
 		},
 		{
-			name:  "bidirectional edge",
-			edges: []string{"worker <-> observer"},
+			name:  "chain syntax (A -- B -- C)",
+			edges: []string{"concierge -- orchestrator -- worker"},
 			want: map[string][]string{
-				"worker":   {"observer"},
-				"observer": {"worker"},
+				"concierge":    {"orchestrator"},
+				"orchestrator": {"concierge", "worker"},
+				"worker":       {"orchestrator"},
 			},
 		},
 		{
-			name:  "mixed edges",
-			edges: []string{"orchestrator -> worker", "worker <-> observer"},
+			name: "multiple edges",
+			edges: []string{
+				"orchestrator -- worker",
+				"orchestrator -- observer",
+			},
 			want: map[string][]string{
-				"orchestrator": {"worker"},
-				"worker":       {"observer"},
-				"observer":     {"worker"},
+				"orchestrator": {"worker", "observer"},
+				"worker":       {"orchestrator"},
+				"observer":     {"orchestrator"},
 			},
 		},
 		{
 			name:  "empty edge (skipped)",
-			edges: []string{"", "  ", "orchestrator -> worker"},
+			edges: []string{"", "  ", "orchestrator -- worker"},
 			want: map[string][]string{
 				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
 			},
 		},
 		{
-			name:    "invalid format (no arrow)",
+			name:    "invalid format (no separator)",
 			edges:   []string{"orchestrator worker"},
 			wantErr: true,
 		},
 		{
 			name:    "invalid format (empty node)",
-			edges:   []string{"orchestrator -> "},
+			edges:   []string{"orchestrator -- "},
 			wantErr: true,
 		},
 		{
-			name:    "invalid format (multiple arrows)",
-			edges:   []string{"a -> b -> c"},
+			name:    "invalid format (single node)",
+			edges:   []string{"orchestrator"},
 			wantErr: true,
 		},
 	}
@@ -401,5 +407,49 @@ base_dir = "/custom/postman"
 	baseDir := resolveBaseDir(cfg.BaseDir)
 	if baseDir != "/custom/postman" {
 		t.Errorf("resolveBaseDir with config.BaseDir: got %q, want %q", baseDir, "/custom/postman")
+	}
+}
+
+func TestGetTalksTo(t *testing.T) {
+	adjacency := map[string][]string{
+		"orchestrator": {"worker", "observer"},
+		"worker":       {"orchestrator"},
+		"observer":     {"orchestrator"},
+	}
+
+	tests := []struct {
+		name     string
+		nodeName string
+		want     []string
+	}{
+		{
+			name:     "orchestrator talks to worker and observer",
+			nodeName: "orchestrator",
+			want:     []string{"worker", "observer"},
+		},
+		{
+			name:     "worker talks to orchestrator",
+			nodeName: "worker",
+			want:     []string{"orchestrator"},
+		},
+		{
+			name:     "unknown node returns empty",
+			nodeName: "unknown",
+			want:     []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetTalksTo(adjacency, tt.nodeName)
+			if len(got) != len(tt.want) {
+				t.Errorf("GetTalksTo() length = %d, want %d", len(got), len(tt.want))
+			}
+			for i, node := range tt.want {
+				if got[i] != node {
+					t.Errorf("GetTalksTo()[%d] = %q, want %q", i, got[i], node)
+				}
+			}
+		})
 	}
 }

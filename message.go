@@ -53,7 +53,10 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 }
 
 // deliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
-func deliverMessage(sessionDir string, filename string, knownNodes map[string]string) error {
+// Routing rules (DEFAULT DENY):
+// - sender="postman" is always allowed
+// - otherwise, sender->recipient edge must exist in adjacency map
+func deliverMessage(sessionDir string, filename string, knownNodes map[string]string, adjacency map[string][]string) error {
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	info, err := ParseMessageFilename(filename)
@@ -63,11 +66,32 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]st
 		return os.Rename(postPath, dst)
 	}
 
+	// Check if recipient exists
 	paneID, found := knownNodes[info.To]
 	if !found {
 		// Unknown recipient: move to dead-letter/
 		dst := filepath.Join(sessionDir, "dead-letter", filename)
 		return os.Rename(postPath, dst)
+	}
+
+	// Check routing permissions (DEFAULT DENY)
+	// IMPORTANT: sender="postman" is always allowed
+	if info.From != "postman" {
+		allowed := false
+		if neighbors, ok := adjacency[info.From]; ok {
+			for _, neighbor := range neighbors {
+				if neighbor == info.To {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			// Routing denied: move to dead-letter/
+			dst := filepath.Join(sessionDir, "dead-letter", filename)
+			fmt.Printf("postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
+			return os.Rename(postPath, dst)
+		}
 	}
 
 	// Ensure recipient inbox subdirectory exists
