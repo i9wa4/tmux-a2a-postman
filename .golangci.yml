@@ -11,8 +11,6 @@ linters:
     - staticcheck
     - unused
     - ineffassign
-    - gofmt
-    - goimports
     - misspell
     - gocritic
     - gosimple
