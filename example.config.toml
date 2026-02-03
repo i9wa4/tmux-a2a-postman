@@ -141,6 +141,19 @@ params:
 """
 
 # =============================================================================
+# Compaction Detection
+# =============================================================================
+
+[compaction_detection]
+enabled = true
+pattern = "auto-compact"
+delay_seconds = 0
+
+[compaction_detection.message_template]
+type = "status-request"
+body = "INTEGRATION TEST: Compaction detected for node {node}. Please send status update."
+
+# =============================================================================
 # Node Configurations
 # =============================================================================
 
@@ -176,6 +189,9 @@ When you send requests to multiple nodes:
 
 [node.worker]
 role = "implementation, consultation"
+idle_timeout_seconds = 30
+idle_reminder_message = "INTEGRATION TEST: Idle reminder triggered"
+idle_reminder_cooldown_seconds = 60
 template = """
 # WORKER (WRITABLE)
 
@@ -194,6 +210,7 @@ When observers provide feedback, they should classify findings by severity:
 [node.observer-a-leader]
 role = "monitoring, review"
 subscribe_digest = true
+observes = ["worker", "orchestrator"]
 template = """
 # OBSERVER (READONLY)
 

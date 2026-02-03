@@ -23,7 +23,6 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 	})
 
-
 	t.Run("XDG_STATE_HOME", func(t *testing.T) {
 		t.Setenv("POSTMAN_HOME", "")
 		t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state")

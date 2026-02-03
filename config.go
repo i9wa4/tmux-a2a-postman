@@ -13,12 +13,12 @@ import (
 // Config holds postman configuration loaded from TOML file.
 type Config struct {
 	// Timing settings
-	ScanInterval       float64 `toml:"scan_interval_seconds"`
-	EnterDelay         float64 `toml:"enter_delay_seconds"`
-	TmuxTimeout        float64 `toml:"tmux_timeout_seconds"`
-	StartupDelay       float64 `toml:"startup_delay_seconds"`
-	NewNodePingDelay   float64 `toml:"new_node_ping_delay_seconds"`
-	ReminderInterval   float64 `toml:"reminder_interval_seconds"`
+	ScanInterval     float64 `toml:"scan_interval_seconds"`
+	EnterDelay       float64 `toml:"enter_delay_seconds"`
+	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
+	StartupDelay     float64 `toml:"startup_delay_seconds"`
+	NewNodePingDelay float64 `toml:"new_node_ping_delay_seconds"`
+	ReminderInterval float64 `toml:"reminder_interval_seconds"`
 
 	// Paths
 	BaseDir string `toml:"base_dir"`
@@ -43,16 +43,16 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template                     string   `toml:"template"`
-	OnJoin                       string   `toml:"on_join"`
-	Observes                     []string `toml:"observes"`
-	Role                         string   `toml:"role"`
-	SubscribeDigest              bool     `toml:"subscribe_digest"`
-	ReminderInterval             float64  `toml:"reminder_interval_seconds"`
-	ReminderMessage              string   `toml:"reminder_message"`
-	IdleTimeoutSeconds           float64  `toml:"idle_timeout_seconds"`
-	IdleReminderMessage          string   `toml:"idle_reminder_message"`
-	IdleReminderCooldownSeconds  float64  `toml:"idle_reminder_cooldown_seconds"`
+	Template                    string   `toml:"template"`
+	OnJoin                      string   `toml:"on_join"`
+	Observes                    []string `toml:"observes"`
+	Role                        string   `toml:"role"`
+	SubscribeDigest             bool     `toml:"subscribe_digest"`
+	ReminderInterval            float64  `toml:"reminder_interval_seconds"`
+	ReminderMessage             string   `toml:"reminder_message"`
+	IdleTimeoutSeconds          float64  `toml:"idle_timeout_seconds"`
+	IdleReminderMessage         string   `toml:"idle_reminder_message"`
+	IdleReminderCooldownSeconds float64  `toml:"idle_reminder_cooldown_seconds"`
 }
 
 // AgentCard holds agent card information.
@@ -68,9 +68,9 @@ type AgentCard struct {
 
 // CompactionDetectionConfig holds compaction detection configuration.
 type CompactionDetectionConfig struct {
-	Enabled        bool                   `toml:"enabled"`
-	Pattern        string                 `toml:"pattern"`
-	DelaySeconds   float64                `toml:"delay_seconds"`
+	Enabled         bool                      `toml:"enabled"`
+	Pattern         string                    `toml:"pattern"`
+	DelaySeconds    float64                   `toml:"delay_seconds"`
 	MessageTemplate CompactionMessageTemplate `toml:"message_template"`
 }
 
