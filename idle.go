@@ -72,17 +72,12 @@ func checkIdleNodes(cfg *Config, adjacency map[string][]string, sessionDir strin
 		}
 
 		if err := sendIdleReminder(nodeName, message, sessionDir); err != nil {
-			stderrMutex.Lock()
-			fmt.Fprintf(os.Stderr, "postman: idle reminder to %s failed: %v\n", nodeName, err)
-			stderrMutex.Unlock()
+			_ = err // Suppress unused variable warning
 			continue
 		}
 
 		// Update last reminder sent timestamp
 		lastReminderSent[nodeName] = now
-		stderrMutex.Lock()
-		fmt.Fprintf(os.Stderr, "postman: idle reminder sent to %s\n", nodeName)
-		stderrMutex.Unlock()
 	}
 }
 

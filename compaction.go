@@ -53,11 +53,6 @@ func checkAllNodesForCompaction(cfg *Config, nodes map[string]NodeInfo, sessionD
 				}
 			}
 
-			// Log detection (without captured content for privacy)
-			stderrMutex.Lock()
-			fmt.Fprintf(os.Stderr, "postman: compaction detected for node %s\n", nodeName)
-			stderrMutex.Unlock()
-
 			// Update detection timestamp
 			compactionDetected[nodeName] = time.Now()
 
@@ -114,25 +109,13 @@ func notifyObserversOfCompaction(nodeName string, cfg *Config, nodes map[string]
 			capturedNode := nodeName
 			time.AfterFunc(delay, func() {
 				if err := sendCompactionNotification(capturedObserver, capturedNode, cfg, sessionDir); err != nil {
-					stderrMutex.Lock()
-					fmt.Fprintf(os.Stderr, "postman: compaction notification to %s failed: %v\n", capturedObserver, err)
-					stderrMutex.Unlock()
-				} else {
-					stderrMutex.Lock()
-					fmt.Fprintf(os.Stderr, "postman: compaction notification sent to %s (node: %s)\n", capturedObserver, capturedNode)
-					stderrMutex.Unlock()
+					_ = err // Suppress unused variable warning
 				}
 			})
 		} else {
 			// Send immediately
 			if err := sendCompactionNotification(observerName, nodeName, cfg, sessionDir); err != nil {
-				stderrMutex.Lock()
-				fmt.Fprintf(os.Stderr, "postman: compaction notification to %s failed: %v\n", observerName, err)
-				stderrMutex.Unlock()
-			} else {
-				stderrMutex.Lock()
-				fmt.Fprintf(os.Stderr, "postman: compaction notification sent to %s (node: %s)\n", observerName, nodeName)
-				stderrMutex.Unlock()
+				_ = err // Suppress unused variable warning
 			}
 		}
 	}
