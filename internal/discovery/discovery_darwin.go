@@ -1,15 +1,14 @@
-//go:build linux
+//go:build darwin
 
-package main
+package discovery
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 )
 
-// getNodeFromProcessOS extracts A2A_NODE from a process environment on Linux.
-// Reads /proc/<pid>/environ which contains null-separated environment variables.
+// getNodeFromProcessOS extracts A2A_NODE from a process environment on macOS.
+// Uses "ps eww" to read the full command line with environment variables.
 // Also checks child processes if direct process doesn't have A2A_NODE.
 func getNodeFromProcessOS(pid string) string {
 	// First check direct process
@@ -36,27 +35,27 @@ func getNodeFromProcessOS(pid string) string {
 
 // checkProcessForNode checks a specific process for A2A_NODE environment variable.
 func checkProcessForNode(pid string) string {
-	data, err := os.ReadFile("/proc/" + pid + "/environ")
+	out, err := exec.Command("ps", "eww", "-o", "command=", "-p", pid).CombinedOutput()
 	if err != nil {
 		return ""
 	}
-	for _, entry := range strings.Split(string(data), "\x00") {
-		if strings.HasPrefix(entry, "A2A_NODE=") {
-			return strings.TrimPrefix(entry, "A2A_NODE=")
+	for _, field := range strings.Fields(string(out)) {
+		if strings.HasPrefix(field, "A2A_NODE=") {
+			return strings.TrimPrefix(field, "A2A_NODE=")
 		}
 	}
 	return ""
 }
 
-// getContextIDFromProcess extracts A2A_CONTEXT_ID from a process environment on Linux.
+// getContextIDFromProcess extracts A2A_CONTEXT_ID from a process environment on macOS.
 func getContextIDFromProcess(pid string) string {
-	data, err := os.ReadFile("/proc/" + pid + "/environ")
+	out, err := exec.Command("ps", "eww", "-o", "command=", "-p", pid).CombinedOutput()
 	if err != nil {
 		return ""
 	}
-	for _, entry := range strings.Split(string(data), "\x00") {
-		if strings.HasPrefix(entry, "A2A_CONTEXT_ID=") {
-			return strings.TrimPrefix(entry, "A2A_CONTEXT_ID=")
+	for _, field := range strings.Fields(string(out)) {
+		if strings.HasPrefix(field, "A2A_CONTEXT_ID=") {
+			return strings.TrimPrefix(field, "A2A_CONTEXT_ID=")
 		}
 	}
 	return ""

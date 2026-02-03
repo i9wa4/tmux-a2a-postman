@@ -1,4 +1,4 @@
-package main
+package e2e_test
 
 import (
 	"os"
@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
 // TestE2E_MessageFileFormat tests message file format compatibility
@@ -51,7 +55,7 @@ func TestE2E_MessageFileFormat(t *testing.T) {
 	}
 
 	// Verify filename parsing
-	info, err := ParseMessageFilename(filename)
+	info, err := message.ParseMessageFilename(filename)
 	if err != nil {
 		t.Fatalf("parsing filename: %v", err)
 	}
@@ -69,7 +73,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	sessionDir := filepath.Join(tmpDir, "test-session")
 
 	// Create session directories
-	if err := createSessionDirs(sessionDir); err != nil {
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("creating session dirs: %v", err)
 	}
 
@@ -84,7 +88,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Mock nodes (recipient exists)
-	nodes := map[string]NodeInfo{
+	nodes := map[string]discovery.NodeInfo{
 		"worker": {
 			PaneID:      "worker-pane-id",
 			SessionName: "test-session",
@@ -99,8 +103,8 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Deliver message (should move to inbox/worker/)
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := message.DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("message.DeliverMessage failed: %v", err)
 	}
 
 	// Verify message moved to inbox/worker/

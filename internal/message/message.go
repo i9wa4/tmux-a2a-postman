@@ -1,4 +1,4 @@
-package main
+package message
 
 import (
 	"fmt"
@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 )
 
 // MessageInfo holds parsed information from a message filename.
@@ -52,11 +55,11 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}, nil
 }
 
-// deliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
+// DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
 // Routing rules (DEFAULT DENY):
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-func deliverMessage(sessionDir string, filename string, knownNodes map[string]NodeInfo, adjacency map[string][]string) error {
+func DeliverMessage(sessionDir string, filename string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string) error {
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	info, err := ParseMessageFilename(filename)
@@ -123,8 +126,8 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]No
 	}
 
 	// Update activity timestamps for idle detection
-	UpdateActivity(info.From)
-	UpdateActivity(info.To)
+	idle.UpdateActivity(info.From)
+	idle.UpdateActivity(info.To)
 
 	fmt.Printf("postman: delivered %s -> %s\n", filename, info.To)
 	return nil
@@ -134,4 +137,27 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]No
 func notifyNode(paneID string, sender string) error {
 	msg := fmt.Sprintf("Message from %s", sender)
 	return exec.Command("tmux", "display-message", "-t", paneID, msg).Run()
+}
+
+// ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.
+func ScanInboxMessages(inboxPath string) []MessageInfo {
+	var messages []MessageInfo
+
+	entries, err := os.ReadDir(inboxPath)
+	if err != nil {
+		return messages
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		info, err := ParseMessageFilename(entry.Name())
+		if err != nil {
+			continue
+		}
+		messages = append(messages, *info)
+	}
+
+	return messages
 }

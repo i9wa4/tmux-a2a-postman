@@ -1,10 +1,14 @@
-package main
+package compaction
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 func TestCheckForCompaction(t *testing.T) {
@@ -59,16 +63,16 @@ func TestCheckForCompaction(t *testing.T) {
 func TestSendCompactionNotification(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		CompactionDetection: CompactionDetectionConfig{
+	cfg := &config.Config{
+		CompactionDetection: config.CompactionDetectionConfig{
 			Enabled:      true,
 			Pattern:      "auto-compact",
 			DelaySeconds: 0,
-			MessageTemplate: CompactionMessageTemplate{
+			MessageTemplate: config.CompactionMessageTemplate{
 				Type: "compaction-recovery",
 				Body: "Compaction detected for node {node}. Observers: please send status update.",
 			},
@@ -100,15 +104,15 @@ func TestSendCompactionNotification(t *testing.T) {
 	}
 
 	contentStr := string(content)
-	if !containsString(contentStr, "Compaction detected for node worker-node") {
+	if !strings.Contains(contentStr, "Compaction detected for node worker-node") {
 		t.Errorf("notification missing expected message, got: %s", contentStr)
 	}
 
-	if !containsString(contentStr, "from: postman") {
+	if !strings.Contains(contentStr, "from: postman") {
 		t.Errorf("notification missing 'from: postman', got: %s", contentStr)
 	}
 
-	if !containsString(contentStr, "type: compaction-recovery") {
+	if !strings.Contains(contentStr, "type: compaction-recovery") {
 		t.Errorf("notification missing 'type: compaction-recovery', got: %s", contentStr)
 	}
 }
@@ -116,21 +120,21 @@ func TestSendCompactionNotification(t *testing.T) {
 func TestNotifyObserversOfCompaction(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		CompactionDetection: CompactionDetectionConfig{
+	cfg := &config.Config{
+		CompactionDetection: config.CompactionDetectionConfig{
 			Enabled:      true,
 			Pattern:      "auto-compact",
 			DelaySeconds: 0,
-			MessageTemplate: CompactionMessageTemplate{
+			MessageTemplate: config.CompactionMessageTemplate{
 				Type: "compaction-recovery",
 				Body: "Compaction detected for node {node}.",
 			},
 		},
-		Nodes: map[string]NodeConfig{
+		Nodes: map[string]config.NodeConfig{
 			"observer-1": {
 				SubscribeDigest: true,
 				Observes:        []string{"worker-node", "other-node"},
@@ -146,7 +150,7 @@ func TestNotifyObserversOfCompaction(t *testing.T) {
 		},
 	}
 
-	nodes := map[string]NodeInfo{
+	nodes := map[string]discovery.NodeInfo{
 		"worker-node": {
 			PaneID:      "%100",
 			SessionName: "test-session",
@@ -191,21 +195,21 @@ func TestNotifyObserversOfCompaction(t *testing.T) {
 func TestCompactionDelay(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		CompactionDetection: CompactionDetectionConfig{
+	cfg := &config.Config{
+		CompactionDetection: config.CompactionDetectionConfig{
 			Enabled:      true,
 			Pattern:      "auto-compact",
 			DelaySeconds: 1.0, // 1 second delay
-			MessageTemplate: CompactionMessageTemplate{
+			MessageTemplate: config.CompactionMessageTemplate{
 				Type: "compaction-recovery",
 				Body: "Compaction detected for node {node}.",
 			},
 		},
-		Nodes: map[string]NodeConfig{
+		Nodes: map[string]config.NodeConfig{
 			"observer-test": {
 				SubscribeDigest: true,
 				Observes:        []string{"worker-node"},
@@ -213,7 +217,7 @@ func TestCompactionDelay(t *testing.T) {
 		},
 	}
 
-	nodes := map[string]NodeInfo{
+	nodes := map[string]discovery.NodeInfo{
 		"worker-node": {
 			PaneID:      "%100",
 			SessionName: "test-session",
@@ -257,17 +261,17 @@ func TestCompactionDelay(t *testing.T) {
 func TestCompactionDetection_Disabled(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		CompactionDetection: CompactionDetectionConfig{
+	cfg := &config.Config{
+		CompactionDetection: config.CompactionDetectionConfig{
 			Enabled:      false, // Disabled
 			Pattern:      "auto-compact",
 			DelaySeconds: 0,
 		},
-		Nodes: map[string]NodeConfig{
+		Nodes: map[string]config.NodeConfig{
 			"observer-test": {
 				SubscribeDigest: true,
 				Observes:        []string{"worker-node"},
@@ -275,7 +279,7 @@ func TestCompactionDetection_Disabled(t *testing.T) {
 		},
 	}
 
-	nodes := map[string]NodeInfo{
+	nodes := map[string]discovery.NodeInfo{
 		"worker-node": {
 			PaneID:      "%100",
 			SessionName: "test-session",
@@ -283,7 +287,7 @@ func TestCompactionDetection_Disabled(t *testing.T) {
 	}
 
 	// Start compaction check (should do nothing when disabled)
-	startCompactionCheck(cfg, nodes, sessionDir)
+	StartCompactionCheck(cfg, nodes, sessionDir)
 
 	// Wait a bit
 	time.Sleep(100 * time.Millisecond)

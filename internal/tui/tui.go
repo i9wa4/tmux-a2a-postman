@@ -1,10 +1,11 @@
-package main
+package tui
 
 import (
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
 // ViewType represents the current TUI view.
@@ -37,7 +38,7 @@ type Model struct {
 	currentView ViewType
 
 	// Message list view
-	messageList []MessageInfo
+	messageList []message.MessageInfo
 	selectedMsg int
 
 	// Routing view
@@ -57,7 +58,7 @@ type Model struct {
 func InitialModel(daemonEvents <-chan DaemonEvent) Model {
 	return Model{
 		currentView:  ViewEvents,
-		messageList:  []MessageInfo{},
+		messageList:  []message.MessageInfo{},
 		selectedMsg:  0,
 		edges:        []Edge{},
 		selectedEdge: 0,
@@ -154,7 +155,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "inbox_update":
 			// Update message list from Details
-			if msgList, ok := msg.Details["messages"].([]MessageInfo); ok {
+			if msgList, ok := msg.Details["messages"].([]message.MessageInfo); ok {
 				m.messageList = msgList
 				// Clamp selection
 				if m.selectedMsg >= len(m.messageList) {

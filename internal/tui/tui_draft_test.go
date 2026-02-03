@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 func TestDualMode_NoArgs(t *testing.T) {
@@ -87,9 +88,9 @@ func TestContextID_Fallback(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Test 1: Explicit ID (highest priority)
-	contextID, source, err := resolveContextID("explicit-id", tmpDir)
+	contextID, source, err := config.ResolveContextID("explicit-id", tmpDir)
 	if err != nil {
-		t.Fatalf("resolveContextID with explicit: %v", err)
+		t.Fatalf("config.ResolveContextID with explicit: %v", err)
 	}
 	if contextID != "explicit-id" {
 		t.Errorf("explicit ID: got %q, want %q", contextID, "explicit-id")
@@ -102,9 +103,9 @@ func TestContextID_Fallback(t *testing.T) {
 	_ = os.Setenv("A2A_CONTEXT_ID", "env-id")
 	defer func() { _ = os.Unsetenv("A2A_CONTEXT_ID") }()
 
-	contextID, source, err = resolveContextID("", tmpDir)
+	contextID, source, err = config.ResolveContextID("", tmpDir)
 	if err != nil {
-		t.Fatalf("resolveContextID with env: %v", err)
+		t.Fatalf("config.ResolveContextID with env: %v", err)
 	}
 	if contextID != "env-id" {
 		t.Errorf("env ID: got %q, want %q", contextID, "env-id")
@@ -116,7 +117,7 @@ func TestContextID_Fallback(t *testing.T) {
 	_ = os.Unsetenv("A2A_CONTEXT_ID")
 
 	// Test 3: No fallback available
-	_, _, err = resolveContextID("", tmpDir)
+	_, _, err = config.ResolveContextID("", tmpDir)
 	if err == nil {
 		t.Error("expected error when no context ID available")
 	}

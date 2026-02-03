@@ -1,10 +1,12 @@
-package main
+package idle
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 func TestUpdateActivity(t *testing.T) {
@@ -40,12 +42,12 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		Nodes: map[string]NodeConfig{
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
 			"worker": {
 				IdleTimeoutSeconds:          5.0,
 				IdleReminderMessage:         "Test reminder",
@@ -81,12 +83,12 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		Nodes: map[string]NodeConfig{
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
 			"worker": {
 				IdleTimeoutSeconds:          1.0, // 1 second threshold
 				IdleReminderMessage:         "Test reminder message",
@@ -137,12 +139,12 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		Nodes: map[string]NodeConfig{
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
 			"worker": {
 				IdleTimeoutSeconds:          1.0,
 				IdleReminderMessage:         "Test reminder",
@@ -181,12 +183,12 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	cfg := &Config{
-		Nodes: map[string]NodeConfig{
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
 			"worker": {
 				IdleTimeoutSeconds:          1.0,
 				IdleReminderMessage:         "Test reminder",
@@ -221,8 +223,8 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 func TestSendIdleReminder(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	nodeName := "test-worker"

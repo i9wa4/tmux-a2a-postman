@@ -1,4 +1,4 @@
-package main
+package compaction
 
 import (
 	"fmt"
@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 // Compaction detection state
@@ -16,8 +19,8 @@ var (
 	compactionMutex    sync.Mutex
 )
 
-// startCompactionCheck starts a goroutine that periodically checks for compaction events.
-func startCompactionCheck(cfg *Config, nodes map[string]NodeInfo, sessionDir string) {
+// StartCompactionCheck starts a goroutine that periodically checks for compaction events.
+func StartCompactionCheck(cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	if !cfg.CompactionDetection.Enabled {
 		return
 	}
@@ -31,7 +34,7 @@ func startCompactionCheck(cfg *Config, nodes map[string]NodeInfo, sessionDir str
 }
 
 // checkAllNodesForCompaction checks all nodes for compaction events.
-func checkAllNodesForCompaction(cfg *Config, nodes map[string]NodeInfo, sessionDir string) {
+func checkAllNodesForCompaction(cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	compactionMutex.Lock()
 	defer compactionMutex.Unlock()
 
@@ -81,7 +84,7 @@ func checkForCompaction(output, pattern string) bool {
 }
 
 // notifyObserversOfCompaction notifies observers subscribed to the affected node.
-func notifyObserversOfCompaction(nodeName string, cfg *Config, nodes map[string]NodeInfo, sessionDir string) {
+func notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	// Find observers subscribed to this node
 	for observerName, nodeConfig := range cfg.Nodes {
 		if !nodeConfig.SubscribeDigest {
@@ -121,7 +124,7 @@ func notifyObserversOfCompaction(nodeName string, cfg *Config, nodes map[string]
 }
 
 // sendCompactionNotification sends a compaction notification message to an observer.
-func sendCompactionNotification(observerName, affectedNode string, cfg *Config, sessionDir string) error {
+func sendCompactionNotification(observerName, affectedNode string, cfg *config.Config, sessionDir string) error {
 	inboxDir := filepath.Join(sessionDir, "inbox", observerName)
 	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
 		return fmt.Errorf("creating inbox directory: %w", err)

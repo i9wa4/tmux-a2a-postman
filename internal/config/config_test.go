@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"os"
@@ -10,7 +10,7 @@ func TestResolveBaseDir(t *testing.T) {
 	t.Run("POSTMAN_HOME priority", func(t *testing.T) {
 		t.Setenv("POSTMAN_HOME", "/tmp/custom-postman")
 		t.Setenv("XDG_STATE_HOME", "")
-		if got := resolveBaseDir(""); got != "/tmp/custom-postman" {
+		if got := ResolveBaseDir(""); got != "/tmp/custom-postman" {
 			t.Errorf("POSTMAN_HOME: got %q, want %q", got, "/tmp/custom-postman")
 		}
 	})
@@ -18,7 +18,7 @@ func TestResolveBaseDir(t *testing.T) {
 	t.Run("configBaseDir priority", func(t *testing.T) {
 		t.Setenv("POSTMAN_HOME", "")
 		t.Setenv("XDG_STATE_HOME", "")
-		if got := resolveBaseDir("/tmp/from-config"); got != "/tmp/from-config" {
+		if got := ResolveBaseDir("/tmp/from-config"); got != "/tmp/from-config" {
 			t.Errorf("configBaseDir: got %q, want %q", got, "/tmp/from-config")
 		}
 	})
@@ -38,7 +38,7 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 		// NOTE: .postman does NOT exist in CWD
 
-		if got := resolveBaseDir(""); got != "/tmp/xdg-state/postman" {
+		if got := ResolveBaseDir(""); got != "/tmp/xdg-state/postman" {
 			t.Errorf("XDG_STATE_HOME: got %q, want %q", got, "/tmp/xdg-state/postman")
 		}
 	})
@@ -59,7 +59,7 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 		// NOTE: HOME is empty, so UserHomeDir() fails
 
-		if got := resolveBaseDir(""); got != "postman" {
+		if got := ResolveBaseDir(""); got != "postman" {
 			t.Errorf("fallback: got %q, want %q", got, "postman")
 		}
 	})
@@ -69,8 +69,8 @@ func TestCreateSessionDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
 	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter"}
@@ -382,9 +382,9 @@ base_dir = "/custom/postman"
 	t.Setenv("POSTMAN_HOME", "")
 	t.Setenv("XDG_STATE_HOME", "")
 
-	baseDir := resolveBaseDir(cfg.BaseDir)
+	baseDir := ResolveBaseDir(cfg.BaseDir)
 	if baseDir != "/custom/postman" {
-		t.Errorf("resolveBaseDir with config.BaseDir: got %q, want %q", baseDir, "/custom/postman")
+		t.Errorf("ResolveBaseDir with config.BaseDir: got %q, want %q", baseDir, "/custom/postman")
 	}
 }
 

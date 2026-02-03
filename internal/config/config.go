@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -107,7 +107,7 @@ func DefaultConfig() *Config {
 func LoadConfig(path string) (*Config, error) {
 	configPath := path
 	if configPath == "" {
-		configPath = resolveConfigPath()
+		configPath = ResolveConfigPath()
 		if configPath == "" {
 			// No config file found, use defaults
 			return DefaultConfig(), nil
@@ -133,9 +133,9 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// resolveConfigPath returns the first existing config file in the fallback chain.
+// ResolveConfigPath returns the first existing config file in the fallback chain.
 // Returns empty string if no config file is found.
-func resolveConfigPath() string {
+func ResolveConfigPath() string {
 	// Try XDG_CONFIG_HOME/postman/config.toml
 	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
 		path := filepath.Join(xdgConfigHome, "postman", "config.toml")
@@ -207,12 +207,12 @@ func GetTalksTo(adjacency map[string][]string, nodeName string) []string {
 	return []string{}
 }
 
-// resolveBaseDir returns the base directory for postman sessions.
+// ResolveBaseDir returns the base directory for postman sessions.
 // Priority:
 // 1. POSTMAN_HOME env var (explicit override)
 // 2. configBaseDir (if non-empty, from config file)
 // 3. XDG_STATE_HOME/postman/ (or ~/.local/state/postman/)
-func resolveBaseDir(configBaseDir string) string {
+func ResolveBaseDir(configBaseDir string) string {
 	// 1. Explicit override
 	if v := os.Getenv("POSTMAN_HOME"); v != "" {
 		return v
@@ -232,8 +232,8 @@ func resolveBaseDir(configBaseDir string) string {
 	return filepath.Join(stateHome, "postman")
 }
 
-// createSessionDirs creates the session directory structure.
-func createSessionDirs(sessionDir string) error {
+// CreateSessionDirs creates the session directory structure.
+func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
 		filepath.Join(sessionDir, "post"),
@@ -267,11 +267,12 @@ func SaveConfig(path string, cfg *Config) error {
 
 // resolveContextID resolves the context ID with fallback chain.
 // Priority:
+// ResolveContextID resolves the context ID using the fallback chain:
 // 1. explicitID (from --context-id flag)
 // 2. A2A_CONTEXT_ID env var
 // 3. .postman/current-context-{tmux_session} file
 // Returns (contextID, source, error).
-func resolveContextID(explicitID string, baseDir string) (string, string, error) {
+func ResolveContextID(explicitID string, baseDir string) (string, string, error) {
 	// 1. Explicit --context-id flag
 	if explicitID != "" {
 		return explicitID, "flag", nil

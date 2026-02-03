@@ -1,9 +1,12 @@
-package main
+package message
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -80,8 +83,8 @@ func TestParseMessageFilename_Invalid(t *testing.T) {
 
 func TestDeliverMessage(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Create inbox for known recipient
@@ -97,13 +100,13 @@ func TestDeliverMessage(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
 	}
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify file moved to inbox
@@ -119,8 +122,8 @@ func TestDeliverMessage(t *testing.T) {
 
 func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Place a message for unknown recipient
@@ -130,12 +133,12 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 	}
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify moved to dead-letter/
@@ -147,8 +150,8 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 
 func TestRouting_Allowed(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Create inbox for worker
@@ -164,15 +167,15 @@ func TestRouting_Allowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// Define edge: orchestrator <-> worker
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
 	}
 
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify delivered to inbox
@@ -193,8 +196,8 @@ func TestRouting_Allowed(t *testing.T) {
 
 func TestRouting_Denied(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Place a message in post/
@@ -204,12 +207,12 @@ func TestRouting_Denied(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined between orchestrator and worker
 	adjacency := map[string][]string{}
 
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify moved to dead-letter/
@@ -225,8 +228,8 @@ func TestRouting_Denied(t *testing.T) {
 
 func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Create inbox for worker
@@ -242,12 +245,12 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined for postman
 	adjacency := map[string][]string{}
 
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify delivered to inbox (postman is always allowed)
@@ -264,8 +267,8 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 
 func TestPONG_Handling(t *testing.T) {
 	sessionDir := t.TempDir()
-	if err := createSessionDirs(sessionDir); err != nil {
-		t.Fatalf("createSessionDirs failed: %v", err)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
 	// Place a PONG message (to postman)
@@ -275,11 +278,11 @@ func TestPONG_Handling(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{}
 
-	if err := deliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
-		t.Fatalf("deliverMessage failed: %v", err)
+	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify moved to read/ (not inbox or dead-letter)

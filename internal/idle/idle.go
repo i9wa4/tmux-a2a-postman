@@ -1,4 +1,4 @@
-package main
+package idle
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 // Idle detection state
@@ -22,8 +24,8 @@ func UpdateActivity(nodeName string) {
 	lastActivity[nodeName] = time.Now()
 }
 
-// startIdleCheck starts a goroutine that periodically checks for idle nodes.
-func startIdleCheck(cfg *Config, adjacency map[string][]string, sessionDir string) {
+// StartIdleCheck starts a goroutine that periodically checks for idle nodes.
+func StartIdleCheck(cfg *config.Config, adjacency map[string][]string, sessionDir string) {
 	ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
 	go func() {
 		for range ticker.C {
@@ -33,7 +35,7 @@ func startIdleCheck(cfg *Config, adjacency map[string][]string, sessionDir strin
 }
 
 // checkIdleNodes checks all nodes for idle timeout and sends reminders.
-func checkIdleNodes(cfg *Config, adjacency map[string][]string, sessionDir string) {
+func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
 

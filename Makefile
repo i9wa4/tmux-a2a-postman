@@ -4,7 +4,7 @@ BUILD_LDFLAGS := "-s -w -X main.revision=$(CURRENT_REVISION)"
 
 .PHONY: build
 build:
-	go build -ldflags=$(BUILD_LDFLAGS) -o $(BIN) .
+	go build -ldflags=$(BUILD_LDFLAGS) -o $(BIN) ./cmd/postman
 
 .PHONY: test
 test:

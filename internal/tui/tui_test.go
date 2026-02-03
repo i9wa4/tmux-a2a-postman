@@ -1,10 +1,11 @@
-package main
+package tui
 
 import (
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
 func TestTUI_InitialModel(t *testing.T) {
@@ -175,7 +176,7 @@ func TestTUI_MessageList_Update(t *testing.T) {
 	m := InitialModel(ch)
 
 	// Send inbox_update event
-	msgList := []MessageInfo{
+	msgList := []message.MessageInfo{
 		{Timestamp: "20260201-120000", From: "orchestrator", To: "worker"},
 		{Timestamp: "20260201-130000", From: "observer", To: "worker"},
 	}
