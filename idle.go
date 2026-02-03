@@ -72,13 +72,17 @@ func checkIdleNodes(cfg *Config, adjacency map[string][]string, sessionDir strin
 		}
 
 		if err := sendIdleReminder(nodeName, message, sessionDir); err != nil {
+			stderrMutex.Lock()
 			fmt.Fprintf(os.Stderr, "postman: idle reminder to %s failed: %v\n", nodeName, err)
+			stderrMutex.Unlock()
 			continue
 		}
 
 		// Update last reminder sent timestamp
 		lastReminderSent[nodeName] = now
+		stderrMutex.Lock()
 		fmt.Fprintf(os.Stderr, "postman: idle reminder sent to %s\n", nodeName)
+		stderrMutex.Unlock()
 	}
 }
 
@@ -90,7 +94,7 @@ func sendIdleReminder(nodeName, message, sessionDir string) error {
 	}
 
 	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("%s-from-postman-idle-reminder.md", timestamp)
+	filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", timestamp, nodeName)
 	filePath := filepath.Join(inboxDir, filename)
 
 	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Idle Reminder\n\n%s\n",
