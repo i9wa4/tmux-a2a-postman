@@ -12,9 +12,8 @@ import (
 
 // Compaction detection state
 var (
-	compactionDetected     = make(map[string]time.Time) // Last detection time per node
-	compactionMutex        sync.Mutex
-	stderrMutex            sync.Mutex
+	compactionDetected = make(map[string]time.Time) // Last detection time per node
+	compactionMutex    sync.Mutex
 )
 
 // startCompactionCheck starts a goroutine that periodically checks for compaction events.

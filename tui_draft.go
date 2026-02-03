@@ -24,18 +24,18 @@ const (
 
 // DraftModel holds the TUI state for create-draft.
 type DraftModel struct {
-	mode         DraftMode
-	nodes        map[string]string // Available nodes from discovery
+	mode          DraftMode
+	nodes         map[string]string // Available nodes from discovery
 	recipientList list.Model
-	selectedNode string
-	messageArea  textarea.Model
-	messageBody  string
-	sessionDir   string
-	contextID    string
-	senderNode   string
-	err          error
-	quitting     bool
-	submitted    bool
+	selectedNode  string
+	messageArea   textarea.Model
+	messageBody   string
+	sessionDir    string
+	contextID     string
+	senderNode    string
+	err           error
+	quitting      bool
+	submitted     bool
 }
 
 // recipientItem implements list.Item for bubbles/list.
@@ -84,8 +84,7 @@ func (m DraftModel) Init() tea.Cmd {
 
 // Update handles messages and updates the model.
 func (m DraftModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch m.mode {
 		case DraftModeSelectRecipient:
 			switch msg.String() {

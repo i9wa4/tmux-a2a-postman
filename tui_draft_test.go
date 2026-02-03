@@ -99,8 +99,8 @@ func TestContextID_Fallback(t *testing.T) {
 	}
 
 	// Test 2: A2A_CONTEXT_ID env
-	os.Setenv("A2A_CONTEXT_ID", "env-id")
-	defer os.Unsetenv("A2A_CONTEXT_ID")
+	_ = os.Setenv("A2A_CONTEXT_ID", "env-id")
+	defer func() { _ = os.Unsetenv("A2A_CONTEXT_ID") }()
 
 	contextID, source, err = resolveContextID("", tmpDir)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestContextID_Fallback(t *testing.T) {
 		t.Errorf("source: got %q, want %q", source, "env:A2A_CONTEXT_ID")
 	}
 
-	os.Unsetenv("A2A_CONTEXT_ID")
+	_ = os.Unsetenv("A2A_CONTEXT_ID")
 
 	// Test 3: No fallback available
 	_, _, err = resolveContextID("", tmpDir)
