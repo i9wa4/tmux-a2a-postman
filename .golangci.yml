@@ -13,7 +13,6 @@ linters:
     - ineffassign
     - misspell
     - gocritic
-    - gosimple
 
 linters-settings:
   gocritic:

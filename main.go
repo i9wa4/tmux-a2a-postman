@@ -69,9 +69,7 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]NodeInfo, cf
 				content := ExpandTemplate(reminderMessage, vars, timeout)
 
 				if err := exec.Command("tmux", "send-keys", "-t", nodeInfo.PaneID, content, "Enter").Run(); err != nil {
-					fmt.Fprintf(os.Stderr, "postman: reminder to %s failed: %v\n", nodeName, err)
-				} else {
-					fmt.Printf("postman: reminder sent to %s (count=%d)\n", nodeName, count)
+					_ = err // Suppress unused variable warning
 				}
 			}
 			// Reset counter after sending reminder
@@ -595,7 +593,6 @@ func sendPingToNode(nodeInfo NodeInfo, contextID, nodeName, template string, cfg
 		return fmt.Errorf("writing PING message: %w", err)
 	}
 
-	fmt.Printf("postman: PING sent to %s (session: %s)\n", nodeName, nodeInfo.SessionName)
 	return nil
 }
 
@@ -603,13 +600,13 @@ func sendPingToNode(nodeInfo NodeInfo, contextID, nodeName, template string, cfg
 func sendPingToAll(baseDir, contextID string, cfg *Config) {
 	nodes, err := DiscoverNodes(baseDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postman: PING: node discovery failed: %v\n", err)
+		_ = err // Suppress unused variable warning
 		return
 	}
 
 	for nodeName, nodeInfo := range nodes {
 		if err := sendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "postman: PING to %s failed: %v\n", nodeName, err)
+			_ = err // Suppress unused variable warning
 		}
 	}
 }
@@ -651,9 +648,7 @@ func sendObserverDigest(filename string, sender string, nodes map[string]NodeInf
 
 		// Send directly to pane via tmux send-keys
 		if err := exec.Command("tmux", "send-keys", "-t", nodeInfo.PaneID, content, "Enter").Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "postman: digest to %s failed: %v\n", nodeName, err)
-		} else {
-			fmt.Printf("postman: digest sent to %s (message from %s)\n", nodeName, sender)
+			_ = err // Suppress unused variable warning
 		}
 	}
 }

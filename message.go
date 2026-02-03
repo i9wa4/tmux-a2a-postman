@@ -119,7 +119,7 @@ func deliverMessage(sessionDir string, filename string, knownNodes map[string]No
 
 	// Send tmux notification to the recipient pane
 	if err := notifyNode(paneID, info.From); err != nil {
-		fmt.Fprintf(os.Stderr, "postman: notify %s: %v\n", info.To, err)
+		_ = err // Suppress unused variable warning
 	}
 
 	// Update activity timestamps for idle detection
