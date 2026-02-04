@@ -141,6 +141,7 @@ func runStart(args []string) error {
 	contextID := fs.String("context-id", "", "session context ID (required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	logFilePath := fs.String("log-file", "", "log file path (optional, defaults to $XDG_STATE_HOME/postman/postman.log)")
+	noTUI := fs.Bool("no-tui", false, "run without TUI")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -343,10 +344,16 @@ func runStart(args []string) error {
 		}
 	}()
 
-	// Start TUI
-	p := tea.NewProgram(tui.InitialModel(daemonEvents))
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("TUI error: %w", err)
+	// Start TUI or wait for shutdown
+	if *noTUI {
+		// No TUI mode: log only, block until ctx.Done()
+		<-ctx.Done()
+	} else {
+		// TUI mode
+		p := tea.NewProgram(tui.InitialModel(daemonEvents))
+		if _, err := p.Run(); err != nil {
+			return fmt.Errorf("TUI error: %w", err)
+		}
 	}
 
 	return nil
