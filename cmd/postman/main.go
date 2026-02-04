@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -177,9 +176,8 @@ func runStart(args []string) error {
 			_ = logFile.Close()
 		}()
 
-		// Setup multi-writer: both stderr and log file
-		multiWriter := io.MultiWriter(os.Stderr, logFile)
-		log.SetOutput(multiWriter)
+		// TUI mode: log to file only
+		log.SetOutput(logFile)
 		log.SetFlags(log.LstdFlags)
 
 		log.Printf("postman: daemon starting (context=%s, log=%s)\n", *contextID, logPath)
@@ -214,7 +212,7 @@ func runStart(args []string) error {
 	inboxDir := filepath.Join(sessionDir, "inbox")
 	readDir := filepath.Join(sessionDir, "read")
 	if err := cleanupStaleInbox(inboxDir, readDir); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  postman: stale inbox cleanup failed: %v\n", err)
+		log.Printf("⚠️  postman: stale inbox cleanup failed: %v\n", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -250,11 +248,11 @@ func runStart(args []string) error {
 	nodes, err := discovery.DiscoverNodes(baseDir)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
-		fmt.Fprintf(os.Stderr, "⚠️  postman: node discovery failed: %v\n", err)
+		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
 		nodes = make(map[string]discovery.NodeInfo)
 	}
 
-	fmt.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
+	log.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
 		*contextID, os.Getpid(), len(nodes))
 
 	// Send PING to all nodes after startup delay
@@ -464,7 +462,7 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 			dst := filepath.Join(readDir, msg.Name())
 
 			if err := os.Rename(src, dst); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️  postman: failed to move stale message %s: %v\n", msg.Name(), err)
+				log.Printf("⚠️  postman: failed to move stale message %s: %v\n", msg.Name(), err)
 				continue
 			}
 			movedCount++
@@ -472,7 +470,7 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	}
 
 	if movedCount > 0 {
-		fmt.Printf("🧹 postman: moved %d stale message(s) to read/\n", movedCount)
+		log.Printf("🧹 postman: moved %d stale message(s) to read/\n", movedCount)
 	}
 
 	return nil
