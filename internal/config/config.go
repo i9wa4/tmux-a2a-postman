@@ -279,6 +279,8 @@ func ResolveBaseDir(configBaseDir string) string {
 }
 
 // CreateSessionDirs creates the session directory structure.
+// Legacy signature for backward compatibility with tests.
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -293,6 +295,14 @@ func CreateSessionDirs(sessionDir string) error {
 		}
 	}
 	return nil
+}
+
+// CreateMultiSessionDirs creates the multi-session directory structure.
+// For multi-session support: contextDir = baseDir/contextID, sessionName = tmux session name
+// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter}
+func CreateMultiSessionDirs(contextDir, sessionName string) error {
+	sessionDir := filepath.Join(contextDir, sessionName)
+	return CreateSessionDirs(sessionDir)
 }
 
 // SaveConfig saves the configuration to a TOML file.

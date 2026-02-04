@@ -112,15 +112,20 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Setup log file
+	// Parse edge definitions for routing
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		return fmt.Errorf("parsing edges: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	contextDir := filepath.Join(baseDir, contextID)
+
+	// Setup log file (under context directory)
 	logPath := logFilePath
 	if logPath == "" {
-		// Default to $XDG_STATE_HOME/postman/postman.log
-		if xdgStateHome := os.Getenv("XDG_STATE_HOME"); xdgStateHome != "" {
-			logPath = filepath.Join(xdgStateHome, "postman", "postman.log")
-		} else if home, err := os.UserHomeDir(); err == nil {
-			logPath = filepath.Join(home, ".local", "state", "postman", "postman.log")
-		}
+		// Default to $baseDir/{contextID}/postman.log
+		logPath = filepath.Join(contextDir, "postman.log")
 	}
 	if logPath != "" {
 		logDir := filepath.Dir(logPath)
@@ -142,16 +147,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Printf("postman: daemon starting (context=%s, log=%s)\n", contextID, logPath)
 	}
 
-	// Parse edge definitions for routing
-	adjacency, err := config.ParseEdges(cfg.Edges)
-	if err != nil {
-		return fmt.Errorf("parsing edges: %w", err)
-	}
+	// TODO: Multi-session support - for now, use "default" as session name
+	// Later phases will discover actual tmux sessions and create dirs for each
+	defaultSessionName := "default"
+	sessionDir := filepath.Join(contextDir, defaultSessionName)
 
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	sessionDir := filepath.Join(baseDir, contextID)
-
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
+	if err := config.CreateMultiSessionDirs(contextDir, defaultSessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
