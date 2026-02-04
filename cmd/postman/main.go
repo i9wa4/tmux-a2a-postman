@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
+	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
@@ -275,6 +276,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start idle check goroutine
 	idle.StartIdleCheck(cfg, adjacency, sessionDir)
+
+	// Start session-level idle check goroutine
+	sessionidle.StartSessionIdleCheck(baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
 
 	// Start compaction detection goroutine
 	compaction.StartCompactionCheck(cfg, nodes, sessionDir)
