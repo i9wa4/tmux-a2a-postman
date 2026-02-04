@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -138,6 +140,7 @@ func runStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	contextID := fs.String("context-id", "", "session context ID (required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
+	logFilePath := fs.String("log-file", "", "log file path (optional, defaults to $XDG_STATE_HOME/postman/postman.log)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -148,6 +151,37 @@ func runStart(args []string) error {
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// Setup log file
+	logPath := *logFilePath
+	if logPath == "" {
+		// Default to $XDG_STATE_HOME/postman/postman.log
+		if xdgStateHome := os.Getenv("XDG_STATE_HOME"); xdgStateHome != "" {
+			logPath = filepath.Join(xdgStateHome, "postman", "postman.log")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			logPath = filepath.Join(home, ".local", "state", "postman", "postman.log")
+		}
+	}
+	if logPath != "" {
+		logDir := filepath.Dir(logPath)
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return fmt.Errorf("creating log directory: %w", err)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("opening log file: %w", err)
+		}
+		defer func() {
+			_ = logFile.Close()
+		}()
+
+		// Setup multi-writer: both stderr and log file
+		multiWriter := io.MultiWriter(os.Stderr, logFile)
+		log.SetOutput(multiWriter)
+		log.SetFlags(log.LstdFlags)
+
+		log.Printf("postman: daemon starting (context=%s, log=%s)\n", *contextID, logPath)
 	}
 
 	// Parse edge definitions for routing
