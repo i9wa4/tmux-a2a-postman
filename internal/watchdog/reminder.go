@@ -51,7 +51,8 @@ func (r *ReminderState) MarkReminderSent(paneID string) {
 // Creates a message file in the post/ directory for delivery.
 func SendIdleReminder(paneID, sessionDir, contextID string, activity PaneActivity) error {
 	now := time.Now()
-	ts := now.Format("20060102-150405")
+	// Use UnixNano for uniqueness to prevent filename collisions
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-watchdog-to-orchestrator.md", ts)
 	postPath := filepath.Join(sessionDir, "post", filename)
 

@@ -63,6 +63,11 @@ func GetPaneActivities() ([]PaneActivity, error) {
 			continue
 		}
 
+		// Skip panes with activity timestamp of 0 (never active or just created)
+		if timestamp == 0 {
+			continue
+		}
+
 		activities = append(activities, PaneActivity{
 			PaneID:           parts[1],
 			LastActivityTime: time.Unix(timestamp, 0),
@@ -190,7 +195,8 @@ func SendWatchdogAlert(
 
 	// Build message content
 	now := time.Now()
-	ts := now.Format("20060102-150405")
+	// Use UnixNano for uniqueness to prevent filename collisions
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-postman-to-watchdog.md", ts)
 
 	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: watchdog\n  timestamp: %s\n---\n\n## Idle Alert\n\ntmux session `%s` の全ノードが停止しています。\n\nIdle nodes: %s\n\n%s\n\nReply: `tmux-a2a-postman create-draft --to <node>`\n",

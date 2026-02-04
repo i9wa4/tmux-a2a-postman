@@ -25,9 +25,9 @@ func CapturePane(paneID, captureDir string, tailLines int) (string, error) {
 		return "", fmt.Errorf("creating capture directory: %w", err)
 	}
 
-	// Generate filename with timestamp
+	// Generate filename with timestamp (use UnixNano for uniqueness)
 	now := time.Now()
-	filename := fmt.Sprintf("%s.log", now.Format("20060102-150405"))
+	filename := fmt.Sprintf("%s-%d.log", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	capturePath := filepath.Join(captureDir, filename)
 
 	// Capture pane content using tmux
@@ -45,8 +45,8 @@ func CapturePane(paneID, captureDir string, tailLines int) (string, error) {
 		return "", fmt.Errorf("capturing pane: %w: %s", err, output)
 	}
 
-	// Write captured content to file
-	if err := os.WriteFile(capturePath, output, 0o644); err != nil {
+	// Write captured content to file (0o600 for security - readable only by owner)
+	if err := os.WriteFile(capturePath, output, 0o600); err != nil {
 		return "", fmt.Errorf("writing capture file: %w", err)
 	}
 

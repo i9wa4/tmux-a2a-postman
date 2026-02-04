@@ -42,6 +42,11 @@ func GetPaneActivities() ([]PaneActivity, error) {
 			continue
 		}
 
+		// Skip panes with activity timestamp of 0 (never active or just created)
+		if timestamp == 0 {
+			continue
+		}
+
 		activities = append(activities, PaneActivity{
 			PaneID:           parts[1],
 			LastActivityTime: time.Unix(timestamp, 0),
