@@ -43,6 +43,9 @@ type Config struct {
 
 	// Compaction detection
 	CompactionDetection CompactionDetectionConfig
+
+	// Watchdog
+	Watchdog WatchdogConfig
 }
 
 // NodeConfig holds per-node configuration.
@@ -82,6 +85,29 @@ type CompactionDetectionConfig struct {
 type CompactionMessageTemplate struct {
 	Type string `toml:"type"`
 	Body string `toml:"body"`
+}
+
+// WatchdogConfig holds watchdog configuration.
+type WatchdogConfig struct {
+	Enabled                  bool                 `toml:"enabled"`
+	IdleThresholdSeconds     float64              `toml:"idle_threshold_seconds"`
+	CooldownSeconds          float64              `toml:"cooldown_seconds"`
+	HeartbeatIntervalSeconds float64              `toml:"heartbeat_interval_seconds"`
+	Capture                  WatchdogCaptureConfig `toml:"capture"`
+	Lock                     WatchdogLockConfig   `toml:"lock"`
+}
+
+// WatchdogCaptureConfig holds watchdog capture configuration.
+type WatchdogCaptureConfig struct {
+	Enabled   bool `toml:"enabled"`
+	MaxFiles  int  `toml:"max_files"`
+	MaxBytes  int  `toml:"max_bytes"`
+	TailLines int  `toml:"tail_lines"`
+}
+
+// WatchdogLockConfig holds watchdog lock configuration.
+type WatchdogLockConfig struct {
+	Path string `toml:"path"`
 }
 
 // DefaultConfig returns a Config with sane default values.
@@ -145,10 +171,10 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman and compaction_detection)
+	// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" {
 			continue
 		}
 
@@ -163,6 +189,13 @@ func LoadConfig(path string) (*Config, error) {
 	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
 		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
 			return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
+		}
+	}
+
+	// Decode [watchdog] section if exists
+	if watchdogPrim, ok := rootSections["watchdog"]; ok {
+		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
+			return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
 		}
 	}
 
