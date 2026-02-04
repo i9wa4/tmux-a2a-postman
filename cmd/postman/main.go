@@ -205,7 +205,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	// Discover nodes at startup
-	nodes, err := discovery.DiscoverNodes(baseDir)
+	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
 		log.Printf("⚠️  postman: node discovery failed: %v\n", err)

@@ -3,6 +3,7 @@ package discovery
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -17,7 +18,8 @@ type NodeInfo struct {
 // DiscoverNodes scans tmux panes and returns a map of node name -> NodeInfo.
 // Only panes that have A2A_NODE env var set are included.
 // Server-wide discovery: scans all sessions (-a flag).
-func DiscoverNodes(baseDir string) (map[string]NodeInfo, error) {
+// SessionDir is calculated as baseDir/contextID/sessionName.
+func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_pid} #{pane_id} #{session_name}").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w: %s", err, out)
@@ -41,12 +43,12 @@ func DiscoverNodes(baseDir string) (map[string]NodeInfo, error) {
 		}
 
 		if node := getNodeFromProcessOS(pid); node != "" {
-			// NOTE: Discovery only finds pane location (PaneID, SessionName).
-			// SessionDir is NOT set here - caller provides contextID from postman's --context-id.
+			// Calculate SessionDir as baseDir/contextID/sessionName
+			sessionDir := filepath.Join(baseDir, contextID, sessionName)
 			nodes[node] = NodeInfo{
 				PaneID:      paneID,
 				SessionName: sessionName,
-				SessionDir:  "", // Caller sets this using postman's context ID
+				SessionDir:  sessionDir,
 			}
 		}
 	}

@@ -70,7 +70,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 	fmt.Println("📮 postman: SendPingToAll starting...")
 
-	nodes, err := discovery.DiscoverNodes(baseDir)
+	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ postman: discovery failed: %v\n", err)
 		return

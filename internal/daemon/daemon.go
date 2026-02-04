@@ -64,7 +64,7 @@ func RunDaemonLoop(
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						// Re-discover nodes before each delivery
-						if freshNodes, err := discovery.DiscoverNodes(baseDir); err == nil {
+						if freshNodes, err := discovery.DiscoverNodes(baseDir, contextID); err == nil {
 							// Build active nodes list
 							activeNodes := make([]string, 0, len(freshNodes))
 							for nodeName := range freshNodes {
