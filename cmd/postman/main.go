@@ -27,6 +27,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
+	"github.com/i9wa4/tmux-a2a-postman/internal/watchdog"
 )
 
 func main() {
@@ -82,9 +83,17 @@ func main() {
 
 	switch command {
 	case "start":
-		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
-			os.Exit(1)
+		// Check if this should run as watchdog
+		if os.Getenv("A2A_NODE") == "watchdog" {
+			if err := runWatchdog(*contextID, *configPath, *logFilePath); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ postman watchdog: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	case "create-draft":
 		if err := runCreateDraft(args); err != nil {
@@ -469,4 +478,137 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	}
 
 	return nil
+}
+
+// runWatchdog runs the watchdog daemon when A2A_NODE=watchdog.
+func runWatchdog(contextID, configPath, logFilePath string) error {
+	// Auto-generate context ID if not specified
+	if contextID == "" {
+		contextID = fmt.Sprintf("session-%s-%04x",
+			time.Now().Format("20060102-150405"),
+			time.Now().UnixNano()&0xffff)
+	}
+
+	// LoadConfig
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// Check if watchdog is enabled
+	if !cfg.Watchdog.Enabled {
+		return fmt.Errorf("watchdog is disabled in config")
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	contextDir := filepath.Join(baseDir, contextID)
+
+	// TODO: Multi-session support - for now, use "default" as session name
+	defaultSessionName := "default"
+	sessionDir := filepath.Join(contextDir, defaultSessionName)
+
+	if err := config.CreateMultiSessionDirs(contextDir, defaultSessionName); err != nil {
+		return fmt.Errorf("creating session directories: %w", err)
+	}
+
+	// Acquire watchdog lock
+	lockPath := os.ExpandEnv(cfg.Watchdog.Lock.Path)
+	if lockPath == "" {
+		lockPath = filepath.Join(baseDir, "postman-watchdog.lock")
+	}
+	watchdogLock, err := watchdog.AcquireLock(lockPath)
+	if err != nil {
+		return fmt.Errorf("acquiring watchdog lock: %w", err)
+	}
+	defer func() { _ = watchdogLock.ReleaseLock() }()
+
+	// Setup log file
+	logPath := logFilePath
+	if logPath == "" {
+		logPath = filepath.Join(contextDir, "watchdog.log")
+	}
+	if logPath != "" {
+		logDir := filepath.Dir(logPath)
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return fmt.Errorf("creating log directory: %w", err)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("opening log file: %w", err)
+		}
+		defer func() {
+			_ = logFile.Close()
+		}()
+
+		log.SetOutput(logFile)
+		log.SetFlags(log.LstdFlags)
+
+		log.Printf("watchdog: starting (context=%s, log=%s)\n", contextID, logPath)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Start heartbeat
+	var heartbeatStop chan<- struct{}
+	if cfg.Watchdog.HeartbeatIntervalSeconds > 0 {
+		heartbeatStop = watchdog.StartHeartbeat(sessionDir, contextID, cfg.Watchdog.HeartbeatIntervalSeconds)
+		defer func() {
+			if heartbeatStop != nil {
+				close(heartbeatStop)
+			}
+		}()
+	}
+
+	// Initialize reminder state
+	reminderState := watchdog.NewReminderState()
+
+	log.Printf("watchdog: started (pid=%d)\n", os.Getpid())
+
+	// Main watchdog loop
+	ticker := time.NewTicker(time.Duration(cfg.Watchdog.IdleThresholdSeconds * float64(time.Second)))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("watchdog: shutting down")
+			return nil
+		case <-ticker.C:
+			// Check for idle panes
+			idlePanes, err := watchdog.GetIdlePanes(cfg.Watchdog.IdleThresholdSeconds)
+			if err != nil {
+				log.Printf("watchdog: idle check failed: %v\n", err)
+				continue
+			}
+
+			// Send reminders for idle panes
+			for _, activity := range idlePanes {
+				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
+					if err := watchdog.SendIdleReminder(activity.PaneID, sessionDir, contextID, activity); err != nil {
+						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
+					} else {
+						reminderState.MarkReminderSent(activity.PaneID)
+						log.Printf("watchdog: reminder sent for %s\n", activity.PaneID)
+					}
+				}
+
+				// Capture pane if enabled
+				if cfg.Watchdog.Capture.Enabled {
+					captureDir := filepath.Join(sessionDir, "capture")
+					capturePath, err := watchdog.CapturePane(activity.PaneID, captureDir, cfg.Watchdog.Capture.TailLines)
+					if err != nil {
+						log.Printf("watchdog: capture failed for %s: %v\n", activity.PaneID, err)
+					} else {
+						log.Printf("watchdog: captured %s -> %s\n", activity.PaneID, capturePath)
+
+						// Rotate captures
+						if err := watchdog.RotateCaptures(captureDir, cfg.Watchdog.Capture.MaxFiles, int64(cfg.Watchdog.Capture.MaxBytes)); err != nil {
+							log.Printf("watchdog: rotation failed: %v\n", err)
+						}
+					}
+				}
+			}
+		}
+	}
 }
