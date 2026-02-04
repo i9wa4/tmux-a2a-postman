@@ -503,11 +503,11 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 	contextDir := filepath.Join(baseDir, contextID)
 
-	// TODO: Multi-session support - for now, use "default" as session name
-	defaultSessionName := "default"
-	sessionDir := filepath.Join(contextDir, defaultSessionName)
+	// NOTE: Use contextDir directly (not multi-session subdirectory)
+	// to match Python postman's directory structure (.postman/session-ID/post/)
+	sessionDir := contextDir
 
-	if err := config.CreateMultiSessionDirs(contextDir, defaultSessionName); err != nil {
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
