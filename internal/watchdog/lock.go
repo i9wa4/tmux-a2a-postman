@@ -65,7 +65,7 @@ func AcquireLock(path string) (*WatchdogLock, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("seeking lock file: %w", err)
 	}
-	if _, err := f.WriteString(fmt.Sprintf("%d\n", pid)); err != nil {
+	if _, err := fmt.Fprintf(f, "%d\n", pid); err != nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, fmt.Errorf("writing PID to lock file: %w", err)
