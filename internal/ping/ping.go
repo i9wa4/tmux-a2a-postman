@@ -18,7 +18,7 @@ func BuildPingMessage(tmpl string, vars map[string]string, timeout time.Duration
 }
 
 // SendPingToNode sends a PING message to a specific node.
-func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config) error {
+func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string) error {
 	// Get node config for template
 	nodeConfig, hasNodeConfig := cfg.Nodes[nodeName]
 	nodeTemplate := ""
@@ -33,19 +33,23 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", nodeName)
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 
+	now := time.Now()
+	ts := now.Format("20060102-150405")
+
 	vars := map[string]string{
 		"context_id":    contextID,
 		"node":          nodeName,
+		"timestamp":     ts,
+		"from_node":     "postman",
 		"template":      nodeTemplate,
 		"talks_to_line": talksToLine,
+		"active_nodes":  strings.Join(activeNodes, ", "),
 		"reply_command": replyCmd,
 		"session_dir":   nodeInfo.SessionDir,
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)
 
-	now := time.Now()
-	ts := now.Format("20060102-150405")
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, nodeName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
@@ -73,12 +77,18 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 	}
 	fmt.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
 
+	// Build active nodes list
+	activeNodes := make([]string, 0, len(nodes))
+	for nodeName := range nodes {
+		activeNodes = append(activeNodes, nodeName)
+	}
+
 	// Use postman's own contextID for session directory
 	sessionDir := filepath.Join(baseDir, contextID)
 	for nodeName, nodeInfo := range nodes {
 		// Override nodeInfo.SessionDir with postman's session
 		nodeInfo.SessionDir = sessionDir
-		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
+		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
 			fmt.Printf("📮 postman: PING sent to %s\n", nodeName)

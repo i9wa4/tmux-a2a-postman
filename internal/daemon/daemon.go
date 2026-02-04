@@ -65,6 +65,12 @@ func RunDaemonLoop(
 					if strings.HasSuffix(filename, ".md") {
 						// Re-discover nodes before each delivery
 						if freshNodes, err := discovery.DiscoverNodes(baseDir); err == nil {
+							// Build active nodes list
+							activeNodes := make([]string, 0, len(freshNodes))
+							for nodeName := range freshNodes {
+								activeNodes = append(activeNodes, nodeName)
+							}
+
 							// Detect new nodes and send PING
 							for nodeName, nodeInfo := range freshNodes {
 								if !knownNodes[nodeName] {
@@ -74,8 +80,9 @@ func RunDaemonLoop(
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 										capturedNode := nodeName
 										capturedNodeInfo := nodeInfo
+										capturedActiveNodes := activeNodes
 										time.AfterFunc(newNodeDelay, func() {
-											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg); err != nil {
+											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
 												events <- tui.DaemonEvent{
 													Type:    "error",
 													Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),

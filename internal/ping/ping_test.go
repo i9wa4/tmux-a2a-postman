@@ -71,7 +71,8 @@ func TestSendPingToNode(t *testing.T) {
 		TmuxTimeout: 5.0,
 	}
 
-	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg)
+	activeNodes := []string{"worker", "orchestrator"}
+	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes)
 	if err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
