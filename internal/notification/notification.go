@@ -54,6 +54,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		"template":       recipientTemplate,
 		"reply_command":  cfg.ReplyCommand,
 		"context_id":     contextID,
+		"session_dir":    sessionDir,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
