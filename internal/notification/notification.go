@@ -81,14 +81,14 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	// 1. Set buffer
 	cmd := exec.Command("tmux", "set-buffer", sanitized)
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
 		return err
 	}
 
 	// 2. Paste buffer to target pane
 	cmd = exec.Command("tmux", "paste-buffer", "-t", paneID)
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
 		return err
 	}
 
@@ -98,7 +98,7 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	// 4. Send Enter key
 	cmd = exec.Command("tmux", "send-keys", "-t", paneID, "Enter")
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "postman: WARNING: failed to send Enter to pane %s: %v\n", paneID, err)
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to send Enter to pane %s: %v\n", paneID, err)
 		return err
 	}
 

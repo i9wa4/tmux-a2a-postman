@@ -31,7 +31,7 @@ func main() {
 	if len(os.Args) == 1 {
 		// No arguments → TUI mode
 		if err := runTUIMain([]string{}); err != nil {
-			fmt.Fprintf(os.Stderr, "postman TUI: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ postman TUI: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -46,7 +46,7 @@ func main() {
 	// Check for --tui flag (explicit TUI launch)
 	if os.Args[1] == "--tui" {
 		if err := runTUIMain(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "postman TUI: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ postman TUI: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -58,16 +58,16 @@ func main() {
 		fmt.Printf("postman %s\n", version.Version)
 	case "start":
 		if err := runStart(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "postman start: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
 			os.Exit(1)
 		}
 	case "create-draft":
 		if err := runCreateDraft(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "postman create-draft: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ postman create-draft: %v\n", err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "postman: unknown command %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "❌ postman: unknown command %q\n", os.Args[1])
 		fmt.Fprintln(os.Stderr, "usage: postman [--version] [--tui] [command] [options]")
 		fmt.Fprintln(os.Stderr, "commands: start, create-draft, version")
 		os.Exit(1)
@@ -200,7 +200,7 @@ func runStart(args []string) error {
 	}
 	if resolvedConfigPath != "" {
 		if err := watcher.Add(resolvedConfigPath); err != nil {
-			fmt.Fprintf(os.Stderr, "postman: warning: could not watch config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch config: %v\n", err)
 		}
 	}
 
@@ -208,11 +208,11 @@ func runStart(args []string) error {
 	nodes, err := discovery.DiscoverNodes(baseDir)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
-		fmt.Fprintf(os.Stderr, "postman: node discovery failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "⚠️  postman: node discovery failed: %v\n", err)
 		nodes = make(map[string]discovery.NodeInfo)
 	}
 
-	fmt.Printf("postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
+	fmt.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
 		*contextID, os.Getpid(), len(nodes))
 
 	// Send PING to all nodes after startup delay

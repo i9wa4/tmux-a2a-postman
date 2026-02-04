@@ -106,7 +106,7 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 		if !allowed {
 			// Routing denied: move to dead-letter/
 			dst := filepath.Join(sessionDir, "dead-letter", filename)
-			fmt.Printf("postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
+			fmt.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			return os.Rename(postPath, dst)
 		}
 	}
@@ -135,7 +135,7 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 	idle.UpdateActivity(info.From)
 	idle.UpdateActivity(info.To)
 
-	fmt.Printf("postman: delivered %s -> %s\n", filename, info.To)
+	fmt.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	return nil
 }
 
