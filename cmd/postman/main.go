@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -174,11 +175,17 @@ func runStart(args []string) error {
 	}
 	defer func() { _ = os.Remove(pidPath) }()
 
+	// Cleanup stale inbox messages (move to read/)
+	inboxDir := filepath.Join(sessionDir, "inbox")
+	readDir := filepath.Join(sessionDir, "read")
+	if err := cleanupStaleInbox(inboxDir, readDir); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  postman: stale inbox cleanup failed: %v\n", err)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	postDir := filepath.Join(sessionDir, "post")
-	inboxDir := filepath.Join(sessionDir, "inbox")
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -335,5 +342,63 @@ func runCreateDraft(args []string) error {
 	}
 
 	fmt.Println(draftPath)
+	return nil
+}
+
+// cleanupStaleInbox moves all messages from inbox/ subdirectories to read/.
+// This cleans up stale messages from previous sessions.
+func cleanupStaleInbox(inboxDir, readDir string) error {
+	// Ensure read/ directory exists
+	if err := os.MkdirAll(readDir, 0o755); err != nil {
+		return fmt.Errorf("creating read directory: %w", err)
+	}
+
+	// Read inbox/ directory
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // inbox/ doesn't exist yet
+		}
+		return fmt.Errorf("reading inbox directory: %w", err)
+	}
+
+	// Iterate over node subdirectories
+	movedCount := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		nodeName := entry.Name()
+		nodeInbox := filepath.Join(inboxDir, nodeName)
+
+		// Read messages in node's inbox
+		messages, err := os.ReadDir(nodeInbox)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  postman: failed to read inbox for %s: %v\n", nodeName, err)
+			continue
+		}
+
+		// Move each message to read/
+		for _, msg := range messages {
+			if msg.IsDir() || !strings.HasSuffix(msg.Name(), ".md") {
+				continue
+			}
+
+			src := filepath.Join(nodeInbox, msg.Name())
+			dst := filepath.Join(readDir, msg.Name())
+
+			if err := os.Rename(src, dst); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  postman: failed to move stale message %s: %v\n", msg.Name(), err)
+				continue
+			}
+			movedCount++
+		}
+	}
+
+	if movedCount > 0 {
+		fmt.Printf("🧹 postman: moved %d stale message(s) to read/\n", movedCount)
+	}
+
 	return nil
 }
