@@ -23,9 +23,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
+	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
-
-var revision string
 
 func main() {
 	// Dual-mode: no args or --tui → TUI mode (default interactive)
@@ -35,6 +34,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "postman TUI: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Check for --version or -v flag
+	if os.Args[1] == "--version" || os.Args[1] == "-v" {
+		fmt.Printf("postman %s\n", version.Version)
 		return
 	}
 
@@ -50,7 +55,7 @@ func main() {
 	// Backward compatible CLI mode
 	switch os.Args[1] {
 	case "version":
-		fmt.Printf("postman dev (rev: %s)\n", revision)
+		fmt.Printf("postman %s\n", version.Version)
 	case "start":
 		if err := runStart(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "postman start: %v\n", err)
@@ -63,7 +68,7 @@ func main() {
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "postman: unknown command %q\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, "usage: postman [--tui] [command] [options]")
+		fmt.Fprintln(os.Stderr, "usage: postman [--version] [--tui] [command] [options]")
 		fmt.Fprintln(os.Stderr, "commands: start, create-draft, version")
 		os.Exit(1)
 	}
