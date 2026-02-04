@@ -126,10 +126,9 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, postPath)
 	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	if err := notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout); err != nil {
-		// Error already logged by SendToPane (WARNING level)
-		// Continue with delivery (notification failure does not fail delivery)
-	}
+	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout)
+	// NOTE: Error already logged by SendToPane (WARNING level)
+	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection
 	idle.UpdateActivity(info.From)
