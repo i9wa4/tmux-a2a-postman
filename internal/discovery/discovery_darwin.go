@@ -47,16 +47,3 @@ func checkProcessForNode(pid string) string {
 	return ""
 }
 
-// getContextIDFromProcess extracts A2A_CONTEXT_ID from a process environment on macOS.
-func getContextIDFromProcess(pid string) string {
-	out, err := exec.Command("ps", "eww", "-o", "command=", "-p", pid).CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	for _, field := range strings.Fields(string(out)) {
-		if strings.HasPrefix(field, "A2A_CONTEXT_ID=") {
-			return strings.TrimPrefix(field, "A2A_CONTEXT_ID=")
-		}
-	}
-	return ""
-}

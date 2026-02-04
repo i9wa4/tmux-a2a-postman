@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
@@ -18,9 +19,26 @@ func BuildPingMessage(tmpl string, vars map[string]string, timeout time.Duration
 
 // SendPingToNode sends a PING message to a specific node.
 func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config) error {
+	// Get node config for template
+	nodeConfig, hasNodeConfig := cfg.Nodes[nodeName]
+	nodeTemplate := ""
+	if hasNodeConfig {
+		nodeTemplate = nodeConfig.Template
+	}
+
+	// Build talks_to_line from adjacency (edges)
+	talksToLine := buildTalksToLine(nodeName, cfg)
+
+	// Build reply command
+	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", nodeName)
+	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
+
 	vars := map[string]string{
-		"context_id": contextID,
-		"node":       nodeName,
+		"context_id":    contextID,
+		"node":          nodeName,
+		"template":      nodeTemplate,
+		"talks_to_line": talksToLine,
+		"reply_command": replyCmd,
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)
@@ -45,15 +63,36 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 // SendPingToAll sends PING messages to all discovered nodes.
 func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
+	fmt.Println("📮 postman: SendPingToAll starting...")
+
 	nodes, err := discovery.DiscoverNodes(baseDir)
 	if err != nil {
-		_ = err // Suppress unused variable warning
+		fmt.Fprintf(os.Stderr, "❌ postman: discovery failed: %v\n", err)
 		return
 	}
+	fmt.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
 
+	// Use postman's own contextID for session directory
+	sessionDir := filepath.Join(baseDir, contextID)
 	for nodeName, nodeInfo := range nodes {
+		// Override nodeInfo.SessionDir with postman's session
+		nodeInfo.SessionDir = sessionDir
 		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg); err != nil {
-			_ = err // Suppress unused variable warning
+			fmt.Fprintf(os.Stderr, "❌ postman: PING to %s failed: %v\n", nodeName, err)
+		} else {
+			fmt.Printf("📮 postman: PING sent to %s\n", nodeName)
 		}
 	}
+}
+
+// buildTalksToLine builds the "Can talk to:" line from edges config.
+func buildTalksToLine(nodeName string, cfg *config.Config) string {
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		return ""
+	}
+	if neighbors, ok := adjacency[nodeName]; ok && len(neighbors) > 0 {
+		return fmt.Sprintf("Can talk to: %s", strings.Join(neighbors, ", "))
+	}
+	return ""
 }

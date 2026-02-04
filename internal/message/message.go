@@ -64,6 +64,11 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 func DeliverMessage(sessionDir string, contextID string, filename string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) error {
 	postPath := filepath.Join(sessionDir, "post", filename)
 
+	// Check if file still exists (handles duplicate fsnotify event)
+	if _, err := os.Stat(postPath); os.IsNotExist(err) {
+		return nil // Already processed
+	}
+
 	info, err := ParseMessageFilename(filename)
 	if err != nil {
 		// Parse error: move to dead-letter/

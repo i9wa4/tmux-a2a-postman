@@ -296,7 +296,7 @@ func runStart(args []string) error {
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient node name (required)")
-	contextID := fs.String("context-id", "", "session context ID (required)")
+	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
 	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -305,8 +305,18 @@ func runCreateDraft(args []string) error {
 	if *to == "" {
 		return fmt.Errorf("--to is required")
 	}
-	if *contextID == "" {
-		return fmt.Errorf("--context-id is required")
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	// Resolve context ID with fallback chain (auto-detect if not specified)
+	resolvedContextID, _, err := config.ResolveContextID(*contextID, baseDir)
+	if err != nil {
+		return fmt.Errorf("resolving context ID: %w", err)
 	}
 
 	sender := *from
@@ -317,13 +327,7 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("--from is required (or set A2A_NODE)")
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	draftDir := filepath.Join(baseDir, *contextID, "draft")
+	draftDir := filepath.Join(baseDir, resolvedContextID, "draft")
 
 	if err := os.MkdirAll(draftDir, 0o755); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
@@ -334,8 +338,18 @@ func runCreateDraft(args []string) error {
 	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, *to)
 	draftPath := filepath.Join(draftDir, filename)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  timestamp: %s\n---\n\n",
-		*contextID, sender, *to, now.Format("2006-01-02T15:04:05.000000"))
+	// Use draft_template from config if available
+	content := cfg.DraftTemplate
+	if content == "" {
+		// Fallback to minimal template
+		content = "---\nmethod: message/send\nparams:\n  contextId: {{context_id}}\n  from: {{from}}\n  to: {{to}}\n  timestamp: {{timestamp}}\n---\n\n## Content\n"
+	}
+
+	// Expand template variables
+	content = strings.ReplaceAll(content, "{{context_id}}", resolvedContextID)
+	content = strings.ReplaceAll(content, "{{from}}", sender)
+	content = strings.ReplaceAll(content, "{{to}}", *to)
+	content = strings.ReplaceAll(content, "{{timestamp}}", now.Format(time.RFC3339))
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing draft: %w", err)

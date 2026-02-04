@@ -2,10 +2,7 @@ package discovery
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -44,39 +41,12 @@ func DiscoverNodes(baseDir string) (map[string]NodeInfo, error) {
 		}
 
 		if node := getNodeFromProcessOS(pid); node != "" {
-			// Resolve sessionDir: tmux session name → contextId
-			// Check for A2A_CONTEXT_ID in process env, or use session name as contextId
-			contextID := getContextIDFromProcess(pid)
-			if contextID == "" {
-				// Fallback: check if current-context-{sessionName} file exists
-				contextFile := filepath.Join(baseDir, fmt.Sprintf("current-context-%s", sessionName))
-				if data, err := os.ReadFile(contextFile); err == nil {
-					contextID = strings.TrimSpace(string(data))
-				}
-			}
-			if contextID == "" {
-				// Final fallback: use session name as contextId
-				contextID = sessionName
-			}
-
-			// Security: Validate context ID
-			if err := validateContextID(contextID); err != nil {
-				// Skip invalid context ID (don't fail entire discovery)
-				continue
-			}
-
-			sessionDir := filepath.Join(baseDir, contextID)
-
-			// Security: Validate session directory (prevent path traversal)
-			if err := validateSessionDir(baseDir, sessionDir); err != nil {
-				// Skip invalid session directory (don't fail entire discovery)
-				continue
-			}
-
+			// NOTE: Discovery only finds pane location (PaneID, SessionName).
+			// SessionDir is NOT set here - caller provides contextID from postman's --context-id.
 			nodes[node] = NodeInfo{
 				PaneID:      paneID,
 				SessionName: sessionName,
-				SessionDir:  sessionDir,
+				SessionDir:  "", // Caller sets this using postman's context ID
 			}
 		}
 	}
@@ -91,29 +61,3 @@ func validatePID(pid string) error {
 	return nil
 }
 
-// validateContextID validates that the context ID contains only safe characters.
-// Safe characters: alphanumeric, hyphen, underscore.
-func validateContextID(contextID string) error {
-	pattern := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	if !pattern.MatchString(contextID) {
-		return fmt.Errorf("invalid contextID: must be alphanumeric, hyphen, underscore only")
-	}
-	return nil
-}
-
-// validateSessionDir validates that sessionDir does not escape baseDir.
-// Prevents path traversal attacks.
-func validateSessionDir(baseDir, sessionDir string) error {
-	absBase, err := filepath.Abs(baseDir)
-	if err != nil {
-		return fmt.Errorf("resolving base directory: %w", err)
-	}
-	absSession, err := filepath.Abs(sessionDir)
-	if err != nil {
-		return fmt.Errorf("resolving session directory: %w", err)
-	}
-	if !strings.HasPrefix(absSession, absBase) {
-		return fmt.Errorf("path traversal detected: session directory not under base directory")
-	}
-	return nil
-}

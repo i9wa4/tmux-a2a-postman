@@ -11,7 +11,11 @@ import (
 )
 
 // Config holds postman configuration loaded from TOML file.
+// Python format: [postman] section contains all settings.
 type Config struct {
+	// Version
+	A2AVersion string `toml:"a2a_version"`
+
 	// Timing settings
 	ScanInterval     float64 `toml:"scan_interval_seconds"`
 	EnterDelay       float64 `toml:"enter_delay_seconds"`
@@ -34,11 +38,11 @@ type Config struct {
 	Edges        []string `toml:"edges"`
 	ReplyCommand string   `toml:"reply_command"`
 
-	// Node-specific configurations
-	Nodes map[string]NodeConfig `toml:"node"`
+	// Node-specific configurations (loaded from [nodename] sections)
+	Nodes map[string]NodeConfig
 
 	// Compaction detection
-	CompactionDetection CompactionDetectionConfig `toml:"compaction_detection"`
+	CompactionDetection CompactionDetectionConfig
 }
 
 // NodeConfig holds per-node configuration.
@@ -101,7 +105,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadConfig loads configuration from a TOML file.
+// LoadConfig loads configuration from a TOML file (Python format).
+// Python format requires [postman] section and [nodename] sections.
 // If path is empty, tries XDG config fallback chain.
 // If no file found, returns DefaultConfig().
 func LoadConfig(path string) (*Config, error) {
@@ -124,10 +129,42 @@ func LoadConfig(path string) (*Config, error) {
 		return DefaultConfig(), nil
 	}
 
-	// Parse TOML file
-	cfg := DefaultConfig()
-	if _, err := toml.DecodeFile(configPath, cfg); err != nil {
+	// Parse TOML file with metadata (Python format)
+	var rootSections map[string]toml.Primitive
+	md, err := toml.DecodeFile(configPath, &rootSections)
+	if err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
+	// Decode [postman] section (required)
+	cfg := DefaultConfig()
+	postmanPrim, ok := rootSections["postman"]
+	if !ok {
+		return nil, fmt.Errorf("[postman] section is required in config file")
+	}
+	if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
+		return nil, fmt.Errorf("decoding [postman] section: %w", err)
+	}
+
+	// Decode [nodename] sections (everything except postman and compaction_detection)
+	cfg.Nodes = make(map[string]NodeConfig)
+	for name, prim := range rootSections {
+		if name == "postman" || name == "compaction_detection" {
+			continue
+		}
+
+		var node NodeConfig
+		if err := md.PrimitiveDecode(prim, &node); err != nil {
+			return nil, fmt.Errorf("decoding [%s] section: %w", name, err)
+		}
+		cfg.Nodes[name] = node
+	}
+
+	// Decode [compaction_detection] section if exists
+	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
+		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
+			return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
+		}
 	}
 
 	return cfg, nil
@@ -136,17 +173,17 @@ func LoadConfig(path string) (*Config, error) {
 // ResolveConfigPath returns the first existing config file in the fallback chain.
 // Returns empty string if no config file is found.
 func ResolveConfigPath() string {
-	// Try XDG_CONFIG_HOME/postman/config.toml
+	// Try XDG_CONFIG_HOME/postman/postman.toml
 	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
-		path := filepath.Join(xdgConfigHome, "postman", "config.toml")
+		path := filepath.Join(xdgConfigHome, "postman", "postman.toml")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 
-	// Try ~/.config/postman/config.toml
+	// Try ~/.config/postman/postman.toml
 	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".config", "postman", "config.toml")
+		path := filepath.Join(home, ".config", "postman", "postman.toml")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
@@ -156,7 +193,8 @@ func ResolveConfigPath() string {
 }
 
 // ParseEdges parses edge definitions into an adjacency map.
-// Edge format: "A -- B -- C" (chain syntax, creates bidirectional edges A↔B, B↔C).
+// Edge format: "A -- B -- C" or "A --> B --> C" (both create bidirectional edges A↔B, B↔C).
+// Both "--" (Go format) and "-->" (Python format) are supported.
 // Returns error for invalid formats.
 func ParseEdges(edges []string) (map[string][]string, error) {
 	result := make(map[string][]string)
@@ -167,10 +205,19 @@ func ParseEdges(edges []string) (map[string][]string, error) {
 			continue
 		}
 
-		// Split by "--" separator
-		parts := strings.Split(edge, "--")
+		// Determine separator: try "-->" first (Python format), then "--" (Go format)
+		var parts []string
+		switch {
+		case strings.Contains(edge, "-->"):
+			parts = strings.Split(edge, "-->")
+		case strings.Contains(edge, "--"):
+			parts = strings.Split(edge, "--")
+		default:
+			return nil, fmt.Errorf("invalid edge format (missing '--' or '-->'): %q", edge)
+		}
+
 		if len(parts) < 2 {
-			return nil, fmt.Errorf("invalid edge format (missing '--'): %q", edge)
+			return nil, fmt.Errorf("invalid edge format (need at least 2 nodes): %q", edge)
 		}
 
 		// Trim all parts

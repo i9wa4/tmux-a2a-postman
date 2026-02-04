@@ -48,16 +48,3 @@ func checkProcessForNode(pid string) string {
 	return ""
 }
 
-// getContextIDFromProcess extracts A2A_CONTEXT_ID from a process environment on Linux.
-func getContextIDFromProcess(pid string) string {
-	data, err := os.ReadFile("/proc/" + pid + "/environ")
-	if err != nil {
-		return ""
-	}
-	for _, entry := range strings.Split(string(data), "\x00") {
-		if strings.HasPrefix(entry, "A2A_CONTEXT_ID=") {
-			return strings.TrimPrefix(entry, "A2A_CONTEXT_ID=")
-		}
-	}
-	return ""
-}

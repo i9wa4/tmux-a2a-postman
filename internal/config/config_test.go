@@ -92,6 +92,8 @@ func TestLoadConfig(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.toml")
 
 	content := `
+[postman]
+a2a_version = "1.0"
 scan_interval_seconds = 2.0
 enter_delay_seconds = 1.0
 tmux_timeout_seconds = 10.0
@@ -105,14 +107,17 @@ digest_template = "Custom digest"
 draft_template = "Custom draft"
 reminder_message = "Custom reminder"
 reply_command = "custom-reply"
-edges = ["orchestrator -> worker", "worker <-> observer"]
+edges = ["orchestrator --> worker", "worker --> observer"]
 
-[node.orchestrator]
+[orchestrator]
 template = "orchestrator template"
 role = "coordinator"
+on_join = ""
 
-[node.worker]
+[worker]
 template = "worker template"
+role = "worker"
+on_join = ""
 subscribe_digest = true
 `
 
@@ -214,6 +219,7 @@ func TestLoadConfig_Partial(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.toml")
 
 	content := `
+[postman]
 scan_interval_seconds = 3.0
 base_dir = "/partial/base"
 `
@@ -337,13 +343,14 @@ func TestConfig_Fallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	xdgConfigHome := filepath.Join(tmpDir, "xdg-config")
 	configDir := filepath.Join(xdgConfigHome, "postman")
-	configPath := filepath.Join(configDir, "config.toml")
+	configPath := filepath.Join(configDir, "postman.toml")
 
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
 
 	content := `
+[postman]
 scan_interval_seconds = 5.0
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -368,6 +375,7 @@ func TestLoadConfig_BaseDir(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.toml")
 
 	content := `
+[postman]
 base_dir = "/custom/postman"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
