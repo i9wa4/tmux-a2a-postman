@@ -33,7 +33,6 @@ go.work.sum
 
 # Build output
 /tmux-a2a-postman
-/postman
 
 # Nix
 .direnv/
