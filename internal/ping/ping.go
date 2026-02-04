@@ -39,6 +39,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		"template":      nodeTemplate,
 		"talks_to_line": talksToLine,
 		"reply_command": replyCmd,
+		"session_dir":   nodeInfo.SessionDir,
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)

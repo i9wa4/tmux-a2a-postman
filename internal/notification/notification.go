@@ -40,7 +40,9 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	}
 
 	// Build inbox path
-	sessionDir := filepath.Dir(filepath.Dir(filepath.Dir(filename))) // Assuming filename is in post/
+	// filename is in post/ directory, so we need 2 Dir() calls to get session directory
+	// Example: /path/to/session-xxx/post/message.md -> /path/to/session-xxx
+	sessionDir := filepath.Dir(filepath.Dir(filename))
 	inboxPath := filepath.Join(sessionDir, "inbox", recipient)
 
 	// Build variables map
