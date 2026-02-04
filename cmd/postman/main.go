@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/compaction"
+	"github.com/i9wa4/tmux-a2a-postman/internal/concierge"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -317,6 +318,32 @@ func runStart(args []string) error {
 			},
 		}
 	}
+
+	// Start concierge status monitoring goroutine
+	go func() {
+		// Find concierge pane ID (best-effort, may not be available)
+		conciergePaneID, _ := concierge.FindConciergePaneID()
+
+		ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				paneInfo, err := concierge.GetPaneInfo(conciergePaneID)
+				if err == nil && paneInfo != nil {
+					daemonEvents <- tui.DaemonEvent{
+						Type: "concierge_status_update",
+						Details: map[string]interface{}{
+							"pane_info": paneInfo,
+						},
+					}
+				}
+			}
+		}
+	}()
 
 	// Start TUI
 	p := tea.NewProgram(tui.InitialModel(daemonEvents))

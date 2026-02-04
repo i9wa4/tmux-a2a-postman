@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/concierge"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
@@ -24,7 +25,7 @@ type Edge struct {
 
 // DaemonEvent represents an event from the daemon goroutine.
 type DaemonEvent struct {
-	Type    string // "message_received", "status_update", "error", "inbox_update", "config_update"
+	Type    string // "message_received", "status_update", "error", "inbox_update", "config_update", "concierge_status_update"
 	Message string
 	Details map[string]interface{}
 }
@@ -45,6 +46,9 @@ type Model struct {
 	edges        []Edge
 	selectedEdge int
 
+	// Concierge status
+	conciergeStatus *concierge.PaneInfo
+
 	// Shared state
 	daemonEvents <-chan DaemonEvent
 	messages     []string
@@ -57,17 +61,18 @@ type Model struct {
 // InitialModel creates the initial TUI model.
 func InitialModel(daemonEvents <-chan DaemonEvent) Model {
 	return Model{
-		currentView:  ViewEvents,
-		messageList:  []message.MessageInfo{},
-		selectedMsg:  0,
-		edges:        []Edge{},
-		selectedEdge: 0,
-		daemonEvents: daemonEvents,
-		messages:     []string{},
-		status:       "Starting...",
-		nodeCount:    0,
-		lastEvent:    "",
-		quitting:     false,
+		currentView:     ViewEvents,
+		messageList:     []message.MessageInfo{},
+		selectedMsg:     0,
+		edges:           []Edge{},
+		selectedEdge:    0,
+		conciergeStatus: nil,
+		daemonEvents:    daemonEvents,
+		messages:        []string{},
+		status:          "Starting...",
+		nodeCount:       0,
+		lastEvent:       "",
+		quitting:        false,
 	}
 }
 
@@ -177,6 +182,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedEdge = 0
 				}
 			}
+		case "concierge_status_update":
+			// Update concierge status from Details
+			if paneInfo, ok := msg.Details["pane_info"].(*concierge.PaneInfo); ok {
+				m.conciergeStatus = paneInfo
+			}
 		case "error":
 			m.messages = append(m.messages, fmt.Sprintf("ERROR: %s", msg.Message))
 			if len(m.messages) > 10 {
@@ -204,6 +214,10 @@ func (m Model) View() string {
 	// Header
 	b.WriteString("=== Postman Daemon ===\n")
 	b.WriteString(fmt.Sprintf("Status: %s | Nodes: %d\n", m.status, m.nodeCount))
+	b.WriteString("\n")
+
+	// Concierge Status Panel
+	b.WriteString(m.renderConciergePanel())
 	b.WriteString("\n")
 
 	// View tabs
@@ -289,5 +303,39 @@ func (m Model) renderRoutingView() string {
 			}
 		}
 	}
+	return b.String()
+}
+
+func (m Model) renderConciergePanel() string {
+	var b strings.Builder
+	b.WriteString("[Concierge Status] ")
+
+	if m.conciergeStatus == nil {
+		b.WriteString("UNKNOWN (no data)")
+		return b.String()
+	}
+
+	// Status indicator with color emoji
+	statusEmoji := ""
+	switch m.conciergeStatus.Status {
+	case concierge.StatusVisible:
+		statusEmoji = "🟢"
+	case concierge.StatusWindowVisible:
+		statusEmoji = "🟡"
+	case concierge.StatusNotVisible:
+		statusEmoji = "🔴"
+	case concierge.StatusUnknown:
+		statusEmoji = "⚪"
+	case concierge.StatusInactive:
+		statusEmoji = "⚫"
+	}
+
+	b.WriteString(fmt.Sprintf("%s %s", statusEmoji, m.conciergeStatus.Status))
+
+	// Additional info
+	if m.conciergeStatus.PaneID != "" {
+		b.WriteString(fmt.Sprintf(" | Pane: %s", m.conciergeStatus.PaneID))
+	}
+
 	return b.String()
 }
