@@ -95,7 +95,7 @@ func RunDaemonLoop(
 								},
 							}
 						}
-						if err := message.DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+						if err := message.DeliverMessage(sessionDir, contextID, filename, nodes, adjacency, cfg); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),

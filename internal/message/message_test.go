@@ -105,7 +105,11 @@ func TestDeliverMessage(t *testing.T) {
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
 	}
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -137,7 +141,11 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 	}
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -173,8 +181,12 @@ func TestRouting_Allowed(t *testing.T) {
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
 	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
 
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -210,8 +222,12 @@ func TestRouting_Denied(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined between orchestrator and worker
 	adjacency := map[string][]string{}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
 
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -248,8 +264,12 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	// No edge defined for postman
 	adjacency := map[string][]string{}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
 
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -280,8 +300,12 @@ func TestPONG_Handling(t *testing.T) {
 
 	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
 	adjacency := map[string][]string{}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
 
-	if err := DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	if err := DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 

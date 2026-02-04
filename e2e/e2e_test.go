@@ -102,8 +102,14 @@ func TestE2E_BasicRouting(t *testing.T) {
 		"worker":       {"orchestrator"},
 	}
 
+	// Mock config
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+
 	// Deliver message (should move to inbox/worker/)
-	if err := message.DeliverMessage(sessionDir, filename, nodes, adjacency); err != nil {
+	if err := message.DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
 		t.Fatalf("message.DeliverMessage failed: %v", err)
 	}
 

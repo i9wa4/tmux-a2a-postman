@@ -3,12 +3,14 @@ package message
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
 
 // MessageInfo holds parsed information from a message filename.
@@ -59,7 +61,7 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // Routing rules (DEFAULT DENY):
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-func DeliverMessage(sessionDir string, filename string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string) error {
+func DeliverMessage(sessionDir string, contextID string, filename string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) error {
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	info, err := ParseMessageFilename(filename)
@@ -121,8 +123,12 @@ func DeliverMessage(sessionDir string, filename string, knownNodes map[string]di
 	}
 
 	// Send tmux notification to the recipient pane
-	if err := notifyNode(paneID, info.From); err != nil {
-		_ = err // Suppress unused variable warning
+	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, postPath)
+	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	if err := notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout); err != nil {
+		// Error already logged by SendToPane (WARNING level)
+		// Continue with delivery (notification failure does not fail delivery)
 	}
 
 	// Update activity timestamps for idle detection
@@ -131,12 +137,6 @@ func DeliverMessage(sessionDir string, filename string, knownNodes map[string]di
 
 	fmt.Printf("postman: delivered %s -> %s\n", filename, info.To)
 	return nil
-}
-
-// notifyNode sends a non-intrusive tmux display-message to the target pane.
-func notifyNode(paneID string, sender string) error {
-	msg := fmt.Sprintf("Message from %s", sender)
-	return exec.Command("tmux", "display-message", "-t", paneID, msg).Run()
 }
 
 // ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.
