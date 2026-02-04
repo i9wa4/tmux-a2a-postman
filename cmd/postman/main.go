@@ -30,132 +30,90 @@ import (
 )
 
 func main() {
-	// Dual-mode: no args or --tui → TUI mode (default interactive)
-	if len(os.Args) == 1 {
-		// No arguments → TUI mode
-		if err := runTUIMain([]string{}); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman TUI: %v\n", err)
-			os.Exit(1)
-		}
-		return
+	// Top-level flags
+	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
+	showVersion := fs.Bool("version", false, "show version")
+	showHelp := fs.Bool("help", false, "show help")
+	noTUI := fs.Bool("no-tui", false, "run without TUI")
+	contextID := fs.String("context-id", "", "session context ID (auto-generated if not specified)")
+	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
+	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/postman/postman.log)")
+
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: postman [options] [command]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  start        Start postman daemon (default)")
+		fmt.Fprintln(os.Stderr, "  create-draft Create message draft")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  postman --no-tui                    # Start daemon without TUI")
+		fmt.Fprintln(os.Stderr, "  postman --context-id my-session     # Start with specific context")
+		fmt.Fprintln(os.Stderr, "  postman create-draft --to worker    # Create draft message")
 	}
 
-	// Check for --version or -v flag
-	if os.Args[1] == "--version" || os.Args[1] == "-v" {
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(1)
+	}
+
+	if *showVersion {
 		fmt.Printf("postman %s\n", version.Version)
 		return
 	}
 
-	// Check for --tui flag (explicit TUI launch)
-	if os.Args[1] == "--tui" {
-		if err := runTUIMain(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman TUI: %v\n", err)
-			os.Exit(1)
-		}
+	if *showHelp {
+		fs.Usage()
 		return
 	}
 
-	// Backward compatible CLI mode
-	switch os.Args[1] {
-	case "version":
-		fmt.Printf("postman %s\n", version.Version)
+	// Determine command (default: start)
+	command := "start"
+	args := fs.Args()
+	if len(args) > 0 {
+		command = args[0]
+		args = args[1:]
+	}
+
+	switch command {
 	case "start":
-		if err := runStart(os.Args[2:]); err != nil {
+		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
 			os.Exit(1)
 		}
 	case "create-draft":
-		if err := runCreateDraft(os.Args[2:]); err != nil {
+		if err := runCreateDraft(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman create-draft: %v\n", err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "❌ postman: unknown command %q\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, "usage: postman [--version] [--tui] [command] [options]")
-		fmt.Fprintln(os.Stderr, "commands: start, create-draft, version")
+		fmt.Fprintf(os.Stderr, "❌ postman: unknown command %q\n", command)
+		fs.Usage()
 		os.Exit(1)
 	}
 }
 
-// runTUIMain runs the TUI mode (create-draft TUI).
-func runTUIMain(args []string) error {
-	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-	contextID := fs.String("context-id", "", "session context ID (optional, fallback to env/file)")
-	configPath := fs.String("config", "", "path to config file (optional)")
-	if err := fs.Parse(args); err != nil {
-		return err
+func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
+	// Auto-generate context ID if not specified
+	if contextID == "" {
+		contextID = fmt.Sprintf("session-%s-%04x",
+			time.Now().Format("20060102-150405"),
+			time.Now().UnixNano()&0xffff)
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-
-	// Resolve context ID with fallback chain
-	resolvedContextID, source, err := config.ResolveContextID(*contextID, baseDir)
-	if err != nil {
-		return fmt.Errorf("resolving context ID: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "postman: using context ID from %s\n", source)
-
-	sessionDir := filepath.Join(baseDir, resolvedContextID)
-
-	// Check if daemon is running (check for postman.pid)
-	pidPath := filepath.Join(sessionDir, "postman.pid")
-	if _, err := os.Stat(pidPath); os.IsNotExist(err) {
-		return fmt.Errorf("daemon not running for context %s (start with: postman start --context-id %s)", resolvedContextID, resolvedContextID)
-	}
-
-	// Discover nodes (require daemon to be running)
-	nodes, err := discovery.DiscoverNodes(baseDir)
-	if err != nil {
-		return fmt.Errorf("discovering nodes: %w (is daemon running?)", err)
-	}
-
-	// Get sender node from A2A_NODE env
-	senderNode := os.Getenv("A2A_NODE")
-	if senderNode == "" {
-		return fmt.Errorf("A2A_NODE environment variable not set")
-	}
-
-	// Extract node names for TUI (map[string]NodeInfo -> map[string]string)
-	nodeNames := make(map[string]string)
-	for nodeName, nodeInfo := range nodes {
-		nodeNames[nodeName] = nodeInfo.PaneID
-	}
-
-	// Launch create-draft TUI
-	m := tui.InitialDraftModel(sessionDir, resolvedContextID, senderNode, nodeNames)
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	return nil
-}
-
-func runStart(args []string) error {
-	fs := flag.NewFlagSet("start", flag.ContinueOnError)
-	contextID := fs.String("context-id", "", "session context ID (required)")
-	configPath := fs.String("config", "", "path to config file (optional)")
-	logFilePath := fs.String("log-file", "", "log file path (optional, defaults to $XDG_STATE_HOME/postman/postman.log)")
-	noTUI := fs.Bool("no-tui", false, "run without TUI")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *contextID == "" {
-		return fmt.Errorf("--context-id is required")
-	}
-
-	cfg, err := config.LoadConfig(*configPath)
+	// LoadConfig handles auto-detection if configPath is empty
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
 	// Setup log file
-	logPath := *logFilePath
+	logPath := logFilePath
 	if logPath == "" {
 		// Default to $XDG_STATE_HOME/postman/postman.log
 		if xdgStateHome := os.Getenv("XDG_STATE_HOME"); xdgStateHome != "" {
@@ -181,7 +139,7 @@ func runStart(args []string) error {
 		log.SetOutput(logFile)
 		log.SetFlags(log.LstdFlags)
 
-		log.Printf("postman: daemon starting (context=%s, log=%s)\n", *contextID, logPath)
+		log.Printf("postman: daemon starting (context=%s, log=%s)\n", contextID, logPath)
 	}
 
 	// Parse edge definitions for routing
@@ -191,7 +149,7 @@ func runStart(args []string) error {
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	sessionDir := filepath.Join(baseDir, *contextID)
+	sessionDir := filepath.Join(baseDir, contextID)
 
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
@@ -235,7 +193,7 @@ func runStart(args []string) error {
 	}
 
 	// Watch config file if exists
-	resolvedConfigPath := *configPath
+	resolvedConfigPath := configPath
 	if resolvedConfigPath == "" {
 		resolvedConfigPath = config.ResolveConfigPath()
 	}
@@ -254,13 +212,13 @@ func runStart(args []string) error {
 	}
 
 	log.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
-		*contextID, os.Getpid(), len(nodes))
+		contextID, os.Getpid(), len(nodes))
 
 	// Send PING to all nodes after startup delay
 	if cfg.StartupDelay > 0 {
 		startupDelay := time.Duration(cfg.StartupDelay * float64(time.Second))
 		time.AfterFunc(startupDelay, func() {
-			ping.SendPingToAll(baseDir, *contextID, cfg)
+			ping.SendPingToAll(baseDir, contextID, cfg)
 		})
 	}
 
@@ -284,7 +242,7 @@ func runStart(args []string) error {
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
-	go daemon.RunDaemonLoop(ctx, baseDir, sessionDir, *contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
+	go daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
@@ -345,7 +303,7 @@ func runStart(args []string) error {
 	}()
 
 	// Start TUI or wait for shutdown
-	if *noTUI {
+	if noTUI {
 		// No TUI mode: log only, block until ctx.Done()
 		<-ctx.Done()
 	} else {

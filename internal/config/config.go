@@ -136,14 +136,13 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// Decode [postman] section (required)
+	// Decode [postman] section (optional, uses defaults if not present)
 	cfg := DefaultConfig()
 	postmanPrim, ok := rootSections["postman"]
-	if !ok {
-		return nil, fmt.Errorf("[postman] section is required in config file")
-	}
-	if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
-		return nil, fmt.Errorf("decoding [postman] section: %w", err)
+	if ok {
+		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
+			return nil, fmt.Errorf("decoding [postman] section: %w", err)
+		}
 	}
 
 	// Decode [nodename] sections (everything except postman and compaction_detection)
