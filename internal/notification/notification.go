@@ -39,10 +39,16 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		talksToLine = fmt.Sprintf("Can talk to: %s", strings.Join(activeTalksTo, ", "))
 	}
 
-	// Build inbox path
-	// filename is in post/ directory, so we need 2 Dir() calls to get session directory
-	// Example: /path/to/session-xxx/post/message.md -> /path/to/session-xxx
-	sessionDir := filepath.Dir(filepath.Dir(filename))
+	// Build inbox path using recipient's actual session directory
+	var sessionDir string
+	if recipientInfo, found := nodes[recipient]; found {
+		// Use recipient's actual SessionDir from discovery
+		sessionDir = recipientInfo.SessionDir
+	} else {
+		// Fallback: calculate from filename
+		// filename is in post/ directory: /path/to/session-xxx/post/message.md -> /path/to/session-xxx
+		sessionDir = filepath.Dir(filepath.Dir(filename))
+	}
 	inboxPath := filepath.Join(sessionDir, "inbox", recipient)
 
 	// Build variables map

@@ -39,8 +39,9 @@ func RunDaemonLoop(
 	// Debounce timers for different paths
 	var inboxTimer *time.Timer
 	var configTimer *time.Timer
-	postDir := filepath.Join(sessionDir, "post")
-	inboxDir := filepath.Join(sessionDir, "inbox")
+
+	// Track watched directories to avoid duplicates
+	watchedDirs := make(map[string]bool)
 
 	for {
 		select {
@@ -58,8 +59,8 @@ func RunDaemonLoop(
 			// Path-based routing
 			eventPath := event.Name
 
-			// Handle post/ directory events
-			if strings.HasPrefix(eventPath, postDir) {
+			// Handle post/ directory events (any session)
+			if strings.HasSuffix(filepath.Dir(eventPath), "post") {
 				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
@@ -75,6 +76,21 @@ func RunDaemonLoop(
 							for nodeName, nodeInfo := range freshNodes {
 								if !knownNodes[nodeName] {
 									knownNodes[nodeName] = true
+
+									// Add new node's directories to watch
+									nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
+									nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
+									if !watchedDirs[nodePostDir] {
+										if err := watcher.Add(nodePostDir); err == nil {
+											watchedDirs[nodePostDir] = true
+										}
+									}
+									if !watchedDirs[nodeInboxDir] {
+										if err := watcher.Add(nodeInboxDir); err == nil {
+											watchedDirs[nodeInboxDir] = true
+										}
+									}
+
 									// Send PING after delay
 									if cfg.NewNodePingDelay > 0 {
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
@@ -126,8 +142,8 @@ func RunDaemonLoop(
 				}
 			}
 
-			// Handle inbox/ directory events (with debounce)
-			if strings.HasPrefix(eventPath, inboxDir) {
+			// Handle inbox/ directory events (any session, with debounce)
+			if strings.HasSuffix(filepath.Dir(filepath.Dir(eventPath)), "inbox") || strings.HasSuffix(filepath.Dir(eventPath), "inbox") {
 				// Debounce inbox updates (200ms)
 				if inboxTimer != nil {
 					inboxTimer.Stop()
@@ -135,7 +151,17 @@ func RunDaemonLoop(
 				inboxTimer = time.AfterFunc(200*time.Millisecond, func() {
 					// Scan inbox for current node
 					if nodeName := os.Getenv("A2A_NODE"); nodeName != "" {
-						msgList := message.ScanInboxMessages(filepath.Join(inboxDir, nodeName))
+						// Get inbox directory from event path
+						// eventPath could be: /path/to/session-xxx/inbox/nodename/message.md
+						// or /path/to/session-xxx/inbox/nodename/
+						var nodeInboxDir string
+						if strings.HasSuffix(filepath.Dir(eventPath), nodeName) {
+							nodeInboxDir = filepath.Dir(eventPath)
+						} else {
+							// Fallback: use default session
+							nodeInboxDir = filepath.Join(sessionDir, "inbox", nodeName)
+						}
+						msgList := message.ScanInboxMessages(nodeInboxDir)
 						events <- tui.DaemonEvent{
 							Type: "inbox_update",
 							Details: map[string]interface{}{

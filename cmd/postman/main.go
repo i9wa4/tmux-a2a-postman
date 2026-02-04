@@ -186,11 +186,48 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	defer func() { _ = watcher.Close() }()
 
-	if err := watcher.Add(postDir); err != nil {
-		return fmt.Errorf("watching post directory: %w", err)
+	// Discover nodes at startup (before watching)
+	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+	if err != nil {
+		// WARNING: log but continue - nodes can be empty
+		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
+		nodes = make(map[string]discovery.NodeInfo)
 	}
-	if err := watcher.Add(inboxDir); err != nil {
-		return fmt.Errorf("watching inbox directory: %w", err)
+
+	// Watch all discovered session directories
+	watchedDirs := make(map[string]bool)
+	for nodeName, nodeInfo := range nodes {
+		nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
+		nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
+
+		if !watchedDirs[nodePostDir] {
+			if err := watcher.Add(nodePostDir); err != nil {
+				log.Printf("⚠️  postman: warning: could not watch %s post directory: %v\n", nodeName, err)
+			} else {
+				watchedDirs[nodePostDir] = true
+			}
+		}
+		if !watchedDirs[nodeInboxDir] {
+			if err := watcher.Add(nodeInboxDir); err != nil {
+				log.Printf("⚠️  postman: warning: could not watch %s inbox directory: %v\n", nodeName, err)
+			} else {
+				watchedDirs[nodeInboxDir] = true
+			}
+		}
+	}
+
+	// Also watch default session directories (for postman's own messages)
+	if !watchedDirs[postDir] {
+		if err := watcher.Add(postDir); err != nil {
+			return fmt.Errorf("watching post directory: %w", err)
+		}
+		watchedDirs[postDir] = true
+	}
+	if !watchedDirs[inboxDir] {
+		if err := watcher.Add(inboxDir); err != nil {
+			return fmt.Errorf("watching inbox directory: %w", err)
+		}
+		watchedDirs[inboxDir] = true
 	}
 
 	// Watch config file if exists
@@ -202,14 +239,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if err := watcher.Add(resolvedConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch config: %v\n", err)
 		}
-	}
-
-	// Discover nodes at startup
-	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
-	if err != nil {
-		// WARNING: log but continue - nodes can be empty
-		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
-		nodes = make(map[string]discovery.NodeInfo)
 	}
 
 	log.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",

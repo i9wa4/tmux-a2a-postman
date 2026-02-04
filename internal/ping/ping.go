@@ -83,11 +83,8 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 		activeNodes = append(activeNodes, nodeName)
 	}
 
-	// Use postman's own contextID for session directory
-	sessionDir := filepath.Join(baseDir, contextID)
+	// Send PING to each node using their actual SessionDir
 	for nodeName, nodeInfo := range nodes {
-		// Override nodeInfo.SessionDir with postman's session
-		nodeInfo.SessionDir = sessionDir
 		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
