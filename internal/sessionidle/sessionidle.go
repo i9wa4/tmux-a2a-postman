@@ -79,8 +79,10 @@ func GetPaneActivities() ([]PaneActivity, error) {
 
 // CheckSessionIdle checks if all nodes in each session are idle.
 // Returns a list of session names that are fully idle.
+// Only monitors nodes that are connected via edges (adjacency map).
 func (s *SessionIdleState) CheckSessionIdle(
 	nodes map[string]discovery.NodeInfo,
+	adjacency map[string][]string,
 	idleThresholdSeconds float64,
 	cooldownSeconds float64,
 ) ([]string, error) {
@@ -107,6 +109,10 @@ func (s *SessionIdleState) CheckSessionIdle(
 	sessionNodes := make(map[string][]string)
 	nodePaneMap := make(map[string]string) // nodeName -> paneID
 	for nodeName, nodeInfo := range nodes {
+		// Only include nodes connected via edges
+		if _, connected := adjacency[nodeName]; !connected {
+			continue // Skip nodes not in edges
+		}
 		sessionNodes[nodeInfo.SessionName] = append(sessionNodes[nodeInfo.SessionName], nodeName)
 		nodePaneMap[nodeName] = nodeInfo.PaneID
 	}
@@ -252,6 +258,7 @@ func StartSessionIdleCheck(
 				// Check for idle sessions
 				idleSessions, err := state.CheckSessionIdle(
 					nodes,
+					adjacency,
 					cfg.Watchdog.IdleThresholdSeconds,
 					cfg.Watchdog.CooldownSeconds,
 				)
