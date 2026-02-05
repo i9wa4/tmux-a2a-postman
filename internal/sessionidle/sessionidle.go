@@ -1,11 +1,12 @@
 package sessionidle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +16,12 @@ import (
 )
 
 // SessionIdleState tracks the last check time for each session to implement cooldown.
+// Issue #31: Now uses capture-pane content hashing instead of #{pane_activity}.
 type SessionIdleState struct {
 	mu              sync.Mutex
 	lastAlertMap    map[string]time.Time
 	lastActivityMap map[string]map[string]time.Time // sessionName -> nodeName -> lastActivityTime
+	paneContentHash map[string]string               // paneID -> content hash (for detecting changes)
 }
 
 // NewSessionIdleState creates a new SessionIdleState.
@@ -26,6 +29,7 @@ func NewSessionIdleState() *SessionIdleState {
 	return &SessionIdleState{
 		lastAlertMap:    make(map[string]time.Time),
 		lastActivityMap: make(map[string]map[string]time.Time),
+		paneContentHash: make(map[string]string),
 	}
 }
 
@@ -35,10 +39,29 @@ type PaneActivity struct {
 	LastActivityTime time.Time
 }
 
+// capturePaneContent captures the visible content of a tmux pane.
+// Returns the content as a string, or empty string on error.
+func capturePaneContent(paneID string) (string, error) {
+	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
+	}
+	return string(output), nil
+}
+
+// hashContent computes SHA256 hash of the content.
+func hashContent(content string) string {
+	hash := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(hash[:])
+}
+
 // GetPaneActivities retrieves activity information for all tmux panes.
-// Parses output of: tmux list-panes -a -F "#{pane_activity} #{pane_id}"
-func GetPaneActivities() ([]PaneActivity, error) {
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_activity} #{pane_id}")
+// Issue #31: Uses capture-pane content diff instead of #{pane_activity}.
+// This prevents false positives when users cycle through windows (which resets #{pane_activity}).
+func (s *SessionIdleState) GetPaneActivities() ([]PaneActivity, error) {
+	// Get list of all pane IDs
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("listing panes: %w: %s", err, output)
@@ -46,32 +69,47 @@ func GetPaneActivities() ([]PaneActivity, error) {
 
 	var activities []PaneActivity
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	now := time.Now()
+
 	for _, line := range lines {
-		if line == "" {
+		paneID := strings.TrimSpace(line)
+		if paneID == "" {
 			continue
 		}
 
-		// Parse "#{pane_activity} #{pane_id}"
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			continue
-		}
-
-		// Parse Unix timestamp (seconds since epoch)
-		timestamp, err := strconv.ParseInt(parts[0], 10, 64)
+		// Capture pane content
+		content, err := capturePaneContent(paneID)
 		if err != nil {
+			// Skip panes that fail to capture (e.g., closed panes)
 			continue
 		}
 
-		// Skip panes with activity timestamp of 0 (never active or just created)
-		if timestamp == 0 {
+		// Compute content hash
+		currentHash := hashContent(content)
+
+		// Check if content changed
+		prevHash, exists := s.paneContentHash[paneID]
+		if !exists {
+			// First time seeing this pane - mark as active now
+			s.paneContentHash[paneID] = currentHash
+			activities = append(activities, PaneActivity{
+				PaneID:           paneID,
+				LastActivityTime: now,
+			})
 			continue
 		}
 
-		activities = append(activities, PaneActivity{
-			PaneID:           parts[1],
-			LastActivityTime: time.Unix(timestamp, 0),
-		})
+		if currentHash != prevHash {
+			// Content changed - pane is active
+			s.paneContentHash[paneID] = currentHash
+			activities = append(activities, PaneActivity{
+				PaneID:           paneID,
+				LastActivityTime: now,
+			})
+		} else {
+			// Content unchanged - use previous activity time (implicit: pane is idle)
+			// We don't add to activities list, caller will handle idle panes
+		}
 	}
 
 	return activities, nil
@@ -93,8 +131,8 @@ func (s *SessionIdleState) CheckSessionIdle(
 		return nil, nil // Idle detection disabled
 	}
 
-	// Get pane activities
-	activities, err := GetPaneActivities()
+	// Get pane activities (using capture-pane content diff - Issue #31)
+	activities, err := s.GetPaneActivities()
 	if err != nil {
 		return nil, fmt.Errorf("getting pane activities: %w", err)
 	}
@@ -142,19 +180,26 @@ func (s *SessionIdleState) CheckSessionIdle(
 		allIdle := true
 		for _, nodeName := range nodeNames {
 			paneID := nodePaneMap[nodeName]
-			activity, found := activityMap[paneID]
 
-			if !found {
-				// Pane not found in activity list, consider as not idle
-				allIdle = false
-				break
+			// Determine last activity time
+			var lastActivityTime time.Time
+			if activity, found := activityMap[paneID]; found {
+				// Content changed - update activity time
+				lastActivityTime = activity.LastActivityTime
+				s.lastActivityMap[sessionName][nodeName] = lastActivityTime
+			} else {
+				// Content unchanged - use previous activity time
+				if prevTime, exists := s.lastActivityMap[sessionName][nodeName]; exists {
+					lastActivityTime = prevTime
+				} else {
+					// No previous activity recorded - assume active now (first check)
+					lastActivityTime = now
+					s.lastActivityMap[sessionName][nodeName] = lastActivityTime
+				}
 			}
 
-			// Update last activity map
-			s.lastActivityMap[sessionName][nodeName] = activity.LastActivityTime
-
 			// Check if idle
-			timeSinceActivity := now.Sub(activity.LastActivityTime)
+			timeSinceActivity := now.Sub(lastActivityTime)
 			if timeSinceActivity < threshold {
 				allIdle = false
 				break
