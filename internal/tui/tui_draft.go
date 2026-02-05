@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // DraftMode represents the current step in draft creation.
@@ -33,6 +35,7 @@ type DraftModel struct {
 	sessionDir    string
 	contextID     string
 	senderNode    string
+	cfg           *config.Config
 	err           error
 	quitting      bool
 	submitted     bool
@@ -48,7 +51,7 @@ func (i recipientItem) Title() string       { return i.name }
 func (i recipientItem) Description() string { return "" }
 
 // InitialDraftModel creates the initial model for create-draft TUI.
-func InitialDraftModel(sessionDir, contextID, senderNode string, nodes map[string]string) DraftModel {
+func InitialDraftModel(sessionDir, contextID, senderNode string, nodes map[string]string, cfg *config.Config) DraftModel {
 	// Build recipient list
 	items := make([]list.Item, 0, len(nodes))
 	for nodeName := range nodes {
@@ -74,6 +77,7 @@ func InitialDraftModel(sessionDir, contextID, senderNode string, nodes map[strin
 		sessionDir:    sessionDir,
 		contextID:     contextID,
 		senderNode:    senderNode,
+		cfg:           cfg,
 	}
 }
 
@@ -201,8 +205,25 @@ func (m *DraftModel) submitDraft() error {
 	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, m.senderNode, m.selectedNode)
 	draftPath := filepath.Join(draftDir, filename)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  timestamp: %s\n---\n\n%s\n",
-		m.contextID, m.senderNode, m.selectedNode, now.Format("2006-01-02T15:04:05.000000"), m.messageBody)
+	// Use draft_template from config if available
+	content := m.cfg.DraftTemplate
+	if content == "" {
+		// Fallback to minimal template
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n{message}\n"
+	}
+
+	// Build variables map for template expansion
+	vars := map[string]string{
+		"context_id": m.contextID,
+		"from":       m.senderNode,
+		"to":         m.selectedNode,
+		"timestamp":  now.Format(time.RFC3339),
+		"message":    m.messageBody,
+	}
+
+	// Expand template with variables and shell commands
+	timeout := time.Duration(m.cfg.TmuxTimeout * float64(time.Second))
+	content = template.ExpandTemplate(content, vars, timeout)
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing draft: %w", err)

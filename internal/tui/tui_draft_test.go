@@ -36,7 +36,10 @@ func TestTUI_CreateDraft_Submit(t *testing.T) {
 		"orchestrator": "orchestrator-pane",
 	}
 
-	m := InitialDraftModel(sessionDir, "test-context", "worker", nodes)
+	// Use default config for testing
+	cfg := config.DefaultConfig()
+
+	m := InitialDraftModel(sessionDir, "test-context", "worker", nodes, cfg)
 
 	// Verify initial state
 	if m.mode != DraftModeSelectRecipient {
@@ -132,7 +135,10 @@ func TestTUI_Draft_Navigation(t *testing.T) {
 		"orchestrator": "orchestrator-pane",
 	}
 
-	m := InitialDraftModel(sessionDir, "test-context", "worker", nodes)
+	// Use default config for testing
+	cfg := config.DefaultConfig()
+
+	m := InitialDraftModel(sessionDir, "test-context", "worker", nodes, cfg)
 
 	// Test recipient selection
 	if m.mode != DraftModeSelectRecipient {

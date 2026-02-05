@@ -26,6 +26,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 	"github.com/i9wa4/tmux-a2a-postman/internal/watchdog"
@@ -409,14 +410,20 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {{context_id}}\n  from: {{from}}\n  to: {{to}}\n  timestamp: {{timestamp}}\n---\n\n## Content\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n## Content\n"
 	}
 
-	// Expand template variables
-	content = strings.ReplaceAll(content, "{{context_id}}", resolvedContextID)
-	content = strings.ReplaceAll(content, "{{from}}", sender)
-	content = strings.ReplaceAll(content, "{{to}}", *to)
-	content = strings.ReplaceAll(content, "{{timestamp}}", now.Format(time.RFC3339))
+	// Build variables map for template expansion
+	vars := map[string]string{
+		"context_id": resolvedContextID,
+		"from":       sender,
+		"to":         *to,
+		"timestamp":  now.Format(time.RFC3339),
+	}
+
+	// Expand template with variables and shell commands
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	content = template.ExpandTemplate(content, vars, timeout)
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing draft: %w", err)
