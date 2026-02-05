@@ -106,10 +106,8 @@ func (s *SessionIdleState) GetPaneActivities() ([]PaneActivity, error) {
 				PaneID:           paneID,
 				LastActivityTime: now,
 			})
-		} else {
-			// Content unchanged - use previous activity time (implicit: pane is idle)
-			// We don't add to activities list, caller will handle idle panes
 		}
+		// Content unchanged - caller handles idle panes (not in activities list)
 	}
 
 	return activities, nil
