@@ -10,7 +10,7 @@ import (
 func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 	digestedFiles := make(map[string]bool)
 	nodes := map[string]discovery.NodeInfo{
-		"observer-a": {
+		"test-session:observer-a": {
 			PaneID:      "%100",
 			SessionName: "test-session",
 		},
@@ -27,18 +27,20 @@ func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 	}
 
 	// Call with sender="observer-a" (should be skipped due to loop prevention)
-	SendObserverDigest("msg-from-observer-a.md", "observer-a", nodes, cfg, digestedFiles)
+	filename1 := "20260206-120000-from-observer-a-to-worker.md"
+	SendObserverDigest(filename1, "observer-a", nodes, cfg, digestedFiles)
 
 	// Verify file was NOT added to digestedFiles (loop prevention worked)
-	if digestedFiles["msg-from-observer-a.md"] {
+	if digestedFiles[filename1] {
 		t.Errorf("digestedFiles should not contain observer message, but it does")
 	}
 
 	// Call with sender="worker" (should be processed)
-	SendObserverDigest("msg-from-worker.md", "worker", nodes, cfg, digestedFiles)
+	filename2 := "20260206-120001-from-worker-to-observer-a.md"
+	SendObserverDigest(filename2, "worker", nodes, cfg, digestedFiles)
 
 	// Verify file was added to digestedFiles
-	if !digestedFiles["msg-from-worker.md"] {
+	if !digestedFiles[filename2] {
 		t.Errorf("digestedFiles should contain worker message, but it doesn't")
 	}
 }
@@ -46,7 +48,7 @@ func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 	digestedFiles := make(map[string]bool)
 	nodes := map[string]discovery.NodeInfo{
-		"observer-a": {
+		"test-session:observer-a": {
 			PaneID:      "%100",
 			SessionName: "test-session",
 		},
@@ -62,7 +64,7 @@ func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 		DigestTemplate: "DIGEST {digest_items}",
 	}
 
-	filename := "msg-from-worker.md"
+	filename := "20260206-120000-from-worker-to-observer-a.md"
 	sender := "worker"
 
 	// First call - should add to digestedFiles
@@ -91,7 +93,7 @@ func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 func TestSendObserverDigest_NoSubscribers(t *testing.T) {
 	digestedFiles := make(map[string]bool)
 	nodes := map[string]discovery.NodeInfo{
-		"worker": {
+		"test-session:worker": {
 			PaneID:      "%100",
 			SessionName: "test-session",
 		},
@@ -107,7 +109,7 @@ func TestSendObserverDigest_NoSubscribers(t *testing.T) {
 		DigestTemplate: "DIGEST {digest_items}",
 	}
 
-	filename := "msg-from-orchestrator.md"
+	filename := "20260206-120000-from-orchestrator-to-worker.md"
 	sender := "orchestrator"
 
 	// Call should still mark file as digested even if no subscribers
@@ -116,5 +118,46 @@ func TestSendObserverDigest_NoSubscribers(t *testing.T) {
 	// Verify file was added to digestedFiles
 	if !digestedFiles[filename] {
 		t.Errorf("digestedFiles should contain %q even with no subscribers", filename)
+	}
+}
+
+// TestSendObserverDigest_PostmanToPostman tests Issue #32 fix
+func TestSendObserverDigest_PostmanToPostman(t *testing.T) {
+	digestedFiles := make(map[string]bool)
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:observer-a": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"observer-a": {
+				SubscribeDigest: true,
+			},
+		},
+		DigestTemplate: "DIGEST {digest_items}",
+	}
+
+	// Test postman-to-postman message (should be skipped)
+	filename := "20260206-120000-from-postman-to-postman.md"
+	sender := "postman"
+
+	SendObserverDigest(filename, sender, nodes, cfg, digestedFiles)
+
+	// Verify file was NOT added to digestedFiles (postman-to-postman should be skipped)
+	if digestedFiles[filename] {
+		t.Errorf("digestedFiles should NOT contain postman-to-postman message, but it does")
+	}
+
+	// Test postman-to-worker message (should be processed)
+	filename2 := "20260206-120001-from-postman-to-worker.md"
+	SendObserverDigest(filename2, sender, nodes, cfg, digestedFiles)
+
+	// Verify file was added to digestedFiles
+	if !digestedFiles[filename2] {
+		t.Errorf("digestedFiles should contain postman-to-worker message, but it doesn't")
 	}
 }

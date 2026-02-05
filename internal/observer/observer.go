@@ -3,21 +3,32 @@ package observer
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // SendObserverDigest sends digest notification to observers with subscribe_digest=true.
 // Loop prevention: skip if sender starts with "observer".
 // Duplicate prevention: track digested files in digestedFiles map.
+// Issue #32: Skip postman-to-postman messages (system internal messages).
 func SendObserverDigest(filename string, sender string, nodes map[string]discovery.NodeInfo, cfg *config.Config, digestedFiles map[string]bool) {
 	// Loop prevention: skip observer messages
 	if strings.HasPrefix(sender, "observer") {
 		return
+	}
+
+	// Issue #32: Skip postman-to-postman messages (system internal)
+	// Parse filename to get recipient
+	if info, err := message.ParseMessageFilename(filepath.Base(filename)); err == nil {
+		if info.From == "postman" && info.To == "postman" {
+			return // Skip system internal messages
+		}
 	}
 
 	// Duplicate prevention: skip if already digested
