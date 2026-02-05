@@ -109,7 +109,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Deliver message (should move to inbox/worker/)
-	if err := message.DeliverMessage(sessionDir, "test-ctx", filename, nodes, adjacency, cfg); err != nil {
+	if err := message.DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
 		t.Fatalf("message.DeliverMessage failed: %v", err)
 	}
 

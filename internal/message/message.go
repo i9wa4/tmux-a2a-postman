@@ -58,11 +58,18 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 }
 
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
+// Multi-session support: postPath is the full path to the message file in post/ directory.
+// The message will be delivered to the recipient's session directory based on NodeInfo.SessionDir.
 // Routing rules (DEFAULT DENY):
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-func DeliverMessage(sessionDir string, contextID string, filename string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) error {
-	postPath := filepath.Join(sessionDir, "post", filename)
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) error {
+	// Extract filename from postPath
+	filename := filepath.Base(postPath)
+
+	// Extract source session directory from postPath
+	// postPath format: /path/to/context-id/session-name/post/message.md
+	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
 
 	// Check if file still exists (handles duplicate fsnotify event)
 	if _, err := os.Stat(postPath); os.IsNotExist(err) {
@@ -71,15 +78,15 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 
 	info, err := ParseMessageFilename(filename)
 	if err != nil {
-		// Parse error: move to dead-letter/
-		dst := filepath.Join(sessionDir, "dead-letter", filename)
+		// Parse error: move to dead-letter/ in source session
+		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 		return os.Rename(postPath, dst)
 	}
 
 	// PONG handling: messages to "postman" are PONG responses
-	// Move directly to read/ (skip inbox delivery)
+	// Move directly to read/ in source session (skip inbox delivery)
 	if info.To == "postman" {
-		dst := filepath.Join(sessionDir, "read", filename)
+		dst := filepath.Join(sourceSessionDir, "read", filename)
 		if err := os.Rename(postPath, dst); err != nil {
 			return fmt.Errorf("moving PONG to read: %w", err)
 		}
@@ -90,8 +97,8 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 	// Check if recipient exists
 	nodeInfo, found := knownNodes[info.To]
 	if !found {
-		// Unknown recipient: move to dead-letter/
-		dst := filepath.Join(sessionDir, "dead-letter", filename)
+		// Unknown recipient: move to dead-letter/ in source session
+		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 		return os.Rename(postPath, dst)
 	}
 	paneID := nodeInfo.PaneID
@@ -109,15 +116,16 @@ func DeliverMessage(sessionDir string, contextID string, filename string, knownN
 			}
 		}
 		if !allowed {
-			// Routing denied: move to dead-letter/
-			dst := filepath.Join(sessionDir, "dead-letter", filename)
+			// Routing denied: move to dead-letter/ in source session
+			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			fmt.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			return os.Rename(postPath, dst)
 		}
 	}
 
-	// Ensure recipient inbox subdirectory exists
-	recipientInbox := filepath.Join(sessionDir, "inbox", info.To)
+	// Ensure recipient inbox subdirectory exists (in recipient's session directory)
+	recipientSessionDir := nodeInfo.SessionDir
+	recipientInbox := filepath.Join(recipientSessionDir, "inbox", info.To)
 	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
 		return fmt.Errorf("creating recipient inbox: %w", err)
 	}

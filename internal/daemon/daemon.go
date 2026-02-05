@@ -77,6 +77,15 @@ func RunDaemonLoop(
 								if !knownNodes[nodeName] {
 									knownNodes[nodeName] = true
 
+									// Ensure session directories exist for new node
+									if err := config.CreateSessionDirs(nodeInfo.SessionDir); err != nil {
+										events <- tui.DaemonEvent{
+											Type:    "error",
+											Message: fmt.Sprintf("failed to create session dirs for %s: %v", nodeName, err),
+										}
+										continue
+									}
+
 									// Add new node's directories to watch
 									nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
 									nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
@@ -118,7 +127,8 @@ func RunDaemonLoop(
 								},
 							}
 						}
-						if err := message.DeliverMessage(sessionDir, contextID, filename, nodes, adjacency, cfg); err != nil {
+						// Use eventPath directly for multi-session support
+						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),

@@ -208,6 +208,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Watch all discovered session directories
 	watchedDirs := make(map[string]bool)
 	for nodeName, nodeInfo := range nodes {
+		// Ensure session directories exist for discovered nodes
+		if err := config.CreateSessionDirs(nodeInfo.SessionDir); err != nil {
+			log.Printf("⚠️  postman: warning: could not create session dirs for %s: %v\n", nodeName, err)
+			continue
+		}
+
 		nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
 		nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
 
