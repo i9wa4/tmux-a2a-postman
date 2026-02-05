@@ -21,14 +21,20 @@ func TestBuildNotification(t *testing.T) {
 		"worker":       {"orchestrator"},
 	}
 
+	// Issue #33: nodes map now uses session-prefixed keys
 	nodes := map[string]discovery.NodeInfo{
-		"worker": {
+		"test:worker": {
 			PaneID:      "%1",
+			SessionName: "test",
+		},
+		"test:orchestrator": {
+			PaneID:      "%2",
 			SessionName: "test",
 		},
 	}
 
-	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md")
+	// sourceSessionName is "test"
+	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md")
 
 	if !strings.Contains(notification, "Message from orchestrator to worker") {
 		t.Errorf("notification = %q, want to contain 'Message from orchestrator to worker'", notification)

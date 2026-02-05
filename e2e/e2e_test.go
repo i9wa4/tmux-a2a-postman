@@ -87,10 +87,15 @@ func TestE2E_BasicRouting(t *testing.T) {
 		t.Fatalf("writing post message: %v", err)
 	}
 
-	// Mock nodes (recipient exists)
+	// Mock nodes (recipient exists) - Issue #33: nodes map now uses session-prefixed keys
 	nodes := map[string]discovery.NodeInfo{
-		"worker": {
+		"test-session:worker": {
 			PaneID:      "worker-pane-id",
+			SessionName: "test-session",
+			SessionDir:  sessionDir,
+		},
+		"test-session:orchestrator": {
+			PaneID:      "orchestrator-pane-id",
 			SessionName: "test-session",
 			SessionDir:  sessionDir,
 		},

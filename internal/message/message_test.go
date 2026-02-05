@@ -100,7 +100,11 @@ func TestDeliverMessage(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 		"worker":       {"orchestrator"},
@@ -137,7 +141,10 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+	}
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
 	}
@@ -175,7 +182,11 @@ func TestRouting_Allowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
 	// Define edge: orchestrator <-> worker
 	adjacency := map[string][]string{
 		"orchestrator": {"worker"},
@@ -219,7 +230,11 @@ func TestRouting_Denied(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
 	// No edge defined between orchestrator and worker
 	adjacency := map[string][]string{}
 	cfg := &config.Config{
@@ -261,7 +276,10 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+	}
 	// No edge defined for postman
 	adjacency := map[string][]string{}
 	cfg := &config.Config{
@@ -298,7 +316,10 @@ func TestPONG_Handling(t *testing.T) {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
-	nodes := map[string]discovery.NodeInfo{"worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir}}
+	// Issue #33: nodes map now uses session-prefixed keys
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+	}
 	adjacency := map[string][]string{}
 	cfg := &config.Config{
 		EnterDelay:  0.1,

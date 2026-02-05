@@ -45,7 +45,10 @@ func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
 		if node := getNodeFromProcessOS(pid); node != "" {
 			// Calculate SessionDir as baseDir/contextID/sessionName
 			sessionDir := filepath.Join(baseDir, contextID, sessionName)
-			nodes[node] = NodeInfo{
+			// Use session-prefixed node name to avoid collisions (Issue #33)
+			// Format: session_name:node_name
+			nodeKey := sessionName + ":" + node
+			nodes[nodeKey] = NodeInfo{
 				PaneID:      paneID,
 				SessionName: sessionName,
 				SessionDir:  sessionDir,

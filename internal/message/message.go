@@ -20,6 +20,39 @@ type MessageInfo struct {
 	To        string
 }
 
+// ResolveNodeName resolves a simple node name to a session-prefixed node name.
+// Resolution priority:
+// 1. If nodeName already contains ":", use as-is (already prefixed)
+// 2. Look for nodeName in the same session as sourceSessionName
+// 3. Look for nodeName in any other session
+// Returns the resolved node name or empty string if not found.
+func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) string {
+	// If already prefixed (contains ":"), use as-is
+	if strings.Contains(nodeName, ":") {
+		if _, found := knownNodes[nodeName]; found {
+			return nodeName
+		}
+		return "" // Prefixed but not found
+	}
+
+	// Try same-session first (priority)
+	sameSessionKey := sourceSessionName + ":" + nodeName
+	if _, found := knownNodes[sameSessionKey]; found {
+		return sameSessionKey
+	}
+
+	// Try any other session
+	for fullName := range knownNodes {
+		// Extract node name from "session:node" format
+		parts := strings.SplitN(fullName, ":", 2)
+		if len(parts) == 2 && parts[1] == nodeName {
+			return fullName
+		}
+	}
+
+	return "" // Not found
+}
+
 // ParseMessageFilename parses a message filename in the format:
 // {timestamp}-from-{sender}-to-{recipient}.md
 // Example: 20260201-022121-from-orchestrator-to-worker.md
@@ -70,6 +103,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Extract source session directory from postPath
 	// postPath format: /path/to/context-id/session-name/post/message.md
 	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
+	sourceSessionName := filepath.Base(sourceSessionDir)
 
 	// Check if file still exists (handles duplicate fsnotify event)
 	if _, err := os.Stat(postPath); os.IsNotExist(err) {
@@ -94,23 +128,41 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return nil
 	}
 
-	// Check if recipient exists
-	nodeInfo, found := knownNodes[info.To]
-	if !found {
+	// Resolve recipient name (Issue #33: session-aware adjacency)
+	recipientFullName := ResolveNodeName(info.To, sourceSessionName, knownNodes)
+	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 		return os.Rename(postPath, dst)
 	}
+	nodeInfo := knownNodes[recipientFullName]
 	paneID := nodeInfo.PaneID
+
+	// Resolve sender name (Issue #33: session-aware adjacency)
+	senderFullName := ResolveNodeName(info.From, sourceSessionName, knownNodes)
+	if senderFullName == "" && info.From != "postman" {
+		// Unknown sender: move to dead-letter/ in source session
+		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		return os.Rename(postPath, dst)
+	}
 
 	// Check routing permissions (DEFAULT DENY)
 	// IMPORTANT: sender="postman" is always allowed
 	if info.From != "postman" {
 		allowed := false
-		if neighbors, ok := adjacency[info.From]; ok {
-			for _, neighbor := range neighbors {
-				if neighbor == info.To {
-					allowed = true
+		// Try adjacency lookup with both simple name and full name
+		// This supports both old-style (simple names) and new-style (session:node) adjacency configs
+		for _, senderKey := range []string{info.From, senderFullName} {
+			if neighbors, ok := adjacency[senderKey]; ok {
+				for _, neighbor := range neighbors {
+					// Resolve neighbor name to full name
+					neighborFullName := ResolveNodeName(neighbor, sourceSessionName, knownNodes)
+					if neighborFullName == recipientFullName {
+						allowed = true
+						break
+					}
+				}
+				if allowed {
 					break
 				}
 			}
@@ -136,7 +188,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Send tmux notification to the recipient pane
-	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, postPath)
+	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath)
 	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout)

@@ -12,25 +12,39 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
+// ExtractSimpleName extracts the simple node name from a session-prefixed name.
+// If the name contains ":", returns the part after ":". Otherwise, returns the name as-is.
+func ExtractSimpleName(fullName string) string {
+	parts := strings.SplitN(fullName, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return fullName
+}
+
 // BuildPingMessage constructs a PING message using the template.
 func BuildPingMessage(tmpl string, vars map[string]string, timeout time.Duration) string {
 	return template.ExpandTemplate(tmpl, vars, timeout)
 }
 
 // SendPingToNode sends a PING message to a specific node.
+// nodeName should be the full session-prefixed name (session:node).
 func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string) error {
-	// Get node config for template
-	nodeConfig, hasNodeConfig := cfg.Nodes[nodeName]
+	// Extract simple name for filename and config lookups (Issue #33)
+	simpleName := ExtractSimpleName(nodeName)
+
+	// Get node config for template (use simple name)
+	nodeConfig, hasNodeConfig := cfg.Nodes[simpleName]
 	nodeTemplate := ""
 	if hasNodeConfig {
 		nodeTemplate = nodeConfig.Template
 	}
 
-	// Build talks_to_line from adjacency (edges)
-	talksToLine := buildTalksToLine(nodeName, cfg)
+	// Build talks_to_line from adjacency (edges) - use simple name
+	talksToLine := buildTalksToLine(simpleName, cfg)
 
-	// Build reply command
-	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", nodeName)
+	// Build reply command (use simple name for backward compatibility)
+	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", simpleName)
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 
 	now := time.Now()
@@ -38,7 +52,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 	vars := map[string]string{
 		"context_id":    contextID,
-		"node":          nodeName,
+		"node":          simpleName, // Use simple name in template vars
 		"timestamp":     ts,
 		"from_node":     "postman",
 		"template":      nodeTemplate,
@@ -50,7 +64,8 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)
 
-	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, nodeName)
+	// Use simple name in filename (Issue #33: keep filenames simple)
+	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, simpleName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
 	// Ensure post directory exists for this node's session
@@ -77,10 +92,11 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 	}
 	fmt.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
 
-	// Build active nodes list
+	// Build active nodes list (use simple names for display - Issue #33)
 	activeNodes := make([]string, 0, len(nodes))
 	for nodeName := range nodes {
-		activeNodes = append(activeNodes, nodeName)
+		simpleName := ExtractSimpleName(nodeName)
+		activeNodes = append(activeNodes, simpleName)
 	}
 
 	// Send PING to each node using their actual SessionDir
