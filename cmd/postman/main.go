@@ -406,6 +406,9 @@ func runCreateDraft(args []string) error {
 	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, *to)
 	draftPath := filepath.Join(draftDir, filename)
 
+	// Generate unique task ID
+	taskID := fmt.Sprintf("%s-%04x", ts, now.UnixNano()%0xFFFF)
+
 	// Use draft_template from config if available
 	content := cfg.DraftTemplate
 	if content == "" {
@@ -416,9 +419,13 @@ func runCreateDraft(args []string) error {
 	// Build variables map for template expansion
 	vars := map[string]string{
 		"context_id": resolvedContextID,
-		"from":       sender,
-		"to":         *to,
+		"task_id":    taskID,
+		"sender":     sender,
+		"recipient":  *to,
 		"timestamp":  now.Format(time.RFC3339),
+		// Backward compatibility
+		"from": sender,
+		"to":   *to,
 	}
 
 	// Expand template with variables and shell commands

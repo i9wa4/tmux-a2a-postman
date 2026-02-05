@@ -205,6 +205,9 @@ func (m *DraftModel) submitDraft() error {
 	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, m.senderNode, m.selectedNode)
 	draftPath := filepath.Join(draftDir, filename)
 
+	// Generate unique task ID
+	taskID := fmt.Sprintf("%s-%04x", ts, now.UnixNano()%0xFFFF)
+
 	// Use draft_template from config if available
 	content := m.cfg.DraftTemplate
 	if content == "" {
@@ -215,10 +218,14 @@ func (m *DraftModel) submitDraft() error {
 	// Build variables map for template expansion
 	vars := map[string]string{
 		"context_id": m.contextID,
-		"from":       m.senderNode,
-		"to":         m.selectedNode,
+		"task_id":    taskID,
+		"sender":     m.senderNode,
+		"recipient":  m.selectedNode,
 		"timestamp":  now.Format(time.RFC3339),
 		"message":    m.messageBody,
+		// Backward compatibility
+		"from": m.senderNode,
+		"to":   m.selectedNode,
 	}
 
 	// Expand template with variables and shell commands
