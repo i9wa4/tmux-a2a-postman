@@ -3,10 +3,28 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/i9wa4/tmux-a2a-postman/internal/concierge"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+)
+
+// Cached style objects (Issue #35)
+var (
+	borderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63"))
+
+	warningStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("208")).
+			Bold(true)
+)
+
+const (
+	minWidth  = 40
+	minHeight = 10
 )
 
 // ViewType represents the current TUI view.
@@ -16,11 +34,22 @@ const (
 	ViewEvents ViewType = iota
 	ViewMessages
 	ViewRouting
+	ViewSessions // Issue #35: Requirement 3
 )
 
 // Edge represents a routing edge definition.
 type Edge struct {
-	Raw string // Raw edge string (e.g., "A -- B -- C")
+	Raw             string    // Raw edge string (e.g., "A -- B -- C")
+	LastActivityAt  time.Time // Issue #35: Requirement 5 - last message time
+	IsActive        bool      // Issue #35: Requirement 5 - was recently used
+}
+
+// SessionInfo holds information about a tmux session.
+// Issue #35: Requirement 3 - multiple session display
+type SessionInfo struct {
+	Name      string
+	NodeCount int
+	Enabled   bool // Issue #35: Requirement 4 - enable/disable toggle
 }
 
 // DaemonEvent represents an event from the daemon goroutine.
@@ -38,6 +67,10 @@ type Model struct {
 	// View state
 	currentView ViewType
 
+	// Terminal size (Issue #35)
+	width  int
+	height int
+
 	// Message list view
 	messageList []message.MessageInfo
 	selectedMsg int
@@ -45,6 +78,10 @@ type Model struct {
 	// Routing view
 	edges        []Edge
 	selectedEdge int
+
+	// Session list view (Issue #35: Requirement 3)
+	sessions        []SessionInfo
+	selectedSession int
 
 	// Concierge status
 	conciergeStatus *concierge.PaneInfo
@@ -62,10 +99,14 @@ type Model struct {
 func InitialModel(daemonEvents <-chan DaemonEvent) Model {
 	return Model{
 		currentView:     ViewEvents,
+		width:           80, // Default width (Issue #35)
+		height:          24, // Default height (Issue #35)
 		messageList:     []message.MessageInfo{},
 		selectedMsg:     0,
 		edges:           []Edge{},
 		selectedEdge:    0,
+		sessions:        []SessionInfo{}, // Issue #35: Requirement 3
+		selectedSession: 0,               // Issue #35: Requirement 3
 		conciergeStatus: nil,
 		daemonEvents:    daemonEvents,
 		messages:        []string{},
@@ -96,6 +137,12 @@ func waitForDaemonEvent(ch <-chan DaemonEvent) tea.Cmd {
 // Update handles messages and updates the model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Handle terminal resize (Issue #35)
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
 	case tea.KeyMsg:
 		// Global keys
 		switch msg.String() {
@@ -103,8 +150,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "tab":
-			// Cycle through views
-			m.currentView = (m.currentView + 1) % 3
+			// Cycle through views (Issue #35: now 4 views)
+			m.currentView = (m.currentView + 1) % 4
 			return m, nil
 		case "1":
 			m.currentView = ViewEvents
@@ -114,6 +161,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "3":
 			m.currentView = ViewRouting
+			return m, nil
+		case "4":
+			m.currentView = ViewSessions // Issue #35: Requirement 3
 			return m, nil
 		}
 
@@ -139,6 +189,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "k", "up":
 				if m.selectedEdge > 0 {
 					m.selectedEdge--
+				}
+			}
+		case ViewSessions:
+			// Issue #35: Requirement 3 & 4
+			switch msg.String() {
+			case "j", "down":
+				if m.selectedSession < len(m.sessions)-1 {
+					m.selectedSession++
+				}
+			case "k", "up":
+				if m.selectedSession > 0 {
+					m.selectedSession--
+				}
+			case " ", "enter":
+				// Issue #35: Requirement 4 - toggle session enable/disable
+				if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
+					m.sessions[m.selectedSession].Enabled = !m.sessions[m.selectedSession].Enabled
 				}
 			}
 		}
@@ -182,6 +249,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedEdge = 0
 				}
 			}
+			// Issue #35: Requirement 3 - update sessions from Details
+			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
+				m.sessions = sessionList
+				// Clamp selection
+				if m.selectedSession >= len(m.sessions) {
+					m.selectedSession = len(m.sessions) - 1
+				}
+				if m.selectedSession < 0 {
+					m.selectedSession = 0
+				}
+			}
 		case "concierge_status_update":
 			// Update concierge status from Details
 			if paneInfo, ok := msg.Details["pane_info"].(*concierge.PaneInfo); ok {
@@ -209,6 +287,16 @@ func (m Model) View() string {
 		return "Shutting down...\n"
 	}
 
+	// Minimum size check (Issue #35)
+	if m.width < minWidth || m.height < minHeight {
+		warning := warningStyle.Render(fmt.Sprintf("⚠️  Terminal too small (min: %dx%d, current: %dx%d)", minWidth, minHeight, m.width, m.height))
+		return borderStyle.Width(m.width - 2).Render(warning)
+	}
+
+	// Calculate content dimensions (Issue #35)
+	contentWidth := m.width - 4   // Account for border + padding
+	contentHeight := m.height - 4 // Account for border + padding
+
 	var b strings.Builder
 
 	// Header
@@ -220,7 +308,7 @@ func (m Model) View() string {
 	b.WriteString(m.renderConciergePanel())
 	b.WriteString("\n")
 
-	// View tabs
+	// View tabs (Issue #35: added 4th tab)
 	b.WriteString("[")
 	if m.currentView == ViewEvents {
 		b.WriteString("1:Events*")
@@ -239,67 +327,149 @@ func (m Model) View() string {
 	} else {
 		b.WriteString("3:Routing")
 	}
+	b.WriteString(" | ")
+	if m.currentView == ViewSessions {
+		b.WriteString("4:Sessions*")
+	} else {
+		b.WriteString("4:Sessions")
+	}
 	b.WriteString("]\n\n")
 
 	// View-specific content
 	switch m.currentView {
 	case ViewEvents:
-		b.WriteString(m.renderEventsView())
+		b.WriteString(m.renderEventsView(contentWidth, contentHeight))
 	case ViewMessages:
-		b.WriteString(m.renderMessagesView())
+		b.WriteString(m.renderMessagesView(contentWidth, contentHeight))
 	case ViewRouting:
-		b.WriteString(m.renderRoutingView())
+		b.WriteString(m.renderRoutingView(contentWidth, contentHeight))
+	case ViewSessions:
+		// Issue #35: Requirement 3 - session list view
+		b.WriteString(m.renderSessionsView(contentWidth, contentHeight))
 	}
 
 	b.WriteString("\n")
 
 	// Status bar
-	b.WriteString("Keys: tab/1-3 (switch view) | j/k (nav) | q (quit)\n")
+	b.WriteString("Keys: tab/1-4 (switch view) | j/k (nav) | q (quit)\n")
 
-	return b.String()
+	content := b.String()
+
+	// Apply border (Issue #35)
+	return borderStyle.Width(m.width - 2).Height(m.height - 2).Render(content)
 }
 
-func (m Model) renderEventsView() string {
+func (m Model) renderEventsView(contentWidth, contentHeight int) string {
 	var b strings.Builder
 	b.WriteString("Recent Events:\n")
 	if len(m.messages) == 0 {
 		b.WriteString("  (no events yet)\n")
 	} else {
-		for _, msg := range m.messages {
+		// Truncate list if too long (Issue #35)
+		maxLines := contentHeight - 8 // Reserve space for header/footer
+		displayCount := len(m.messages)
+		if displayCount > maxLines {
+			displayCount = maxLines
+		}
+		startIdx := len(m.messages) - displayCount
+		for i := startIdx; i < len(m.messages); i++ {
+			msg := m.messages[i]
+			// Truncate long lines (Issue #35)
+			if len(msg) > contentWidth-4 {
+				msg = msg[:contentWidth-7] + "..."
+			}
 			b.WriteString(fmt.Sprintf("  - %s\n", msg))
 		}
 	}
 	return b.String()
 }
 
-func (m Model) renderMessagesView() string {
+func (m Model) renderMessagesView(contentWidth, contentHeight int) string {
 	var b strings.Builder
 	b.WriteString("Inbox Messages:\n")
 	if len(m.messageList) == 0 {
 		b.WriteString("  (no messages)\n")
 	} else {
-		for i, msg := range m.messageList {
+		// Truncate list if too long (Issue #35)
+		maxLines := contentHeight - 8
+		displayCount := len(m.messageList)
+		if displayCount > maxLines {
+			displayCount = maxLines
+		}
+		startIdx := 0
+		if len(m.messageList) > maxLines {
+			// Keep selected message visible
+			if m.selectedMsg >= maxLines {
+				startIdx = m.selectedMsg - maxLines + 1
+			}
+		}
+		endIdx := startIdx + displayCount
+		if endIdx > len(m.messageList) {
+			endIdx = len(m.messageList)
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			msg := m.messageList[i]
+			line := fmt.Sprintf("%s | from: %s | to: %s", msg.Timestamp, msg.From, msg.To)
+			// Truncate long lines (Issue #35)
+			if len(line) > contentWidth-6 {
+				line = line[:contentWidth-9] + "..."
+			}
 			if i == m.selectedMsg {
-				b.WriteString(fmt.Sprintf("  > %s | from: %s | to: %s\n", msg.Timestamp, msg.From, msg.To))
+				b.WriteString(fmt.Sprintf("  > %s\n", line))
 			} else {
-				b.WriteString(fmt.Sprintf("    %s | from: %s | to: %s\n", msg.Timestamp, msg.From, msg.To))
+				b.WriteString(fmt.Sprintf("    %s\n", line))
 			}
 		}
 	}
 	return b.String()
 }
 
-func (m Model) renderRoutingView() string {
+func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 	var b strings.Builder
 	b.WriteString("Routing Edges:\n")
 	if len(m.edges) == 0 {
 		b.WriteString("  (no edges defined)\n")
 	} else {
-		for i, edge := range m.edges {
+		// Truncate list if too long (Issue #35)
+		maxLines := contentHeight - 8
+		displayCount := len(m.edges)
+		if displayCount > maxLines {
+			displayCount = maxLines
+		}
+		startIdx := 0
+		if len(m.edges) > maxLines {
+			if m.selectedEdge >= maxLines {
+				startIdx = m.selectedEdge - maxLines + 1
+			}
+		}
+		endIdx := startIdx + displayCount
+		if endIdx > len(m.edges) {
+			endIdx = len(m.edges)
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			edge := m.edges[i]
+			line := edge.Raw
+
+			// Issue #35: Requirement 5 - highlight active edges
+			prefix := "    "
+			suffix := ""
+			if edge.IsActive {
+				prefix = "  🟢 "
+				suffix = " (active)"
+			}
+
+			// Truncate long lines (Issue #35)
+			maxLen := contentWidth - 6 - len(suffix)
+			if len(line) > maxLen {
+				line = line[:maxLen-3] + "..."
+			}
+
 			if i == m.selectedEdge {
-				b.WriteString(fmt.Sprintf("  > %s\n", edge.Raw))
+				b.WriteString(fmt.Sprintf("  > %s%s\n", line, suffix))
 			} else {
-				b.WriteString(fmt.Sprintf("    %s\n", edge.Raw))
+				b.WriteString(fmt.Sprintf("%s%s%s\n", prefix, line, suffix))
 			}
 		}
 	}
@@ -337,5 +507,57 @@ func (m Model) renderConciergePanel() string {
 		b.WriteString(fmt.Sprintf(" | Pane: %s", m.conciergeStatus.PaneID))
 	}
 
+	return b.String()
+}
+
+func (m Model) renderSessionsView(contentWidth, contentHeight int) string {
+	var b strings.Builder
+	b.WriteString("Sessions:\n")
+	if len(m.sessions) == 0 {
+		b.WriteString("  (no sessions)\n")
+	} else {
+		// Truncate list if too long (Issue #35)
+		maxLines := contentHeight - 8
+		displayCount := len(m.sessions)
+		if displayCount > maxLines {
+			displayCount = maxLines
+		}
+		startIdx := 0
+		if len(m.sessions) > maxLines {
+			// Keep selected session visible
+			if m.selectedSession >= maxLines {
+				startIdx = m.selectedSession - maxLines + 1
+			}
+		}
+		endIdx := startIdx + displayCount
+		if endIdx > len(m.sessions) {
+			endIdx = len(m.sessions)
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			sess := m.sessions[i]
+
+			// Issue #35: Requirement 4 - status indicator
+			statusIcon := "🔴" // Disabled
+			if sess.Enabled {
+				statusIcon = "🟢" // Enabled
+			}
+
+			line := fmt.Sprintf("%s %s (nodes: %d)", statusIcon, sess.Name, sess.NodeCount)
+
+			// Truncate long lines (Issue #35)
+			if len(line) > contentWidth-6 {
+				line = line[:contentWidth-9] + "..."
+			}
+
+			if i == m.selectedSession {
+				b.WriteString(fmt.Sprintf("  > %s\n", line))
+			} else {
+				b.WriteString(fmt.Sprintf("    %s\n", line))
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString("Press space/enter to toggle enable/disable\n")
+	}
 	return b.String()
 }

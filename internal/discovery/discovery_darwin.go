@@ -46,4 +46,3 @@ func checkProcessForNode(pid string) string {
 	}
 	return ""
 }
-

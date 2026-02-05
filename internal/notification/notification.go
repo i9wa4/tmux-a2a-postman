@@ -93,16 +93,16 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 
 	// Build variables map
 	vars := map[string]string{
-		"from_node":      sender,
-		"node":           recipient,
-		"timestamp":      extractTimestamp(filename),
-		"filename":       filepath.Base(filename),
-		"inbox_path":     inboxPath,
-		"talks_to_line":  talksToLine,
-		"template":       recipientTemplate,
-		"reply_command":  cfg.ReplyCommand,
-		"context_id":     contextID,
-		"session_dir":    sessionDir,
+		"from_node":     sender,
+		"node":          recipient,
+		"timestamp":     extractTimestamp(filename),
+		"filename":      filepath.Base(filename),
+		"inbox_path":    inboxPath,
+		"talks_to_line": talksToLine,
+		"template":      recipientTemplate,
+		"reply_command": cfg.ReplyCommand,
+		"context_id":    contextID,
+		"session_dir":   sessionDir,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))

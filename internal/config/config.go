@@ -89,12 +89,12 @@ type CompactionMessageTemplate struct {
 
 // WatchdogConfig holds watchdog configuration.
 type WatchdogConfig struct {
-	Enabled                  bool                 `toml:"enabled"`
-	IdleThresholdSeconds     float64              `toml:"idle_threshold_seconds"`
-	CooldownSeconds          float64              `toml:"cooldown_seconds"`
-	HeartbeatIntervalSeconds float64              `toml:"heartbeat_interval_seconds"`
+	Enabled                  bool                  `toml:"enabled"`
+	IdleThresholdSeconds     float64               `toml:"idle_threshold_seconds"`
+	CooldownSeconds          float64               `toml:"cooldown_seconds"`
+	HeartbeatIntervalSeconds float64               `toml:"heartbeat_interval_seconds"`
 	Capture                  WatchdogCaptureConfig `toml:"capture"`
-	Lock                     WatchdogLockConfig   `toml:"lock"`
+	Lock                     WatchdogLockConfig    `toml:"lock"`
 }
 
 // WatchdogCaptureConfig holds watchdog capture configuration.

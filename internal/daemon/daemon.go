@@ -214,12 +214,38 @@ func RunDaemonLoop(
 						// Send config update event
 						edgeList := make([]tui.Edge, len(newCfg.Edges))
 						for i, e := range newCfg.Edges {
-							edgeList[i] = tui.Edge{Raw: e}
+							// Issue #35: Requirement 5 - edge activity tracking (placeholder)
+							edgeList[i] = tui.Edge{
+								Raw:            e,
+								LastActivityAt: time.Time{}, // Zero time for now
+								IsActive:       false,        // Not active initially
+							}
 						}
+
+						// Issue #35: Requirement 3 - build session info from nodes
+						sessionNodeCount := make(map[string]int)
+						for nodeName := range nodes {
+							// Extract session name from "session:node" format
+							parts := strings.SplitN(nodeName, ":", 2)
+							if len(parts) == 2 {
+								sessionName := parts[0]
+								sessionNodeCount[sessionName]++
+							}
+						}
+						sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+						for sessionName, nodeCount := range sessionNodeCount {
+							sessionList = append(sessionList, tui.SessionInfo{
+								Name:      sessionName,
+								NodeCount: nodeCount,
+								Enabled:   true, // Issue #35: All sessions enabled by default (memory only)
+							})
+						}
+
 						events <- tui.DaemonEvent{
 							Type: "config_update",
 							Details: map[string]interface{}{
-								"edges": edgeList,
+								"edges":    edgeList,
+								"sessions": sessionList, // Issue #35: Requirement 3
 							},
 						}
 						events <- tui.DaemonEvent{
