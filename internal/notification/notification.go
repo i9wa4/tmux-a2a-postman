@@ -91,6 +91,18 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	}
 	inboxPath := filepath.Join(sessionDir, "inbox", recipient)
 
+	// Issue #39: Embed --context-id in reply_command
+	replyCmd := cfg.ReplyCommand
+	if strings.Contains(replyCmd, "create-draft") && !strings.Contains(replyCmd, "--context-id") {
+		// Insert --context-id before --to if present
+		if strings.Contains(replyCmd, "--to") {
+			replyCmd = strings.Replace(replyCmd, "--to", fmt.Sprintf("--context-id %s --to", contextID), 1)
+		} else {
+			// Append at the end if --to is not present
+			replyCmd = fmt.Sprintf("%s --context-id %s", replyCmd, contextID)
+		}
+	}
+
 	// Build variables map
 	vars := map[string]string{
 		"from_node":     sender,
@@ -100,7 +112,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		"inbox_path":    inboxPath,
 		"talks_to_line": talksToLine,
 		"template":      recipientTemplate,
-		"reply_command": cfg.ReplyCommand,
+		"reply_command": replyCmd,
 		"context_id":    contextID,
 		"session_dir":   sessionDir,
 	}
