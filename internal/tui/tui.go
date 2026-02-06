@@ -546,11 +546,7 @@ func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 			prefix := "    "
 			suffix := ""
 
-			// Truncate long lines (Issue #35)
-			maxLen := contentWidth - 6 - len(suffix)
-			if len(line) > maxLen {
-				line = line[:maxLen-3] + "..."
-			}
+			// Issue #43: Remove truncation to show all node names (allow wrapping)
 
 			if i == m.selectedEdge {
 				b.WriteString(fmt.Sprintf("  > %s%s\n", line, suffix))
