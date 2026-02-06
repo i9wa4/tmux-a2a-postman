@@ -276,6 +276,15 @@ func RunDaemonLoop(
 								// Issue #37: Record edge activity
 								recordEdgeActivity(info.From, info.To, time.Now())
 
+								// Issue #40: Send edge_update event to TUI
+								edgeList := buildEdgeList(cfg.Edges, cfg)
+								events <- tui.DaemonEvent{
+									Type: "edge_update",
+									Details: map[string]interface{}{
+										"edges": edgeList,
+									},
+								}
+
 								observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
 								// Increment reminder counter for recipient
 								if info.To != "postman" {

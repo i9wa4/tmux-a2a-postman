@@ -55,7 +55,7 @@ type SessionInfo struct {
 
 // DaemonEvent represents an event from the daemon goroutine.
 type DaemonEvent struct {
-	Type    string // "message_received", "status_update", "error", "inbox_update", "config_update", "concierge_status_update"
+	Type    string // "message_received", "status_update", "error", "inbox_update", "config_update", "edge_update", "concierge_status_update"
 	Message string
 	Details map[string]interface{}
 }
@@ -270,6 +270,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if m.selectedSession < 0 {
 					m.selectedSession = 0
+				}
+			}
+		case "edge_update":
+			// Issue #40: Update edges from edge_update event
+			if edgeList, ok := msg.Details["edges"].([]Edge); ok {
+				m.edges = edgeList
+				// Clamp selection
+				if m.selectedEdge >= len(m.edges) {
+					m.selectedEdge = len(m.edges) - 1
+				}
+				if m.selectedEdge < 0 {
+					m.selectedEdge = 0
 				}
 			}
 		case "concierge_status_update":
