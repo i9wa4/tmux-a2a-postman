@@ -154,6 +154,11 @@ func RunDaemonLoop(
 	// Track watched directories to avoid duplicates
 	watchedDirs := make(map[string]bool)
 
+	// Issue #41: Periodic node discovery
+	scanInterval := time.Duration(cfg.ScanInterval * float64(time.Second))
+	scanTicker := time.NewTicker(scanInterval)
+	defer scanTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -399,6 +404,99 @@ func RunDaemonLoop(
 			events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("watcher error: %v", err),
+			}
+		case <-scanTicker.C:
+			// Issue #41: Periodic node discovery
+			freshNodes, err := discovery.DiscoverNodes(baseDir, contextID)
+			if err != nil {
+				continue
+			}
+
+			// Build active nodes list
+			activeNodes := make([]string, 0, len(freshNodes))
+			for nodeName := range freshNodes {
+				activeNodes = append(activeNodes, nodeName)
+			}
+
+			// Detect new nodes and send PING
+			newNodesDetected := false
+			for nodeName, nodeInfo := range freshNodes {
+				if !knownNodes[nodeName] {
+					knownNodes[nodeName] = true
+					newNodesDetected = true
+
+					// Ensure session directories exist for new node
+					if err := config.CreateSessionDirs(nodeInfo.SessionDir); err != nil {
+						events <- tui.DaemonEvent{
+							Type:    "error",
+							Message: fmt.Sprintf("failed to create session dirs for %s: %v", nodeName, err),
+						}
+						continue
+					}
+
+					// Add new node's directories to watch
+					nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
+					nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
+					if !watchedDirs[nodePostDir] {
+						if err := watcher.Add(nodePostDir); err == nil {
+							watchedDirs[nodePostDir] = true
+						}
+					}
+					if !watchedDirs[nodeInboxDir] {
+						if err := watcher.Add(nodeInboxDir); err == nil {
+							watchedDirs[nodeInboxDir] = true
+						}
+					}
+
+					// Send PING after delay
+					if cfg.NewNodePingDelay > 0 {
+						newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
+						capturedNode := nodeName
+						capturedNodeInfo := nodeInfo
+						capturedActiveNodes := activeNodes
+						time.AfterFunc(newNodeDelay, func() {
+							if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
+								events <- tui.DaemonEvent{
+									Type:    "error",
+									Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
+								}
+							}
+						})
+					}
+				}
+			}
+
+			// Update nodes map and send status update if new nodes detected
+			if newNodesDetected {
+				nodes = freshNodes
+
+				// Build session info from nodes
+				sessionNodeCount := make(map[string]int)
+				for nodeName := range nodes {
+					parts := strings.SplitN(nodeName, ":", 2)
+					if len(parts) == 2 {
+						sessionName := parts[0]
+						sessionNodeCount[sessionName]++
+					}
+				}
+				sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+				for sessionName, nodeCount := range sessionNodeCount {
+					sessionList = append(sessionList, tui.SessionInfo{
+						Name:      sessionName,
+						NodeCount: nodeCount,
+						Enabled:   true,
+					})
+				}
+
+				// Update node count and session info
+				events <- tui.DaemonEvent{
+					Type:    "status_update",
+					Message: "Running",
+					Details: map[string]interface{}{
+						"node_count": len(nodes),
+						"sessions":   sessionList,
+					},
+				}
 			}
 		}
 	}
