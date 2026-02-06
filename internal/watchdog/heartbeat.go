@@ -7,22 +7,25 @@ import (
 	"time"
 )
 
-// SendHeartbeat sends a heartbeat message to orchestrator via postman messaging.
+// SendHeartbeat sends a heartbeat message to target node via postman messaging.
 // Creates a PING message file in the post/ directory for delivery.
-func SendHeartbeat(sessionDir, contextID string) error {
+// Issue #46: Added uiNode parameter to generalize target node.
+func SendHeartbeat(sessionDir, contextID, uiNode string) error {
 	now := time.Now()
 	// Use UnixNano for uniqueness to prevent filename collisions
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
-	filename := fmt.Sprintf("%s-from-watchdog-to-orchestrator.md", ts)
+	// Issue #46: Use uiNode parameter instead of hardcoded "orchestrator"
+	filename := fmt.Sprintf("%s-from-watchdog-to-%s.md", ts, uiNode)
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	// Build PING message content
+	// Issue #46: Use uiNode parameter instead of hardcoded "orchestrator"
 	content := fmt.Sprintf(`---
 method: message/send
 params:
   contextId: %s
   from: watchdog
-  to: orchestrator
+  to: %s
   timestamp: %s
 ---
 
@@ -31,7 +34,7 @@ params:
 Watchdog is alive and monitoring.
 
 Timestamp: %s
-`, contextID, now.Format(time.RFC3339), now.Format(time.RFC3339))
+`, contextID, uiNode, now.Format(time.RFC3339), now.Format(time.RFC3339))
 
 	// Write message to post/ directory
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
@@ -43,7 +46,8 @@ Timestamp: %s
 
 // StartHeartbeat starts a goroutine that sends heartbeat messages at regular intervals.
 // Returns a channel that can be closed to stop the heartbeat.
-func StartHeartbeat(sessionDir, contextID string, intervalSeconds float64) chan<- struct{} {
+// Issue #46: Added uiNode parameter to generalize target node.
+func StartHeartbeat(sessionDir, contextID, uiNode string, intervalSeconds float64) chan<- struct{} {
 	stopChan := make(chan struct{})
 
 	go func() {
@@ -60,7 +64,8 @@ func StartHeartbeat(sessionDir, contextID string, intervalSeconds float64) chan<
 			case <-stopChan:
 				return
 			case <-ticker.C:
-				if err := SendHeartbeat(sessionDir, contextID); err != nil {
+				// Issue #46: Pass uiNode parameter to SendHeartbeat
+				if err := SendHeartbeat(sessionDir, contextID, uiNode); err != nil {
 					// Log error but continue
 					fmt.Fprintf(os.Stderr, "⚠️  watchdog: heartbeat failed: %v\n", err)
 				}

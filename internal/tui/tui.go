@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/i9wa4/tmux-a2a-postman/internal/concierge"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 )
 
 // Cached style objects (Issue #35)
@@ -88,7 +88,7 @@ type Model struct {
 	selectedSession int
 
 	// Target node status (Issue #45: renamed from "Concierge" in UI)
-	conciergeStatus *concierge.PaneInfo
+	conciergeStatus *uipane.PaneInfo
 
 	// Shared state
 	daemonEvents <-chan DaemonEvent
@@ -251,7 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "concierge_status_update":
 			// Update concierge status from Details
-			if paneInfo, ok := msg.Details["pane_info"].(*concierge.PaneInfo); ok {
+			if paneInfo, ok := msg.Details["pane_info"].(*uipane.PaneInfo); ok {
 				m.conciergeStatus = paneInfo
 			}
 		case "error":

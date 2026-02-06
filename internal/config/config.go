@@ -40,6 +40,7 @@ type Config struct {
 	// Global settings
 	Edges        []string `toml:"edges"`
 	ReplyCommand string   `toml:"reply_command"`
+	UINode       string   `toml:"ui_node"` // Issue #46: Generalized target node name
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -130,6 +131,7 @@ func DefaultConfig() *Config {
 		DraftTemplate:        "",
 		ReminderMessage:      "",
 		ReplyCommand:         "",
+		UINode:               "concierge", // Issue #46: Default UI target node
 		Edges:                []string{},
 		Nodes:                make(map[string]NodeConfig),
 	}

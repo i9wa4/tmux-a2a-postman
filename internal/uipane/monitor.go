@@ -1,4 +1,4 @@
-package concierge
+package uipane
 
 import (
 	"fmt"
@@ -165,15 +165,19 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 	}, nil
 }
 
-// FindConciergePaneID finds the pane_id for A2A_NODE=concierge.
+// FindTargetPaneID finds the pane_id for A2A_NODE=nodeName.
+// Issue #46: Generalized from FindConciergePaneID to accept any node name.
 // Returns empty string if not found.
-func FindConciergePaneID() (string, error) {
+func FindTargetPaneID(nodeName string) (string, error) {
 	// Get all panes with their environment
 	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux list-panes failed: %w", err)
 	}
+
+	// Issue #46: Construct the search string from nodeName parameter
+	searchStr := fmt.Sprintf("A2A_NODE=%s", nodeName)
 
 	for _, line := range strings.Split(string(output), "\n") {
 		paneID := strings.TrimSpace(line)
@@ -200,7 +204,7 @@ func FindConciergePaneID() (string, error) {
 			continue
 		}
 
-		if strings.Contains(string(envOutput), "A2A_NODE=concierge") {
+		if strings.Contains(string(envOutput), searchStr) {
 			return paneID, nil
 		}
 	}

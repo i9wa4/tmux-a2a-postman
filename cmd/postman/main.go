@@ -16,7 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/compaction"
-	"github.com/i9wa4/tmux-a2a-postman/internal/concierge"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -322,10 +322,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 	}
 
-	// Start concierge status monitoring goroutine
+	// Start UI pane status monitoring goroutine (Issue #46)
 	go func() {
-		// Find concierge pane ID (best-effort, may not be available)
-		conciergePaneID, _ := concierge.FindConciergePaneID()
+		// Issue #46: Find target pane ID using configured UI node name
+		targetPaneID, _ := uipane.FindTargetPaneID(cfg.UINode)
 
 		ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
 		defer ticker.Stop()
@@ -335,7 +335,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				paneInfo, err := concierge.GetPaneInfo(conciergePaneID)
+				paneInfo, err := uipane.GetPaneInfo(targetPaneID)
 				if err == nil && paneInfo != nil {
 					daemonEvents <- tui.DaemonEvent{
 						Type: "concierge_status_update",
@@ -569,10 +569,10 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Start heartbeat
+	// Start heartbeat (Issue #46: added cfg.UINode parameter)
 	var heartbeatStop chan<- struct{}
 	if cfg.Watchdog.HeartbeatIntervalSeconds > 0 {
-		heartbeatStop = watchdog.StartHeartbeat(sessionDir, contextID, cfg.Watchdog.HeartbeatIntervalSeconds)
+		heartbeatStop = watchdog.StartHeartbeat(sessionDir, contextID, cfg.UINode, cfg.Watchdog.HeartbeatIntervalSeconds)
 		defer func() {
 			if heartbeatStop != nil {
 				close(heartbeatStop)
@@ -602,10 +602,10 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 				continue
 			}
 
-			// Send reminders for idle panes
+			// Send reminders for idle panes (Issue #46: added cfg.UINode parameter)
 			for _, activity := range idlePanes {
 				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
-					if err := watchdog.SendIdleReminder(activity.PaneID, sessionDir, contextID, activity); err != nil {
+					if err := watchdog.SendIdleReminder(activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
 						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
 					} else {
 						reminderState.MarkReminderSent(activity.PaneID)

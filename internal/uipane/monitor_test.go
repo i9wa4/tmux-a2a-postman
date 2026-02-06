@@ -1,4 +1,4 @@
-package concierge
+package uipane
 
 import (
 	"testing"

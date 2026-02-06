@@ -49,23 +49,26 @@ func (r *ReminderState) MarkReminderSent(paneID string) {
 
 // SendIdleReminder sends an idle reminder message via postman messaging.
 // Creates a message file in the post/ directory for delivery.
-func SendIdleReminder(paneID, sessionDir, contextID string, activity PaneActivity) error {
+// Issue #46: Added uiNode parameter to generalize target node.
+func SendIdleReminder(paneID, sessionDir, contextID, uiNode string, activity PaneActivity) error {
 	now := time.Now()
 	// Use UnixNano for uniqueness to prevent filename collisions
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
-	filename := fmt.Sprintf("%s-from-watchdog-to-orchestrator.md", ts)
+	// Issue #46: Use uiNode parameter instead of hardcoded "orchestrator"
+	filename := fmt.Sprintf("%s-from-watchdog-to-%s.md", ts, uiNode)
 	postPath := filepath.Join(sessionDir, "post", filename)
 
 	// Calculate idle duration
 	idleDuration := time.Since(activity.LastActivityTime)
 
 	// Build message content
+	// Issue #46: Use uiNode parameter instead of hardcoded "orchestrator"
 	content := fmt.Sprintf(`---
 method: message/send
 params:
   contextId: %s
   from: watchdog
-  to: orchestrator
+  to: %s
   timestamp: %s
 ---
 
@@ -74,7 +77,7 @@ params:
 Pane %s has been idle for %s.
 
 Last activity: %s
-`, contextID, now.Format(time.RFC3339), paneID, idleDuration.Round(time.Second), activity.LastActivityTime.Format(time.RFC3339))
+`, contextID, uiNode, now.Format(time.RFC3339), paneID, idleDuration.Round(time.Second), activity.LastActivityTime.Format(time.RFC3339))
 
 	// Write message to post/ directory
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
