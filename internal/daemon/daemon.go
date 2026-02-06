@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -164,7 +163,7 @@ func RunDaemonLoop(
 	defer close(events)
 
 	// Debounce timers for different paths
-	var inboxTimer *time.Timer
+	// Issue #45: Removed inboxTimer (inbox_update event removed)
 	var configTimer *time.Timer
 
 	// Track watched directories to avoid duplicates
@@ -317,35 +316,8 @@ func RunDaemonLoop(
 				}
 			}
 
-			// Handle inbox/ directory events (any session, with debounce)
-			if strings.HasSuffix(filepath.Dir(filepath.Dir(eventPath)), "inbox") || strings.HasSuffix(filepath.Dir(eventPath), "inbox") {
-				// Debounce inbox updates (200ms)
-				if inboxTimer != nil {
-					inboxTimer.Stop()
-				}
-				inboxTimer = time.AfterFunc(200*time.Millisecond, func() {
-					// Scan inbox for current node
-					if nodeName := os.Getenv("A2A_NODE"); nodeName != "" {
-						// Get inbox directory from event path
-						// eventPath could be: /path/to/session-xxx/inbox/nodename/message.md
-						// or /path/to/session-xxx/inbox/nodename/
-						var nodeInboxDir string
-						if strings.HasSuffix(filepath.Dir(eventPath), nodeName) {
-							nodeInboxDir = filepath.Dir(eventPath)
-						} else {
-							// Fallback: use default session
-							nodeInboxDir = filepath.Join(sessionDir, "inbox", nodeName)
-						}
-						msgList := message.ScanInboxMessages(nodeInboxDir)
-						events <- tui.DaemonEvent{
-							Type: "inbox_update",
-							Details: map[string]interface{}{
-								"messages": msgList,
-							},
-						}
-					}
-				})
-			}
+		// Issue #45: Removed inbox_update event (Messages view removed from TUI)
+
 
 			// Handle config file events (with debounce)
 			if configPath != "" && eventPath == configPath {

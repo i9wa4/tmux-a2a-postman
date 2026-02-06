@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
 func TestTUI_InitialModel(t *testing.T) {
@@ -109,15 +108,24 @@ func TestTUI_View(t *testing.T) {
 
 	view := m.View()
 
-	// Verify header
-	if !strings.Contains(view, "=== Postman Daemon ===") {
-		t.Error("view missing header")
+	// Issue #45: Verify new split layout components
+	// Left pane
+	if !strings.Contains(view, "Sessions") {
+		t.Error("view missing left pane Sessions header")
 	}
-	if !strings.Contains(view, "Status: Running") {
-		t.Error("view missing status")
+
+	// Right pane
+	if !strings.Contains(view, "[Target:") {
+		t.Error("view missing Target node status")
 	}
-	if !strings.Contains(view, "Nodes: 3") {
-		t.Error("view missing node count")
+	if !strings.Contains(view, "1:Events") {
+		t.Error("view missing Events tab")
+	}
+	if !strings.Contains(view, "2:Routing") {
+		t.Error("view missing Routing tab")
+	}
+	if !strings.Contains(view, "Recent Events:") {
+		t.Error("view missing Recent Events header")
 	}
 
 	// Verify messages
@@ -126,11 +134,6 @@ func TestTUI_View(t *testing.T) {
 	}
 	if !strings.Contains(view, "Message 2") {
 		t.Error("view missing Message 2")
-	}
-
-	// Verify quit instruction (updated for Issue #12)
-	if !strings.Contains(view, "q (quit)") {
-		t.Error("view missing quit instruction")
 	}
 }
 
@@ -169,34 +172,6 @@ func TestTUI_MessageTruncation(t *testing.T) {
 	}
 }
 
-func TestTUI_MessageList_Update(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch)
-
-	// Send inbox_update event
-	msgList := []message.MessageInfo{
-		{Timestamp: "20260201-120000", From: "orchestrator", To: "worker"},
-		{Timestamp: "20260201-130000", From: "observer", To: "worker"},
-	}
-	event := DaemonEventMsg{
-		Type: "inbox_update",
-		Details: map[string]interface{}{
-			"messages": msgList,
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if len(m.messageList) != 2 {
-		t.Errorf("messageList length: got %d, want 2", len(m.messageList))
-	}
-	if m.messageList[0].From != "orchestrator" {
-		t.Errorf("first message from: got %q, want %q", m.messageList[0].From, "orchestrator")
-	}
-}
 
 func TestTUI_RoutingView_AddEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
