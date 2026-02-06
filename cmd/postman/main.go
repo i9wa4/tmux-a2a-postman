@@ -257,13 +257,8 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	log.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
 		contextID, os.Getpid(), len(nodes))
 
-	// Send PING to all nodes after startup delay
-	if cfg.StartupDelay > 0 {
-		startupDelay := time.Duration(cfg.StartupDelay * float64(time.Second))
-		time.AfterFunc(startupDelay, func() {
-			ping.SendPingToAll(baseDir, contextID, cfg)
-		})
-	}
+	// Issue #47: Removed automatic SendPingToAll (too aggressive)
+	// PING is now manual via 'p' key in TUI
 
 	// Track known nodes for new node detection
 	knownNodes := make(map[string]bool)
@@ -353,8 +348,48 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		// No TUI mode: log only, block until ctx.Done()
 		<-ctx.Done()
 	} else {
-		// TUI mode
-		p := tea.NewProgram(tui.InitialModel(daemonEvents))
+		// TUI mode with command channel (Issue #47)
+		tuiCommands := make(chan tui.TUICommand, 10)
+
+		// Start TUI command handler goroutine
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case cmd := <-tuiCommands:
+					// Issue #47: Handle TUI commands
+					switch cmd.Type {
+					case "send_ping":
+						// Send PING to all nodes in the target session
+						targetNodes := make(map[string]discovery.NodeInfo)
+						for k, v := range nodes {
+							if v.SessionName == cmd.Target {
+								targetNodes[k] = v
+							}
+						}
+						if len(targetNodes) > 0 {
+							// Build active nodes list (use simple names for display)
+							activeNodes := make([]string, 0, len(nodes))
+							for nodeName := range nodes {
+								simpleName := ping.ExtractSimpleName(nodeName)
+								activeNodes = append(activeNodes, simpleName)
+							}
+							// Send PING to each node in the target session
+							for nodeName, nodeInfo := range targetNodes {
+								if err := ping.SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
+									log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
+								} else {
+									log.Printf("📮 postman: PING sent to %s\n", nodeName)
+								}
+							}
+						}
+					}
+				}
+			}
+		}()
+
+		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands))
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("TUI error: %w", err)
 		}

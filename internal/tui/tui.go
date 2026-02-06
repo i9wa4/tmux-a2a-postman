@@ -69,6 +69,13 @@ type DaemonEvent struct {
 // DaemonEventMsg wraps DaemonEvent for tea.Msg interface.
 type DaemonEventMsg DaemonEvent
 
+// TUICommand represents a command from TUI to the daemon.
+// Issue #47: Added for manual PING functionality.
+type TUICommand struct {
+	Type   string // "send_ping"
+	Target string // Session name for PING target
+}
+
 // Model holds the TUI state.
 // Issue #45: Removed messageList and selectedMsg fields
 type Model struct {
@@ -92,6 +99,7 @@ type Model struct {
 
 	// Shared state
 	daemonEvents <-chan DaemonEvent
+	tuiCommands  chan<- TUICommand // Issue #47: Command channel to daemon
 	messages     []string
 	status       string
 	nodeCount    int
@@ -101,7 +109,8 @@ type Model struct {
 
 // InitialModel creates the initial TUI model.
 // Issue #45: Removed messageList and selectedMsg initialization
-func InitialModel(daemonEvents <-chan DaemonEvent) Model {
+// Issue #47: Added tuiCommands channel parameter
+func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand) Model {
 	return Model{
 		currentView:     ViewEvents,
 		width:           80, // Default width (Issue #35)
@@ -112,6 +121,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent) Model {
 		selectedSession: 0,               // Issue #35: Requirement 3
 		conciergeStatus: nil,
 		daemonEvents:    daemonEvents,
+		tuiCommands:     tuiCommands, // Issue #47: Command channel
 		messages:        []string{},
 		status:          "Starting...",
 		nodeCount:       0,
@@ -183,6 +193,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Issue #45: Toggle session enable/disable
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				m.sessions[m.selectedSession].Enabled = !m.sessions[m.selectedSession].Enabled
+			}
+			return m, nil
+		case "p":
+			// Issue #47: Send PING to selected session
+			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
+				sess := m.sessions[m.selectedSession]
+				if m.tuiCommands != nil {
+					m.tuiCommands <- TUICommand{
+						Type:   "send_ping",
+						Target: sess.Name,
+					}
+				}
 			}
 			return m, nil
 		}
@@ -356,7 +378,7 @@ func (m Model) renderLeftPane(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: toggle]\n")
+	b.WriteString("[space: toggle] [p: ping]\n") // Issue #47: Added ping help
 
 	return b.String()
 }
