@@ -59,7 +59,7 @@ func recordEdgeActivity(from, to string, timestamp time.Time) {
 	edgeHistory[key] = activity
 }
 
-// buildEdgeList builds edge list with activity data (Issue #37).
+// buildEdgeList builds edge list with activity data (Issue #37, #42).
 func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 	edgeHistoryMu.RLock()
 	defer edgeHistoryMu.RUnlock()
@@ -69,60 +69,76 @@ func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 
 	edgeList := make([]tui.Edge, len(edges))
 	for i, e := range edges {
-		// Parse edge to get node pair (A--B or A-->B format)
-		var nodeA, nodeB string
+		// Issue #42: Parse chain edge into node segments
+		var nodes []string
 		if strings.Contains(e, "-->") {
-			parts := strings.SplitN(e, "-->", 2)
-			if len(parts) == 2 {
-				nodeA = strings.TrimSpace(parts[0])
-				nodeB = strings.TrimSpace(parts[1])
+			parts := strings.Split(e, "-->")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
 			}
 		} else if strings.Contains(e, "--") {
-			parts := strings.SplitN(e, "--", 2)
-			if len(parts) == 2 {
-				nodeA = strings.TrimSpace(parts[0])
-				nodeB = strings.TrimSpace(parts[1])
+			parts := strings.Split(e, "--")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
 			}
 		}
 
-		// Get activity data
-		key := makeEdgeKey(nodeA, nodeB)
-		activity, exists := edgeHistory[key]
-
+		// Calculate direction for each segment
+		var segmentDirections []string
 		var lastActivityAt time.Time
 		isActive := false
+
+		// Process each adjacent pair
+		for j := 0; j < len(nodes)-1; j++ {
+			nodeA := nodes[j]
+			nodeB := nodes[j+1]
+
+			key := makeEdgeKey(nodeA, nodeB)
+			activity, exists := edgeHistory[key]
+
+			segmentDir := "none"
+			if exists && nodeA != "" && nodeB != "" {
+				// Check if each direction is active (within activity window)
+				forwardActive := !activity.LastForwardAt.IsZero() && now.Sub(activity.LastForwardAt) <= activityWindow
+				backwardActive := !activity.LastBackwardAt.IsZero() && now.Sub(activity.LastBackwardAt) <= activityWindow
+
+				// Update global last activity time
+				if activity.LastForwardAt.After(lastActivityAt) {
+					lastActivityAt = activity.LastForwardAt
+				}
+				if activity.LastBackwardAt.After(lastActivityAt) {
+					lastActivityAt = activity.LastBackwardAt
+				}
+
+				// Determine segment direction
+				switch {
+				case forwardActive && backwardActive:
+					segmentDir = "bidirectional"
+					isActive = true
+				case forwardActive:
+					segmentDir = "forward"
+					isActive = true
+				case backwardActive:
+					segmentDir = "backward"
+					isActive = true
+				}
+			}
+
+			segmentDirections = append(segmentDirections, segmentDir)
+		}
+
+		// For backward compatibility, set Direction to first segment direction
 		direction := "none"
-
-		if exists && nodeA != "" && nodeB != "" {
-			// Check if each direction is active (within activity window)
-			forwardActive := !activity.LastForwardAt.IsZero() && now.Sub(activity.LastForwardAt) <= activityWindow
-			backwardActive := !activity.LastBackwardAt.IsZero() && now.Sub(activity.LastBackwardAt) <= activityWindow
-
-			// Determine most recent activity time
-			if activity.LastForwardAt.After(activity.LastBackwardAt) {
-				lastActivityAt = activity.LastForwardAt
-			} else {
-				lastActivityAt = activity.LastBackwardAt
-			}
-
-			// Determine direction based on which activities are within window
-			if forwardActive && backwardActive {
-				direction = "bidirectional"
-				isActive = true
-			} else if forwardActive {
-				direction = "forward"
-				isActive = true
-			} else if backwardActive {
-				direction = "backward"
-				isActive = true
-			}
+		if len(segmentDirections) > 0 {
+			direction = segmentDirections[0]
 		}
 
 		edgeList[i] = tui.Edge{
-			Raw:            e,
-			LastActivityAt: lastActivityAt,
-			IsActive:       isActive,
-			Direction:      direction,
+			Raw:               e,
+			LastActivityAt:    lastActivityAt,
+			IsActive:          isActive,
+			Direction:         direction,
+			SegmentDirections: segmentDirections,
 		}
 	}
 

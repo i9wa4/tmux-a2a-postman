@@ -20,6 +20,13 @@ var (
 	warningStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("208")).
 			Bold(true)
+
+	// Issue #42: Edge arrow styles
+	grayArrowStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+
+	greenArrowStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("10"))
 )
 
 const (
@@ -43,6 +50,7 @@ type Edge struct {
 	LastActivityAt  time.Time // Issue #35: Requirement 5 - last message time
 	IsActive        bool      // Issue #35: Requirement 5 - was recently used
 	Direction      string    // Issue #37: Communication direction ("none", "forward", "backward", "bidirectional")
+	SegmentDirections  []string  // Issue #42: Direction for each segment in chain edges
 }
 
 // SessionInfo holds information about a tmux session.
@@ -488,32 +496,55 @@ func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 			edge := m.edges[i]
 			line := edge.Raw
 
-			// Issue #37: Replace edge separator with directional arrow
-			var arrow string
-			switch edge.Direction {
-			case "forward":
-				arrow = " --> "
-			case "backward":
-				arrow = " <-- "
-			case "bidirectional":
-				arrow = " <--> "
-			default: // "none"
-				arrow = " -- "
-			}
-			// Replace both "-->" and "--" in original edge string
-			if strings.Contains(line, "-->") {
-				line = strings.Replace(line, "-->", arrow, 1)
-			} else if strings.Contains(line, "--") {
-				line = strings.Replace(line, "--", arrow, 1)
+			// Issue #42: Replace each segment with colored directional arrow
+			if len(edge.SegmentDirections) > 0 {
+				// Parse nodes from edge
+				var nodes []string
+				if strings.Contains(line, "-->") {
+					parts := strings.Split(line, "-->")
+					for _, p := range parts {
+						nodes = append(nodes, strings.TrimSpace(p))
+					}
+				} else if strings.Contains(line, "--") {
+					parts := strings.Split(line, "--")
+					for _, p := range parts {
+						nodes = append(nodes, strings.TrimSpace(p))
+					}
+				}
+
+				// Rebuild line with styled arrows
+				if len(nodes) == len(edge.SegmentDirections)+1 {
+					var builder strings.Builder
+					for j, node := range nodes {
+						builder.WriteString(node)
+						if j < len(edge.SegmentDirections) {
+							// Get arrow and style for this segment
+							var arrow string
+							var arrowStyle lipgloss.Style
+							switch edge.SegmentDirections[j] {
+							case "forward":
+								arrow = " --> "
+								arrowStyle = greenArrowStyle
+							case "backward":
+								arrow = " <-- "
+								arrowStyle = greenArrowStyle
+							case "bidirectional":
+								arrow = " <--> "
+								arrowStyle = greenArrowStyle
+							default: // "none"
+								arrow = " -- "
+								arrowStyle = grayArrowStyle
+							}
+							builder.WriteString(arrowStyle.Render(arrow))
+						}
+					}
+					line = builder.String()
+				}
 			}
 
-			// Issue #35: Requirement 5 - highlight active edges
+			// Issue #42: Remove emoji prefix (simplified display)
 			prefix := "    "
 			suffix := ""
-			if edge.IsActive {
-				prefix = "  🟢 "
-				suffix = " (active)"
-			}
 
 			// Truncate long lines (Issue #35)
 			maxLen := contentWidth - 6 - len(suffix)
