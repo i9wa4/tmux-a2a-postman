@@ -118,12 +118,33 @@ func RunDaemonLoop(
 								}
 							}
 							nodes = freshNodes
-							// Update node count
+
+							// Issue #36: Bug 2 - Build session info from nodes
+							sessionNodeCount := make(map[string]int)
+							for nodeName := range nodes {
+								// Extract session name from "session:node" format
+								parts := strings.SplitN(nodeName, ":", 2)
+								if len(parts) == 2 {
+									sessionName := parts[0]
+									sessionNodeCount[sessionName]++
+								}
+							}
+							sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+							for sessionName, nodeCount := range sessionNodeCount {
+								sessionList = append(sessionList, tui.SessionInfo{
+									Name:      sessionName,
+									NodeCount: nodeCount,
+									Enabled:   true, // Issue #35: All sessions enabled by default (memory only)
+								})
+							}
+
+							// Update node count and session info
 							events <- tui.DaemonEvent{
 								Type:    "status_update",
 								Message: "Running",
 								Details: map[string]interface{}{
 									"node_count": len(nodes),
+									"sessions":   sessionList, // Issue #36: Bug 2 - Send session info
 								},
 							}
 						}

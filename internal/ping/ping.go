@@ -2,6 +2,7 @@ package ping
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,14 +84,14 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 // SendPingToAll sends PING messages to all discovered nodes.
 func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
-	fmt.Println("📮 postman: SendPingToAll starting...")
+	log.Println("📮 postman: SendPingToAll starting...")
 
 	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ postman: discovery failed: %v\n", err)
 		return
 	}
-	fmt.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
+	log.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
 
 	// Build active nodes list (use simple names for display - Issue #33)
 	activeNodes := make([]string, 0, len(nodes))
@@ -102,9 +103,10 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 	// Send PING to each node using their actual SessionDir
 	for nodeName, nodeInfo := range nodes {
 		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman: PING to %s failed: %v\n", nodeName, err)
+			log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
-			fmt.Printf("📮 postman: PING sent to %s\n", nodeName)
+			// Issue #36: Use log package (outputs to file in TUI mode, stderr in --no-tui mode)
+			log.Printf("📮 postman: PING sent to %s\n", nodeName)
 		}
 	}
 }

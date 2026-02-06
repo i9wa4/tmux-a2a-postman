@@ -2,6 +2,7 @@ package message
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,7 +125,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if err := os.Rename(postPath, dst); err != nil {
 			return fmt.Errorf("moving PONG to read: %w", err)
 		}
-		fmt.Printf("postman: PONG received from %s\n", info.From)
+		log.Printf("postman: PONG received from %s\n", info.From)
 		return nil
 	}
 
@@ -170,7 +171,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !allowed {
 			// Routing denied: move to dead-letter/ in source session
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
-			fmt.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
+			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			return os.Rename(postPath, dst)
 		}
 	}
@@ -199,7 +200,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	idle.UpdateActivity(info.From)
 	idle.UpdateActivity(info.To)
 
-	fmt.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
+	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	return nil
 }
 

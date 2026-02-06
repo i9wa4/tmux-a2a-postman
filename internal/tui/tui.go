@@ -225,6 +225,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if count, ok := msg.Details["node_count"].(int); ok {
 				m.nodeCount = count
 			}
+			// Issue #36: Bug 2 - update sessions from Details
+			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
+				m.sessions = sessionList
+				// Clamp selection
+				if m.selectedSession >= len(m.sessions) {
+					m.selectedSession = len(m.sessions) - 1
+				}
+				if m.selectedSession < 0 {
+					m.selectedSession = 0
+				}
+			}
 		case "inbox_update":
 			// Update message list from Details
 			if msgList, ok := msg.Details["messages"].([]message.MessageInfo); ok {
@@ -367,6 +378,10 @@ func (m Model) renderEventsView(contentWidth, contentHeight int) string {
 	} else {
 		// Truncate list if too long (Issue #35)
 		maxLines := contentHeight - 8 // Reserve space for header/footer
+		// Issue #36: Bug 3 - Prevent negative maxLines
+		if maxLines < 1 {
+			maxLines = 1
+		}
 		displayCount := len(m.messages)
 		if displayCount > maxLines {
 			displayCount = maxLines
@@ -392,6 +407,10 @@ func (m Model) renderMessagesView(contentWidth, contentHeight int) string {
 	} else {
 		// Truncate list if too long (Issue #35)
 		maxLines := contentHeight - 8
+		// Issue #36: Bug 3 - Prevent negative maxLines
+		if maxLines < 1 {
+			maxLines = 1
+		}
 		displayCount := len(m.messageList)
 		if displayCount > maxLines {
 			displayCount = maxLines
@@ -433,6 +452,10 @@ func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 	} else {
 		// Truncate list if too long (Issue #35)
 		maxLines := contentHeight - 8
+		// Issue #36: Bug 3 - Prevent negative maxLines
+		if maxLines < 1 {
+			maxLines = 1
+		}
 		displayCount := len(m.edges)
 		if displayCount > maxLines {
 			displayCount = maxLines
@@ -518,6 +541,10 @@ func (m Model) renderSessionsView(contentWidth, contentHeight int) string {
 	} else {
 		// Truncate list if too long (Issue #35)
 		maxLines := contentHeight - 8
+		// Issue #36: Bug 3 - Prevent negative maxLines
+		if maxLines < 1 {
+			maxLines = 1
+		}
 		displayCount := len(m.sessions)
 		if displayCount > maxLines {
 			displayCount = maxLines

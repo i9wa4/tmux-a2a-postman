@@ -132,31 +132,27 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 	contextDir := filepath.Join(baseDir, contextID)
 
-	// Setup log file (under context directory)
+	// Setup log output (Issue #36: always log to file)
 	logPath := logFilePath
 	if logPath == "" {
 		// Default to $baseDir/{contextID}/postman.log
 		logPath = filepath.Join(contextDir, "postman.log")
 	}
-	if logPath != "" {
-		logDir := filepath.Dir(logPath)
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
-			return fmt.Errorf("creating log directory: %w", err)
-		}
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return fmt.Errorf("opening log file: %w", err)
-		}
-		defer func() {
-			_ = logFile.Close()
-		}()
-
-		// TUI mode: log to file only
-		log.SetOutput(logFile)
-		log.SetFlags(log.LstdFlags)
-
-		log.Printf("postman: daemon starting (context=%s, log=%s)\n", contextID, logPath)
+	logDir := filepath.Dir(logPath)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return fmt.Errorf("creating log directory: %w", err)
 	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening log file: %w", err)
+	}
+	defer func() {
+		_ = logFile.Close()
+	}()
+
+	log.SetOutput(logFile)
+	log.SetFlags(log.LstdFlags)
+	log.Printf("postman: daemon starting (context=%s, log=%s)\n", contextID, logPath)
 
 	// TODO: Multi-session support - for now, use "default" as session name
 	// Later phases will discover actual tmux sessions and create dirs for each
