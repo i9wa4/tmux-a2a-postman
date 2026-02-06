@@ -519,20 +519,21 @@ func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 						builder.WriteString(node)
 						if j < len(edge.SegmentDirections) {
 							// Get arrow and style for this segment
+							// Issue #44: Align all arrows to 6 characters width
 							var arrow string
 							var arrowStyle lipgloss.Style
 							switch edge.SegmentDirections[j] {
 							case "forward":
-								arrow = " --> "
+								arrow = " -->  "
 								arrowStyle = greenArrowStyle
 							case "backward":
-								arrow = " <-- "
+								arrow = " <--  "
 								arrowStyle = greenArrowStyle
 							case "bidirectional":
 								arrow = " <--> "
 								arrowStyle = greenArrowStyle
 							default: // "none"
-								arrow = " -- "
+								arrow = "  --  "
 								arrowStyle = grayArrowStyle
 							}
 							builder.WriteString(arrowStyle.Render(arrow))
