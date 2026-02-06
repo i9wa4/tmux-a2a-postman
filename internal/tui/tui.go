@@ -42,6 +42,7 @@ type Edge struct {
 	Raw             string    // Raw edge string (e.g., "A -- B -- C")
 	LastActivityAt  time.Time // Issue #35: Requirement 5 - last message time
 	IsActive        bool      // Issue #35: Requirement 5 - was recently used
+	Direction      string    // Issue #37: Communication direction ("none", "forward", "backward", "bidirectional")
 }
 
 // SessionInfo holds information about a tmux session.
@@ -474,6 +475,25 @@ func (m Model) renderRoutingView(contentWidth, contentHeight int) string {
 		for i := startIdx; i < endIdx; i++ {
 			edge := m.edges[i]
 			line := edge.Raw
+
+			// Issue #37: Replace edge separator with directional arrow
+			var arrow string
+			switch edge.Direction {
+			case "forward":
+				arrow = " --> "
+			case "backward":
+				arrow = " <-- "
+			case "bidirectional":
+				arrow = " <--> "
+			default: // "none"
+				arrow = " -- "
+			}
+			// Replace both "-->" and "--" in original edge string
+			if strings.Contains(line, "-->") {
+				line = strings.Replace(line, "-->", arrow, 1)
+			} else if strings.Contains(line, "--") {
+				line = strings.Replace(line, "--", arrow, 1)
+			}
 
 			// Issue #35: Requirement 5 - highlight active edges
 			prefix := "    "

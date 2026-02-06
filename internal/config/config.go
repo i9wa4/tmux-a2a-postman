@@ -24,6 +24,9 @@ type Config struct {
 	NewNodePingDelay float64 `toml:"new_node_ping_delay_seconds"`
 	ReminderInterval float64 `toml:"reminder_interval_seconds"`
 
+	// TUI settings (Issue #37)
+	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
+
 	// Paths
 	BaseDir string `toml:"base_dir"`
 
@@ -119,6 +122,7 @@ func DefaultConfig() *Config {
 		StartupDelay:         2.0,
 		NewNodePingDelay:     3.0,
 		ReminderInterval:     0.0,
+		EdgeActivitySeconds:  60.0, // Issue #37: Default 60 seconds
 		BaseDir:              "",
 		NotificationTemplate: "Message from {sender}",
 		PingTemplate:         "PING from postman",
@@ -197,6 +201,14 @@ func LoadConfig(path string) (*Config, error) {
 		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
 			return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
 		}
+	}
+
+	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
+	if cfg.EdgeActivitySeconds <= 0 {
+		cfg.EdgeActivitySeconds = 1 // Force minimum
+	}
+	if cfg.EdgeActivitySeconds > 3600 {
+		cfg.EdgeActivitySeconds = 3600 // Force maximum
 	}
 
 	return cfg, nil

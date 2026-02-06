@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -17,6 +19,115 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+// EdgeActivity tracks communication timestamps for an edge (Issue #37).
+type EdgeActivity struct {
+	LastForwardAt  time.Time // A -> B last communication time
+	LastBackwardAt time.Time // B -> A last communication time
+}
+
+// Global edge history tracking (Issue #37)
+var (
+	edgeHistoryMu sync.RWMutex
+	edgeHistory   = make(map[string]EdgeActivity)
+)
+
+// makeEdgeKey generates a sorted edge key for consistent lookups (Issue #37).
+func makeEdgeKey(nodeA, nodeB string) string {
+	nodes := []string{nodeA, nodeB}
+	sort.Strings(nodes)
+	return nodes[0] + ":" + nodes[1]
+}
+
+// recordEdgeActivity records edge communication activity (Issue #37).
+func recordEdgeActivity(from, to string, timestamp time.Time) {
+	edgeHistoryMu.Lock()
+	defer edgeHistoryMu.Unlock()
+
+	key := makeEdgeKey(from, to)
+	activity := edgeHistory[key]
+
+	// Determine direction: sort nodes and check if from is first
+	nodes := []string{from, to}
+	sort.Strings(nodes)
+	if from == nodes[0] {
+		activity.LastForwardAt = timestamp
+	} else {
+		activity.LastBackwardAt = timestamp
+	}
+
+	edgeHistory[key] = activity
+}
+
+// buildEdgeList builds edge list with activity data (Issue #37).
+func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
+	edgeHistoryMu.RLock()
+	defer edgeHistoryMu.RUnlock()
+
+	now := time.Now()
+	activityWindow := time.Duration(cfg.EdgeActivitySeconds * float64(time.Second))
+
+	edgeList := make([]tui.Edge, len(edges))
+	for i, e := range edges {
+		// Parse edge to get node pair (A--B or A-->B format)
+		var nodeA, nodeB string
+		if strings.Contains(e, "-->") {
+			parts := strings.SplitN(e, "-->", 2)
+			if len(parts) == 2 {
+				nodeA = strings.TrimSpace(parts[0])
+				nodeB = strings.TrimSpace(parts[1])
+			}
+		} else if strings.Contains(e, "--") {
+			parts := strings.SplitN(e, "--", 2)
+			if len(parts) == 2 {
+				nodeA = strings.TrimSpace(parts[0])
+				nodeB = strings.TrimSpace(parts[1])
+			}
+		}
+
+		// Get activity data
+		key := makeEdgeKey(nodeA, nodeB)
+		activity, exists := edgeHistory[key]
+
+		var lastActivityAt time.Time
+		isActive := false
+		direction := "none"
+
+		if exists && nodeA != "" && nodeB != "" {
+			// Check if each direction is active (within activity window)
+			forwardActive := !activity.LastForwardAt.IsZero() && now.Sub(activity.LastForwardAt) <= activityWindow
+			backwardActive := !activity.LastBackwardAt.IsZero() && now.Sub(activity.LastBackwardAt) <= activityWindow
+
+			// Determine most recent activity time
+			if activity.LastForwardAt.After(activity.LastBackwardAt) {
+				lastActivityAt = activity.LastForwardAt
+			} else {
+				lastActivityAt = activity.LastBackwardAt
+			}
+
+			// Determine direction based on which activities are within window
+			if forwardActive && backwardActive {
+				direction = "bidirectional"
+				isActive = true
+			} else if forwardActive {
+				direction = "forward"
+				isActive = true
+			} else if backwardActive {
+				direction = "backward"
+				isActive = true
+			}
+		}
+
+		edgeList[i] = tui.Edge{
+			Raw:            e,
+			LastActivityAt: lastActivityAt,
+			IsActive:       isActive,
+			Direction:      direction,
+		}
+	}
+
+	return edgeList
+}
 
 // RunDaemonLoop runs the daemon event loop in a goroutine.
 func RunDaemonLoop(
@@ -162,6 +273,9 @@ func RunDaemonLoop(
 							}
 							// Send observer digest on successful delivery
 							if info, err := message.ParseMessageFilename(filename); err == nil {
+								// Issue #37: Record edge activity
+								recordEdgeActivity(info.From, info.To, time.Now())
+
 								observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
 								// Increment reminder counter for recipient
 								if info.To != "postman" {
@@ -233,15 +347,8 @@ func RunDaemonLoop(
 						cfg = newCfg
 						adjacency = newAdjacency
 						// Send config update event
-						edgeList := make([]tui.Edge, len(newCfg.Edges))
-						for i, e := range newCfg.Edges {
-							// Issue #35: Requirement 5 - edge activity tracking (placeholder)
-							edgeList[i] = tui.Edge{
-								Raw:            e,
-								LastActivityAt: time.Time{}, // Zero time for now
-								IsActive:       false,        // Not active initially
-							}
-						}
+						// Issue #37: Build edge list with activity data
+						edgeList := buildEdgeList(newCfg.Edges, newCfg)
 
 						// Issue #35: Requirement 3 - build session info from nodes
 						sessionNodeCount := make(map[string]int)
