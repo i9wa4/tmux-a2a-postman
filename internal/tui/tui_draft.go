@@ -215,7 +215,7 @@ func (m *DraftModel) submitDraft() error {
 		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n{message}\n"
 	}
 
-	// Build variables map for template expansion
+	// Build variables map for template expansion (Issue #38)
 	vars := map[string]string{
 		"context_id": m.contextID,
 		"task_id":    taskID,
@@ -223,6 +223,7 @@ func (m *DraftModel) submitDraft() error {
 		"recipient":  m.selectedNode,
 		"timestamp":  now.Format(time.RFC3339),
 		"message":    m.messageBody,
+		"filename":   filename, // Issue #38: Add filename for template expansion
 		// Backward compatibility
 		"from": m.senderNode,
 		"to":   m.selectedNode,
