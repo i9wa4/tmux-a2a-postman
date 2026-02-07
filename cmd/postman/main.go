@@ -285,12 +285,31 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	go daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
 
+	// Build session info from nodes
+	sessionNodeCount := make(map[string]int)
+	for nodeName := range nodes {
+		parts := strings.SplitN(nodeName, ":", 2)
+		if len(parts) == 2 {
+			sessionName := parts[0]
+			sessionNodeCount[sessionName]++
+		}
+	}
+	sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+	for sessionName, nodeCount := range sessionNodeCount {
+		sessionList = append(sessionList, tui.SessionInfo{
+			Name:      sessionName,
+			NodeCount: nodeCount,
+			Enabled:   true,
+		})
+	}
+
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
 		Type:    "status_update",
 		Message: "Running",
 		Details: map[string]interface{}{
 			"node_count": len(nodes),
+			"sessions":   sessionList,
 		},
 	}
 
@@ -302,7 +321,8 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	daemonEvents <- tui.DaemonEvent{
 		Type: "config_update",
 		Details: map[string]interface{}{
-			"edges": edgeList,
+			"edges":    edgeList,
+			"sessions": sessionList,
 		},
 	}
 
