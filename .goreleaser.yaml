@@ -5,9 +5,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: postman
-    binary: postman
-    main: .
+  - id: tmux-a2a-postman
+    binary: tmux-a2a-postman
+    main: ./cmd/tmux-a2a-postman
     ldflags:
       - -s -w
       - -X main.revision={{.ShortCommit}}
@@ -21,7 +21,7 @@ builds:
       - arm64
 
 archives:
-  - id: postman
+  - id: tmux-a2a-postman
     format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
