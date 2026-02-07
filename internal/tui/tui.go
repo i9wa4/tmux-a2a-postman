@@ -314,8 +314,11 @@ func (m Model) View() string {
 	leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
 	rightPane := m.renderRightPane(rightPaneWidth, contentHeight)
 
-	// Horizontal split using lipgloss
-	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	// Create vertical separator
+	separator := strings.Repeat("│\n", contentHeight)
+
+	// Horizontal split using lipgloss with separator
+	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, separator, rightPane)
 
 	// Apply border (Issue #35)
 	return borderStyle.Width(m.width - 2).Height(m.height - 2).Render(splitView)
