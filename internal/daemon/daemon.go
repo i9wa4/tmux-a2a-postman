@@ -27,7 +27,9 @@ type EdgeActivity struct {
 
 // Global edge history tracking (Issue #37)
 var (
-	edgeHistoryMu sync.RWMutex
+	edgeHistoryMu     sync.RWMutex
+	enabledSessionsMu sync.RWMutex
+	enabledSessions   = make(map[string]bool)
 	edgeHistory   = make(map[string]EdgeActivity)
 )
 
@@ -280,7 +282,7 @@ func RunDaemonLoop(
 							}
 						}
 						// Use eventPath directly for multi-session support
-						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg); err != nil {
+						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, IsSessionEnabled); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -367,7 +369,7 @@ func RunDaemonLoop(
 							sessionList = append(sessionList, tui.SessionInfo{
 								Name:      sessionName,
 								NodeCount: nodeCount,
-								Enabled:   true, // Issue #35: All sessions enabled by default (memory only)
+								Enabled:   false, // All sessions disabled by default
 							})
 						}
 
@@ -488,4 +490,23 @@ func RunDaemonLoop(
 			}
 		}
 	}
+}
+
+// SetSessionEnabled sets the enabled/disabled state for a session.
+func SetSessionEnabled(sessionName string, enabled bool) {
+	enabledSessionsMu.Lock()
+	defer enabledSessionsMu.Unlock()
+	enabledSessions[sessionName] = enabled
+}
+
+// IsSessionEnabled checks if a session is enabled.
+// Returns true if session is enabled, false otherwise.
+func IsSessionEnabled(sessionName string) bool {
+	enabledSessionsMu.RLock()
+	defer enabledSessionsMu.RUnlock()
+	enabled, exists := enabledSessions[sessionName]
+	if !exists {
+		return false // Default: disabled
+	}
+	return enabled
 }

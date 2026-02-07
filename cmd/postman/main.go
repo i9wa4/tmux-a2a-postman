@@ -294,12 +294,15 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			sessionNodeCount[sessionName]++
 		}
 	}
+	// Session enable/disable state (all disabled by default)
+	enabledSessions := make(map[string]bool)
 	sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
 	for sessionName, nodeCount := range sessionNodeCount {
+		enabledSessions[sessionName] = false
 		sessionList = append(sessionList, tui.SessionInfo{
 			Name:      sessionName,
 			NodeCount: nodeCount,
-			Enabled:   true,
+			Enabled:   false,
 		})
 	}
 
@@ -402,6 +405,41 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								} else {
 									log.Printf("📮 postman: PING sent to %s\n", nodeName)
 								}
+							}
+						}
+					case "session_toggle":
+						// Toggle session enable/disable
+						if currentState, exists := enabledSessions[cmd.Target]; exists {
+							newState := !currentState
+							enabledSessions[cmd.Target] = newState
+							daemon.SetSessionEnabled(cmd.Target, newState)
+							log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
+
+							// Rebuild session list and send status update
+							sessionNodeCount := make(map[string]int)
+							for nodeName := range nodes {
+								parts := strings.SplitN(nodeName, ":", 2)
+								if len(parts) == 2 {
+									sessionName := parts[0]
+									sessionNodeCount[sessionName]++
+								}
+							}
+							updatedSessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+							for sessionName, nodeCount := range sessionNodeCount {
+								enabled := enabledSessions[sessionName]
+								updatedSessionList = append(updatedSessionList, tui.SessionInfo{
+									Name:      sessionName,
+									NodeCount: nodeCount,
+									Enabled:   enabled,
+								})
+							}
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "status_update",
+								Message: "Running",
+								Details: map[string]interface{}{
+									"node_count": len(nodes),
+									"sessions":   updatedSessionList,
+								},
 							}
 						}
 					}

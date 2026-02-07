@@ -113,7 +113,7 @@ func TestDeliverMessage(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestRouting_Allowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestRouting_Denied(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -326,7 +326,7 @@ func TestPONG_Handling(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 

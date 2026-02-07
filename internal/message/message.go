@@ -97,7 +97,8 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // Routing rules (DEFAULT DENY):
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) error {
+// Session check: both sender and recipient sessions must be enabled (unless sender is postman)
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -174,6 +175,25 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			return os.Rename(postPath, dst)
 		}
+	}
+
+	// Check session enabled/disabled state
+	// Extract sender and recipient session names
+	senderSessionName := sourceSessionName
+	recipientSessionName := nodeInfo.SessionName
+
+	// Both sessions must be enabled (unless sender is postman)
+	if info.From != "postman" {
+		if !isSessionEnabled(senderSessionName) {
+			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
+			return os.Rename(postPath, dst)
+		}
+	}
+	if !isSessionEnabled(recipientSessionName) {
+		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
+		return os.Rename(postPath, dst)
 	}
 
 	// Ensure recipient inbox subdirectory exists (in recipient's session directory)

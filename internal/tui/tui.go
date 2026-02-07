@@ -190,9 +190,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case " ", "enter":
-			// Issue #45: Toggle session enable/disable
+			// Session toggle via TUICommand
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
-				m.sessions[m.selectedSession].Enabled = !m.sessions[m.selectedSession].Enabled
+				sess := m.sessions[m.selectedSession]
+				if m.tuiCommands != nil {
+					m.tuiCommands <- TUICommand{
+						Type:   "session_toggle",
+						Target: sess.Name,
+					}
+				}
 			}
 			return m, nil
 		case "p":
