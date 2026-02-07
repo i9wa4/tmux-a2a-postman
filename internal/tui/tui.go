@@ -337,13 +337,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Issue #59: Update session-node mapping
-			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string]interface{}); ok {
-				m.sessionNodes = make(map[string][]string)
-				for sessionName, nodesRaw := range sessionNodesRaw {
-					if nodeSlice, ok := nodesRaw.([]string); ok {
-						m.sessionNodes[sessionName] = nodeSlice
-					}
-				}
+			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
+				m.sessionNodes = sessionNodesRaw
 			}
 		// Issue #45: Removed "inbox_update" handler
 		case "config_update":
@@ -372,13 +367,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Issue #59: Update session-node mapping
-			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string]interface{}); ok {
-				m.sessionNodes = make(map[string][]string)
-				for sessionName, nodesRaw := range sessionNodesRaw {
-					if nodeSlice, ok := nodesRaw.([]string); ok {
-						m.sessionNodes[sessionName] = nodeSlice
-					}
-				}
+			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
+				m.sessionNodes = sessionNodesRaw
 			}
 		case "edge_update":
 			// Issue #40: Update edges from edge_update event
@@ -629,7 +619,7 @@ func (m Model) renderEventsView(width, height int) string {
 	selectedName := m.getSelectedSessionName()
 	var filteredEvents []EventEntry
 	for _, event := range m.events {
-		if selectedName == "" || event.SessionName == selectedName {
+		if selectedName == "" || event.SessionName == "" || event.SessionName == selectedName {
 			filteredEvents = append(filteredEvents, event)
 		}
 	}
