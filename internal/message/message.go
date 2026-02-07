@@ -183,6 +183,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	recipientSessionName := nodeInfo.SessionName
 
 	// Both sessions must be enabled (unless sender is postman)
+	// NOTE: Postman exemption applies to all messages from postman, not just PING.
+	// Currently only PING uses this exemption. If other postman message types are added
+	// in the future, consider whether they should also bypass session checks.
 	if info.From != "postman" {
 		if !isSessionEnabled(senderSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)

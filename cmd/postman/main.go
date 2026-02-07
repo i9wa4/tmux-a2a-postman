@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -303,6 +304,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			Enabled:   daemon.IsSessionEnabled(sessionName),
 		})
 	}
+	// Sort session list by name to maintain consistent order
+	sort.Slice(sessionList, func(i, j int) bool {
+		return sessionList[i].Name < sessionList[j].Name
+	})
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
@@ -382,7 +387,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					// Issue #47: Handle TUI commands
 					switch cmd.Type {
 					case "send_ping":
-						// Send PING to all nodes in the target session
+						// Send PING to all nodes in the target session (Issue #52)
 						targetNodes := make(map[string]discovery.NodeInfo)
 						for k, v := range nodes {
 							if v.SessionName == cmd.Target {
@@ -397,12 +402,30 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								activeNodes = append(activeNodes, simpleName)
 							}
 							// Send PING to each node in the target session
+							successCount := 0
+							failCount := 0
 							for nodeName, nodeInfo := range targetNodes {
 								if err := ping.SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
 									log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
+									failCount++
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "message_received",
+										Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
+									}
 								} else {
 									log.Printf("📮 postman: PING sent to %s\n", nodeName)
+									successCount++
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "message_received",
+										Message: fmt.Sprintf("PING sent to %s", nodeName),
+									}
 								}
+							}
+							// Send summary event
+							totalCount := successCount + failCount
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 							}
 						}
 					case "session_toggle":
@@ -429,6 +452,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								Enabled:   daemon.IsSessionEnabled(sessionName),
 							})
 						}
+						// Sort session list by name to maintain consistent order
+						sort.Slice(updatedSessionList, func(i, j int) bool {
+							return updatedSessionList[i].Name < updatedSessionList[j].Name
+						})
 
 						// Send status update
 						daemonEvents <- tui.DaemonEvent{

@@ -273,6 +273,10 @@ func RunDaemonLoop(
 									Enabled:   IsSessionEnabled(sessionName),
 								})
 							}
+							// Sort session list by name to maintain consistent order
+							sort.Slice(sessionList, func(i, j int) bool {
+								return sessionList[i].Name < sessionList[j].Name
+							})
 
 							// Update node count and session info
 							events <- tui.DaemonEvent{
@@ -375,6 +379,10 @@ func RunDaemonLoop(
 								Enabled:   IsSessionEnabled(sessionName),
 							})
 						}
+						// Sort session list by name to maintain consistent order
+						sort.Slice(sessionList, func(i, j int) bool {
+							return sessionList[i].Name < sessionList[j].Name
+						})
 
 						events <- tui.DaemonEvent{
 							Type: "config_update",
@@ -480,6 +488,10 @@ func RunDaemonLoop(
 						Enabled:   IsSessionEnabled(sessionName),
 					})
 				}
+				// Sort session list by name to maintain consistent order
+				sort.Slice(sessionList, func(i, j int) bool {
+					return sessionList[i].Name < sessionList[j].Name
+				})
 
 				// Update node count and session info
 				events <- tui.DaemonEvent{
