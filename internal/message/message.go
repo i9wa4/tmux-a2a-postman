@@ -274,8 +274,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection (Issue #55)
-	idle.UpdateSendActivity(info.From)
-	idle.UpdateReceiveActivity(info.To)
+	// NOTE: Exclude system messages (from/to "postman") from ball tracking
+	if info.From != "postman" {
+		idle.UpdateSendActivity(info.From)
+	}
+	if info.To != "postman" {
+		idle.UpdateReceiveActivity(info.To)
+	}
 
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	return nil

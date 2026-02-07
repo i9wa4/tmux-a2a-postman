@@ -131,7 +131,32 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		return
 	}
 
+	// Build edge node set from configured edges
+	edgeNodes := make(map[string]bool)
+	for _, edge := range m.edges {
+		// Parse node names from edge.Raw (same as renderRoutingView)
+		var nodes []string
+		if strings.Contains(edge.Raw, "-->") {
+			parts := strings.Split(edge.Raw, "-->")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
+			}
+		} else if strings.Contains(edge.Raw, "--") {
+			parts := strings.Split(edge.Raw, "--")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
+			}
+		}
+		for _, node := range nodes {
+			edgeNodes[node] = true
+		}
+	}
+
+	// Only update states for edge-registered nodes
 	for nodeName, activity := range nodeActivities {
+		if !edgeNodes[nodeName] {
+			continue
+		}
 		// Determine state: gray (no PONG) / active (PONG, not holding) / holding (PONG + holding ball)
 		switch {
 		case !activity.PongReceived:
