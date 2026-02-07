@@ -36,6 +36,7 @@ type Config struct {
 	DigestTemplate       string `toml:"digest_template"`
 	DraftTemplate        string `toml:"draft_template"`
 	ReminderMessage      string `toml:"reminder_message"`
+	CommonTemplate       string `toml:"common_template"` // Issue #49: Shared template for all nodes
 
 	// Global settings
 	Edges        []string `toml:"edges"`

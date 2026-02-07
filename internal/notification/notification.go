@@ -53,6 +53,14 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	if nodeConfig, ok := cfg.Nodes[recipient]; ok {
 		recipientTemplate = nodeConfig.Template
 	}
+	// Issue #49: Prepend common_template if present
+	if cfg.CommonTemplate != "" {
+		if recipientTemplate != "" {
+			recipientTemplate = cfg.CommonTemplate + "\n\n" + recipientTemplate
+		} else {
+			recipientTemplate = cfg.CommonTemplate
+		}
+	}
 
 	// Get talks_to list for recipient (use simple name for adjacency lookup)
 	talksTo := config.GetTalksTo(adjacency, recipient)

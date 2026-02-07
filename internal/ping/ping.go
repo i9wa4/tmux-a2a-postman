@@ -40,6 +40,14 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	if hasNodeConfig {
 		nodeTemplate = nodeConfig.Template
 	}
+	// Issue #49: Prepend common_template if present
+	if cfg.CommonTemplate != "" {
+		if nodeTemplate != "" {
+			nodeTemplate = cfg.CommonTemplate + "\n\n" + nodeTemplate
+		} else {
+			nodeTemplate = cfg.CommonTemplate
+		}
+	}
 
 	// Build talks_to_line from adjacency (edges) - use simple name
 	talksToLine := buildTalksToLine(simpleName, cfg)
