@@ -467,8 +467,24 @@ func (m Model) renderTargetNodeStatusLine() string {
 	return b.String()
 }
 
+// truncateString truncates a string to maxLen runes (UTF-8 safe).
+// If truncated, appends "..." to the result.
+// Issue #60: Fix long line wrapping in Events pane
+func truncateString(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	if maxLen < 3 {
+		// Too short to add "...", just truncate
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
+}
+
 // renderEventsView renders the events view (right pane content).
 // Issue #45: Adjusted for right pane layout
+// Issue #60: Fix long line wrapping with UTF-8 safe truncation
 func (m Model) renderEventsView(width, height int) string {
 	var b strings.Builder
 	b.WriteString("Recent Events:\n")
@@ -487,9 +503,11 @@ func (m Model) renderEventsView(width, height int) string {
 		startIdx := len(m.messages) - displayCount
 		for i := startIdx; i < len(m.messages); i++ {
 			msg := m.messages[i]
-			// Truncate long lines
-			if len(msg) > width-4 {
-				msg = msg[:width-7] + "..."
+			// Truncate long lines (UTF-8 safe)
+			// Reserve 4 characters for "  - " prefix
+			maxMsgLen := width - 4
+			if maxMsgLen > 0 {
+				msg = truncateString(msg, maxMsgLen)
 			}
 			b.WriteString(fmt.Sprintf("  - %s\n", msg))
 		}
