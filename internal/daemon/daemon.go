@@ -332,35 +332,55 @@ func RunDaemonLoop(
 							}
 						}
 						// Use eventPath directly for multi-session support
-						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, IsSessionEnabled); err != nil {
+						// Issue #53: Create wrapper channel for dead-letter notifications
+						messageEvents := make(chan message.DaemonEvent, 1)
+						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, IsSessionEnabled, messageEvents); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),
 							}
 						} else {
-							// Send message received event
-							events <- tui.DaemonEvent{
-								Type:    "message_received",
-								Message: fmt.Sprintf("Delivered: %s", filename),
-							}
-							// Send observer digest on successful delivery
-							if info, err := message.ParseMessageFilename(filename); err == nil {
-								// Issue #37: Record edge activity
-								recordEdgeActivity(info.From, info.To, time.Now())
-
-								// Issue #40: Send edge_update event to TUI
-								edgeList := buildEdgeList(cfg.Edges, cfg)
+							// Issue #53: Check if dead-letter event was sent
+							deadLetterEventSent := false
+							select {
+							case msgEvent := <-messageEvents:
 								events <- tui.DaemonEvent{
-									Type: "edge_update",
-									Details: map[string]interface{}{
-										"edges": edgeList,
-									},
+									Type:    msgEvent.Type,
+									Message: msgEvent.Message,
+									Details: msgEvent.Details,
 								}
+								deadLetterEventSent = true
+							default:
+								// No dead-letter event, normal delivery
+							}
 
-								observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
-								// Increment reminder counter for recipient
-								if info.To != "postman" {
-									reminderState.Increment(info.To, nodes, cfg)
+							// Send normal delivery event only if not dead-lettered
+							if !deadLetterEventSent {
+								events <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("Delivered: %s", filename),
+								}
+							}
+							// Send observer digest on successful delivery (only for normal delivery)
+							if !deadLetterEventSent {
+								if info, err := message.ParseMessageFilename(filename); err == nil {
+									// Issue #37: Record edge activity
+									recordEdgeActivity(info.From, info.To, time.Now())
+
+									// Issue #40: Send edge_update event to TUI
+									edgeList := buildEdgeList(cfg.Edges, cfg)
+									events <- tui.DaemonEvent{
+										Type: "edge_update",
+										Details: map[string]interface{}{
+											"edges": edgeList,
+										},
+									}
+
+									observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
+									// Increment reminder counter for recipient
+									if info.To != "postman" {
+										reminderState.Increment(info.To, nodes, cfg)
+									}
 								}
 							}
 						}

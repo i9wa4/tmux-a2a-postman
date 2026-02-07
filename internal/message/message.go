@@ -14,6 +14,13 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
 
+// DaemonEvent represents an event to be sent to the TUI (Issue #53).
+type DaemonEvent struct {
+	Type    string
+	Message string
+	Details map[string]interface{}
+}
+
 // MessageInfo holds parsed information from a message filename.
 type MessageInfo struct {
 	Timestamp string
@@ -98,7 +105,8 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // - sender="postman" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
 // Session check: both sender and recipient sessions must be enabled (unless sender is postman)
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool) error {
+// Issue #53: Added events channel parameter for dead-letter notifications
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -116,6 +124,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		// Parse error: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		// Issue #53: Notify dead-letter event
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s (parse error)", filename),
+			}
+		}
 		return os.Rename(postPath, dst)
 	}
 
@@ -135,6 +150,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		// Issue #53: Notify dead-letter event
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown recipient)", info.From, info.To),
+			}
+		}
 		return os.Rename(postPath, dst)
 	}
 	nodeInfo := knownNodes[recipientFullName]
@@ -145,6 +167,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if senderFullName == "" && info.From != "postman" {
 		// Unknown sender: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		// Issue #53: Notify dead-letter event
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown sender)", info.From, info.To),
+			}
+		}
 		return os.Rename(postPath, dst)
 	}
 
@@ -173,6 +202,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			// Routing denied: move to dead-letter/ in source session
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
+			// Issue #53: Notify dead-letter event
+			if events != nil {
+				events <- DaemonEvent{
+					Type:    "message_received",
+					Message: fmt.Sprintf("Dead-letter: %s -> %s (routing denied)", info.From, info.To),
+				}
+			}
 			return os.Rename(postPath, dst)
 		}
 	}
@@ -190,6 +226,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !isSessionEnabled(senderSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
+			// Issue #53: Notify dead-letter event
+			if events != nil {
+				events <- DaemonEvent{
+					Type:    "message_received",
+					Message: fmt.Sprintf("Dead-letter: %s -> %s (sender session disabled)", info.From, info.To),
+				}
+			}
 			return os.Rename(postPath, dst)
 		}
 	}
@@ -197,6 +240,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !isSessionEnabled(recipientSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
+			// Issue #53: Notify dead-letter event
+			if events != nil {
+				events <- DaemonEvent{
+					Type:    "message_received",
+					Message: fmt.Sprintf("Dead-letter: %s -> %s (recipient session disabled)", info.From, info.To),
+				}
+			}
 			return os.Rename(postPath, dst)
 		}
 	}
