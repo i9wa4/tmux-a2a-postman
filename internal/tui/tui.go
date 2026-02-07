@@ -335,20 +335,20 @@ func (m Model) renderLeftPane(width, height int) string {
 	if len(m.sessions) == 0 {
 		b.WriteString("(no sessions)\n")
 	} else {
-		// Calculate scroll window
+		// Calculate scroll window (each session can use 1-2 lines)
 		maxLines := height - 5 // Reserve space for header + footer
-		if maxLines < 1 {
-			maxLines = 1
+		if maxLines < 2 {
+			maxLines = 2
 		}
 
 		startIdx := 0
 		endIdx := len(m.sessions)
-		if len(m.sessions) > maxLines {
-			// Keep selected session visible
-			if m.selectedSession >= maxLines {
-				startIdx = m.selectedSession - maxLines + 1
+		if len(m.sessions) > maxLines/2 {
+			// Keep selected session visible (approximate)
+			if m.selectedSession >= maxLines/2 {
+				startIdx = m.selectedSession - maxLines/2 + 1
 			}
-			endIdx = startIdx + maxLines
+			endIdx = startIdx + maxLines/2
 			if endIdx > len(m.sessions) {
 				endIdx = len(m.sessions)
 			}
@@ -357,25 +357,30 @@ func (m Model) renderLeftPane(width, height int) string {
 		for i := startIdx; i < endIdx; i++ {
 			sess := m.sessions[i]
 
-			// Issue #45: Status indicator (OK/OFF)
+			// Status indicator (OK/OFF)
 			statusIcon := "OK "
 			if !sess.Enabled {
 				statusIcon = "OFF"
 			}
 
-			// Build line
-			line := fmt.Sprintf("%s (%d) %s", sess.Name, sess.NodeCount, statusIcon)
-
-			// Truncate if too long
-			if len(line) > width-4 {
-				line = line[:width-7] + "..."
-			}
-
-			// Selection indicator
-			if i == m.selectedSession {
-				b.WriteString(fmt.Sprintf("> %s\n", line))
+			// Check if session name + status fits in one line
+			oneLine := fmt.Sprintf("%s (%d) %s", sess.Name, sess.NodeCount, statusIcon)
+			if len(oneLine) <= width-4 {
+				// Fits in one line
+				if i == m.selectedSession {
+					b.WriteString(fmt.Sprintf("> %s\n", oneLine))
+				} else {
+					b.WriteString(fmt.Sprintf("  %s\n", oneLine))
+				}
 			} else {
-				b.WriteString(fmt.Sprintf("  %s\n", line))
+				// Wrap to two lines
+				if i == m.selectedSession {
+					b.WriteString(fmt.Sprintf("> %s\n", sess.Name))
+					b.WriteString(fmt.Sprintf("  (%d) %s\n", sess.NodeCount, statusIcon))
+				} else {
+					b.WriteString(fmt.Sprintf("  %s\n", sess.Name))
+					b.WriteString(fmt.Sprintf("  (%d) %s\n", sess.NodeCount, statusIcon))
+				}
 			}
 		}
 	}
