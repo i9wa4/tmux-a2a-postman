@@ -320,11 +320,29 @@ func (m Model) View() string {
 	leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
 	rightPane := m.renderRightPane(rightPaneWidth, contentHeight)
 
-	// Create vertical separator
-	separator := strings.Repeat("│\n", contentHeight)
+	// Create vertical separator with exact height
+	// NOTE: lipgloss.JoinHorizontal requires all inputs to have the same line count.
+	// Use lipgloss.Place to ensure separator matches contentHeight exactly.
+	separator := lipgloss.Place(
+		1,              // width: 1 character
+		contentHeight,  // height: match content
+		lipgloss.Left,  // horizontal alignment
+		lipgloss.Top,   // vertical alignment
+		strings.Repeat("│\n", contentHeight-1)+"│", // contentHeight lines without trailing newline
+	)
+
+	// Ensure leftPane and rightPane are exact height using lipgloss.PlaceVertical
+	leftPaneStyled := lipgloss.NewStyle().
+		Width(leftPaneWidth).
+		Height(contentHeight).
+		Render(leftPane)
+	rightPaneStyled := lipgloss.NewStyle().
+		Width(rightPaneWidth).
+		Height(contentHeight).
+		Render(rightPane)
 
 	// Horizontal split using lipgloss with separator
-	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, separator, rightPane)
+	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
 
 	// Apply border (Issue #35)
 	return borderStyle.Width(m.width - 2).Height(m.height - 2).Render(splitView)

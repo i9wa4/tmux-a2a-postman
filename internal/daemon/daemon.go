@@ -162,7 +162,10 @@ func RunDaemonLoop(
 	events chan<- tui.DaemonEvent,
 	configPath string,
 ) {
-	defer close(events)
+	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
+	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
+	// "send on closed channel" panics. Let the channel be garbage collected when all
+	// goroutines exit.
 
 	// Debounce timers for different paths
 	// Issue #45: Removed inboxTimer (inbox_update event removed)
