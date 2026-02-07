@@ -103,6 +103,10 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		}
 	}
 
+	// CRITICAL FIX: Expand {context_id} placeholder in reply_command template
+	// This handles cases where reply_command contains {context_id} literally in config
+	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
+
 	// Build variables map
 	vars := map[string]string{
 		"from_node":     sender,
