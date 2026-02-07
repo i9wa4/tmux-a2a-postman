@@ -42,7 +42,8 @@ func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
 			continue
 		}
 
-		if node := getNodeFromProcessOS(pid); node != "" {
+		// Issue #48: Pass paneID for tmux-based detection
+		if node := getNodeFromProcessOS(pid, paneID); node != "" {
 			// Calculate SessionDir as baseDir/contextID/sessionName
 			sessionDir := filepath.Join(baseDir, contextID, sessionName)
 			// Use session-prefixed node name to avoid collisions (Issue #33)

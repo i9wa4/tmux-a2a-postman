@@ -9,9 +9,16 @@ import (
 )
 
 // getNodeFromProcessOS extracts A2A_NODE from a process environment on Linux.
-// Reads /proc/<pid>/environ which contains null-separated environment variables.
+// Issue #48: First tries tmux show-environment (detects late-exported vars),
+// then falls back to /proc/<pid>/environ for startup-only env vars.
 // Also checks child processes if direct process doesn't have A2A_NODE.
-func getNodeFromProcessOS(pid string) string {
+func getNodeFromProcessOS(pid string, paneID string) string {
+	// Method 1: Try tmux show-environment (Issue #48)
+	if node := getNodeFromTmux(paneID); node != "" {
+		return node
+	}
+
+	// Method 2: Fallback to /proc/<pid>/environ (startup env only)
 	// First check direct process
 	if node := checkProcessForNode(pid); node != "" {
 		return node
@@ -30,6 +37,21 @@ func getNodeFromProcessOS(pid string) string {
 		if node := checkProcessForNode(childPid); node != "" {
 			return node
 		}
+	}
+	return ""
+}
+
+// getNodeFromTmux extracts A2A_NODE from tmux pane environment (Issue #48).
+// This method detects variables exported after process startup.
+func getNodeFromTmux(paneID string) string {
+	out, err := exec.Command("tmux", "show-environment", "-t", paneID, "A2A_NODE").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	// Parse output: "A2A_NODE=worker" or "-A2A_NODE" (unset)
+	line := strings.TrimSpace(string(out))
+	if strings.HasPrefix(line, "A2A_NODE=") {
+		return strings.TrimPrefix(line, "A2A_NODE=")
 	}
 	return ""
 }
