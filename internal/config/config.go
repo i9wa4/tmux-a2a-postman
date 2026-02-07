@@ -59,7 +59,6 @@ type NodeConfig struct {
 	OnJoin                      string   `toml:"on_join"`
 	Observes                    []string `toml:"observes"`
 	Role                        string   `toml:"role"`
-	SubscribeDigest             bool     `toml:"subscribe_digest"`
 	ReminderInterval            float64  `toml:"reminder_interval_seconds"`
 	ReminderMessage             string   `toml:"reminder_message"`
 	IdleTimeoutSeconds          float64  `toml:"idle_timeout_seconds"`
@@ -78,7 +77,6 @@ type AgentCard struct {
 	TalksTo         []string `toml:"talks_to"`
 	Template        string   `toml:"template"`
 	Role            string   `toml:"role"`
-	SubscribeDigest bool     `toml:"subscribe_digest"`
 }
 
 // CompactionDetectionConfig holds compaction detection configuration.

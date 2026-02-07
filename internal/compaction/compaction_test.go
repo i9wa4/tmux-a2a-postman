@@ -136,16 +136,13 @@ func TestNotifyObserversOfCompaction(t *testing.T) {
 		},
 		Nodes: map[string]config.NodeConfig{
 			"observer-1": {
-				SubscribeDigest: true,
-				Observes:        []string{"worker-node", "other-node"},
+				Observes: []string{"worker-node", "other-node"},
 			},
 			"observer-2": {
-				SubscribeDigest: true,
-				Observes:        []string{"other-node"}, // Does not observe worker-node
+				Observes: []string{"other-node"}, // Does not observe worker-node
 			},
 			"observer-3": {
-				SubscribeDigest: false, // Not subscribed
-				Observes:        []string{"worker-node"},
+				Observes: []string{}, // No observes (will be skipped)
 			},
 		},
 	}
@@ -211,8 +208,7 @@ func TestCompactionDelay(t *testing.T) {
 		},
 		Nodes: map[string]config.NodeConfig{
 			"observer-test": {
-				SubscribeDigest: true,
-				Observes:        []string{"worker-node"},
+				Observes: []string{"worker-node"},
 			},
 		},
 	}
@@ -273,8 +269,7 @@ func TestCompactionDetection_Disabled(t *testing.T) {
 		},
 		Nodes: map[string]config.NodeConfig{
 			"observer-test": {
-				SubscribeDigest: true,
-				Observes:        []string{"worker-node"},
+				Observes: []string{"worker-node"},
 			},
 		},
 	}

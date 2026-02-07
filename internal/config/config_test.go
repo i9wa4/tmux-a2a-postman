@@ -118,7 +118,6 @@ on_join = ""
 template = "worker template"
 role = "worker"
 on_join = ""
-subscribe_digest = true
 `
 
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -177,9 +176,6 @@ subscribe_digest = true
 	}
 	if cfg.Nodes["orchestrator"].Role != "coordinator" {
 		t.Errorf("Node orchestrator role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "coordinator")
-	}
-	if !cfg.Nodes["worker"].SubscribeDigest {
-		t.Errorf("Node worker subscribe_digest: got false, want true")
 	}
 }
 

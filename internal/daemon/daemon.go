@@ -383,7 +383,7 @@ func RunDaemonLoop(
 											},
 										}
 
-										observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
+										observer.SendObserverDigest(filename, info.From, info.To, nodes, cfg, digestedFiles)
 										// Increment reminder counter for recipient
 										reminderState.Increment(info.To, nodes, cfg)
 

@@ -20,7 +20,7 @@ func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 		TmuxTimeout: 5.0,
 		Nodes: map[string]config.NodeConfig{
 			"observer-a": {
-				SubscribeDigest: true,
+				Observes: []string{"worker"},
 			},
 		},
 		DigestTemplate: "DIGEST {digest_items}",
@@ -28,7 +28,7 @@ func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 
 	// Call with sender="observer-a" (should be skipped due to loop prevention)
 	filename1 := "20260206-120000-from-observer-a-to-worker.md"
-	SendObserverDigest(filename1, "observer-a", nodes, cfg, digestedFiles)
+	SendObserverDigest(filename1, "observer-a", "worker", nodes, cfg, digestedFiles)
 
 	// Verify file was NOT added to digestedFiles (loop prevention worked)
 	if digestedFiles[filename1] {
@@ -37,7 +37,7 @@ func TestSendObserverDigest_LoopPrevention(t *testing.T) {
 
 	// Call with sender="worker" (should be processed)
 	filename2 := "20260206-120001-from-worker-to-observer-a.md"
-	SendObserverDigest(filename2, "worker", nodes, cfg, digestedFiles)
+	SendObserverDigest(filename2, "worker", "observer-a", nodes, cfg, digestedFiles)
 
 	// Verify file was added to digestedFiles
 	if !digestedFiles[filename2] {
@@ -58,7 +58,7 @@ func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 		TmuxTimeout: 5.0,
 		Nodes: map[string]config.NodeConfig{
 			"observer-a": {
-				SubscribeDigest: true,
+				Observes: []string{"worker"},
 			},
 		},
 		DigestTemplate: "DIGEST {digest_items}",
@@ -66,9 +66,10 @@ func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 
 	filename := "20260206-120000-from-worker-to-observer-a.md"
 	sender := "worker"
+	recipient := "observer-a"
 
 	// First call - should add to digestedFiles
-	SendObserverDigest(filename, sender, nodes, cfg, digestedFiles)
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
 	if !digestedFiles[filename] {
 		t.Fatalf("digestedFiles should contain %q after first call", filename)
 	}
@@ -77,7 +78,7 @@ func TestSendObserverDigest_DuplicatePrevention(t *testing.T) {
 	firstCallProcessed := digestedFiles[filename]
 
 	// Second call with same filename - should be skipped due to duplicate prevention
-	SendObserverDigest(filename, sender, nodes, cfg, digestedFiles)
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
 
 	// Verify digestedFiles still contains the file (not removed)
 	if !digestedFiles[filename] {
@@ -103,7 +104,7 @@ func TestSendObserverDigest_NoSubscribers(t *testing.T) {
 		TmuxTimeout: 5.0,
 		Nodes: map[string]config.NodeConfig{
 			"worker": {
-				SubscribeDigest: false, // Not subscribed
+				Observes: []string{}, // No observes
 			},
 		},
 		DigestTemplate: "DIGEST {digest_items}",
@@ -111,9 +112,10 @@ func TestSendObserverDigest_NoSubscribers(t *testing.T) {
 
 	filename := "20260206-120000-from-orchestrator-to-worker.md"
 	sender := "orchestrator"
+	recipient := "worker"
 
 	// Call should still mark file as digested even if no subscribers
-	SendObserverDigest(filename, sender, nodes, cfg, digestedFiles)
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
 
 	// Verify file was added to digestedFiles
 	if !digestedFiles[filename] {
@@ -135,7 +137,7 @@ func TestSendObserverDigest_PostmanToPostman(t *testing.T) {
 		TmuxTimeout: 5.0,
 		Nodes: map[string]config.NodeConfig{
 			"observer-a": {
-				SubscribeDigest: true,
+				Observes: []string{"postman", "worker"},
 			},
 		},
 		DigestTemplate: "DIGEST {digest_items}",
@@ -144,8 +146,9 @@ func TestSendObserverDigest_PostmanToPostman(t *testing.T) {
 	// Test postman-to-postman message (should be skipped)
 	filename := "20260206-120000-from-postman-to-postman.md"
 	sender := "postman"
+	recipient := "postman"
 
-	SendObserverDigest(filename, sender, nodes, cfg, digestedFiles)
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
 
 	// Verify file was NOT added to digestedFiles (postman-to-postman should be skipped)
 	if digestedFiles[filename] {
@@ -154,10 +157,108 @@ func TestSendObserverDigest_PostmanToPostman(t *testing.T) {
 
 	// Test postman-to-worker message (should be processed)
 	filename2 := "20260206-120001-from-postman-to-worker.md"
-	SendObserverDigest(filename2, sender, nodes, cfg, digestedFiles)
+	recipient2 := "worker"
+	SendObserverDigest(filename2, sender, recipient2, nodes, cfg, digestedFiles)
 
 	// Verify file was added to digestedFiles
 	if !digestedFiles[filename2] {
 		t.Errorf("digestedFiles should contain postman-to-worker message, but it doesn't")
+	}
+}
+
+// TestSendObserverDigest_ObservesFilterFrom tests Issue #62 - observes matches sender
+func TestSendObserverDigest_ObservesFilterFrom(t *testing.T) {
+	digestedFiles := make(map[string]bool)
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:observer-a": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"observer-a": {
+				Observes: []string{"worker"}, // Observes worker
+			},
+		},
+		DigestTemplate: "DIGEST {digest_items}",
+	}
+
+	filename := "20260206-120000-from-worker-to-orchestrator.md"
+	sender := "worker"
+	recipient := "orchestrator"
+
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
+
+	// Verify file was added (sender matches observes)
+	if !digestedFiles[filename] {
+		t.Errorf("digestedFiles should contain message where sender matches observes")
+	}
+}
+
+// TestSendObserverDigest_ObservesFilterTo tests Issue #62 - observes matches recipient
+func TestSendObserverDigest_ObservesFilterTo(t *testing.T) {
+	digestedFiles := make(map[string]bool)
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:observer-a": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"observer-a": {
+				Observes: []string{"worker"}, // Observes worker
+			},
+		},
+		DigestTemplate: "DIGEST {digest_items}",
+	}
+
+	filename := "20260206-120000-from-orchestrator-to-worker.md"
+	sender := "orchestrator"
+	recipient := "worker"
+
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
+
+	// Verify file was added (recipient matches observes)
+	if !digestedFiles[filename] {
+		t.Errorf("digestedFiles should contain message where recipient matches observes")
+	}
+}
+
+// TestSendObserverDigest_ObservesNoMatch tests Issue #62 - observes does not match sender or recipient
+func TestSendObserverDigest_ObservesNoMatch(t *testing.T) {
+	digestedFiles := make(map[string]bool)
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:observer-a": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"observer-a": {
+				Observes: []string{"other-node"}, // Does not observe orchestrator or worker
+			},
+		},
+		DigestTemplate: "DIGEST {digest_items}",
+	}
+
+	filename := "20260206-120000-from-orchestrator-to-worker.md"
+	sender := "orchestrator"
+	recipient := "worker"
+
+	SendObserverDigest(filename, sender, recipient, nodes, cfg, digestedFiles)
+
+	// Verify file was added to digestedFiles (duplicate prevention still works)
+	// but no digest should be sent (no assertions for actual sending in this test)
+	if !digestedFiles[filename] {
+		t.Errorf("digestedFiles should contain message even if no observes match (duplicate prevention)")
 	}
 }

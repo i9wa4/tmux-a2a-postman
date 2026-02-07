@@ -115,7 +115,7 @@ func checkForCompaction(output, pattern string) bool {
 func notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	// Find observers subscribed to this node
 	for observerName, nodeConfig := range cfg.Nodes {
-		if !nodeConfig.SubscribeDigest {
+		if len(nodeConfig.Observes) == 0 {
 			continue
 		}
 
