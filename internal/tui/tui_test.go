@@ -19,8 +19,8 @@ func TestTUI_InitialModel(t *testing.T) {
 	if m.nodeCount != 0 {
 		t.Errorf("initial nodeCount: got %d, want 0", m.nodeCount)
 	}
-	if len(m.messages) != 0 {
-		t.Errorf("initial messages length: got %d, want 0", len(m.messages))
+	if len(m.events) != 0 {
+		t.Errorf("initial events length: got %d, want 0", len(m.events))
 	}
 	if m.quitting {
 		t.Error("initial quitting: got true, want false")
@@ -60,11 +60,11 @@ func TestTUI_Update_MessageReceived(t *testing.T) {
 	newModel, _ := m.Update(event)
 	m = newModel.(Model)
 
-	if len(m.messages) != 1 {
-		t.Errorf("messages length: got %d, want 1", len(m.messages))
+	if len(m.events) != 1 {
+		t.Errorf("events length: got %d, want 1", len(m.events))
 	}
-	if m.messages[0] != "Test message delivered" {
-		t.Errorf("message content: got %q, want %q", m.messages[0], "Test message delivered")
+	if m.events[0].Message != "Test message delivered" {
+		t.Errorf("event message content: got %q, want %q", m.events[0].Message, "Test message delivered")
 	}
 	if m.lastEvent != "Test message delivered" {
 		t.Errorf("lastEvent: got %q, want %q", m.lastEvent, "Test message delivered")
@@ -104,7 +104,10 @@ func TestTUI_View(t *testing.T) {
 	m := InitialModel(ch, nil)
 	m.status = "Running"
 	m.nodeCount = 3
-	m.messages = []string{"Message 1", "Message 2"}
+	m.events = []EventEntry{
+		{Message: "Message 1"},
+		{Message: "Message 2"},
+	}
 
 	view := m.View()
 
@@ -167,8 +170,8 @@ func TestTUI_MessageTruncation(t *testing.T) {
 		m = newModel.(Model)
 	}
 
-	if len(m.messages) != 10 {
-		t.Errorf("message truncation: got %d messages, want 10", len(m.messages))
+	if len(m.events) != 10 {
+		t.Errorf("event truncation: got %d events, want 10", len(m.events))
 	}
 }
 

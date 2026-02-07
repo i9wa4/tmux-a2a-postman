@@ -282,12 +282,15 @@ func RunDaemonLoop(
 
 							// Issue #36: Bug 2 - Build session info from nodes
 							sessionNodeCount := make(map[string]int)
+							sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 							for nodeName := range nodes {
 								// Extract session name from "session:node" format
 								parts := strings.SplitN(nodeName, ":", 2)
 								if len(parts) == 2 {
 									sessionName := parts[0]
+									simpleNodeName := parts[1]
 									sessionNodeCount[sessionName]++
+									sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 								}
 							}
 							sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
@@ -308,8 +311,9 @@ func RunDaemonLoop(
 								Type:    "status_update",
 								Message: "Running",
 								Details: map[string]interface{}{
-									"node_count": len(nodes),
-									"sessions":   sessionList, // Issue #36: Bug 2 - Send session info
+									"node_count":    len(nodes),
+									"sessions":      sessionList,  // Issue #36: Bug 2 - Send session info
+									"session_nodes": sessionNodes, // Issue #59: Session-node mapping
 								},
 							}
 						}
@@ -338,9 +342,16 @@ func RunDaemonLoop(
 
 							// Send normal delivery event only if not dead-lettered
 							if !deadLetterEventSent {
+								// Issue #59: Extract session name from eventPath
+								// eventPath format: /path/to/context-id/session-name/post/message.md
+								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+								sourceSessionName := filepath.Base(sourceSessionDir)
 								events <- tui.DaemonEvent{
 									Type:    "message_received",
 									Message: fmt.Sprintf("Delivered: %s", filename),
+									Details: map[string]interface{}{
+										"session": sourceSessionName,
+									},
 								}
 							}
 							// Send observer digest on successful delivery (only for normal delivery)
@@ -428,12 +439,15 @@ func RunDaemonLoop(
 
 						// Issue #35: Requirement 3 - build session info from nodes
 						sessionNodeCount := make(map[string]int)
+						sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 						for nodeName := range nodes {
 							// Extract session name from "session:node" format
 							parts := strings.SplitN(nodeName, ":", 2)
 							if len(parts) == 2 {
 								sessionName := parts[0]
+								simpleNodeName := parts[1]
 								sessionNodeCount[sessionName]++
+								sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 							}
 						}
 						sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
@@ -452,8 +466,9 @@ func RunDaemonLoop(
 						events <- tui.DaemonEvent{
 							Type: "config_update",
 							Details: map[string]interface{}{
-								"edges":    edgeList,
-								"sessions": sessionList, // Issue #35: Requirement 3
+								"edges":         edgeList,
+								"sessions":      sessionList,  // Issue #35: Requirement 3
+								"session_nodes": sessionNodes, // Issue #59: Session-node mapping
 							},
 						}
 						events <- tui.DaemonEvent{

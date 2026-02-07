@@ -67,6 +67,13 @@ type SessionInfo struct {
 	Enabled   bool // Issue #35: Requirement 4 - enable/disable toggle
 }
 
+// EventEntry holds event information with session context (Issue #59).
+type EventEntry struct {
+	Message     string
+	SessionName string
+	Timestamp   time.Time
+}
+
 // DaemonEvent represents an event from the daemon goroutine.
 type DaemonEvent struct {
 	Type    string // "message_received", "status_update", "error", "config_update", "edge_update", "concierge_status_update"
@@ -101,6 +108,7 @@ type Model struct {
 	// Session list view (Issue #35: Requirement 3, Issue #45: left pane)
 	sessions        []SessionInfo
 	selectedSession int
+	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 
 	// Target node status (Issue #45: renamed from "Concierge" in UI)
 	conciergeStatus *uipane.PaneInfo
@@ -111,7 +119,7 @@ type Model struct {
 	// Shared state
 	daemonEvents <-chan DaemonEvent
 	tuiCommands  chan<- TUICommand // Issue #47: Command channel to daemon
-	messages     []string
+	events       []EventEntry      // Issue #59: Session-tagged events (was messages []string)
 	status       string
 	nodeCount    int
 	lastEvent    string
@@ -123,6 +131,22 @@ func (m Model) Quitting() bool {
 	return m.quitting
 }
 
+// getSelectedSessionName returns the selected session name, or "" for "(All)" (Issue #59).
+func (m Model) getSelectedSessionName() string {
+	if m.selectedSession == 0 || m.selectedSession >= len(m.sessions) {
+		return "" // "" means "All"
+	}
+	return m.sessions[m.selectedSession].Name
+}
+
+// getSelectedBorderColor returns border color based on selection (Issue #59).
+func (m Model) getSelectedBorderColor() string {
+	if m.getSelectedSessionName() == "" {
+		return "63" // default (gray)
+	}
+	return "10" // highlight color (green, matches session selection)
+}
+
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
@@ -131,30 +155,24 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		return
 	}
 
-	// Build edge node set from configured edges
-	edgeNodes := make(map[string]bool)
-	for _, edge := range m.edges {
-		// Parse node names from edge.Raw (same as renderRoutingView)
-		var nodes []string
-		if strings.Contains(edge.Raw, "-->") {
-			parts := strings.Split(edge.Raw, "-->")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		} else if strings.Contains(edge.Raw, "--") {
-			parts := strings.Split(edge.Raw, "--")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		}
-		for _, node := range nodes {
-			edgeNodes[node] = true
+	// Issue #59: Filter by selected session (or all if "(All)")
+	selectedName := m.getSelectedSessionName()
+	var sessionNodeSet map[string]bool
+	if selectedName == "" {
+		// "(All)" - show all nodes
+		sessionNodeSet = nil // nil means no filtering
+	} else {
+		// Build node set for selected session
+		sessionNodeSet = make(map[string]bool)
+		for _, nodeName := range m.sessionNodes[selectedName] {
+			sessionNodeSet[nodeName] = true
 		}
 	}
 
-	// Only update states for edge-registered nodes
+	// Update states for session-filtered nodes
 	for nodeName, activity := range nodeActivities {
-		if !edgeNodes[nodeName] {
+		// Apply session filter
+		if sessionNodeSet != nil && !sessionNodeSet[nodeName] {
 			continue
 		}
 		// Determine state: gray (no PONG) / active (PONG, not holding) / holding (PONG + holding ball)
@@ -179,13 +197,14 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		height:          24, // Default height (Issue #35)
 		edges:           []Edge{},
 		selectedEdge:    0,
-		sessions:        []SessionInfo{}, // Issue #35: Requirement 3
-		selectedSession: 0,               // Issue #35: Requirement 3
+		sessions:        []SessionInfo{},           // Issue #35: Requirement 3
+		selectedSession: 0,                         // Issue #35: Requirement 3
+		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
 		conciergeStatus: nil,
 		nodeStates:      make(map[string]string), // Issue #55: Node state tracking
 		daemonEvents:    daemonEvents,
-		tuiCommands:     tuiCommands, // Issue #47: Command channel
-		messages:        []string{},
+		tuiCommands:     tuiCommands,    // Issue #47: Command channel
+		events:          []EventEntry{}, // Issue #59: Session-tagged events
 		status:          "Starting...",
 		nodeCount:       0,
 		lastEvent:       "",
@@ -254,7 +273,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case " ", "enter":
 			// Session toggle via TUICommand
-			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
+			// Issue #59: Guard against "(All)" selection
+			if m.selectedSession > 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
@@ -266,7 +286,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "p":
 			// Issue #47: Send PING to selected session
-			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
+			// Issue #59: Guard against "(All)" selection
+			if m.selectedSession > 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
@@ -283,10 +304,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case "message_received":
 			m.lastEvent = msg.Message
-			m.messages = append(m.messages, msg.Message)
-			// Keep only last 10 messages
-			if len(m.messages) > 10 {
-				m.messages = m.messages[len(m.messages)-10:]
+			// Issue #59: Extract session from Details
+			sessionName := ""
+			if session, ok := msg.Details["session"].(string); ok {
+				sessionName = session
+			}
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: sessionName,
+				Timestamp:   time.Now(),
+			})
+			// Keep only last 10 events
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
 			}
 		case "status_update":
 			m.status = msg.Message
@@ -295,13 +325,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #36: Bug 2 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = sessionList
+				// Issue #59: Prepend "(All)" virtual entry
+				allEntry := SessionInfo{Name: "(All)", Enabled: true}
+				m.sessions = append([]SessionInfo{allEntry}, sessionList...)
 				// Clamp selection
 				if m.selectedSession >= len(m.sessions) {
 					m.selectedSession = len(m.sessions) - 1
 				}
 				if m.selectedSession < 0 {
 					m.selectedSession = 0
+				}
+			}
+			// Issue #59: Update session-node mapping
+			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string]interface{}); ok {
+				m.sessionNodes = make(map[string][]string)
+				for sessionName, nodesRaw := range sessionNodesRaw {
+					if nodeSlice, ok := nodesRaw.([]string); ok {
+						m.sessionNodes[sessionName] = nodeSlice
+					}
 				}
 			}
 		// Issue #45: Removed "inbox_update" handler
@@ -319,13 +360,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = sessionList
+				// Issue #59: Prepend "(All)" virtual entry
+				allEntry := SessionInfo{Name: "(All)", Enabled: true}
+				m.sessions = append([]SessionInfo{allEntry}, sessionList...)
 				// Clamp selection
 				if m.selectedSession >= len(m.sessions) {
 					m.selectedSession = len(m.sessions) - 1
 				}
 				if m.selectedSession < 0 {
 					m.selectedSession = 0
+				}
+			}
+			// Issue #59: Update session-node mapping
+			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string]interface{}); ok {
+				m.sessionNodes = make(map[string][]string)
+				for sessionName, nodesRaw := range sessionNodesRaw {
+					if nodeSlice, ok := nodesRaw.([]string); ok {
+						m.sessionNodes[sessionName] = nodeSlice
+					}
 				}
 			}
 		case "edge_update":
@@ -359,9 +411,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateNodeStatesFromActivity(nodeStatesRaw)
 			}
 		case "error":
-			m.messages = append(m.messages, fmt.Sprintf("ERROR: %s", msg.Message))
-			if len(m.messages) > 10 {
-				m.messages = m.messages[len(m.messages)-10:]
+			m.events = append(m.events, EventEntry{
+				Message:     fmt.Sprintf("ERROR: %s", msg.Message),
+				SessionName: "", // Error events have no specific session
+				Timestamp:   time.Now(),
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
 			}
 		case "channel_closed":
 			m.quitting = true
@@ -421,7 +477,11 @@ func (m Model) View() string {
 	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
 
 	// Apply border (Issue #35)
-	return borderStyle.Width(m.width - 2).Height(m.height - 2).Render(splitView)
+	// Issue #59: Dynamic border color based on selection
+	localBorderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(m.getSelectedBorderColor()))
+	return localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(splitView)
 }
 
 // renderLeftPane renders the left pane (Sessions list).
@@ -564,7 +624,17 @@ func truncateString(s string, maxLen int) string {
 func (m Model) renderEventsView(width, height int) string {
 	var b strings.Builder
 	b.WriteString("Recent Events:\n")
-	if len(m.messages) == 0 {
+
+	// Issue #59: Filter events by selected session
+	selectedName := m.getSelectedSessionName()
+	var filteredEvents []EventEntry
+	for _, event := range m.events {
+		if selectedName == "" || event.SessionName == selectedName {
+			filteredEvents = append(filteredEvents, event)
+		}
+	}
+
+	if len(filteredEvents) == 0 {
 		b.WriteString("  (no events yet)\n")
 	} else {
 		// Truncate list if too long
@@ -572,13 +642,14 @@ func (m Model) renderEventsView(width, height int) string {
 		if maxLines < 1 {
 			maxLines = 1
 		}
-		displayCount := len(m.messages)
+		displayCount := len(filteredEvents)
 		if displayCount > maxLines {
 			displayCount = maxLines
 		}
-		startIdx := len(m.messages) - displayCount
-		for i := startIdx; i < len(m.messages); i++ {
-			msg := m.messages[i]
+		startIdx := len(filteredEvents) - displayCount
+		for i := startIdx; i < len(filteredEvents); i++ {
+			event := filteredEvents[i]
+			msg := event.Message
 			// Truncate long lines (UTF-8 safe)
 			// Reserve 4 characters for "  - " prefix
 			maxMsgLen := width - 4
@@ -591,12 +662,62 @@ func (m Model) renderEventsView(width, height int) string {
 	return b.String()
 }
 
+// NOTE (Issue #59 Limitations):
+// - Per-session edge activity not implemented
+// - idle.go maintains global state; per-session idle filtering not supported
+//
 // renderRoutingView renders the routing view (right pane content).
 // Issue #45: Adjusted for right pane layout, removed selection display
 func (m Model) renderRoutingView(width, height int) string {
 	var b strings.Builder
 	b.WriteString("Routing Edges:\n")
-	if len(m.edges) == 0 {
+
+	// Issue #59: Filter edges by selected session (ANY method)
+	selectedName := m.getSelectedSessionName()
+	var filteredEdges []Edge
+	if selectedName == "" {
+		// "(All)" selected - show all edges
+		filteredEdges = m.edges
+	} else {
+		// Filter edges: show if ANY node belongs to selected session
+		nodesInSession := m.sessionNodes[selectedName]
+		nodeSet := make(map[string]bool)
+		for _, nodeName := range nodesInSession {
+			nodeSet[nodeName] = true
+		}
+
+		for _, edge := range m.edges {
+			// Parse nodes from edge
+			var nodes []string
+			line := edge.Raw
+			if strings.Contains(line, "-->") {
+				parts := strings.Split(line, "-->")
+				for _, p := range parts {
+					nodes = append(nodes, strings.TrimSpace(p))
+				}
+			} else if strings.Contains(line, "--") {
+				parts := strings.Split(line, "--")
+				for _, p := range parts {
+					nodes = append(nodes, strings.TrimSpace(p))
+				}
+			}
+
+			// Check if ANY node is in selected session
+			anyMatch := false
+			for _, node := range nodes {
+				if nodeSet[node] {
+					anyMatch = true
+					break
+				}
+			}
+
+			if anyMatch {
+				filteredEdges = append(filteredEdges, edge)
+			}
+		}
+	}
+
+	if len(filteredEdges) == 0 {
 		b.WriteString("  (no edges defined)\n")
 	} else {
 		// Truncate list if too long
@@ -604,18 +725,18 @@ func (m Model) renderRoutingView(width, height int) string {
 		if maxLines < 1 {
 			maxLines = 1
 		}
-		displayCount := len(m.edges)
+		displayCount := len(filteredEdges)
 		if displayCount > maxLines {
 			displayCount = maxLines
 		}
 		startIdx := 0
 		endIdx := startIdx + displayCount
-		if endIdx > len(m.edges) {
-			endIdx = len(m.edges)
+		if endIdx > len(filteredEdges) {
+			endIdx = len(filteredEdges)
 		}
 
 		for i := startIdx; i < endIdx; i++ {
-			edge := m.edges[i]
+			edge := filteredEdges[i]
 			line := edge.Raw
 
 			// Issue #42: Replace each segment with colored directional arrow
