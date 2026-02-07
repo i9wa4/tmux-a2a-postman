@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -294,17 +295,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			sessionNodeCount[sessionName]++
 		}
 	}
-	// Session enable/disable state (all disabled by default)
-	enabledSessions := make(map[string]bool)
+	// Session info list (all disabled by default)
 	sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
 	for sessionName, nodeCount := range sessionNodeCount {
-		enabledSessions[sessionName] = false
 		sessionList = append(sessionList, tui.SessionInfo{
 			Name:      sessionName,
 			NodeCount: nodeCount,
-			Enabled:   false,
+			Enabled:   daemon.IsSessionEnabled(sessionName),
 		})
 	}
+	// Sort session list by name to maintain consistent order
+	sort.Slice(sessionList, func(i, j int) bool {
+		return sessionList[i].Name < sessionList[j].Name
+	})
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
@@ -384,7 +387,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					// Issue #47: Handle TUI commands
 					switch cmd.Type {
 					case "send_ping":
-						// Send PING to all nodes in the target session
+						// Send PING to all nodes in the target session (Issue #52)
 						targetNodes := make(map[string]discovery.NodeInfo)
 						for k, v := range nodes {
 							if v.SessionName == cmd.Target {
@@ -399,48 +402,79 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								activeNodes = append(activeNodes, simpleName)
 							}
 							// Send PING to each node in the target session
+							successCount := 0
+							failCount := 0
 							for nodeName, nodeInfo := range targetNodes {
 								if err := ping.SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
 									log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
+									failCount++
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "message_received",
+										Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
+									}
 								} else {
 									log.Printf("📮 postman: PING sent to %s\n", nodeName)
+									successCount++
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "message_received",
+										Message: fmt.Sprintf("PING sent to %s", nodeName),
+									}
 								}
+							}
+							// Send summary event
+							totalCount := successCount + failCount
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 							}
 						}
 					case "session_toggle":
 						// Toggle session enable/disable
-						if currentState, exists := enabledSessions[cmd.Target]; exists {
-							newState := !currentState
-							enabledSessions[cmd.Target] = newState
-							daemon.SetSessionEnabled(cmd.Target, newState)
-							log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
+						currentState := daemon.IsSessionEnabled(cmd.Target)
+						newState := !currentState
+						daemon.SetSessionEnabled(cmd.Target, newState)
+						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
-							// Rebuild session list and send status update
-							sessionNodeCount := make(map[string]int)
-							for nodeName := range nodes {
-								parts := strings.SplitN(nodeName, ":", 2)
-								if len(parts) == 2 {
-									sessionName := parts[0]
-									sessionNodeCount[sessionName]++
-								}
+						// Rebuild session list and send status update
+						sessionNodeCount := make(map[string]int)
+						for nodeName := range nodes {
+							parts := strings.SplitN(nodeName, ":", 2)
+							if len(parts) == 2 {
+								sessionName := parts[0]
+								sessionNodeCount[sessionName]++
 							}
-							updatedSessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-							for sessionName, nodeCount := range sessionNodeCount {
-								enabled := enabledSessions[sessionName]
-								updatedSessionList = append(updatedSessionList, tui.SessionInfo{
-									Name:      sessionName,
-									NodeCount: nodeCount,
-									Enabled:   enabled,
-								})
-							}
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "status_update",
-								Message: "Running",
-								Details: map[string]interface{}{
-									"node_count": len(nodes),
-									"sessions":   updatedSessionList,
-								},
-							}
+						}
+						updatedSessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
+						for sessionName, nodeCount := range sessionNodeCount {
+							updatedSessionList = append(updatedSessionList, tui.SessionInfo{
+								Name:      sessionName,
+								NodeCount: nodeCount,
+								Enabled:   daemon.IsSessionEnabled(sessionName),
+							})
+						}
+						// Sort session list by name to maintain consistent order
+						sort.Slice(updatedSessionList, func(i, j int) bool {
+							return updatedSessionList[i].Name < updatedSessionList[j].Name
+						})
+
+						// Send status update
+						daemonEvents <- tui.DaemonEvent{
+							Type:    "status_update",
+							Message: "Running",
+							Details: map[string]interface{}{
+								"node_count": len(nodes),
+								"sessions":   updatedSessionList,
+							},
+						}
+
+						// Send Events pane feedback
+						stateStr := "OFF"
+						if newState {
+							stateStr = "ON"
+						}
+						daemonEvents <- tui.DaemonEvent{
+							Type:    "message_received",
+							Message: fmt.Sprintf("Session %s toggled %s", cmd.Target, stateStr),
 						}
 					}
 				}
