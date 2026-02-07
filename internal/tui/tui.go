@@ -161,7 +161,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		switch {
 		case !activity.PongReceived:
 			m.nodeStates[nodeName] = "gray"
-		case idle.IsHoldingBall(nodeName):
+		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
 			m.nodeStates[nodeName] = "holding"
 		default:
 			m.nodeStates[nodeName] = "active"

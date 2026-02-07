@@ -350,6 +350,7 @@ func RunDaemonLoop(
 									if info.To == "postman" {
 										// PONG received - track state, skip edge/observer/reminder
 										idle.MarkPongReceived(info.From)
+										idle.UpdateSendActivity(info.From) // Track PONG as send activity
 										events <- tui.DaemonEvent{
 											Type: "pong_received",
 											Details: map[string]interface{}{
