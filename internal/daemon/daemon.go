@@ -21,25 +21,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-// safeGo starts a goroutine with panic recovery (Issue #57).
-func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				stack := debug.Stack()
-				log.Printf("🚨 PANIC in goroutine %q: %v\n%s\n", name, r, string(stack))
-				if events != nil {
-					events <- tui.DaemonEvent{
-						Type:    "error",
-						Message: fmt.Sprintf("Internal error in %s (recovered)", name),
-					}
-				}
-			}
-		}()
-		fn()
-	}()
-}
-
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
 func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, fn func()) *time.Timer {
 	return time.AfterFunc(d, func() {
@@ -70,7 +51,7 @@ var (
 	edgeHistoryMu     sync.RWMutex
 	enabledSessionsMu sync.RWMutex
 	enabledSessions   = make(map[string]bool)
-	edgeHistory   = make(map[string]EdgeActivity)
+	edgeHistory       = make(map[string]EdgeActivity)
 )
 
 // makeEdgeKey generates a sorted edge key for consistent lookups (Issue #37).
@@ -388,8 +369,7 @@ func RunDaemonLoop(
 				}
 			}
 
-		// Issue #45: Removed inbox_update event (Messages view removed from TUI)
-
+			// Issue #45: Removed inbox_update event (Messages view removed from TUI)
 
 			// Handle config file events (with debounce)
 			if configPath != "" && eventPath == configPath {

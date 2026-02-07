@@ -172,7 +172,6 @@ func TestTUI_MessageTruncation(t *testing.T) {
 	}
 }
 
-
 func TestTUI_RoutingView_AddEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

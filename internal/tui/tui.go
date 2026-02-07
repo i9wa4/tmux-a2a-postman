@@ -316,8 +316,8 @@ func (m Model) View() string {
 	}
 
 	// Issue #45: Calculate pane widths for split layout
-	totalWidth := m.width - 4   // Account for border + padding
-	leftPaneWidth := 25         // Fixed width for sessions list
+	totalWidth := m.width - 4 // Account for border + padding
+	leftPaneWidth := 25       // Fixed width for sessions list
 	rightPaneWidth := totalWidth - leftPaneWidth - 1
 	contentHeight := m.height - 4 // Account for border + padding
 
@@ -329,10 +329,10 @@ func (m Model) View() string {
 	// NOTE: lipgloss.JoinHorizontal requires all inputs to have the same line count.
 	// Use lipgloss.Place to ensure separator matches contentHeight exactly.
 	separator := lipgloss.Place(
-		1,              // width: 1 character
-		contentHeight,  // height: match content
-		lipgloss.Left,  // horizontal alignment
-		lipgloss.Top,   // vertical alignment
+		1,             // width: 1 character
+		contentHeight, // height: match content
+		lipgloss.Left, // horizontal alignment
+		lipgloss.Top,  // vertical alignment
 		strings.Repeat("│\n", contentHeight-1)+"│", // contentHeight lines without trailing newline
 	)
 

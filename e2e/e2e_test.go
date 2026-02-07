@@ -114,7 +114,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Deliver message (should move to inbox/worker/)
-	if err := message.DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }); err != nil {
+	if err := message.DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
 		t.Fatalf("message.DeliverMessage failed: %v", err)
 	}
 
