@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/compaction"
-	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -29,9 +29,30 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 	"github.com/i9wa4/tmux-a2a-postman/internal/watchdog"
 )
+
+// safeGo starts a goroutine with panic recovery (Issue #57).
+func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("🚨 PANIC in goroutine %q: %v\n%s\n", name, r, string(stack))
+				fmt.Fprintf(os.Stderr, "🚨 PANIC in goroutine %q: %v\n", name, r)
+				if events != nil {
+					events <- tui.DaemonEvent{
+						Type:    "error",
+						Message: fmt.Sprintf("Internal error in %s (recovered)", name),
+					}
+				}
+			}
+		}()
+		fn()
+	}()
+}
 
 func main() {
 	// Top-level flags
@@ -148,6 +169,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("opening log file: %w", err)
 	}
 	defer func() {
+		// Issue #57: Ensure logs are flushed before exit
+		log.Println("postman: flushing logs and shutting down")
+		_ = logFile.Sync()
 		_ = logFile.Close()
 	}()
 
@@ -185,6 +209,15 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Issue #57: Signal handling logging
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	safeGo("signal-handler", nil, func() {
+		sig := <-sigCh
+		log.Printf("🛑 postman: received signal %v, initiating graceful shutdown\n", sig)
+		cancel()
+	})
 
 	postDir := filepath.Join(sessionDir, "post")
 
@@ -284,7 +317,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
-	go daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
+	safeGo("daemon-loop", daemonEvents, func() {
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
+	})
 
 	// Build session info from nodes
 	sessionNodeCount := make(map[string]int)
@@ -344,7 +379,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	// Start UI pane status monitoring goroutine (Issue #46)
-	go func() {
+	safeGo("ui-pane-monitor", daemonEvents, func() {
 		// Issue #46: Find target pane ID using configured UI node name
 		targetPaneID, _ := uipane.FindTargetPaneID(cfg.UINode)
 
@@ -354,6 +389,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		for {
 			select {
 			case <-ctx.Done():
+				log.Println("postman: UI pane monitoring stopped")
 				return
 			case <-ticker.C:
 				paneInfo, err := uipane.GetPaneInfo(targetPaneID)
@@ -367,7 +403,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 				}
 			}
 		}
-	}()
+	})
 
 	// Start TUI or wait for shutdown
 	if noTUI {
@@ -378,10 +414,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		tuiCommands := make(chan tui.TUICommand, 10)
 
 		// Start TUI command handler goroutine
-		go func() {
+		safeGo("tui-command-handler", daemonEvents, func() {
 			for {
 				select {
 				case <-ctx.Done():
+					log.Println("postman: TUI command handler stopped")
 					return
 				case cmd := <-tuiCommands:
 					// Issue #47: Handle TUI commands
@@ -479,14 +516,28 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					}
 				}
 			}
-		}()
+		})
 
 		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands))
-		if _, err := p.Run(); err != nil {
+		log.Println("postman: TUI starting")
+		finalModel, err := p.Run()
+		if err != nil {
+			log.Printf("postman: TUI exited with error: %v\n", err)
 			return fmt.Errorf("TUI error: %w", err)
+		}
+		// Issue #57: Log TUI exit reason
+		if model, ok := finalModel.(tui.Model); ok {
+			if model.Quitting() {
+				log.Println("postman: TUI exited normally (user quit)")
+			} else {
+				log.Println("postman: TUI exited (unexpected termination)")
+			}
+		} else {
+			log.Println("postman: TUI exited (unknown state)")
 		}
 	}
 
+	log.Println("postman: daemon exiting normally")
 	return nil
 }
 

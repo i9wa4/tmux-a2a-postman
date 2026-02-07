@@ -107,6 +107,11 @@ type Model struct {
 	quitting     bool
 }
 
+// Quitting returns true if the TUI is in quitting state (Issue #57).
+func (m Model) Quitting() bool {
+	return m.quitting
+}
+
 // InitialModel creates the initial TUI model.
 // Issue #45: Removed messageList and selectedMsg initialization
 // Issue #47: Added tuiCommands channel parameter

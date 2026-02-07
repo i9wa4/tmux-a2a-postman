@@ -2,9 +2,11 @@ package compaction
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +14,32 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
+
+// safeGo starts a goroutine with panic recovery (Issue #57).
+func safeGo(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("🚨 PANIC in goroutine %q: %v\n%s\n", name, r, string(stack))
+			}
+		}()
+		fn()
+	}()
+}
+
+// safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
+func safeAfterFunc(d time.Duration, name string, fn func()) *time.Timer {
+	return time.AfterFunc(d, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("🚨 PANIC in timer callback %q: %v\n%s\n", name, r, string(stack))
+			}
+		}()
+		fn()
+	})
+}
 
 // Compaction detection state
 var (
@@ -26,11 +54,11 @@ func StartCompactionCheck(cfg *config.Config, nodes map[string]discovery.NodeInf
 	}
 
 	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
-	go func() {
+	safeGo("compaction-monitor", func() {
 		for range ticker.C {
 			checkAllNodesForCompaction(cfg, nodes, sessionDir)
 		}
-	}()
+	})
 }
 
 // checkAllNodesForCompaction checks all nodes for compaction events.
@@ -109,7 +137,7 @@ func notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[
 			delay := time.Duration(cfg.CompactionDetection.DelaySeconds) * time.Second
 			capturedObserver := observerName
 			capturedNode := nodeName
-			time.AfterFunc(delay, func() {
+			safeAfterFunc(delay, "delayed-notification", func() {
 				if err := sendCompactionNotification(capturedObserver, capturedNode, cfg, sessionDir); err != nil {
 					_ = err // Suppress unused variable warning
 				}

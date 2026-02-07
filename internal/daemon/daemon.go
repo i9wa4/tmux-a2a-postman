@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +20,44 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+// safeGo starts a goroutine with panic recovery (Issue #57).
+func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("🚨 PANIC in goroutine %q: %v\n%s\n", name, r, string(stack))
+				if events != nil {
+					events <- tui.DaemonEvent{
+						Type:    "error",
+						Message: fmt.Sprintf("Internal error in %s (recovered)", name),
+					}
+				}
+			}
+		}()
+		fn()
+	}()
+}
+
+// safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
+func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, fn func()) *time.Timer {
+	return time.AfterFunc(d, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("🚨 PANIC in timer callback %q: %v\n%s\n", name, r, string(stack))
+				if events != nil {
+					events <- tui.DaemonEvent{
+						Type:    "error",
+						Message: fmt.Sprintf("Internal error in %s (recovered)", name),
+					}
+				}
+			}
+		}()
+		fn()
+	})
+}
 
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
 type EdgeActivity struct {
@@ -182,10 +222,13 @@ func RunDaemonLoop(
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("postman: daemon loop received shutdown signal")
+			// Issue #57: Send channel_closed to trigger TUI exit
 			events <- tui.DaemonEvent{
-				Type:    "status_update",
+				Type:    "channel_closed",
 				Message: "Shutting down",
 			}
+			log.Println("postman: daemon loop stopped")
 			return
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -242,7 +285,7 @@ func RunDaemonLoop(
 										capturedNode := nodeName
 										capturedNodeInfo := nodeInfo
 										capturedActiveNodes := activeNodes
-										time.AfterFunc(newNodeDelay, func() {
+										safeAfterFunc(newNodeDelay, "new-node-ping", events, func() {
 											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
 												events <- tui.DaemonEvent{
 													Type:    "error",
@@ -335,7 +378,7 @@ func RunDaemonLoop(
 					if configTimer != nil {
 						configTimer.Stop()
 					}
-					configTimer = time.AfterFunc(200*time.Millisecond, func() {
+					configTimer = safeAfterFunc(200*time.Millisecond, "config-reload", events, func() {
 						// Reload config
 						newCfg, err := config.LoadConfig(configPath)
 						if err != nil {
@@ -455,7 +498,7 @@ func RunDaemonLoop(
 						capturedNode := nodeName
 						capturedNodeInfo := nodeInfo
 						capturedActiveNodes := activeNodes
-						time.AfterFunc(newNodeDelay, func() {
+						safeAfterFunc(newNodeDelay, "scan-discovered-ping", events, func() {
 							if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
 								events <- tui.DaemonEvent{
 									Type:    "error",
