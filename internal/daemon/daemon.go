@@ -553,11 +553,14 @@ func RunDaemonLoop(
 
 				// Build session info from nodes
 				sessionNodeCount := make(map[string]int)
+				sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 				for nodeName := range nodes {
 					parts := strings.SplitN(nodeName, ":", 2)
 					if len(parts) == 2 {
 						sessionName := parts[0]
+						simpleNodeName := parts[1]
 						sessionNodeCount[sessionName]++
+						sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 					}
 				}
 				sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
@@ -578,8 +581,9 @@ func RunDaemonLoop(
 					Type:    "status_update",
 					Message: "Running",
 					Details: map[string]interface{}{
-						"node_count": len(nodes),
-						"sessions":   sessionList,
+						"node_count":    len(nodes),
+						"sessions":      sessionList,
+						"session_nodes": sessionNodes, // Issue #59: Session-node mapping
 					},
 				}
 			}

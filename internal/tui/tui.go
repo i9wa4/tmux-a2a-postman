@@ -169,10 +169,34 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		}
 	}
 
-	// Update states for session-filtered nodes
+	// Issue #55: Build edge node set (safety net against non-edge nodes)
+	edgeNodes := make(map[string]bool)
+	for _, edge := range m.edges {
+		var nodes []string
+		if strings.Contains(edge.Raw, "-->") {
+			parts := strings.Split(edge.Raw, "-->")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
+			}
+		} else if strings.Contains(edge.Raw, "--") {
+			parts := strings.Split(edge.Raw, "--")
+			for _, p := range parts {
+				nodes = append(nodes, strings.TrimSpace(p))
+			}
+		}
+		for _, node := range nodes {
+			edgeNodes[node] = true
+		}
+	}
+
+	// Apply BOTH filters
 	for nodeName, activity := range nodeActivities {
 		// Apply session filter
 		if sessionNodeSet != nil && !sessionNodeSet[nodeName] {
+			continue
+		}
+		// Apply edge filter
+		if !edgeNodes[nodeName] {
 			continue
 		}
 		// Determine state: gray (no PONG) / active (PONG, not holding) / holding (PONG + holding ball)
