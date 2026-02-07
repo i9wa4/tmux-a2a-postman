@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -207,6 +209,33 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	// Issue #50: Load node files from nodes/ directory
+	configDir := filepath.Dir(configPath)
+	nodesDir := filepath.Join(configDir, "nodes")
+	if info, err := os.Stat(nodesDir); err == nil && info.IsDir() {
+		nodeFiles, _ := filepath.Glob(filepath.Join(nodesDir, "*.toml"))
+		sort.Strings(nodeFiles) // deterministic alphabetical order
+		for _, nodeFile := range nodeFiles {
+			var sections map[string]toml.Primitive
+			md2, err := toml.DecodeFile(nodeFile, &sections)
+			if err != nil {
+				log.Printf("warning: skipping %s: %v", nodeFile, err)
+				continue
+			}
+			for name, prim := range sections {
+				if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+					continue // skip reserved sections
+				}
+				var node NodeConfig
+				if err := md2.PrimitiveDecode(prim, &node); err != nil {
+					log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
+					continue
+				}
+				cfg.Nodes[name] = node // override if exists in postman.toml
+			}
+		}
+	}
+
 	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
 	if cfg.EdgeActivitySeconds <= 0 {
 		cfg.EdgeActivitySeconds = 1 // Force minimum
@@ -369,6 +398,19 @@ func SaveConfig(path string, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// ResolveNodesDir returns the nodes directory path for the given config file path.
+// Returns empty string if nodes directory doesn't exist.
+func ResolveNodesDir(configPath string) string {
+	if configPath == "" {
+		return ""
+	}
+	nodesDir := filepath.Join(filepath.Dir(configPath), "nodes")
+	if info, err := os.Stat(nodesDir); err == nil && info.IsDir() {
+		return nodesDir
+	}
+	return ""
 }
 
 // resolveContextID resolves the context ID with fallback chain.

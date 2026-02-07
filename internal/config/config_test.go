@@ -435,3 +435,296 @@ func TestGetTalksTo(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_SplitNodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	nodesDir := filepath.Join(tmpDir, "nodes")
+
+	// Create postman.toml with [postman] section
+	mainContent := `
+[postman]
+scan_interval_seconds = 1.0
+`
+	if err := os.WriteFile(configPath, []byte(mainContent), 0o644); err != nil {
+		t.Fatalf("WriteFile postman.toml failed: %v", err)
+	}
+
+	// Create nodes/ directory
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll nodes failed: %v", err)
+	}
+
+	// Create nodes/worker.toml
+	workerContent := `
+[worker]
+template = "worker template from nodes"
+role = "worker"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
+		t.Fatalf("WriteFile worker.toml failed: %v", err)
+	}
+
+	// Create nodes/orchestrator.toml
+	orchestratorContent := `
+[orchestrator]
+template = "orchestrator template from nodes"
+role = "orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "orchestrator.toml"), []byte(orchestratorContent), 0o644); err != nil {
+		t.Fatalf("WriteFile orchestrator.toml failed: %v", err)
+	}
+
+	// Load config
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify nodes from directory are loaded
+	if len(cfg.Nodes) != 2 {
+		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	}
+	if cfg.Nodes["worker"].Template != "worker template from nodes" {
+		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template from nodes")
+	}
+	if cfg.Nodes["orchestrator"].Template != "orchestrator template from nodes" {
+		t.Errorf("orchestrator template: got %q, want %q", cfg.Nodes["orchestrator"].Template, "orchestrator template from nodes")
+	}
+}
+
+func TestLoadConfig_SplitOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	nodesDir := filepath.Join(tmpDir, "nodes")
+
+	// Create postman.toml with [worker] section
+	mainContent := `
+[postman]
+scan_interval_seconds = 1.0
+
+[worker]
+template = "worker template from main"
+role = "worker-main"
+`
+	if err := os.WriteFile(configPath, []byte(mainContent), 0o644); err != nil {
+		t.Fatalf("WriteFile postman.toml failed: %v", err)
+	}
+
+	// Create nodes/ directory
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll nodes failed: %v", err)
+	}
+
+	// Create nodes/worker.toml with different values
+	workerContent := `
+[worker]
+template = "worker template from nodes (override)"
+role = "worker-override"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
+		t.Fatalf("WriteFile worker.toml failed: %v", err)
+	}
+
+	// Load config
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify node file overrides main config
+	if cfg.Nodes["worker"].Template != "worker template from nodes (override)" {
+		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template from nodes (override)")
+	}
+	if cfg.Nodes["worker"].Role != "worker-override" {
+		t.Errorf("worker role: got %q, want %q", cfg.Nodes["worker"].Role, "worker-override")
+	}
+}
+
+func TestLoadConfig_SplitReservedSkip(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	nodesDir := filepath.Join(tmpDir, "nodes")
+
+	// Create postman.toml with [postman] section
+	mainContent := `
+[postman]
+scan_interval_seconds = 2.0
+`
+	if err := os.WriteFile(configPath, []byte(mainContent), 0o644); err != nil {
+		t.Fatalf("WriteFile postman.toml failed: %v", err)
+	}
+
+	// Create nodes/ directory
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll nodes failed: %v", err)
+	}
+
+	// Create nodes/reserved.toml with [postman] section (should be ignored)
+	reservedContent := `
+[postman]
+scan_interval_seconds = 999.0
+
+[worker]
+template = "worker template"
+role = "worker"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "reserved.toml"), []byte(reservedContent), 0o644); err != nil {
+		t.Fatalf("WriteFile reserved.toml failed: %v", err)
+	}
+
+	// Load config
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify [postman] from node file is ignored (main config value preserved)
+	if cfg.ScanInterval != 2.0 {
+		t.Errorf("ScanInterval: got %v, want 2.0 (reserved section should be ignored)", cfg.ScanInterval)
+	}
+	// Verify [worker] from same file is loaded (non-reserved sections are OK)
+	if cfg.Nodes["worker"].Template != "worker template" {
+		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template")
+	}
+}
+
+func TestLoadConfig_SplitInvalidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	nodesDir := filepath.Join(tmpDir, "nodes")
+
+	// Create postman.toml
+	mainContent := `
+[postman]
+scan_interval_seconds = 1.0
+`
+	if err := os.WriteFile(configPath, []byte(mainContent), 0o644); err != nil {
+		t.Fatalf("WriteFile postman.toml failed: %v", err)
+	}
+
+	// Create nodes/ directory
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll nodes failed: %v", err)
+	}
+
+	// Create nodes/worker.toml (valid)
+	workerContent := `
+[worker]
+template = "worker template"
+role = "worker"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
+		t.Fatalf("WriteFile worker.toml failed: %v", err)
+	}
+
+	// Create nodes/bad.toml (invalid TOML)
+	badContent := `invalid toml content [[[`
+	if err := os.WriteFile(filepath.Join(nodesDir, "bad.toml"), []byte(badContent), 0o644); err != nil {
+		t.Fatalf("WriteFile bad.toml failed: %v", err)
+	}
+
+	// Load config (should succeed with warning for bad.toml)
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v (should gracefully handle invalid files)", err)
+	}
+
+	// Verify valid worker.toml is loaded
+	if len(cfg.Nodes) != 1 {
+		t.Errorf("Nodes length: got %d, want 1 (bad.toml should be skipped)", len(cfg.Nodes))
+	}
+	if cfg.Nodes["worker"].Template != "worker template" {
+		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template")
+	}
+}
+
+func TestLoadConfig_NoNodesDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	// Create postman.toml with [worker] section (no nodes/ directory)
+	content := `
+[postman]
+scan_interval_seconds = 1.0
+
+[worker]
+template = "worker template from main"
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Load config (should work without nodes/ directory)
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify backward compatibility (main config works)
+	if cfg.Nodes["worker"].Template != "worker template from main" {
+		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template from main")
+	}
+}
+
+func TestResolveNodesDir(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T) string // Returns configPath
+		wantExists bool
+	}{
+		{
+			name: "existing nodes directory",
+			setup: func(t *testing.T) string {
+				tmpDir := t.TempDir()
+				configPath := filepath.Join(tmpDir, "postman.toml")
+				nodesDir := filepath.Join(tmpDir, "nodes")
+				if err := os.WriteFile(configPath, []byte("[postman]"), 0o644); err != nil {
+					t.Fatalf("WriteFile failed: %v", err)
+				}
+				if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+					t.Fatalf("MkdirAll failed: %v", err)
+				}
+				return configPath
+			},
+			wantExists: true,
+		},
+		{
+			name: "non-existing nodes directory",
+			setup: func(t *testing.T) string {
+				tmpDir := t.TempDir()
+				configPath := filepath.Join(tmpDir, "postman.toml")
+				if err := os.WriteFile(configPath, []byte("[postman]"), 0o644); err != nil {
+					t.Fatalf("WriteFile failed: %v", err)
+				}
+				// Do not create nodes/ directory
+				return configPath
+			},
+			wantExists: false,
+		},
+		{
+			name: "empty config path",
+			setup: func(t *testing.T) string {
+				return ""
+			},
+			wantExists: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := tt.setup(t)
+			nodesDir := ResolveNodesDir(configPath)
+			if tt.wantExists {
+				if nodesDir == "" {
+					t.Errorf("ResolveNodesDir() returned empty, want non-empty path")
+				}
+			} else {
+				if nodesDir != "" {
+					t.Errorf("ResolveNodesDir() = %q, want empty", nodesDir)
+				}
+			}
+		})
+	}
+}

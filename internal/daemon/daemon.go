@@ -184,6 +184,7 @@ func RunDaemonLoop(
 	reminderState *reminder.ReminderState,
 	events chan<- tui.DaemonEvent,
 	configPath string,
+	nodesDir string,
 ) {
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
@@ -406,7 +407,10 @@ func RunDaemonLoop(
 			// Issue #45: Removed inbox_update event (Messages view removed from TUI)
 
 			// Handle config file events (with debounce)
-			if configPath != "" && eventPath == configPath {
+			// Issue #50: Also handle events from nodes/ directory
+			isConfigEvent := configPath != "" && eventPath == configPath
+			isNodesDirEvent := nodesDir != "" && strings.HasPrefix(eventPath, nodesDir+string(filepath.Separator))
+			if isConfigEvent || isNodesDirEvent {
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 					// Debounce config updates (200ms)
 					if configTimer != nil {

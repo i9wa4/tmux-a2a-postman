@@ -288,6 +288,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 	}
 
+	// Issue #50: Watch nodes/ directory if exists
+	nodesDir := config.ResolveNodesDir(resolvedConfigPath)
+	if nodesDir != "" {
+		if err := watcher.Add(nodesDir); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch nodes dir: %v\n", err)
+		}
+	}
+
 	log.Printf("📮 postman: daemon started (context=%s, pid=%d, nodes=%d)\n",
 		contextID, os.Getpid(), len(nodes))
 
@@ -318,7 +326,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath, nodesDir)
 	})
 
 	// Build session info from nodes
