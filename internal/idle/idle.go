@@ -10,18 +10,70 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
+// NodeActivity holds activity tracking state for a node (Issue #55).
+type NodeActivity struct {
+	LastReceived time.Time
+	LastSent     time.Time
+	PongReceived bool
+}
+
 // Idle detection state
 var (
-	lastActivity     = make(map[string]time.Time)
+	nodeActivity     = make(map[string]NodeActivity)
 	lastReminderSent = make(map[string]time.Time)
 	idleMutex        sync.Mutex
 )
 
-// UpdateActivity updates the last activity timestamp for a node.
-func UpdateActivity(nodeName string) {
+// UpdateSendActivity updates the last sent timestamp for a node (Issue #55).
+func UpdateSendActivity(nodeName string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	lastActivity[nodeName] = time.Now()
+	activity := nodeActivity[nodeName]
+	activity.LastSent = time.Now()
+	nodeActivity[nodeName] = activity
+}
+
+// UpdateReceiveActivity updates the last received timestamp for a node (Issue #55).
+func UpdateReceiveActivity(nodeName string) {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+	activity := nodeActivity[nodeName]
+	activity.LastReceived = time.Now()
+	nodeActivity[nodeName] = activity
+}
+
+// MarkPongReceived marks that a node has received PONG confirmation (Issue #55).
+func MarkPongReceived(nodeName string) {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+	activity := nodeActivity[nodeName]
+	activity.PongReceived = true
+	nodeActivity[nodeName] = activity
+}
+
+// GetNodeStates returns a copy of all node activity states (Issue #55).
+func GetNodeStates() map[string]NodeActivity {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+	result := make(map[string]NodeActivity)
+	for k, v := range nodeActivity {
+		result[k] = v
+	}
+	return result
+}
+
+// IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).
+// NOTE: IsHoldingBall uses simple timestamp comparison (LastReceived > LastSent).
+// This is a heuristic - it may misjudge in multi-sender scenarios.
+// For precise tracking, consider per-sender counters (future #56).
+func IsHoldingBall(nodeName string) bool {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+	activity, exists := nodeActivity[nodeName]
+	if !exists {
+		return false
+	}
+	return !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent)
 }
 
 // StartIdleCheck starts a goroutine that periodically checks for idle nodes.
@@ -47,9 +99,18 @@ func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDi
 			continue
 		}
 
-		// Skip if no last activity recorded yet
-		lastAct, exists := lastActivity[nodeName]
+		// Skip if no last activity recorded yet (Issue #55: use max of LastSent/LastReceived)
+		activity, exists := nodeActivity[nodeName]
 		if !exists {
+			continue
+		}
+
+		// Use max of LastSent and LastReceived for idle detection
+		lastAct := activity.LastSent
+		if activity.LastReceived.After(lastAct) {
+			lastAct = activity.LastReceived
+		}
+		if lastAct.IsZero() {
 			continue
 		}
 

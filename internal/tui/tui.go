@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 )
 
@@ -26,6 +27,13 @@ var (
 
 	greenArrowStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("10"))
+
+	// Issue #55: Node state styles
+	activeNodeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("10")) // green
+
+	ballHolderStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("208")) // orange
 )
 
 const (
@@ -97,6 +105,9 @@ type Model struct {
 	// Target node status (Issue #45: renamed from "Concierge" in UI)
 	conciergeStatus *uipane.PaneInfo
 
+	// Node state tracking (Issue #55)
+	nodeStates map[string]string // "gray" / "active" / "holding"
+
 	// Shared state
 	daemonEvents <-chan DaemonEvent
 	tuiCommands  chan<- TUICommand // Issue #47: Command channel to daemon
@@ -112,6 +123,27 @@ func (m Model) Quitting() bool {
 	return m.quitting
 }
 
+// updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
+func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
+	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
+	nodeActivities, ok := nodeStatesRaw.(map[string]idle.NodeActivity)
+	if !ok {
+		return
+	}
+
+	for nodeName, activity := range nodeActivities {
+		// Determine state: gray (no PONG) / active (PONG, not holding) / holding (PONG + holding ball)
+		switch {
+		case !activity.PongReceived:
+			m.nodeStates[nodeName] = "gray"
+		case idle.IsHoldingBall(nodeName):
+			m.nodeStates[nodeName] = "holding"
+		default:
+			m.nodeStates[nodeName] = "active"
+		}
+	}
+}
+
 // InitialModel creates the initial TUI model.
 // Issue #45: Removed messageList and selectedMsg initialization
 // Issue #47: Added tuiCommands channel parameter
@@ -125,6 +157,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessions:        []SessionInfo{}, // Issue #35: Requirement 3
 		selectedSession: 0,               // Issue #35: Requirement 3
 		conciergeStatus: nil,
+		nodeStates:      make(map[string]string), // Issue #55: Node state tracking
 		daemonEvents:    daemonEvents,
 		tuiCommands:     tuiCommands, // Issue #47: Command channel
 		messages:        []string{},
@@ -286,6 +319,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Update concierge status from Details
 			if paneInfo, ok := msg.Details["pane_info"].(*uipane.PaneInfo); ok {
 				m.conciergeStatus = paneInfo
+			}
+		case "pong_received":
+			// Issue #55: Mark node as active when PONG received
+			if node, ok := msg.Details["node"].(string); ok {
+				m.nodeStates[node] = "active"
+			}
+		case "ball_state_update":
+			// Issue #55: Update node states from idle tracking
+			if nodeStatesRaw, ok := msg.Details["node_states"]; ok {
+				// Type assertion is tricky with maps - need to handle interface{} carefully
+				// The map comes from idle.GetNodeStates() which returns map[string]NodeActivity
+				// We need to extract state from each NodeActivity
+				m.updateNodeStatesFromActivity(nodeStatesRaw)
 			}
 		case "error":
 			m.messages = append(m.messages, fmt.Sprintf("ERROR: %s", msg.Message))
@@ -563,11 +609,22 @@ func (m Model) renderRoutingView(width, height int) string {
 					}
 				}
 
-				// Rebuild line with styled arrows
+				// Rebuild line with styled arrows and colored node names (Issue #55)
 				if len(nodes) == len(edge.SegmentDirections)+1 {
 					var builder strings.Builder
 					for j, node := range nodes {
-						builder.WriteString(node)
+						// Issue #55: Color node name based on state
+						nodeStyle := lipgloss.NewStyle() // default (gray)
+						if state, exists := m.nodeStates[node]; exists {
+							switch state {
+							case "active":
+								nodeStyle = activeNodeStyle
+							case "holding":
+								nodeStyle = ballHolderStyle
+								// case "gray" or default: use default style
+							}
+						}
+						builder.WriteString(nodeStyle.Render(node))
 						if j < len(edge.SegmentDirections) {
 							// Get arrow and style for this segment
 							// Issue #44: Align all arrows to 6 characters width

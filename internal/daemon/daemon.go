@@ -14,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/observer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
@@ -345,22 +346,42 @@ func RunDaemonLoop(
 							// Send observer digest on successful delivery (only for normal delivery)
 							if !deadLetterEventSent {
 								if info, err := message.ParseMessageFilename(filename); err == nil {
-									// Issue #37: Record edge activity
-									recordEdgeActivity(info.From, info.To, time.Now())
+									// Issue #55: Handle PONG separately from normal messages
+									if info.To == "postman" {
+										// PONG received - track state, skip edge/observer/reminder
+										idle.MarkPongReceived(info.From)
+										events <- tui.DaemonEvent{
+											Type: "pong_received",
+											Details: map[string]interface{}{
+												"node": info.From,
+											},
+										}
+									} else {
+										// Normal message delivery - record edge activity, send digest, etc.
+										// Issue #37: Record edge activity
+										recordEdgeActivity(info.From, info.To, time.Now())
 
-									// Issue #40: Send edge_update event to TUI
-									edgeList := buildEdgeList(cfg.Edges, cfg)
-									events <- tui.DaemonEvent{
-										Type: "edge_update",
-										Details: map[string]interface{}{
-											"edges": edgeList,
-										},
-									}
+										// Issue #40: Send edge_update event to TUI
+										edgeList := buildEdgeList(cfg.Edges, cfg)
+										events <- tui.DaemonEvent{
+											Type: "edge_update",
+											Details: map[string]interface{}{
+												"edges": edgeList,
+											},
+										}
 
-									observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
-									// Increment reminder counter for recipient
-									if info.To != "postman" {
+										observer.SendObserverDigest(filename, info.From, nodes, cfg, digestedFiles)
+										// Increment reminder counter for recipient
 										reminderState.Increment(info.To, nodes, cfg)
+
+										// Issue #55: Emit ball state update after message delivery
+										nodeStates := idle.GetNodeStates()
+										events <- tui.DaemonEvent{
+											Type: "ball_state_update",
+											Details: map[string]interface{}{
+												"node_states": nodeStates,
+											},
+										}
 									}
 								}
 							}

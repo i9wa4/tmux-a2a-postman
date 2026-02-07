@@ -12,31 +12,48 @@ import (
 func TestUpdateActivity(t *testing.T) {
 	// Reset state
 	idleMutex.Lock()
-	lastActivity = make(map[string]time.Time)
+	nodeActivity = make(map[string]NodeActivity)
 	idleMutex.Unlock()
 
 	nodeName := "test-node"
 	before := time.Now()
 
-	UpdateActivity(nodeName)
+	// Test UpdateSendActivity
+	UpdateSendActivity(nodeName)
 
 	idleMutex.Lock()
-	activityTime, exists := lastActivity[nodeName]
+	activity := nodeActivity[nodeName]
 	idleMutex.Unlock()
 
-	if !exists {
-		t.Fatalf("activity not recorded for %s", nodeName)
+	if activity.LastSent.IsZero() {
+		t.Fatalf("send activity not recorded for %s", nodeName)
 	}
 
-	if activityTime.Before(before) {
-		t.Errorf("activity time %v is before test start %v", activityTime, before)
+	if activity.LastSent.Before(before) {
+		t.Errorf("send activity time %v is before test start %v", activity.LastSent, before)
+	}
+
+	// Test UpdateReceiveActivity
+	before2 := time.Now()
+	UpdateReceiveActivity(nodeName)
+
+	idleMutex.Lock()
+	activity2 := nodeActivity[nodeName]
+	idleMutex.Unlock()
+
+	if activity2.LastReceived.IsZero() {
+		t.Fatalf("receive activity not recorded for %s", nodeName)
+	}
+
+	if activity2.LastReceived.Before(before2) {
+		t.Errorf("receive activity time %v is before test start %v", activity2.LastReceived, before2)
 	}
 }
 
 func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	// Reset state
 	idleMutex.Lock()
-	lastActivity = make(map[string]time.Time)
+	nodeActivity = make(map[string]NodeActivity)
 	lastReminderSent = make(map[string]time.Time)
 	idleMutex.Unlock()
 
@@ -57,7 +74,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	}
 
 	// Set recent activity (within threshold)
-	UpdateActivity("worker")
+	UpdateSendActivity("worker")
 
 	// Check idle nodes - should NOT send reminder
 	checkIdleNodes(cfg, nil, sessionDir)
@@ -77,7 +94,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	// Reset state
 	idleMutex.Lock()
-	lastActivity = make(map[string]time.Time)
+	nodeActivity = make(map[string]NodeActivity)
 	lastReminderSent = make(map[string]time.Time)
 	idleMutex.Unlock()
 
@@ -99,7 +116,9 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 
 	// Set old activity (exceeds threshold)
 	idleMutex.Lock()
-	lastActivity["worker"] = time.Now().Add(-2 * time.Second)
+	nodeActivity["worker"] = NodeActivity{
+		LastSent: time.Now().Add(-2 * time.Second),
+	}
 	idleMutex.Unlock()
 
 	// Check idle nodes - should send reminder
@@ -133,7 +152,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 	// Reset state
 	idleMutex.Lock()
-	lastActivity = make(map[string]time.Time)
+	nodeActivity = make(map[string]NodeActivity)
 	lastReminderSent = make(map[string]time.Time)
 	idleMutex.Unlock()
 
@@ -155,7 +174,9 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 
 	// Set old activity and recent reminder sent
 	idleMutex.Lock()
-	lastActivity["worker"] = time.Now().Add(-2 * time.Second)
+	nodeActivity["worker"] = NodeActivity{
+		LastSent: time.Now().Add(-2 * time.Second),
+	}
 	lastReminderSent["worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
 	idleMutex.Unlock()
 
@@ -177,7 +198,7 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 	// Reset state
 	idleMutex.Lock()
-	lastActivity = make(map[string]time.Time)
+	nodeActivity = make(map[string]NodeActivity)
 	lastReminderSent = make(map[string]time.Time)
 	idleMutex.Unlock()
 
@@ -199,11 +220,13 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 
 	// Set old activity
 	idleMutex.Lock()
-	lastActivity["worker"] = time.Now().Add(-2 * time.Second)
+	nodeActivity["worker"] = NodeActivity{
+		LastSent: time.Now().Add(-2 * time.Second),
+	}
 	idleMutex.Unlock()
 
 	// Update activity (reset timer)
-	UpdateActivity("worker")
+	UpdateSendActivity("worker")
 
 	// Check idle nodes - should NOT send reminder (activity reset)
 	checkIdleNodes(cfg, nil, sessionDir)

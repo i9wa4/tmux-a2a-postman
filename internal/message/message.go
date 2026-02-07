@@ -136,6 +136,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// PONG handling: messages to "postman" are PONG responses
 	// Move directly to read/ in source session (skip inbox delivery)
+	// NOTE: PONG state tracking (MarkPongReceived) is handled in daemon.go
+	// post-delivery block, not here. This function only moves PONG to read/.
 	if info.To == "postman" {
 		dst := filepath.Join(sourceSessionDir, "read", filename)
 		if err := os.Rename(postPath, dst); err != nil {
@@ -271,9 +273,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 
-	// Update activity timestamps for idle detection
-	idle.UpdateActivity(info.From)
-	idle.UpdateActivity(info.To)
+	// Update activity timestamps for idle detection (Issue #55)
+	idle.UpdateSendActivity(info.From)
+	idle.UpdateReceiveActivity(info.To)
 
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	return nil
