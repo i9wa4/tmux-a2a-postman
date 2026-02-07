@@ -301,3 +301,157 @@ func containsSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// Issue #56: Tests for dropped-ball detection
+func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
+	// Reset state
+	idleMutex.Lock()
+	nodeActivity = make(map[string]NodeActivity)
+	idleMutex.Unlock()
+
+	// Setup: Node holding ball beyond threshold
+	idleMutex.Lock()
+	nodeActivity["worker"] = NodeActivity{
+		LastReceived:        time.Now().Add(-11 * time.Second),
+		LastSent:            time.Now().Add(-15 * time.Second),
+		PongReceived:        true,
+		LastNotifiedDropped: time.Time{}, // Never notified
+	}
+	idleMutex.Unlock()
+
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds:  10,
+			DroppedBallCooldownSeconds: 10,
+		},
+	}
+
+	dropped := CheckDroppedBalls(nodeConfigs)
+
+	if len(dropped) != 1 {
+		t.Errorf("expected 1 dropped node, got %d", len(dropped))
+	}
+
+	if duration, exists := dropped["worker"]; !exists {
+		t.Errorf("expected worker to be detected as dropped")
+	} else if duration < 11*time.Second {
+		t.Errorf("expected duration >= 11s, got %v", duration)
+	}
+}
+
+func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
+	// Reset state
+	idleMutex.Lock()
+	nodeActivity = make(map[string]NodeActivity)
+	idleMutex.Unlock()
+
+	// Setup: Node holding ball but within threshold
+	idleMutex.Lock()
+	nodeActivity["worker"] = NodeActivity{
+		LastReceived: time.Now().Add(-5 * time.Second),
+		LastSent:     time.Now().Add(-7 * time.Second),
+		PongReceived: true,
+	}
+	idleMutex.Unlock()
+
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds:  10,
+			DroppedBallCooldownSeconds: 10,
+		},
+	}
+
+	dropped := CheckDroppedBalls(nodeConfigs)
+
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped nodes (threshold not exceeded), got %d", len(dropped))
+	}
+}
+
+func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
+	// Reset state
+	idleMutex.Lock()
+	nodeActivity = make(map[string]NodeActivity)
+	idleMutex.Unlock()
+
+	// Setup: Node holding ball beyond threshold, but already notified recently
+	idleMutex.Lock()
+	nodeActivity["worker"] = NodeActivity{
+		LastReceived:        time.Now().Add(-11 * time.Second),
+		LastSent:            time.Now().Add(-15 * time.Second),
+		PongReceived:        true,
+		LastNotifiedDropped: time.Now().Add(-5 * time.Second), // Notified 5s ago
+	}
+	idleMutex.Unlock()
+
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds:  10,
+			DroppedBallCooldownSeconds: 10, // 10s cooldown
+		},
+	}
+
+	dropped := CheckDroppedBalls(nodeConfigs)
+
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped nodes (cooldown active), got %d", len(dropped))
+	}
+}
+
+func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
+	// Reset state
+	idleMutex.Lock()
+	nodeActivity = make(map[string]NodeActivity)
+	idleMutex.Unlock()
+
+	// Setup: Node holding ball but handshake incomplete (no PONG)
+	idleMutex.Lock()
+	nodeActivity["worker"] = NodeActivity{
+		LastReceived: time.Now().Add(-11 * time.Second),
+		LastSent:     time.Now().Add(-15 * time.Second),
+		PongReceived: false, // No PONG yet
+	}
+	idleMutex.Unlock()
+
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds:  10,
+			DroppedBallCooldownSeconds: 10,
+		},
+	}
+
+	dropped := CheckDroppedBalls(nodeConfigs)
+
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped nodes (PONG not received), got %d", len(dropped))
+	}
+}
+
+func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
+	// Reset state
+	idleMutex.Lock()
+	nodeActivity = make(map[string]NodeActivity)
+	idleMutex.Unlock()
+
+	// Setup: Node holding ball but dropped-ball detection disabled (threshold=0)
+	idleMutex.Lock()
+	nodeActivity["worker"] = NodeActivity{
+		LastReceived: time.Now().Add(-11 * time.Second),
+		LastSent:     time.Now().Add(-15 * time.Second),
+		PongReceived: true,
+	}
+	idleMutex.Unlock()
+
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds:  0, // Disabled
+			DroppedBallCooldownSeconds: 10,
+		},
+	}
+
+	dropped := CheckDroppedBalls(nodeConfigs)
+
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped nodes (detection disabled), got %d", len(dropped))
+	}
+}

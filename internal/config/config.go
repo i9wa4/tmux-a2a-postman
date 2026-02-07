@@ -65,6 +65,9 @@ type NodeConfig struct {
 	IdleTimeoutSeconds          float64  `toml:"idle_timeout_seconds"`
 	IdleReminderMessage         string   `toml:"idle_reminder_message"`
 	IdleReminderCooldownSeconds float64  `toml:"idle_reminder_cooldown_seconds"`
+	DroppedBallTimeoutSeconds   int      `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
+	DroppedBallCooldownSeconds  int      `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
+	DroppedBallNotification     string   `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 }
 
 // AgentCard holds agent card information.

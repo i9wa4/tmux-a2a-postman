@@ -12,9 +12,10 @@ import (
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
-	LastReceived time.Time
-	LastSent     time.Time
-	PongReceived bool
+	LastReceived        time.Time
+	LastSent            time.Time
+	PongReceived        bool
+	LastNotifiedDropped time.Time // Issue #56: cooldown tracking for dropped-ball alerts
 }
 
 // Idle detection state
@@ -74,6 +75,59 @@ func IsHoldingBall(nodeName string) bool {
 		return false
 	}
 	return !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent)
+}
+
+// CheckDroppedBalls detects nodes holding the ball for too long (Issue #56).
+// Returns map of nodeName -> holding duration for nodes exceeding threshold.
+// NOTE: Uses simple timestamp comparison (same limitation as IsHoldingBall).
+// Multi-sender scenarios may trigger false positives.
+func CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig) map[string]time.Duration {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+
+	dropped := make(map[string]time.Duration)
+	now := time.Now()
+
+	for nodeName, activity := range nodeActivity {
+		cfg, exists := nodeConfigs[nodeName]
+		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
+			continue
+		}
+		// Skip if PONG not received (handshake incomplete)
+		if !activity.PongReceived {
+			continue
+		}
+		// Check holding: LastReceived > LastSent
+		if activity.LastReceived.IsZero() || !activity.LastReceived.After(activity.LastSent) {
+			continue
+		}
+		// Check duration
+		holdingDuration := now.Sub(activity.LastReceived)
+		threshold := time.Duration(cfg.DroppedBallTimeoutSeconds) * time.Second
+		if holdingDuration <= threshold {
+			continue
+		}
+		// Check cooldown
+		cooldown := time.Duration(cfg.DroppedBallCooldownSeconds) * time.Second
+		if cooldown <= 0 {
+			cooldown = threshold // default: same as timeout
+		}
+		if !activity.LastNotifiedDropped.IsZero() && now.Sub(activity.LastNotifiedDropped) < cooldown {
+			continue
+		}
+		dropped[nodeName] = holdingDuration
+	}
+	return dropped
+}
+
+// MarkDroppedBallNotified marks that a dropped-ball alert was sent for the node (Issue #56).
+func MarkDroppedBallNotified(nodeName string) {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+	if activity, exists := nodeActivity[nodeName]; exists {
+		activity.LastNotifiedDropped = time.Now()
+		nodeActivity[nodeName] = activity
+	}
 }
 
 // StartIdleCheck starts a goroutine that periodically checks for idle nodes.

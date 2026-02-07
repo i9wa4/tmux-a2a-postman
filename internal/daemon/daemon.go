@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -586,6 +587,63 @@ func RunDaemonLoop(
 						"session_nodes": sessionNodes, // Issue #59: Session-node mapping
 					},
 				}
+			}
+
+			// Issue #56: Check dropped balls
+			// Build simple-name -> NodeConfig mapping
+			nodeConfigs := make(map[string]config.NodeConfig)
+			for fullName := range nodes {
+				parts := strings.SplitN(fullName, ":", 2)
+				if len(parts) == 2 {
+					simpleName := parts[1]
+					if nc, ok := cfg.Nodes[simpleName]; ok {
+						nodeConfigs[simpleName] = nc
+					}
+				}
+			}
+
+			droppedNodes := idle.CheckDroppedBalls(nodeConfigs)
+			for nodeName, duration := range droppedNodes {
+				idle.MarkDroppedBallNotified(nodeName)
+
+				// Emit dropped_ball event for Events pane
+				events <- tui.DaemonEvent{
+					Type:    "dropped_ball",
+					Message: fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeName, duration.Round(time.Second)),
+					Details: map[string]interface{}{
+						"node":     nodeName,
+						"duration": duration.Seconds(),
+					},
+				}
+
+				// Optional: tmux display-message
+				nc := nodeConfigs[nodeName]
+				notification := nc.DroppedBallNotification
+				if notification == "" {
+					notification = "tui"
+				}
+				if notification == "display" || notification == "all" {
+					_ = exec.Command("tmux", "display-message",
+						fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeName, duration.Round(time.Second)),
+					).Run()
+				}
+			}
+
+			// Include dropped_nodes in ball_state_update
+			droppedNodeMap := make(map[string]bool)
+			for nodeName := range droppedNodes {
+				droppedNodeMap[nodeName] = true
+			}
+
+			// Send ball_state_update event with dropped_nodes
+			nodeStates := idle.GetNodeStates()
+			events <- tui.DaemonEvent{
+				Type:    "ball_state_update",
+				Message: "Ball states updated",
+				Details: map[string]interface{}{
+					"node_states":   nodeStates,
+					"dropped_nodes": droppedNodeMap,
+				},
 			}
 		}
 	}

@@ -34,6 +34,10 @@ var (
 
 	ballHolderStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("208")) // orange
+
+	// Issue #56: Dropped ball style
+	droppedNodeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")) // red
 )
 
 const (
@@ -148,7 +152,8 @@ func (m Model) getSelectedBorderColor() string {
 }
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
-func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
+// Issue #56: Added droppedNodes parameter for dropped-ball detection.
+func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedNodes map[string]bool) {
 	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
 	nodeActivities, ok := nodeStatesRaw.(map[string]idle.NodeActivity)
 	if !ok {
@@ -199,10 +204,12 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		if !edgeNodes[nodeName] {
 			continue
 		}
-		// Determine state: gray (no PONG) / active (PONG, not holding) / holding (PONG + holding ball)
+		// Determine state: gray (no PONG) / dropped / holding / active (Issue #56: added dropped)
 		switch {
 		case !activity.PongReceived:
 			m.nodeStates[nodeName] = "gray"
+		case droppedNodes != nil && droppedNodes[nodeName]:
+			m.nodeStates[nodeName] = "dropped"
 		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
 			m.nodeStates[nodeName] = "holding"
 		default:
@@ -342,6 +349,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "dropped_ball":
+			// Issue #56: Dropped ball event
+			m.lastEvent = msg.Message
+			// Extract session from node name (Details["node"])
+			sessionName := ""
+			if node, ok := msg.Details["node"].(string); ok {
+				// NOTE: node is simple name, need to find session from sessionNodes
+				for session, nodes := range m.sessionNodes {
+					for _, n := range nodes {
+						if n == node {
+							sessionName = session
+							break
+						}
+					}
+					if sessionName != "" {
+						break
+					}
+				}
+			}
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: sessionName,
+				Timestamp:   time.Now(),
+			})
+			// Keep only last 10 events
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "status_update":
 			m.status = msg.Message
 			if count, ok := msg.Details["node_count"].(int); ok {
@@ -418,11 +453,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "ball_state_update":
 			// Issue #55: Update node states from idle tracking
+			// Issue #56: Extract dropped_nodes for dropped-ball detection
+			var droppedNodes map[string]bool
+			if droppedNodesRaw, ok := msg.Details["dropped_nodes"].(map[string]bool); ok {
+				droppedNodes = droppedNodesRaw
+			}
 			if nodeStatesRaw, ok := msg.Details["node_states"]; ok {
 				// Type assertion is tricky with maps - need to handle interface{} carefully
 				// The map comes from idle.GetNodeStates() which returns map[string]NodeActivity
 				// We need to extract state from each NodeActivity
-				m.updateNodeStatesFromActivity(nodeStatesRaw)
+				m.updateNodeStatesFromActivity(nodeStatesRaw, droppedNodes)
 			}
 		case "error":
 			m.events = append(m.events, EventEntry{
@@ -774,6 +814,7 @@ func (m Model) renderRoutingView(width, height int) string {
 					var builder strings.Builder
 					for j, node := range nodes {
 						// Issue #55: Color node name based on state
+						// Issue #56: Added "dropped" state
 						nodeStyle := lipgloss.NewStyle() // default (gray)
 						if state, exists := m.nodeStates[node]; exists {
 							switch state {
@@ -781,6 +822,8 @@ func (m Model) renderRoutingView(width, height int) string {
 								nodeStyle = activeNodeStyle
 							case "holding":
 								nodeStyle = ballHolderStyle
+							case "dropped":
+								nodeStyle = droppedNodeStyle
 								// case "gray" or default: use default style
 							}
 						}
