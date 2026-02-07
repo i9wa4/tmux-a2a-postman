@@ -190,10 +190,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			return os.Rename(postPath, dst)
 		}
 	}
-	if !isSessionEnabled(recipientSessionName) {
-		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
-		log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
-		return os.Rename(postPath, dst)
+	if info.From != "postman" {
+		if !isSessionEnabled(recipientSessionName) {
+			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
+			return os.Rename(postPath, dst)
+		}
 	}
 
 	// Ensure recipient inbox subdirectory exists (in recipient's session directory)

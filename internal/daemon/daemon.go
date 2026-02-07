@@ -267,7 +267,7 @@ func RunDaemonLoop(
 								sessionList = append(sessionList, tui.SessionInfo{
 									Name:      sessionName,
 									NodeCount: nodeCount,
-									Enabled:   true, // Issue #35: All sessions enabled by default (memory only)
+									Enabled:   IsSessionEnabled(sessionName),
 								})
 							}
 
@@ -369,7 +369,7 @@ func RunDaemonLoop(
 							sessionList = append(sessionList, tui.SessionInfo{
 								Name:      sessionName,
 								NodeCount: nodeCount,
-								Enabled:   false, // All sessions disabled by default
+								Enabled:   IsSessionEnabled(sessionName),
 							})
 						}
 
@@ -474,7 +474,7 @@ func RunDaemonLoop(
 					sessionList = append(sessionList, tui.SessionInfo{
 						Name:      sessionName,
 						NodeCount: nodeCount,
-						Enabled:   true,
+						Enabled:   IsSessionEnabled(sessionName),
 					})
 				}
 

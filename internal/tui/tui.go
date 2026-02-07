@@ -363,8 +363,8 @@ func (m Model) renderLeftPane(width, height int) string {
 		for i := startIdx; i < endIdx; i++ {
 			sess := m.sessions[i]
 
-			// Status indicator (OK/OFF)
-			statusIcon := "OK "
+			// Status indicator (ON/OFF)
+			statusIcon := "ON "
 			if !sess.Enabled {
 				statusIcon = "OFF"
 			}
@@ -392,7 +392,7 @@ func (m Model) renderLeftPane(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: toggle] [p: ping]\n") // Issue #47: Added ping help
+	b.WriteString("[space: session on/off] [p: ping]\n") // Issue #47: Added ping help
 
 	return b.String()
 }
