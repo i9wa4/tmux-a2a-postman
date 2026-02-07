@@ -130,6 +130,38 @@ func MarkDroppedBallNotified(nodeName string) {
 	}
 }
 
+// GetCurrentlyDroppedNodes returns nodes currently in dropped-ball state (Issue #56).
+// Unlike CheckDroppedBalls, this does NOT check cooldown - used for TUI display only.
+func GetCurrentlyDroppedNodes(nodeConfigs map[string]config.NodeConfig) map[string]bool {
+	idleMutex.Lock()
+	defer idleMutex.Unlock()
+
+	dropped := make(map[string]bool)
+	now := time.Now()
+
+	for nodeName, activity := range nodeActivity {
+		cfg, exists := nodeConfigs[nodeName]
+		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
+			continue
+		}
+		// Skip if PONG not received (handshake incomplete)
+		if !activity.PongReceived {
+			continue
+		}
+		// Check holding: LastReceived > LastSent
+		if activity.LastReceived.IsZero() || !activity.LastReceived.After(activity.LastSent) {
+			continue
+		}
+		// Check duration (NO cooldown check for TUI display)
+		holdingDuration := now.Sub(activity.LastReceived)
+		threshold := time.Duration(cfg.DroppedBallTimeoutSeconds) * time.Second
+		if holdingDuration > threshold {
+			dropped[nodeName] = true
+		}
+	}
+	return dropped
+}
+
 // StartIdleCheck starts a goroutine that periodically checks for idle nodes.
 func StartIdleCheck(cfg *config.Config, adjacency map[string][]string, sessionDir string) {
 	ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds

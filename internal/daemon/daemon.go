@@ -629,11 +629,8 @@ func RunDaemonLoop(
 				}
 			}
 
-			// Include dropped_nodes in ball_state_update
-			droppedNodeMap := make(map[string]bool)
-			for nodeName := range droppedNodes {
-				droppedNodeMap[nodeName] = true
-			}
+			// Get currently dropped nodes for TUI display (no cooldown check)
+			droppedNodeMap := idle.GetCurrentlyDroppedNodes(nodeConfigs)
 
 			// Send ball_state_update event with dropped_nodes
 			nodeStates := idle.GetNodeStates()
