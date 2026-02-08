@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -549,6 +550,25 @@ func runCreateDraft(args []string) error {
 	sessionName = filepath.Base(sessionName)
 	if sessionName == "." || sessionName == ".." || sessionName == "" {
 		return fmt.Errorf("invalid session name: %q", *session)
+	}
+
+	// Issue #76: Verify session exists in tmux (if we're in tmux)
+	if config.GetTmuxSessionName() != "" {
+		// We're in tmux, so verify the session exists
+		cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+		output, err := cmd.Output()
+		if err == nil {
+			found := false
+			for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+				if line == sessionName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("tmux session %q does not exist", sessionName)
+			}
+		}
 	}
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
