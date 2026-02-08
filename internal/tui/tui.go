@@ -167,13 +167,16 @@ func (m Model) getSelectedBorderColor() string {
 }
 
 // sessionHasIdleNodes returns true if any node in the session has "holding" or "dropped" state (Issue #64).
+// Issue #77: Use session-prefixed keys (sessionName:nodeName) to avoid collision across sessions.
 func (m Model) sessionHasIdleNodes(sessionName string) bool {
 	nodes, ok := m.sessionNodes[sessionName]
 	if !ok {
 		return false
 	}
 	for _, nodeName := range nodes {
-		if state, exists := m.nodeStates[nodeName]; exists {
+		// Issue #77: Construct session-prefixed key
+		prefixedKey := sessionName + ":" + nodeName
+		if state, exists := m.nodeStates[prefixedKey]; exists {
 			if state == "holding" || state == "dropped" {
 				return true
 			}
@@ -184,6 +187,7 @@ func (m Model) sessionHasIdleNodes(sessionName string) bool {
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 // Issue #56: Added droppedNodes parameter for dropped-ball detection.
+// Issue #77: Use session-prefixed keys to avoid collision across sessions.
 func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedNodes map[string]bool) {
 	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
 	nodeActivities, ok := nodeStatesRaw.(map[string]idle.NodeActivity)
@@ -200,6 +204,14 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		}
 	}
 
+	// Issue #77: Build reverse index from sessionNodes (simpleNodeName -> list of sessions)
+	nodeToSessions := make(map[string][]string)
+	for sessionName, nodes := range m.sessionNodes {
+		for _, nodeName := range nodes {
+			nodeToSessions[nodeName] = append(nodeToSessions[nodeName], sessionName)
+		}
+	}
+
 	// Issue #68: Apply edge filter only (removed session filter for global state consistency)
 	for nodeName, activity := range nodeActivities {
 		// Apply edge filter
@@ -207,15 +219,27 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 			continue
 		}
 		// Determine state: gray (no PONG) / dropped / holding / active (Issue #56: added dropped)
+		var state string
 		switch {
 		case !activity.PongReceived:
-			m.nodeStates[nodeName] = "gray"
+			state = "gray"
 		case droppedNodes != nil && droppedNodes[nodeName]:
-			m.nodeStates[nodeName] = "dropped"
+			state = "dropped"
 		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
-			m.nodeStates[nodeName] = "holding"
+			state = "holding"
 		default:
-			m.nodeStates[nodeName] = "active"
+			state = "active"
+		}
+
+		// Issue #77: Store state with session-prefixed keys for all sessions containing this node
+		if sessions, found := nodeToSessions[nodeName]; found {
+			for _, sessionName := range sessions {
+				prefixedKey := sessionName + ":" + nodeName
+				m.nodeStates[prefixedKey] = state
+			}
+		} else {
+			// Fallback: if node not in any session (shouldn't happen), use simple name
+			m.nodeStates[nodeName] = state
 		}
 	}
 }
@@ -444,8 +468,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pong_received":
 			// Issue #55: Mark node as active when PONG received
+			// Issue #77: Use session-prefixed keys to avoid collision across sessions
 			if node, ok := msg.Details["node"].(string); ok {
-				m.nodeStates[node] = "active"
+				// Find all sessions containing this node
+				for sessionName, nodes := range m.sessionNodes {
+					for _, nodeName := range nodes {
+						if nodeName == node {
+							prefixedKey := sessionName + ":" + nodeName
+							m.nodeStates[prefixedKey] = "active"
+						}
+					}
+				}
 			}
 		case "ball_state_update":
 			// Issue #55: Update node states from idle tracking
@@ -768,8 +801,34 @@ func (m Model) renderRoutingView(width, height int) string {
 					for j, node := range nodes {
 						// Issue #55: Color node name based on state
 						// Issue #56: Added "dropped" state
+						// Issue #77: Use session-prefixed keys to avoid collision across sessions
 						nodeStyle := lipgloss.NewStyle() // default (gray)
-						if state, exists := m.nodeStates[node]; exists {
+
+						// Construct session-prefixed key
+						var stateKey string
+						if selectedName != "" {
+							// Specific session selected: use that session's prefix
+							stateKey = selectedName + ":" + node
+						} else {
+							// "(All)" selected: find any session containing this node
+							for sessionName, nodesInSession := range m.sessionNodes {
+								for _, nodeName := range nodesInSession {
+									if nodeName == node {
+										stateKey = sessionName + ":" + node
+										break
+									}
+								}
+								if stateKey != "" {
+									break
+								}
+							}
+							// Fallback: if node not found in any session, try simple name (shouldn't happen)
+							if stateKey == "" {
+								stateKey = node
+							}
+						}
+
+						if state, exists := m.nodeStates[stateKey]; exists {
 							switch state {
 							case "active":
 								nodeStyle = activeNodeStyle

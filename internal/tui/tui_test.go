@@ -321,10 +321,11 @@ func TestSessionHasIdleNodes(t *testing.T) {
 		"session-a": {"worker", "observer"},
 		"session-b": {"tester"},
 	}
+	// Issue #77: Use session-prefixed keys
 	m.nodeStates = map[string]string{
-		"worker":   "active",
-		"observer": "holding",
-		"tester":   "gray",
+		"session-a:worker":   "active",
+		"session-a:observer": "holding",
+		"session-b:tester":   "gray",
 	}
 
 	// session-a has "holding" node
@@ -343,7 +344,7 @@ func TestSessionHasIdleNodes(t *testing.T) {
 	}
 
 	// Test dropped state
-	m.nodeStates["tester"] = "dropped"
+	m.nodeStates["session-b:tester"] = "dropped"
 	if !m.sessionHasIdleNodes("session-b") {
 		t.Error("session-b should have idle nodes (tester is dropped)")
 	}
@@ -365,10 +366,11 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 		"session-a": {"worker", "observer"},
 		"session-b": {"tester"},
 	}
+	// Issue #77: Use session-prefixed keys
 	m.nodeStates = map[string]string{
-		"worker":   "active",
-		"observer": "holding",
-		"tester":   "gray",
+		"session-a:worker":   "active",
+		"session-a:observer": "holding",
+		"session-b:tester":   "gray",
 	}
 
 	result := m.renderLeftPane(25, 20)
