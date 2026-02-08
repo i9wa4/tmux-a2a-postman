@@ -191,20 +191,6 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		return
 	}
 
-	// Issue #59: Filter by selected session (or all if "(All)")
-	selectedName := m.getSelectedSessionName()
-	var sessionNodeSet map[string]bool
-	if selectedName == "" {
-		// "(All)" - show all nodes
-		sessionNodeSet = nil // nil means no filtering
-	} else {
-		// Build node set for selected session
-		sessionNodeSet = make(map[string]bool)
-		for _, nodeName := range m.sessionNodes[selectedName] {
-			sessionNodeSet[nodeName] = true
-		}
-	}
-
 	// Issue #55: Build edge node set (safety net against non-edge nodes)
 	edgeNodes := make(map[string]bool)
 	for _, edge := range m.edges {
@@ -214,12 +200,8 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		}
 	}
 
-	// Apply BOTH filters
+	// Issue #68: Apply edge filter only (removed session filter for global state consistency)
 	for nodeName, activity := range nodeActivities {
-		// Apply session filter
-		if sessionNodeSet != nil && !sessionNodeSet[nodeName] {
-			continue
-		}
 		// Apply edge filter
 		if !edgeNodes[nodeName] {
 			continue
