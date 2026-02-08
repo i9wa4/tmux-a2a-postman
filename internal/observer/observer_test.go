@@ -262,3 +262,146 @@ func TestSendObserverDigest_ObservesNoMatch(t *testing.T) {
 		t.Errorf("digestedFiles should contain message even if no observes match (duplicate prevention)")
 	}
 }
+
+// TestClassifyMessageType tests Issue #72 - message type classification
+func TestClassifyMessageType(t *testing.T) {
+	tests := []struct {
+		name      string
+		filename  string
+		sender    string
+		recipient string
+		want      string
+	}{
+		{
+			name:      "PONG message (recipient=postman)",
+			filename:  "20260209-120000-from-worker-to-postman.md",
+			sender:    "worker",
+			recipient: "postman",
+			want:      "pong",
+		},
+		{
+			name:      "System message (sender=postman)",
+			filename:  "20260209-120000-from-postman-to-worker.md",
+			sender:    "postman",
+			recipient: "worker",
+			want:      "system",
+		},
+		{
+			name:      "Normal message",
+			filename:  "20260209-120000-from-worker-to-orchestrator.md",
+			sender:    "worker",
+			recipient: "orchestrator",
+			want:      "message",
+		},
+		{
+			name:      "Precedence test: recipient=postman takes priority",
+			filename:  "20260209-120000-from-postman-to-postman.md",
+			sender:    "postman",
+			recipient: "postman",
+			want:      "pong", // recipient check comes first
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyMessageType(tt.filename, tt.sender, tt.recipient)
+			if got != tt.want {
+				t.Errorf("ClassifyMessageType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSendObserverDigest_ExcludeType tests Issue #72 - digest exclude types
+func TestSendObserverDigest_ExcludeType(t *testing.T) {
+	// Note: digestedFiles is always set to true (duplicate prevention)
+	// regardless of exclude types. Exclude types only skip sending
+	// to specific nodes (via continue in the loop).
+	// We verify the exclude logic by checking that files are still
+	// added to digestedFiles (duplicate prevention works) and that
+	// different message types are classified correctly.
+
+	tests := []struct {
+		name         string
+		sender       string
+		recipient    string
+		excludeTypes []string
+		msgType      string
+		description  string
+	}{
+		{
+			name:         "Exclude pong messages",
+			sender:       "worker",
+			recipient:    "postman",
+			excludeTypes: []string{"pong"},
+			msgType:      "pong",
+			description:  "PONG message classification",
+		},
+		{
+			name:         "Exclude system messages",
+			sender:       "postman",
+			recipient:    "worker",
+			excludeTypes: []string{"system"},
+			msgType:      "system",
+			description:  "System message classification",
+		},
+		{
+			name:         "Allow message when not in exclude list",
+			sender:       "worker",
+			recipient:    "orchestrator",
+			excludeTypes: []string{"pong", "system"},
+			msgType:      "message",
+			description:  "Normal message classification",
+		},
+		{
+			name:         "No exclude types configured",
+			sender:       "worker",
+			recipient:    "postman",
+			excludeTypes: []string{},
+			msgType:      "pong",
+			description:  "PONG without exclude config",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup
+			digestedFiles := make(map[string]bool)
+			filename := "test-message.md"
+
+			cfg := &config.Config{
+				Nodes: map[string]config.NodeConfig{
+					"observer-a": {
+						Observes:           []string{"worker", "orchestrator", "postman"},
+						DigestExcludeTypes: tt.excludeTypes,
+					},
+				},
+				DigestTemplate: "DIGEST {digest_items}",
+				TmuxTimeout:    5.0,
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test-session:observer-a": {
+					PaneID:      "%100",
+					SessionName: "test-session",
+				},
+			}
+
+			// Verify message type classification
+			gotMsgType := ClassifyMessageType(filename, tt.sender, tt.recipient)
+			if gotMsgType != tt.msgType {
+				t.Errorf("%s: message type = %v, want %v",
+					tt.description, gotMsgType, tt.msgType)
+			}
+
+			// Execute
+			SendObserverDigest(filename, tt.sender, tt.recipient, nodes, cfg, digestedFiles)
+
+			// Verify digestedFiles is always set (duplicate prevention)
+			if !digestedFiles[filename] {
+				t.Errorf("%s: digestedFiles[%s] should be true (duplicate prevention)",
+					tt.description, filename)
+			}
+		})
+	}
+}

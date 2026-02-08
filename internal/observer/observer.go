@@ -10,6 +10,24 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
+// ClassifyMessageType determines the type of a message for digest filtering (Issue #72).
+// NOTE: Only messages that pass through post/ reach SendObserverDigest.
+// idle reminder and compaction notification are written directly to inbox/
+// and never reach this function.
+func ClassifyMessageType(filename, sender, recipient string) string {
+	// Precedence:
+	// 1. recipient=="postman" -> "pong"
+	// 2. sender=="postman" -> "system" (currently only PING uses post/)
+	// 3. default -> "message"
+	if recipient == "postman" {
+		return "pong"
+	}
+	if sender == "postman" {
+		return "system"
+	}
+	return "message"
+}
+
 // SendObserverDigest sends digest notification to observers with matching observes config.
 // Loop prevention: skip if sender starts with "observer".
 // Duplicate prevention: track digested files in digestedFiles map.
@@ -41,6 +59,21 @@ func SendObserverDigest(filename string, sender string, recipient string, nodes 
 		// Check if sender or recipient is in observes list
 		if !containsNode(nodeConfig.Observes, sender) && !containsNode(nodeConfig.Observes, recipient) {
 			continue
+		}
+
+		// Issue #72: Check digest exclude types
+		msgType := ClassifyMessageType(filename, sender, recipient)
+		if len(nodeConfig.DigestExcludeTypes) > 0 {
+			excluded := false
+			for _, excludeType := range nodeConfig.DigestExcludeTypes {
+				if excludeType == msgType {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
 		}
 
 		nodeInfo, found := nodes[nodeName]

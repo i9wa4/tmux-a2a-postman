@@ -81,6 +81,7 @@ type NodeConfig struct {
 	DroppedBallTimeoutSeconds   int      `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
 	DroppedBallCooldownSeconds  int      `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
 	DroppedBallNotification     string   `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
+	DigestExcludeTypes          []string `toml:"digest_exclude_types"`          // Issue #72: exclude message types from digest
 }
 
 // AgentCard holds agent card information.

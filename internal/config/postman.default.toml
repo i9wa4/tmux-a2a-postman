@@ -217,3 +217,4 @@ path = "$HOME/.postman/postman-watchdog.lock"
 # dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
 # dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
 # dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
+# digest_exclude_types = ["system", "pong"]  # Exclude message types from digest notifications
