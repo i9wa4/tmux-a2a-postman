@@ -118,9 +118,6 @@ func TestTUI_View(t *testing.T) {
 	}
 
 	// Right pane
-	if !strings.Contains(view, "[Target:") {
-		t.Error("view missing Target node status")
-	}
 	if !strings.Contains(view, "1:Events") {
 		t.Error("view missing Events tab")
 	}

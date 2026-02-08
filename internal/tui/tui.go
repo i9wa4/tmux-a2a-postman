@@ -151,6 +151,22 @@ func (m Model) getSelectedBorderColor() string {
 	return "10" // highlight color (green, matches session selection)
 }
 
+// sessionHasIdleNodes returns true if any node in the session has "holding" or "dropped" state (Issue #64).
+func (m Model) sessionHasIdleNodes(sessionName string) bool {
+	nodes, ok := m.sessionNodes[sessionName]
+	if !ok {
+		return false
+	}
+	for _, nodeName := range nodes {
+		if state, exists := m.nodeStates[nodeName]; exists {
+			if state == "holding" || state == "dropped" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 // Issue #56: Added droppedNodes parameter for dropped-ball detection.
 func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedNodes map[string]bool) {
@@ -540,6 +556,7 @@ func (m Model) View() string {
 
 // renderLeftPane renders the left pane (Sessions list).
 // Issue #45: New function for left-right split layout
+// Issue #64: Simplified with emoji status indicators
 func (m Model) renderLeftPane(width, height int) string {
 	var b strings.Builder
 
@@ -549,20 +566,18 @@ func (m Model) renderLeftPane(width, height int) string {
 	if len(m.sessions) == 0 {
 		b.WriteString("(no sessions)\n")
 	} else {
-		// Calculate scroll window (each session can use 1-2 lines)
-		maxLines := height - 5 // Reserve space for header + footer
+		maxLines := height - 5
 		if maxLines < 2 {
 			maxLines = 2
 		}
 
 		startIdx := 0
 		endIdx := len(m.sessions)
-		if len(m.sessions) > maxLines/2 {
-			// Keep selected session visible (approximate)
-			if m.selectedSession >= maxLines/2 {
-				startIdx = m.selectedSession - maxLines/2 + 1
+		if len(m.sessions) > maxLines {
+			if m.selectedSession >= maxLines {
+				startIdx = m.selectedSession - maxLines + 1
 			}
-			endIdx = startIdx + maxLines/2
+			endIdx = startIdx + maxLines
 			if endIdx > len(m.sessions) {
 				endIdx = len(m.sessions)
 			}
@@ -571,36 +586,38 @@ func (m Model) renderLeftPane(width, height int) string {
 		for i := startIdx; i < endIdx; i++ {
 			sess := m.sessions[i]
 
-			// Status indicator (ON/OFF)
-			statusIcon := "ON "
-			if !sess.Enabled {
-				statusIcon = "OFF"
+			// Issue #64: Cursor prefix
+			cursor := "  "
+			if i == m.selectedSession {
+				cursor = "> "
 			}
 
-			// Check if session name + status fits in one line
-			oneLine := fmt.Sprintf("%s (%d) %s", sess.Name, sess.NodeCount, statusIcon)
-			if len(oneLine) <= width-4 {
-				// Fits in one line
-				if i == m.selectedSession {
-					b.WriteString(fmt.Sprintf("> %s\n", oneLine))
-				} else {
-					b.WriteString(fmt.Sprintf("  %s\n", oneLine))
-				}
+			if sess.Name == "(All)" {
+				// "(All)" has no emoji prefix
+				b.WriteString(fmt.Sprintf("%s%s\n", cursor, sess.Name))
 			} else {
-				// Wrap to two lines
-				if i == m.selectedSession {
-					b.WriteString(fmt.Sprintf("> %s\n", sess.Name))
-					b.WriteString(fmt.Sprintf("  (%d) %s\n", sess.NodeCount, statusIcon))
-				} else {
-					b.WriteString(fmt.Sprintf("  %s\n", sess.Name))
-					b.WriteString(fmt.Sprintf("  (%d) %s\n", sess.NodeCount, statusIcon))
+				// Status emoji
+				statusEmoji := "⚫"
+				if sess.Enabled {
+					statusEmoji = "🟢"
 				}
+
+				// Mail emoji for sessions with idle/waiting nodes
+				mailEmoji := ""
+				if m.sessionHasIdleNodes(sess.Name) {
+					mailEmoji = "📧"
+				}
+
+				// Add space after emojis before session name
+				prefix := statusEmoji + mailEmoji + " "
+
+				b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, prefix, sess.Name))
 			}
 		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: session on/off] [p: ping]\n") // Issue #47: Added ping help
+	b.WriteString("[space: session on/off] [p: ping]\n")
 
 	return b.String()
 }
@@ -609,10 +626,6 @@ func (m Model) renderLeftPane(width, height int) string {
 // Issue #45: New function for left-right split layout
 func (m Model) renderRightPane(width, height int) string {
 	var b strings.Builder
-
-	// Issue #45: Target Node status (renamed from "Concierge")
-	b.WriteString(m.renderTargetNodeStatusLine())
-	b.WriteString("\n")
 
 	// Tab display
 	b.WriteString("[")
@@ -636,23 +649,6 @@ func (m Model) renderRightPane(width, height int) string {
 	case ViewRouting:
 		b.WriteString(m.renderRoutingView(width, height-6))
 	}
-
-	return b.String()
-}
-
-// renderTargetNodeStatusLine renders the target node status line.
-// Issue #45: Renamed from "Concierge" to "Target Node"
-func (m Model) renderTargetNodeStatusLine() string {
-	var b strings.Builder
-	b.WriteString("[Target: ")
-
-	if m.conciergeStatus == nil {
-		b.WriteString("UNKNOWN]")
-		return b.String()
-	}
-
-	// Status display (text only, no emoji for simplicity)
-	b.WriteString(fmt.Sprintf("%s]", m.conciergeStatus.Status))
 
 	return b.String()
 }
