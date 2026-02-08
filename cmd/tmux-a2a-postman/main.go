@@ -26,6 +26,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
+	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -328,28 +329,8 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath, nodesDir)
 	})
 
-	// Build session info from nodes
-	sessionNodeCount := make(map[string]int)
-	for nodeName := range nodes {
-		parts := strings.SplitN(nodeName, ":", 2)
-		if len(parts) == 2 {
-			sessionName := parts[0]
-			sessionNodeCount[sessionName]++
-		}
-	}
-	// Session info list (all disabled by default)
-	sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-	for sessionName, nodeCount := range sessionNodeCount {
-		sessionList = append(sessionList, tui.SessionInfo{
-			Name:      sessionName,
-			NodeCount: nodeCount,
-			Enabled:   daemon.IsSessionEnabled(sessionName),
-		})
-	}
-	// Sort session list by name to maintain consistent order
-	sort.Slice(sessionList, func(i, j int) bool {
-		return sessionList[i].Name < sessionList[j].Name
-	})
+	// Build session info from nodes (all disabled by default)
+	sessionList := session.BuildSessionList(nodes, daemon.IsSessionEnabled)
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{

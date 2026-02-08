@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/observer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
+	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -283,7 +284,6 @@ func RunDaemonLoop(
 							nodes = freshNodes
 
 							// Issue #36: Bug 2 - Build session info from nodes
-							sessionNodeCount := make(map[string]int)
 							sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 							for nodeName := range nodes {
 								// Extract session name from "session:node" format
@@ -291,22 +291,10 @@ func RunDaemonLoop(
 								if len(parts) == 2 {
 									sessionName := parts[0]
 									simpleNodeName := parts[1]
-									sessionNodeCount[sessionName]++
 									sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 								}
 							}
-							sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-							for sessionName, nodeCount := range sessionNodeCount {
-								sessionList = append(sessionList, tui.SessionInfo{
-									Name:      sessionName,
-									NodeCount: nodeCount,
-									Enabled:   IsSessionEnabled(sessionName),
-								})
-							}
-							// Sort session list by name to maintain consistent order
-							sort.Slice(sessionList, func(i, j int) bool {
-								return sessionList[i].Name < sessionList[j].Name
-							})
+							sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
 
 							// Update node count and session info
 							events <- tui.DaemonEvent{
@@ -443,7 +431,6 @@ func RunDaemonLoop(
 						edgeList := buildEdgeList(newCfg.Edges, newCfg)
 
 						// Issue #35: Requirement 3 - build session info from nodes
-						sessionNodeCount := make(map[string]int)
 						sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 						for nodeName := range nodes {
 							// Extract session name from "session:node" format
@@ -451,22 +438,10 @@ func RunDaemonLoop(
 							if len(parts) == 2 {
 								sessionName := parts[0]
 								simpleNodeName := parts[1]
-								sessionNodeCount[sessionName]++
 								sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 							}
 						}
-						sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-						for sessionName, nodeCount := range sessionNodeCount {
-							sessionList = append(sessionList, tui.SessionInfo{
-								Name:      sessionName,
-								NodeCount: nodeCount,
-								Enabled:   IsSessionEnabled(sessionName),
-							})
-						}
-						// Sort session list by name to maintain consistent order
-						sort.Slice(sessionList, func(i, j int) bool {
-							return sessionList[i].Name < sessionList[j].Name
-						})
+						sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
 
 						events <- tui.DaemonEvent{
 							Type: "config_update",
@@ -557,29 +532,16 @@ func RunDaemonLoop(
 				nodes = freshNodes
 
 				// Build session info from nodes
-				sessionNodeCount := make(map[string]int)
 				sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 				for nodeName := range nodes {
 					parts := strings.SplitN(nodeName, ":", 2)
 					if len(parts) == 2 {
 						sessionName := parts[0]
 						simpleNodeName := parts[1]
-						sessionNodeCount[sessionName]++
 						sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 					}
 				}
-				sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-				for sessionName, nodeCount := range sessionNodeCount {
-					sessionList = append(sessionList, tui.SessionInfo{
-						Name:      sessionName,
-						NodeCount: nodeCount,
-						Enabled:   IsSessionEnabled(sessionName),
-					})
-				}
-				// Sort session list by name to maintain consistent order
-				sort.Slice(sessionList, func(i, j int) bool {
-					return sessionList[i].Name < sessionList[j].Name
-				})
+				sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
 
 				// Update node count and session info
 				events <- tui.DaemonEvent{
