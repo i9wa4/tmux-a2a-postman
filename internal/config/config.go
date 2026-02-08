@@ -126,7 +126,6 @@ type WatchdogCaptureConfig struct {
 	TailLines int  `toml:"tail_lines"`
 }
 
-// WatchdogLockConfig holds watchdog lock configuration.
 // DefaultConfig returns a Config with sane default values.
 func DefaultConfig() *Config {
 	return &Config{
