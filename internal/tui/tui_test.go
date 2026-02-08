@@ -280,3 +280,140 @@ func TestTUI_HotReload(t *testing.T) {
 		t.Errorf("second edge after reload: got %q, want %q", m.edges[1].Raw, "B -- C")
 	}
 }
+
+func TestParseEdgeNodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{"undirected simple", "A -- B", []string{"A", "B"}},
+		{"directed simple", "A --> B", []string{"A", "B"}},
+		{"undirected chain", "A -- B -- C", []string{"A", "B", "C"}},
+		{"directed chain", "A --> B --> C", []string{"A", "B", "C"}},
+		{"whitespace", "  A  --  B  ", []string{"A", "B"}},
+		{"no separator", "A B", nil},
+		{"empty string", "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseEdgeNodes(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("ParseEdgeNodes(%q): got %d nodes, want %d", tt.input, len(result), len(tt.expected))
+				return
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("ParseEdgeNodes(%q)[%d]: got %q, want %q", tt.input, i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSessionHasIdleNodes(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil)
+	m.sessionNodes = map[string][]string{
+		"session-a": {"worker", "observer"},
+		"session-b": {"tester"},
+	}
+	m.nodeStates = map[string]string{
+		"worker":   "active",
+		"observer": "holding",
+		"tester":   "gray",
+	}
+
+	// session-a has "holding" node
+	if !m.sessionHasIdleNodes("session-a") {
+		t.Error("session-a should have idle nodes (observer is holding)")
+	}
+
+	// session-b has no holding/dropped nodes
+	if m.sessionHasIdleNodes("session-b") {
+		t.Error("session-b should not have idle nodes (tester is gray)")
+	}
+
+	// non-existent session
+	if m.sessionHasIdleNodes("session-c") {
+		t.Error("non-existent session should not have idle nodes")
+	}
+
+	// Test dropped state
+	m.nodeStates["tester"] = "dropped"
+	if !m.sessionHasIdleNodes("session-b") {
+		t.Error("session-b should have idle nodes (tester is dropped)")
+	}
+}
+
+func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil)
+	m.width = 80
+	m.height = 24
+	m.sessions = []SessionInfo{
+		{Name: "(All)", Enabled: true},
+		{Name: "session-a", NodeCount: 2, Enabled: true},
+		{Name: "session-b", NodeCount: 1, Enabled: false},
+	}
+	m.sessionNodes = map[string][]string{
+		"session-a": {"worker", "observer"},
+		"session-b": {"tester"},
+	}
+	m.nodeStates = map[string]string{
+		"worker":   "active",
+		"observer": "holding",
+		"tester":   "gray",
+	}
+
+	result := m.renderLeftPane(25, 20)
+
+	// Verify "(All)" has no emoji prefix
+	if !strings.Contains(result, "(All)") {
+		t.Error("renderLeftPane missing (All) entry")
+	}
+
+	// Verify enabled session has green emoji
+	if !strings.Contains(result, "\U0001F7E2") { // 🟢
+		t.Error("renderLeftPane missing green circle emoji for enabled session")
+	}
+
+	// Verify disabled session has black emoji
+	if !strings.Contains(result, "\u26AB") { // ⚫
+		t.Error("renderLeftPane missing black circle emoji for disabled session")
+	}
+
+	// Verify mail emoji for session with idle nodes
+	if !strings.Contains(result, "\U0001F4E7") { // 📧
+		t.Error("renderLeftPane missing mail emoji for session with holding node")
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{"short string", "hello", 10, "hello"},
+		{"exact length", "hello", 5, "hello"},
+		{"truncated", "hello world", 8, "hello..."},
+		{"very short max", "hello", 2, "he"},
+		{"unicode", "こんにちは世界", 5, "こん..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateString(tt.input, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("truncateString(%q, %d): got %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+			}
+		})
+	}
+}
