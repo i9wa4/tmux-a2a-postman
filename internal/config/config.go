@@ -13,8 +13,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-//go:embed default_postman.toml
-var defaultConfigData []byte
+//go:embed postman.default.toml
+var defaultConfigBytes []byte
 
 // Config holds postman configuration loaded from TOML file.
 // Python format: [postman] section contains all settings.
@@ -152,7 +152,7 @@ func DefaultConfig() *Config {
 func loadEmbeddedConfig() (*Config, error) {
 	// Parse embedded TOML data
 	var rootSections map[string]toml.Primitive
-	md, err := toml.Decode(string(defaultConfigData), &rootSections)
+	md, err := toml.Decode(string(defaultConfigBytes), &rootSections)
 	if err != nil {
 		return nil, fmt.Errorf("parsing embedded config: %w", err)
 	}
