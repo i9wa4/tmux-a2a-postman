@@ -422,3 +422,29 @@ func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
 		t.Errorf("expected no dropped nodes (detection disabled), got %d", len(dropped))
 	}
 }
+
+func TestGetPongActiveNodes(t *testing.T) {
+	tracker := NewIdleTracker()
+
+	// Initially empty
+	result := tracker.GetPongActiveNodes()
+	if len(result) != 0 {
+		t.Errorf("expected empty, got %v", result)
+	}
+
+	// Mark PONG received
+	tracker.MarkPongReceived("session1:nodeA")
+	tracker.MarkPongReceived("session1:nodeB")
+	tracker.UpdateSendActivity("session1:nodeC") // No PONG
+
+	result = tracker.GetPongActiveNodes()
+	if len(result) != 2 {
+		t.Errorf("expected 2, got %d", len(result))
+	}
+	if !result["session1:nodeA"] || !result["session1:nodeB"] {
+		t.Errorf("expected nodeA and nodeB, got %v", result)
+	}
+	if result["session1:nodeC"] {
+		t.Errorf("nodeC should not be active (no PONG)")
+	}
+}

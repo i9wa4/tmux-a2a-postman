@@ -270,8 +270,9 @@ func RunDaemonLoop(
 										capturedNode := nodeName
 										capturedNodeInfo := nodeInfo
 										capturedActiveNodes := activeNodes
+										capturedPongActiveNodes := idleTracker.GetPongActiveNodes()
 										safeAfterFunc(newNodeDelay, "new-node-ping", events, func() {
-											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
+											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes, capturedPongActiveNodes); err != nil {
 												events <- tui.DaemonEvent{
 													Type:    "error",
 													Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
@@ -520,8 +521,9 @@ func RunDaemonLoop(
 						capturedNode := nodeName
 						capturedNodeInfo := nodeInfo
 						capturedActiveNodes := activeNodes
+						capturedPongActiveNodes := idleTracker.GetPongActiveNodes()
 						safeAfterFunc(newNodeDelay, "scan-discovered-ping", events, func() {
-							if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes); err != nil {
+							if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes, capturedPongActiveNodes); err != nil {
 								events <- tui.DaemonEvent{
 									Type:    "error",
 									Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),

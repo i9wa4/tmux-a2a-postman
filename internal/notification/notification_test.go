@@ -34,10 +34,87 @@ func TestBuildNotification(t *testing.T) {
 	}
 
 	// sourceSessionName is "test"
-	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md")
+	// Issue #84: Add pongActiveNodes parameter (all active for this test)
+	pongActiveNodes := map[string]bool{
+		"test:worker":       true,
+		"test:orchestrator": true,
+	}
+	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md", pongActiveNodes)
 
 	if !strings.Contains(notification, "Message from orchestrator to worker") {
 		t.Errorf("notification = %q, want to contain 'Message from orchestrator to worker'", notification)
+	}
+}
+
+// TestBuildNotification_PongActiveFiltering tests Issue #84 - talks_to_line filtering
+func TestBuildNotification_PongActiveFiltering(t *testing.T) {
+	cfg := &config.Config{
+		NotificationTemplate: "Message: {talks_to_line}",
+		TmuxTimeout:          5.0,
+		ReplyCommand:         "postman create-draft --to <recipient>",
+	}
+
+	adjacency := map[string][]string{
+		"worker": {"orchestrator", "observer"},
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {
+			PaneID:      "%1",
+			SessionName: "test",
+		},
+		"test:orchestrator": {
+			PaneID:      "%2",
+			SessionName: "test",
+		},
+		"test:observer": {
+			PaneID:      "%3",
+			SessionName: "test",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		pongActiveNodes map[string]bool
+		wantContains    string
+		wantNotContains string
+	}{
+		{
+			name: "All nodes PONG-active",
+			pongActiveNodes: map[string]bool{
+				"test:orchestrator": true,
+				"test:observer":     true,
+			},
+			wantContains:    "orchestrator, observer",
+			wantNotContains: "",
+		},
+		{
+			name: "Only orchestrator PONG-active",
+			pongActiveNodes: map[string]bool{
+				"test:orchestrator": true,
+			},
+			wantContains:    "orchestrator",
+			wantNotContains: "observer",
+		},
+		{
+			name:            "No nodes PONG-active",
+			pongActiveNodes: map[string]bool{},
+			wantContains:    "",
+			wantNotContains: "Can talk to",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/file.md", tt.pongActiveNodes)
+
+			if tt.wantContains != "" && !strings.Contains(notification, tt.wantContains) {
+				t.Errorf("notification = %q, want to contain %q", notification, tt.wantContains)
+			}
+			if tt.wantNotContains != "" && strings.Contains(notification, tt.wantNotContains) {
+				t.Errorf("notification = %q, should not contain %q", notification, tt.wantNotContains)
+			}
+		})
 	}
 }
 

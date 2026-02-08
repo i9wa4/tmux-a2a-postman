@@ -47,7 +47,7 @@ func resolveNodeNameForNotification(nodeName, sourceSessionName string, knownNod
 // talks_to_line, template, reply_command, context_id.
 // recipient and sender are simple node names (not session-prefixed).
 // sourceSessionName is the session name where the message originated.
-func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string) string {
+func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, pongActiveNodes map[string]bool) string {
 	// Get recipient's template (use simple name for config lookup)
 	recipientTemplate := ""
 	if nodeConfig, ok := cfg.Nodes[recipient]; ok {
@@ -64,13 +64,12 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 
 	// Get talks_to list for recipient (use simple name for adjacency lookup)
 	talksTo := config.GetTalksTo(adjacency, recipient)
-	// Filter to only active nodes (need to resolve each node name to full name)
+	// Issue #84: Filter to only PONG-active nodes
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
-		// Resolve node name to full name for lookup in nodes map
 		nodeFullName := resolveNodeNameForNotification(node, sourceSessionName, nodes)
-		if nodeFullName != "" {
-			// Keep simple name in the list for display
+		// Issue #84: Filter by PONG-active status (resolveNodeNameForNotification success + PONG received)
+		if nodeFullName != "" && pongActiveNodes[nodeFullName] {
 			activeTalksTo = append(activeTalksTo, node)
 		}
 	}

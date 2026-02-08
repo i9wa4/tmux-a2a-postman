@@ -77,6 +77,21 @@ func (t *IdleTracker) GetNodeStates() map[string]NodeActivity {
 	return result
 }
 
+// GetPongActiveNodes returns a set of node keys that have received PONG (Issue #84).
+// Returns non-nil map (empty if no PONG received).
+// NOTE: PONG-active status is informational (UX), not an access control mechanism.
+func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	result := make(map[string]bool)
+	for key, activity := range t.nodeActivity {
+		if activity.PongReceived {
+			result[key] = true
+		}
+	}
+	return result
+}
+
 // IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).
 // NOTE: IsHoldingBall uses simple timestamp comparison (LastReceived > LastSent).
 // This is a heuristic - it may misjudge in multi-sender scenarios.

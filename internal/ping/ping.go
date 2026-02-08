@@ -10,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -30,7 +31,7 @@ func BuildPingMessage(tmpl string, vars map[string]string, timeout time.Duration
 
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
-func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string) error {
+func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool) error {
 	// Extract simple name for filename and config lookups (Issue #33)
 	simpleName := ExtractSimpleName(nodeName)
 
@@ -50,7 +51,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	}
 
 	// Build talks_to_line from adjacency (edges) - use simple name
-	talksToLine := buildTalksToLine(simpleName, cfg)
+	talksToLine := buildTalksToLine(simpleName, cfg, pongActiveNodes)
 
 	// Build reply command (use simple name for backward compatibility)
 	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", simpleName)
@@ -91,7 +92,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 }
 
 // SendPingToAll sends PING messages to all discovered nodes.
-func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
+func SendPingToAll(baseDir, contextID string, cfg *config.Config, idleTracker *idle.IdleTracker) {
 	log.Println("📮 postman: SendPingToAll starting...")
 
 	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
@@ -108,9 +109,12 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 		activeNodes = append(activeNodes, simpleName)
 	}
 
+	// Issue #84: Get PONG-active nodes for talks_to_line filtering
+	pongActiveNodes := idleTracker.GetPongActiveNodes()
+
 	// Send PING to each node using their actual SessionDir
 	for nodeName, nodeInfo := range nodes {
-		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes); err != nil {
+		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
 			log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
 			// Issue #36: Use log package (outputs to file in TUI mode, stderr in --no-tui mode)
@@ -120,13 +124,31 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config) {
 }
 
 // buildTalksToLine builds the "Can talk to:" line from edges config.
-func buildTalksToLine(nodeName string, cfg *config.Config) string {
+func buildTalksToLine(nodeName string, cfg *config.Config, pongActiveNodes map[string]bool) string {
 	adjacency, err := config.ParseEdges(cfg.Edges)
 	if err != nil {
 		return ""
 	}
 	if neighbors, ok := adjacency[nodeName]; ok && len(neighbors) > 0 {
-		return fmt.Sprintf("Can talk to: %s", strings.Join(neighbors, ", "))
+		// Issue #84: Filter by PONG-active status
+		var active []string
+		for _, n := range neighbors {
+			// NOTE: Neighbors are simple names. For PONG lookup, check all session prefixes.
+			found := false
+			for key := range pongActiveNodes {
+				parts := strings.SplitN(key, ":", 2)
+				if len(parts) == 2 && parts[1] == n {
+					found = true
+					break
+				}
+			}
+			if found {
+				active = append(active, n)
+			}
+		}
+		if len(active) > 0 {
+			return fmt.Sprintf("Can talk to: %s", strings.Join(active, ", "))
+		}
 	}
 	return ""
 }
