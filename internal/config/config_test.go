@@ -118,6 +118,11 @@ on_join = ""
 template = "worker template"
 role = "worker"
 on_join = ""
+
+[observer]
+template = "observer template"
+role = "observer"
+on_join = ""
 `
 
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -171,8 +176,8 @@ on_join = ""
 	if len(cfg.Edges) != 2 {
 		t.Errorf("Edges length: got %d, want 2", len(cfg.Edges))
 	}
-	if len(cfg.Nodes) != 2 {
-		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	if len(cfg.Nodes) != 3 {
+		t.Errorf("Nodes length: got %d, want 3", len(cfg.Nodes))
 	}
 	if cfg.Nodes["orchestrator"].Role != "coordinator" {
 		t.Errorf("Node orchestrator role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "coordinator")

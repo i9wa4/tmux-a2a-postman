@@ -313,6 +313,20 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.EdgeActivitySeconds = 3600 // Force maximum
 	}
 
+	// Issue #70: Validate configuration
+	validationErrors := ValidateConfig(cfg)
+	var errors []string
+	for _, ve := range validationErrors {
+		if ve.Severity == "error" {
+			errors = append(errors, ve.Error())
+		} else {
+			log.Printf("config warning: %s\n", ve.Error())
+		}
+	}
+	if len(errors) > 0 {
+		return nil, fmt.Errorf("config validation failed:\n%s", strings.Join(errors, "\n"))
+	}
+
 	return cfg, nil
 }
 

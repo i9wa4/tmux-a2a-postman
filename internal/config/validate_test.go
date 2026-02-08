@@ -1,0 +1,179 @@
+package config
+
+import (
+	"testing"
+)
+
+func TestValidateConfig_ValidConfig(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"worker -- orchestrator",
+			"orchestrator -- observer",
+		},
+		Nodes: map[string]NodeConfig{
+			"worker":       {},
+			"orchestrator": {},
+			"observer":     {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors, got %d: %v", len(errors), errors)
+	}
+}
+
+func TestValidateConfig_InvalidEdgeNode(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"worker -- nonexistent",
+		},
+		Nodes: map[string]NodeConfig{
+			"worker": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for nonexistent edge node")
+	}
+
+	foundError := false
+	for _, err := range errors {
+		if err.Severity == "error" && err.Field == "edges[0]" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("expected error for edges[0], got: %v", errors)
+	}
+}
+
+func TestValidateConfig_PostmanInEdges(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"worker -- postman",
+		},
+		Nodes: map[string]NodeConfig{
+			"worker": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	// "postman" in edges should be skipped (not an error)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors for postman in edges, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_InvalidObservesTarget(t *testing.T) {
+	cfg := &Config{
+		Nodes: map[string]NodeConfig{
+			"observer": {
+				Observes: []string{"nonexistent"},
+			},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for nonexistent observes target")
+	}
+
+	foundError := false
+	for _, err := range errors {
+		if err.Severity == "error" && err.Field == "nodes.observer.observes[0]" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("expected error for nodes.observer.observes[0], got: %v", errors)
+	}
+}
+
+func TestValidateConfig_ReservedNodeName(t *testing.T) {
+	cfg := &Config{
+		Nodes: map[string]NodeConfig{
+			"postman": {},
+			"worker":  {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for reserved node name 'postman'")
+	}
+
+	foundError := false
+	for _, err := range errors {
+		if err.Severity == "error" && err.Field == "nodes.postman" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("expected error for nodes.postman, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_ReservedNodeNameMultiple(t *testing.T) {
+	cfg := &Config{
+		Nodes: map[string]NodeConfig{
+			"watchdog": {},
+			"worker":   {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for reserved node name 'watchdog'")
+	}
+
+	foundError := false
+	for _, err := range errors {
+		if err.Severity == "error" && err.Field == "nodes.watchdog" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Errorf("expected error for nodes.watchdog, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_ChainEdge(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"A -- B -- C",
+		},
+		Nodes: map[string]NodeConfig{
+			"A": {},
+			"B": {},
+			"C": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors for chain edge, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_DirectedEdge(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"A --> B",
+		},
+		Nodes: map[string]NodeConfig{
+			"A": {},
+			"B": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) != 0 {
+		t.Errorf("expected no validation errors for directed edge, got: %v", errors)
+	}
+}
