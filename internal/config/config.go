@@ -286,20 +286,29 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Issue #50: Load node files from nodes/ directory
-	// Support flat key-value format (node name from filename)
 	configDir := filepath.Dir(configPath)
 	nodesDir := filepath.Join(configDir, "nodes")
 	if info, err := os.Stat(nodesDir); err == nil && info.IsDir() {
 		nodeFiles, _ := filepath.Glob(filepath.Join(nodesDir, "*.toml"))
 		sort.Strings(nodeFiles) // deterministic alphabetical order
 		for _, nodeFile := range nodeFiles {
-			nodeName := strings.TrimSuffix(filepath.Base(nodeFile), ".toml")
-			var node NodeConfig
-			if _, err := toml.DecodeFile(nodeFile, &node); err != nil {
+			var sections map[string]toml.Primitive
+			md2, err := toml.DecodeFile(nodeFile, &sections)
+			if err != nil {
 				log.Printf("warning: skipping %s: %v", nodeFile, err)
 				continue
 			}
-			cfg.Nodes[nodeName] = node // override if exists in postman.toml
+			for name, prim := range sections {
+				if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+					continue // skip reserved sections
+				}
+				var node NodeConfig
+				if err := md2.PrimitiveDecode(prim, &node); err != nil {
+					log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
+					continue
+				}
+				cfg.Nodes[name] = node // override if exists in postman.toml
+			}
 		}
 	}
 
