@@ -221,13 +221,14 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 
 		// Determine state
 		var state string
-		if droppedNodes != nil && droppedNodes[nodeKey] {
+		switch {
+		case droppedNodes != nil && droppedNodes[nodeKey]:
 			state = "dropped"
-		} else if !activity.PongReceived {
+		case !activity.PongReceived:
 			state = "waiting"
-		} else if !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent) {
+		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
 			state = "holding"
-		} else {
+		default:
 			state = "active"
 		}
 
@@ -249,7 +250,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessions:        []SessionInfo{},           // Issue #35: Requirement 3
 		selectedSession: 0,                         // Issue #35: Requirement 3
 		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
-		nodeStates:      make(map[string]string), // Issue #55: Node state tracking
+		nodeStates:      make(map[string]string),   // Issue #55: Node state tracking
 		daemonEvents:    daemonEvents,
 		tuiCommands:     tuiCommands,    // Issue #47: Command channel
 		events:          []EventEntry{}, // Issue #59: Session-tagged events

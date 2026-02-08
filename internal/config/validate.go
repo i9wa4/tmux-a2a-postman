@@ -25,11 +25,12 @@ func ValidateConfig(cfg *Config) []ValidationError {
 	for i, edge := range cfg.Edges {
 		// Parse edge using same logic as ParseEdges
 		var separator string
-		if strings.Contains(edge, " --> ") {
+		switch {
+		case strings.Contains(edge, " --> "):
 			separator = " --> "
-		} else if strings.Contains(edge, " -- ") {
+		case strings.Contains(edge, " -- "):
 			separator = " -- "
-		} else {
+		default:
 			// Invalid separator - skip (ParseEdges will handle)
 			continue
 		}

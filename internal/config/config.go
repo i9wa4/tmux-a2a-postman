@@ -42,7 +42,7 @@ type Config struct {
 	DigestTemplate               string `toml:"digest_template"`
 	DraftTemplate                string `toml:"draft_template"`
 	ReminderMessage              string `toml:"reminder_message"`
-	CommonTemplate               string `toml:"common_template"`                  // Issue #49: Shared template for all nodes
+	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
 	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
 	IdleReminderHeaderTemplate   string `toml:"idle_reminder_header_template"`   // Issue #82: Idle reminder header
 	SessionIdleAlertTemplate     string `toml:"session_idle_alert_template"`     // Issue #82: Session idle alert message
@@ -87,12 +87,12 @@ type NodeConfig struct {
 
 // AgentCard holds agent card information.
 type AgentCard struct {
-	ID              string   `toml:"id"`
-	Name            string   `toml:"name"`
-	Constraints     string   `toml:"constraints"`
-	TalksTo         []string `toml:"talks_to"`
-	Template        string   `toml:"template"`
-	Role            string   `toml:"role"`
+	ID          string   `toml:"id"`
+	Name        string   `toml:"name"`
+	Constraints string   `toml:"constraints"`
+	TalksTo     []string `toml:"talks_to"`
+	Template    string   `toml:"template"`
+	Role        string   `toml:"role"`
 }
 
 // CompactionDetectionConfig holds compaction detection configuration.
@@ -129,23 +129,23 @@ type WatchdogCaptureConfig struct {
 // DefaultConfig returns a Config with sane default values.
 func DefaultConfig() *Config {
 	return &Config{
-		ScanInterval:         1.0,
-		EnterDelay:           0.5,
-		TmuxTimeout:          5.0,
-		StartupDelay:         2.0,
-		NewNodePingDelay:     3.0,
-		ReminderInterval:     0.0,
-		EdgeActivitySeconds:  60.0, // Issue #37: Default 60 seconds
-		BaseDir:              "",
-		NotificationTemplate: "Message from {sender}",
-		PingTemplate:         "PING from postman",
-		DigestTemplate:       "",
-		DraftTemplate:        "",
-		ReminderMessage:      "",
-		ReplyCommand:         "",
-		UINode:               "concierge", // Issue #46: Default UI target node
-		Edges:                []string{},
-		Nodes:                make(map[string]NodeConfig),
+		ScanInterval:                 1.0,
+		EnterDelay:                   0.5,
+		TmuxTimeout:                  5.0,
+		StartupDelay:                 2.0,
+		NewNodePingDelay:             3.0,
+		ReminderInterval:             0.0,
+		EdgeActivitySeconds:          60.0, // Issue #37: Default 60 seconds
+		BaseDir:                      "",
+		NotificationTemplate:         "Message from {sender}",
+		PingTemplate:                 "PING from postman",
+		DigestTemplate:               "",
+		DraftTemplate:                "",
+		ReminderMessage:              "",
+		ReplyCommand:                 "",
+		UINode:                       "concierge", // Issue #46: Default UI target node
+		Edges:                        []string{},
+		Nodes:                        make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate: "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/.",
 		IdleReminderHeaderTemplate:   "## Idle Reminder",
 		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",

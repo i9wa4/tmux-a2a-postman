@@ -256,9 +256,9 @@ func SendWatchdogAlert(
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	vars := map[string]string{
-		"session_name":   sessionName,
-		"idle_nodes":     strings.Join(idleNodes, ", "),
-		"talks_to_line":  talksToLine,
+		"session_name":  sessionName,
+		"idle_nodes":    strings.Join(idleNodes, ", "),
+		"talks_to_line": talksToLine,
 	}
 	alertBody := template.ExpandTemplate(alertTemplate, vars, timeout)
 
