@@ -9,6 +9,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
@@ -114,7 +115,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	}
 
 	// Deliver message (should move to inbox/worker/)
-	if err := message.DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := message.DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("message.DeliverMessage failed: %v", err)
 	}
 

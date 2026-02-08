@@ -7,6 +7,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -113,7 +114,7 @@ func TestDeliverMessage(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -152,7 +153,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -197,7 +198,7 @@ func TestRouting_Allowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -242,7 +243,7 @@ func TestRouting_Denied(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -287,7 +288,7 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -326,7 +327,7 @@ func TestPONG_Handling(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 

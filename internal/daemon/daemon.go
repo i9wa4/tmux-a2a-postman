@@ -50,13 +50,21 @@ type EdgeActivity struct {
 	LastBackwardAt time.Time // B -> A last communication time
 }
 
-// Global edge history tracking (Issue #37)
-var (
+// DaemonState manages daemon state (Issue #71).
+type DaemonState struct {
+	edgeHistory       map[string]EdgeActivity
 	edgeHistoryMu     sync.RWMutex
+	enabledSessions   map[string]bool
 	enabledSessionsMu sync.RWMutex
-	enabledSessions   = make(map[string]bool)
-	edgeHistory       = make(map[string]EdgeActivity)
-)
+}
+
+// NewDaemonState creates a new DaemonState instance (Issue #71).
+func NewDaemonState() *DaemonState {
+	return &DaemonState{
+		edgeHistory:     make(map[string]EdgeActivity),
+		enabledSessions: make(map[string]bool),
+	}
+}
 
 // makeEdgeKey generates a sorted edge key for consistent lookups (Issue #37).
 func makeEdgeKey(nodeA, nodeB string) string {
@@ -65,13 +73,13 @@ func makeEdgeKey(nodeA, nodeB string) string {
 	return nodes[0] + ":" + nodes[1]
 }
 
-// recordEdgeActivity records edge communication activity (Issue #37).
-func recordEdgeActivity(from, to string, timestamp time.Time) {
-	edgeHistoryMu.Lock()
-	defer edgeHistoryMu.Unlock()
+// RecordEdgeActivity records edge communication activity (Issue #37, #71).
+func (ds *DaemonState) RecordEdgeActivity(from, to string, timestamp time.Time) {
+	ds.edgeHistoryMu.Lock()
+	defer ds.edgeHistoryMu.Unlock()
 
 	key := makeEdgeKey(from, to)
-	activity := edgeHistory[key]
+	activity := ds.edgeHistory[key]
 
 	// Determine direction: sort nodes and check if from is first
 	nodes := []string{from, to}
@@ -82,13 +90,13 @@ func recordEdgeActivity(from, to string, timestamp time.Time) {
 		activity.LastBackwardAt = timestamp
 	}
 
-	edgeHistory[key] = activity
+	ds.edgeHistory[key] = activity
 }
 
-// buildEdgeList builds edge list with activity data (Issue #37, #42).
-func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
-	edgeHistoryMu.RLock()
-	defer edgeHistoryMu.RUnlock()
+// BuildEdgeList builds edge list with activity data (Issue #37, #42, #71).
+func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
+	ds.edgeHistoryMu.RLock()
+	defer ds.edgeHistoryMu.RUnlock()
 
 	now := time.Now()
 	activityWindow := time.Duration(cfg.EdgeActivitySeconds * float64(time.Second))
@@ -109,7 +117,7 @@ func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 			nodeB := nodes[j+1]
 
 			key := makeEdgeKey(nodeA, nodeB)
-			activity, exists := edgeHistory[key]
+			activity, exists := ds.edgeHistory[key]
 
 			segmentDir := "none"
 			if exists && nodeA != "" && nodeB != "" {
@@ -160,7 +168,7 @@ func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 	return edgeList
 }
 
-// RunDaemonLoop runs the daemon event loop in a goroutine.
+// RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).
 func RunDaemonLoop(
 	ctx context.Context,
 	baseDir string,
@@ -176,6 +184,8 @@ func RunDaemonLoop(
 	events chan<- tui.DaemonEvent,
 	configPath string,
 	nodesDir string,
+	daemonState *DaemonState,
+	idleTracker *idle.IdleTracker,
 ) {
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
@@ -284,7 +294,7 @@ func RunDaemonLoop(
 									sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 								}
 							}
-							sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
+							sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
 
 							// Update node count and session info
 							events <- tui.DaemonEvent{
@@ -300,7 +310,7 @@ func RunDaemonLoop(
 						// Use eventPath directly for multi-session support
 						// Issue #53: Create wrapper channel for dead-letter notifications
 						messageEvents := make(chan message.DaemonEvent, 1)
-						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, IsSessionEnabled, messageEvents); err != nil {
+						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -345,8 +355,8 @@ func RunDaemonLoop(
 										// PONG received - track state, skip edge/observer/reminder
 										// Issue #79: Use session-prefixed key for tracking
 										prefixedKey := sourceSessionName + ":" + info.From
-										idle.MarkPongReceived(prefixedKey)
-										idle.UpdateSendActivity(prefixedKey) // Track PONG as send activity
+										idleTracker.MarkPongReceived(prefixedKey)
+										idleTracker.UpdateSendActivity(prefixedKey) // Track PONG as send activity
 										events <- tui.DaemonEvent{
 											Type: "pong_received",
 											Details: map[string]interface{}{
@@ -356,10 +366,10 @@ func RunDaemonLoop(
 									} else {
 										// Normal message delivery - record edge activity, send digest, etc.
 										// Issue #37: Record edge activity
-										recordEdgeActivity(info.From, info.To, time.Now())
+										daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
 
 										// Issue #40: Send edge_update event to TUI
-										edgeList := buildEdgeList(cfg.Edges, cfg)
+										edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
 										events <- tui.DaemonEvent{
 											Type: "edge_update",
 											Details: map[string]interface{}{
@@ -372,7 +382,7 @@ func RunDaemonLoop(
 										reminderState.Increment(info.To, nodes, cfg)
 
 										// Issue #55: Emit ball state update after message delivery
-										nodeStates := idle.GetNodeStates()
+										nodeStates := idleTracker.GetNodeStates()
 										events <- tui.DaemonEvent{
 											Type: "ball_state_update",
 											Details: map[string]interface{}{
@@ -423,7 +433,7 @@ func RunDaemonLoop(
 						adjacency = newAdjacency
 						// Send config update event
 						// Issue #37: Build edge list with activity data
-						edgeList := buildEdgeList(newCfg.Edges, newCfg)
+						edgeList := daemonState.BuildEdgeList(newCfg.Edges, newCfg)
 
 						// Issue #35: Requirement 3 - build session info from nodes
 						sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
@@ -436,7 +446,7 @@ func RunDaemonLoop(
 								sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 							}
 						}
-						sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
+						sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
 
 						events <- tui.DaemonEvent{
 							Type: "config_update",
@@ -536,7 +546,7 @@ func RunDaemonLoop(
 						sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 					}
 				}
-				sessionList := session.BuildSessionList(nodes, IsSessionEnabled)
+				sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
 
 				// Update node count and session info
 				events <- tui.DaemonEvent{
@@ -563,9 +573,9 @@ func RunDaemonLoop(
 				}
 			}
 
-			droppedNodes := idle.CheckDroppedBalls(nodeConfigs)
+			droppedNodes := idleTracker.CheckDroppedBalls(nodeConfigs)
 			for nodeKey, duration := range droppedNodes {
-				idle.MarkDroppedBallNotified(nodeKey)
+				idleTracker.MarkDroppedBallNotified(nodeKey)
 
 				// Extract simple name for nodeConfigs lookup
 				simpleName := nodeKey
@@ -607,10 +617,10 @@ func RunDaemonLoop(
 			}
 
 			// Get currently dropped nodes for TUI display (no cooldown check)
-			droppedNodeMap := idle.GetCurrentlyDroppedNodes(nodeConfigs)
+			droppedNodeMap := idleTracker.GetCurrentlyDroppedNodes(nodeConfigs)
 
 			// Send ball_state_update event with dropped_nodes
-			nodeStates := idle.GetNodeStates()
+			nodeStates := idleTracker.GetNodeStates()
 			events <- tui.DaemonEvent{
 				Type:    "ball_state_update",
 				Message: "Ball states updated",
@@ -623,19 +633,19 @@ func RunDaemonLoop(
 	}
 }
 
-// SetSessionEnabled sets the enabled/disabled state for a session.
-func SetSessionEnabled(sessionName string, enabled bool) {
-	enabledSessionsMu.Lock()
-	defer enabledSessionsMu.Unlock()
-	enabledSessions[sessionName] = enabled
+// SetSessionEnabled sets the enabled/disabled state for a session (Issue #71).
+func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
+	ds.enabledSessionsMu.Lock()
+	defer ds.enabledSessionsMu.Unlock()
+	ds.enabledSessions[sessionName] = enabled
 }
 
-// IsSessionEnabled checks if a session is enabled.
+// IsSessionEnabled checks if a session is enabled (Issue #71).
 // Returns true if session is enabled, false otherwise.
-func IsSessionEnabled(sessionName string) bool {
-	enabledSessionsMu.RLock()
-	defer enabledSessionsMu.RUnlock()
-	enabled, exists := enabledSessions[sessionName]
+func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
+	ds.enabledSessionsMu.RLock()
+	defer ds.enabledSessionsMu.RUnlock()
+	enabled, exists := ds.enabledSessions[sessionName]
 	if !exists {
 		return false // Default: disabled
 	}

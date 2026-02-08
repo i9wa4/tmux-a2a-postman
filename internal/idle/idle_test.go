@@ -10,20 +10,16 @@ import (
 )
 
 func TestUpdateActivity(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
-
+	tracker := NewIdleTracker()
 	nodeKey := "test-session:test-node"
 	before := time.Now()
 
 	// Test UpdateSendActivity
-	UpdateSendActivity(nodeKey)
+	tracker.UpdateSendActivity(nodeKey)
 
-	idleMutex.Lock()
-	activity := nodeActivity[nodeKey]
-	idleMutex.Unlock()
+	tracker.mu.Lock()
+	activity := tracker.nodeActivity[nodeKey]
+	tracker.mu.Unlock()
 
 	if activity.LastSent.IsZero() {
 		t.Fatalf("send activity not recorded for %s", nodeKey)
@@ -35,11 +31,11 @@ func TestUpdateActivity(t *testing.T) {
 
 	// Test UpdateReceiveActivity
 	before2 := time.Now()
-	UpdateReceiveActivity(nodeKey)
+	tracker.UpdateReceiveActivity(nodeKey)
 
-	idleMutex.Lock()
-	activity2 := nodeActivity[nodeKey]
-	idleMutex.Unlock()
+	tracker.mu.Lock()
+	activity2 := tracker.nodeActivity[nodeKey]
+	tracker.mu.Unlock()
 
 	if activity2.LastReceived.IsZero() {
 		t.Fatalf("receive activity not recorded for %s", nodeKey)
@@ -51,11 +47,7 @@ func TestUpdateActivity(t *testing.T) {
 }
 
 func TestCheckIdleNodes_NoTimeout(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	lastReminderSent = make(map[string]time.Time)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -74,10 +66,10 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	}
 
 	// Set recent activity (within threshold)
-	UpdateSendActivity("test-session:worker")
+	tracker.UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder
-	checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir)
 
 	// Verify no reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -92,11 +84,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 }
 
 func TestCheckIdleNodes_WithTimeout(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	lastReminderSent = make(map[string]time.Time)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -115,14 +103,14 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	}
 
 	// Set old activity (exceeds threshold)
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	// Check idle nodes - should send reminder
-	checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir)
 
 	// Verify reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -150,11 +138,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 }
 
 func TestCheckIdleNodes_WithCooldown(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	lastReminderSent = make(map[string]time.Time)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -173,15 +157,15 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 	}
 
 	// Set old activity and recent reminder sent
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
-	lastReminderSent["test-session:worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
-	idleMutex.Unlock()
+	tracker.lastReminderSent["test-session:worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
+	tracker.mu.Unlock()
 
 	// Check idle nodes - should NOT send reminder (cooldown active)
-	checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir)
 
 	// Verify no new reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -196,11 +180,7 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 }
 
 func TestCheckIdleNodes_ActivityReset(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	lastReminderSent = make(map[string]time.Time)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -219,17 +199,17 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 	}
 
 	// Set old activity
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	// Update activity (reset timer)
-	UpdateSendActivity("test-session:worker")
+	tracker.UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder (activity reset)
-	checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir)
 
 	// Verify no reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -244,6 +224,7 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 }
 
 func TestSendIdleReminder(t *testing.T) {
+	tracker := NewIdleTracker()
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -254,7 +235,7 @@ func TestSendIdleReminder(t *testing.T) {
 	nodeName := "test-worker"
 	message := "Test idle reminder message"
 
-	if err := sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
+	if err := tracker.sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
 		t.Fatalf("sendIdleReminder failed: %v", err)
 	}
 
@@ -305,20 +286,17 @@ func containsSubstring(s, substr string) bool {
 
 // Issue #56: Tests for dropped-ball detection
 func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	// Setup: Node holding ball beyond threshold
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
 		PongReceived:        true,
 		LastNotifiedDropped: time.Time{}, // Never notified
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	nodeConfigs := map[string]config.NodeConfig{
 		"worker": {
@@ -327,7 +305,7 @@ func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
 		},
 	}
 
-	dropped := CheckDroppedBalls(nodeConfigs)
+	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 1 {
 		t.Errorf("expected 1 dropped node, got %d", len(dropped))
@@ -341,19 +319,16 @@ func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
 }
 
 func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	// Setup: Node holding ball but within threshold
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-5 * time.Second),
 		LastSent:     time.Now().Add(-7 * time.Second),
 		PongReceived: true,
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	nodeConfigs := map[string]config.NodeConfig{
 		"worker": {
@@ -362,7 +337,7 @@ func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
 		},
 	}
 
-	dropped := CheckDroppedBalls(nodeConfigs)
+	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped nodes (threshold not exceeded), got %d", len(dropped))
@@ -370,20 +345,17 @@ func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
 }
 
 func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	// Setup: Node holding ball beyond threshold, but already notified recently
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
 		PongReceived:        true,
 		LastNotifiedDropped: time.Now().Add(-5 * time.Second), // Notified 5s ago
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	nodeConfigs := map[string]config.NodeConfig{
 		"worker": {
@@ -392,7 +364,7 @@ func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
 		},
 	}
 
-	dropped := CheckDroppedBalls(nodeConfigs)
+	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped nodes (cooldown active), got %d", len(dropped))
@@ -400,19 +372,16 @@ func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
 }
 
 func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	// Setup: Node holding ball but handshake incomplete (no PONG)
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-11 * time.Second),
 		LastSent:     time.Now().Add(-15 * time.Second),
 		PongReceived: false, // No PONG yet
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	nodeConfigs := map[string]config.NodeConfig{
 		"worker": {
@@ -421,7 +390,7 @@ func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
 		},
 	}
 
-	dropped := CheckDroppedBalls(nodeConfigs)
+	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped nodes (PONG not received), got %d", len(dropped))
@@ -429,19 +398,16 @@ func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
 }
 
 func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
-	// Reset state
-	idleMutex.Lock()
-	nodeActivity = make(map[string]NodeActivity)
-	idleMutex.Unlock()
+	tracker := NewIdleTracker()
 
 	// Setup: Node holding ball but dropped-ball detection disabled (threshold=0)
-	idleMutex.Lock()
-	nodeActivity["test-session:worker"] = NodeActivity{
+	tracker.mu.Lock()
+	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-11 * time.Second),
 		LastSent:     time.Now().Add(-15 * time.Second),
 		PongReceived: true,
 	}
-	idleMutex.Unlock()
+	tracker.mu.Unlock()
 
 	nodeConfigs := map[string]config.NodeConfig{
 		"worker": {
@@ -450,7 +416,7 @@ func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
 		},
 	}
 
-	dropped := CheckDroppedBalls(nodeConfigs)
+	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped nodes (detection disabled), got %d", len(dropped))

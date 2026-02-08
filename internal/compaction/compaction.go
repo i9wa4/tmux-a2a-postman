@@ -1,6 +1,7 @@
 package compaction
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -42,30 +43,43 @@ func safeAfterFunc(d time.Duration, name string, fn func()) *time.Timer {
 	})
 }
 
-// Compaction detection state
-var (
-	compactionDetected = make(map[string]time.Time) // Last detection time per node
-	compactionMutex    sync.Mutex
-)
+// CompactionTracker manages compaction detection state (Issue #71).
+type CompactionTracker struct {
+	compactionDetected map[string]time.Time
+	mu                 sync.Mutex
+}
 
-// StartCompactionCheck starts a goroutine that periodically checks for compaction events.
-func StartCompactionCheck(cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
+// NewCompactionTracker creates a new CompactionTracker instance (Issue #71).
+func NewCompactionTracker() *CompactionTracker {
+	return &CompactionTracker{
+		compactionDetected: make(map[string]time.Time),
+	}
+}
+
+// StartCompactionCheck starts a goroutine that periodically checks for compaction events (Issue #71).
+func (ct *CompactionTracker) StartCompactionCheck(ctx context.Context, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	if !cfg.CompactionDetection.Enabled {
 		return
 	}
 
 	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
 	safeGo("compaction-monitor", func() {
-		for range ticker.C {
-			checkAllNodesForCompaction(cfg, nodes, sessionDir)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ct.checkAllNodesForCompaction(cfg, nodes, sessionDir)
+			}
 		}
 	})
 }
 
-// checkAllNodesForCompaction checks all nodes for compaction events.
-func checkAllNodesForCompaction(cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
-	compactionMutex.Lock()
-	defer compactionMutex.Unlock()
+// checkAllNodesForCompaction checks all nodes for compaction events (Issue #71).
+func (ct *CompactionTracker) checkAllNodesForCompaction(cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
 
 	for nodeName, nodeInfo := range nodes {
 		// Capture pane output (last 10 lines only)
@@ -78,17 +92,17 @@ func checkAllNodesForCompaction(cfg *config.Config, nodes map[string]discovery.N
 		// Check for compaction pattern
 		if checkForCompaction(output, cfg.CompactionDetection.Pattern) {
 			// Check if already notified recently (avoid duplicate notifications)
-			if lastDetected, ok := compactionDetected[nodeName]; ok {
+			if lastDetected, ok := ct.compactionDetected[nodeName]; ok {
 				if time.Since(lastDetected) < 30*time.Second {
 					continue // Skip duplicate notification within 30 seconds
 				}
 			}
 
 			// Update detection timestamp
-			compactionDetected[nodeName] = time.Now()
+			ct.compactionDetected[nodeName] = time.Now()
 
 			// Notify observers
-			notifyObserversOfCompaction(nodeName, cfg, nodes, sessionDir)
+			ct.notifyObserversOfCompaction(nodeName, cfg, nodes, sessionDir)
 		}
 	}
 }
@@ -112,8 +126,8 @@ func checkForCompaction(output, pattern string) bool {
 	return strings.Contains(output, pattern)
 }
 
-// notifyObserversOfCompaction notifies observers subscribed to the affected node.
-func notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
+// notifyObserversOfCompaction notifies observers subscribed to the affected node (Issue #71).
+func (ct *CompactionTracker) notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
 	// Find observers subscribed to this node
 	for observerName, nodeConfig := range cfg.Nodes {
 		if len(nodeConfig.Observes) == 0 {
@@ -139,21 +153,21 @@ func notifyObserversOfCompaction(nodeName string, cfg *config.Config, nodes map[
 			capturedObserver := observerName
 			capturedNode := nodeName
 			safeAfterFunc(delay, "delayed-notification", func() {
-				if err := sendCompactionNotification(capturedObserver, capturedNode, cfg, sessionDir); err != nil {
+				if err := ct.sendCompactionNotification(capturedObserver, capturedNode, cfg, sessionDir); err != nil {
 					_ = err // Suppress unused variable warning
 				}
 			})
 		} else {
 			// Send immediately
-			if err := sendCompactionNotification(observerName, nodeName, cfg, sessionDir); err != nil {
+			if err := ct.sendCompactionNotification(observerName, nodeName, cfg, sessionDir); err != nil {
 				_ = err // Suppress unused variable warning
 			}
 		}
 	}
 }
 
-// sendCompactionNotification sends a compaction notification message to an observer.
-func sendCompactionNotification(observerName, affectedNode string, cfg *config.Config, sessionDir string) error {
+// sendCompactionNotification sends a compaction notification message to an observer (Issue #71).
+func (ct *CompactionTracker) sendCompactionNotification(observerName, affectedNode string, cfg *config.Config, sessionDir string) error {
 	inboxDir := filepath.Join(sessionDir, "inbox", observerName)
 	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
 		return fmt.Errorf("creating inbox directory: %w", err)

@@ -1,6 +1,7 @@
 package compaction
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,7 @@ func TestCheckForCompaction(t *testing.T) {
 }
 
 func TestSendCompactionNotification(t *testing.T) {
+	tracker := NewCompactionTracker()
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -82,7 +84,7 @@ func TestSendCompactionNotification(t *testing.T) {
 	observerName := "observer-test"
 	affectedNode := "worker-node"
 
-	if err := sendCompactionNotification(observerName, affectedNode, cfg, sessionDir); err != nil {
+	if err := tracker.sendCompactionNotification(observerName, affectedNode, cfg, sessionDir); err != nil {
 		t.Fatalf("sendCompactionNotification failed: %v", err)
 	}
 
@@ -118,6 +120,7 @@ func TestSendCompactionNotification(t *testing.T) {
 }
 
 func TestNotifyObserversOfCompaction(t *testing.T) {
+	tracker := NewCompactionTracker()
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -156,7 +159,7 @@ func TestNotifyObserversOfCompaction(t *testing.T) {
 
 	affectedNode := "worker-node"
 
-	notifyObserversOfCompaction(affectedNode, cfg, nodes, sessionDir)
+	tracker.notifyObserversOfCompaction(affectedNode, cfg, nodes, sessionDir)
 
 	// Verify observer-1 received notification
 	inbox1 := filepath.Join(sessionDir, "inbox", "observer-1")
@@ -190,6 +193,7 @@ func TestNotifyObserversOfCompaction(t *testing.T) {
 }
 
 func TestCompactionDelay(t *testing.T) {
+	tracker := NewCompactionTracker()
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -224,7 +228,7 @@ func TestCompactionDelay(t *testing.T) {
 
 	// Trigger notification (should have 1 second delay)
 	start := time.Now()
-	notifyObserversOfCompaction(affectedNode, cfg, nodes, sessionDir)
+	tracker.notifyObserversOfCompaction(affectedNode, cfg, nodes, sessionDir)
 
 	// Check immediately - should have no notification yet
 	inbox := filepath.Join(sessionDir, "inbox", "observer-test")
@@ -255,6 +259,7 @@ func TestCompactionDelay(t *testing.T) {
 }
 
 func TestCompactionDetection_Disabled(t *testing.T) {
+	tracker := NewCompactionTracker()
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -282,7 +287,8 @@ func TestCompactionDetection_Disabled(t *testing.T) {
 	}
 
 	// Start compaction check (should do nothing when disabled)
-	StartCompactionCheck(cfg, nodes, sessionDir)
+	ctx := context.Background()
+	tracker.StartCompactionCheck(ctx, cfg, nodes, sessionDir)
 
 	// Wait a bit
 	time.Sleep(100 * time.Millisecond)

@@ -315,23 +315,28 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Reminder state for per-node message counters
 	reminderState := reminder.NewReminderState()
 
+	// Issue #71: Create state management instances
+	daemonState := daemon.NewDaemonState()
+	idleTracker := idle.NewIdleTracker()
+	compactionTracker := compaction.NewCompactionTracker()
+
 	// Start idle check goroutine
-	idle.StartIdleCheck(cfg, adjacency, sessionDir)
+	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir)
 
 	// Start session-level idle check goroutine
 	sessionidle.StartSessionIdleCheck(baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
 
 	// Start compaction detection goroutine
-	compaction.StartCompactionCheck(cfg, nodes, sessionDir)
+	compactionTracker.StartCompactionCheck(ctx, cfg, nodes, sessionDir)
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath, nodesDir)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker)
 	})
 
 	// Build session info from nodes (all disabled by default)
-	sessionList := session.BuildSessionList(nodes, daemon.IsSessionEnabled)
+	sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
@@ -429,9 +434,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 					case "session_toggle":
 						// Toggle session enable/disable
-						currentState := daemon.IsSessionEnabled(cmd.Target)
+						currentState := daemonState.IsSessionEnabled(cmd.Target)
 						newState := !currentState
-						daemon.SetSessionEnabled(cmd.Target, newState)
+						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
 						// Rebuild session list and send status update
@@ -448,7 +453,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							updatedSessionList = append(updatedSessionList, tui.SessionInfo{
 								Name:      sessionName,
 								NodeCount: nodeCount,
-								Enabled:   daemon.IsSessionEnabled(sessionName),
+								Enabled:   daemonState.IsSessionEnabled(sessionName),
 							})
 						}
 						// Sort session list by name to maintain consistent order

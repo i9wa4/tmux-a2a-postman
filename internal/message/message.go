@@ -107,7 +107,8 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // - otherwise, sender->recipient edge must exist in adjacency map
 // Session check: both sender and recipient sessions must be enabled (unless sender is postman)
 // Issue #53: Added events channel parameter for dead-letter notifications
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent) error {
+// Issue #71: Added idleTracker parameter for activity tracking
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -329,10 +330,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// NOTE: Exclude system messages (from/to "postman") from ball tracking
 	// Issue #79: Use session-prefixed keys for tracking
 	if info.From != "postman" {
-		idle.UpdateSendActivity(sourceSessionName + ":" + info.From)
+		idleTracker.UpdateSendActivity(sourceSessionName + ":" + info.From)
 	}
 	if info.To != "postman" {
-		idle.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
+		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
