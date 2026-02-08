@@ -15,18 +15,18 @@ func TestUpdateActivity(t *testing.T) {
 	nodeActivity = make(map[string]NodeActivity)
 	idleMutex.Unlock()
 
-	nodeName := "test-node"
+	nodeKey := "test-session:test-node"
 	before := time.Now()
 
 	// Test UpdateSendActivity
-	UpdateSendActivity(nodeName)
+	UpdateSendActivity(nodeKey)
 
 	idleMutex.Lock()
-	activity := nodeActivity[nodeName]
+	activity := nodeActivity[nodeKey]
 	idleMutex.Unlock()
 
 	if activity.LastSent.IsZero() {
-		t.Fatalf("send activity not recorded for %s", nodeName)
+		t.Fatalf("send activity not recorded for %s", nodeKey)
 	}
 
 	if activity.LastSent.Before(before) {
@@ -35,14 +35,14 @@ func TestUpdateActivity(t *testing.T) {
 
 	// Test UpdateReceiveActivity
 	before2 := time.Now()
-	UpdateReceiveActivity(nodeName)
+	UpdateReceiveActivity(nodeKey)
 
 	idleMutex.Lock()
-	activity2 := nodeActivity[nodeName]
+	activity2 := nodeActivity[nodeKey]
 	idleMutex.Unlock()
 
 	if activity2.LastReceived.IsZero() {
-		t.Fatalf("receive activity not recorded for %s", nodeName)
+		t.Fatalf("receive activity not recorded for %s", nodeKey)
 	}
 
 	if activity2.LastReceived.Before(before2) {
@@ -74,7 +74,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	}
 
 	// Set recent activity (within threshold)
-	UpdateSendActivity("worker")
+	UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder
 	checkIdleNodes(cfg, nil, sessionDir)
@@ -116,7 +116,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 
 	// Set old activity (exceeds threshold)
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
 	idleMutex.Unlock()
@@ -174,10 +174,10 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 
 	// Set old activity and recent reminder sent
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
-	lastReminderSent["worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
+	lastReminderSent["test-session:worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
 	idleMutex.Unlock()
 
 	// Check idle nodes - should NOT send reminder (cooldown active)
@@ -220,13 +220,13 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 
 	// Set old activity
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastSent: time.Now().Add(-2 * time.Second),
 	}
 	idleMutex.Unlock()
 
 	// Update activity (reset timer)
-	UpdateSendActivity("worker")
+	UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder (activity reset)
 	checkIdleNodes(cfg, nil, sessionDir)
@@ -312,7 +312,7 @@ func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
 
 	// Setup: Node holding ball beyond threshold
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
 		PongReceived:        true,
@@ -333,7 +333,7 @@ func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
 		t.Errorf("expected 1 dropped node, got %d", len(dropped))
 	}
 
-	if duration, exists := dropped["worker"]; !exists {
+	if duration, exists := dropped["test-session:worker"]; !exists {
 		t.Errorf("expected worker to be detected as dropped")
 	} else if duration < 11*time.Second {
 		t.Errorf("expected duration >= 11s, got %v", duration)
@@ -348,7 +348,7 @@ func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
 
 	// Setup: Node holding ball but within threshold
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-5 * time.Second),
 		LastSent:     time.Now().Add(-7 * time.Second),
 		PongReceived: true,
@@ -377,7 +377,7 @@ func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
 
 	// Setup: Node holding ball beyond threshold, but already notified recently
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
 		PongReceived:        true,
@@ -407,7 +407,7 @@ func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
 
 	// Setup: Node holding ball but handshake incomplete (no PONG)
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-11 * time.Second),
 		LastSent:     time.Now().Add(-15 * time.Second),
 		PongReceived: false, // No PONG yet
@@ -436,7 +436,7 @@ func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
 
 	// Setup: Node holding ball but dropped-ball detection disabled (threshold=0)
 	idleMutex.Lock()
-	nodeActivity["worker"] = NodeActivity{
+	nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived: time.Now().Add(-11 * time.Second),
 		LastSent:     time.Now().Add(-15 * time.Second),
 		PongReceived: true,

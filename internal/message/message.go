@@ -327,11 +327,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Update activity timestamps for idle detection (Issue #55)
 	// NOTE: Exclude system messages (from/to "postman") from ball tracking
+	// Issue #79: Use session-prefixed keys for tracking
 	if info.From != "postman" {
-		idle.UpdateSendActivity(info.From)
+		idle.UpdateSendActivity(sourceSessionName + ":" + info.From)
 	}
 	if info.To != "postman" {
-		idle.UpdateReceiveActivity(info.To)
+		idle.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)

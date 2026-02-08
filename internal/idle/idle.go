@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,30 +28,33 @@ var (
 )
 
 // UpdateSendActivity updates the last sent timestamp for a node (Issue #55).
-func UpdateSendActivity(nodeName string) {
+// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
+func UpdateSendActivity(nodeKey string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	activity := nodeActivity[nodeName]
+	activity := nodeActivity[nodeKey]
 	activity.LastSent = time.Now()
-	nodeActivity[nodeName] = activity
+	nodeActivity[nodeKey] = activity
 }
 
 // UpdateReceiveActivity updates the last received timestamp for a node (Issue #55).
-func UpdateReceiveActivity(nodeName string) {
+// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
+func UpdateReceiveActivity(nodeKey string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	activity := nodeActivity[nodeName]
+	activity := nodeActivity[nodeKey]
 	activity.LastReceived = time.Now()
-	nodeActivity[nodeName] = activity
+	nodeActivity[nodeKey] = activity
 }
 
 // MarkPongReceived marks that a node has received PONG confirmation (Issue #55).
-func MarkPongReceived(nodeName string) {
+// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
+func MarkPongReceived(nodeKey string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	activity := nodeActivity[nodeName]
+	activity := nodeActivity[nodeKey]
 	activity.PongReceived = true
-	nodeActivity[nodeName] = activity
+	nodeActivity[nodeKey] = activity
 }
 
 // GetNodeStates returns a copy of all node activity states (Issue #55).
@@ -68,10 +72,11 @@ func GetNodeStates() map[string]NodeActivity {
 // NOTE: IsHoldingBall uses simple timestamp comparison (LastReceived > LastSent).
 // This is a heuristic - it may misjudge in multi-sender scenarios.
 // For precise tracking, consider per-sender counters (future #56).
-func IsHoldingBall(nodeName string) bool {
+// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
+func IsHoldingBall(nodeKey string) bool {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	activity, exists := nodeActivity[nodeName]
+	activity, exists := nodeActivity[nodeKey]
 	if !exists {
 		return false
 	}
@@ -79,9 +84,10 @@ func IsHoldingBall(nodeName string) bool {
 }
 
 // CheckDroppedBalls detects nodes holding the ball for too long (Issue #56).
-// Returns map of nodeName -> holding duration for nodes exceeding threshold.
+// Returns map of nodeKey -> holding duration for nodes exceeding threshold.
 // NOTE: Uses simple timestamp comparison (same limitation as IsHoldingBall).
 // Multi-sender scenarios may trigger false positives.
+// Issue #79: Use session-prefixed keys for tracking, extract simple name for config lookup.
 func CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig) map[string]time.Duration {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
@@ -89,8 +95,13 @@ func CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig) map[string]time
 	dropped := make(map[string]time.Duration)
 	now := time.Now()
 
-	for nodeName, activity := range nodeActivity {
-		cfg, exists := nodeConfigs[nodeName]
+	for nodeKey, activity := range nodeActivity {
+		// Extract simple name for nodeConfigs lookup
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+		cfg, exists := nodeConfigs[simpleName]
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
 		}
@@ -116,23 +127,25 @@ func CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig) map[string]time
 		if !activity.LastNotifiedDropped.IsZero() && now.Sub(activity.LastNotifiedDropped) < cooldown {
 			continue
 		}
-		dropped[nodeName] = holdingDuration
+		dropped[nodeKey] = holdingDuration
 	}
 	return dropped
 }
 
 // MarkDroppedBallNotified marks that a dropped-ball alert was sent for the node (Issue #56).
-func MarkDroppedBallNotified(nodeName string) {
+// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
+func MarkDroppedBallNotified(nodeKey string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
-	if activity, exists := nodeActivity[nodeName]; exists {
+	if activity, exists := nodeActivity[nodeKey]; exists {
 		activity.LastNotifiedDropped = time.Now()
-		nodeActivity[nodeName] = activity
+		nodeActivity[nodeKey] = activity
 	}
 }
 
 // GetCurrentlyDroppedNodes returns nodes currently in dropped-ball state (Issue #56).
 // Unlike CheckDroppedBalls, this does NOT check cooldown - used for TUI display only.
+// Issue #79: Use session-prefixed keys for tracking, extract simple name for config lookup.
 func GetCurrentlyDroppedNodes(nodeConfigs map[string]config.NodeConfig) map[string]bool {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
@@ -140,8 +153,13 @@ func GetCurrentlyDroppedNodes(nodeConfigs map[string]config.NodeConfig) map[stri
 	dropped := make(map[string]bool)
 	now := time.Now()
 
-	for nodeName, activity := range nodeActivity {
-		cfg, exists := nodeConfigs[nodeName]
+	for nodeKey, activity := range nodeActivity {
+		// Extract simple name for nodeConfigs lookup
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+		cfg, exists := nodeConfigs[simpleName]
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
 		}
@@ -157,7 +175,7 @@ func GetCurrentlyDroppedNodes(nodeConfigs map[string]config.NodeConfig) map[stri
 		holdingDuration := now.Sub(activity.LastReceived)
 		threshold := time.Duration(cfg.DroppedBallTimeoutSeconds) * time.Second
 		if holdingDuration > threshold {
-			dropped[nodeName] = true
+			dropped[nodeKey] = true
 		}
 	}
 	return dropped
@@ -174,21 +192,21 @@ func StartIdleCheck(cfg *config.Config, adjacency map[string][]string, sessionDi
 }
 
 // checkIdleNodes checks all nodes for idle timeout and sends reminders.
+// Issue #79: Iterate nodeActivity (session-prefixed keys), extract simple name for config lookup.
 func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string) {
 	idleMutex.Lock()
 	defer idleMutex.Unlock()
 
 	now := time.Now()
 
-	for nodeName, nodeConfig := range cfg.Nodes {
-		// Skip if idle timeout not configured
-		if nodeConfig.IdleTimeoutSeconds <= 0 {
-			continue
+	for nodeKey, activity := range nodeActivity {
+		// Extract simple name for nodeConfigs lookup
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
 		}
-
-		// Skip if no last activity recorded yet (Issue #55: use max of LastSent/LastReceived)
-		activity, exists := nodeActivity[nodeName]
-		if !exists {
+		nodeConfig, exists := cfg.Nodes[simpleName]
+		if !exists || nodeConfig.IdleTimeoutSeconds <= 0 {
 			continue
 		}
 
@@ -207,27 +225,27 @@ func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDi
 			continue
 		}
 
-		// Check cooldown period
-		if lastSent, ok := lastReminderSent[nodeName]; ok {
+		// Check cooldown period (use session-prefixed key)
+		if lastSent, ok := lastReminderSent[nodeKey]; ok {
 			cooldown := time.Duration(nodeConfig.IdleReminderCooldownSeconds) * time.Second
 			if now.Sub(lastSent) < cooldown {
 				continue
 			}
 		}
 
-		// Send reminder
+		// Send reminder (use simple name for inbox path)
 		message := nodeConfig.IdleReminderMessage
 		if message == "" {
 			message = "Idle reminder: Are you still working?"
 		}
 
-		if err := sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
+		if err := sendIdleReminder(cfg, simpleName, message, sessionDir); err != nil {
 			_ = err // Suppress unused variable warning
 			continue
 		}
 
-		// Update last reminder sent timestamp
-		lastReminderSent[nodeName] = now
+		// Update last reminder sent timestamp (use session-prefixed key)
+		lastReminderSent[nodeKey] = now
 	}
 }
 

@@ -335,16 +335,21 @@ func RunDaemonLoop(
 							}
 							// Send observer digest on successful delivery (only for normal delivery)
 							if !deadLetterEventSent {
+								// Issue #79: Extract session name for PONG tracking
+								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+								sourceSessionName := filepath.Base(sourceSessionDir)
 								if info, err := message.ParseMessageFilename(filename); err == nil {
 									// Issue #55: Handle PONG separately from normal messages
 									if info.To == "postman" {
 										// PONG received - track state, skip edge/observer/reminder
-										idle.MarkPongReceived(info.From)
-										idle.UpdateSendActivity(info.From) // Track PONG as send activity
+										// Issue #79: Use session-prefixed key for tracking
+										prefixedKey := sourceSessionName + ":" + info.From
+										idle.MarkPongReceived(prefixedKey)
+										idle.UpdateSendActivity(prefixedKey) // Track PONG as send activity
 										events <- tui.DaemonEvent{
 											Type: "pong_received",
 											Details: map[string]interface{}{
-												"node": info.From,
+												"node": prefixedKey,
 											},
 										}
 									} else {
@@ -558,28 +563,34 @@ func RunDaemonLoop(
 			}
 
 			droppedNodes := idle.CheckDroppedBalls(nodeConfigs)
-			for nodeName, duration := range droppedNodes {
-				idle.MarkDroppedBallNotified(nodeName)
+			for nodeKey, duration := range droppedNodes {
+				idle.MarkDroppedBallNotified(nodeKey)
+
+				// Extract simple name for nodeConfigs lookup
+				simpleName := nodeKey
+				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+					simpleName = parts[1]
+				}
 
 				// Emit dropped_ball event for Events pane
 				events <- tui.DaemonEvent{
 					Type:    "dropped_ball",
-					Message: fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeName, duration.Round(time.Second)),
+					Message: fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeKey, duration.Round(time.Second)),
 					Details: map[string]interface{}{
-						"node":     nodeName,
+						"node":     nodeKey,
 						"duration": duration.Seconds(),
 					},
 				}
 
 				// Optional: tmux display-message
-				nc := nodeConfigs[nodeName]
+				nc := nodeConfigs[simpleName]
 				notification := nc.DroppedBallNotification
 				if notification == "" {
 					notification = "tui"
 				}
 				if notification == "display" || notification == "all" {
 					_ = exec.Command("tmux", "display-message",
-						fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeName, duration.Round(time.Second)),
+						fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeKey, duration.Round(time.Second)),
 					).Run()
 				}
 			}

@@ -188,6 +188,7 @@ func (m Model) sessionHasIdleNodes(sessionName string) bool {
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 // Issue #56: Added droppedNodes parameter for dropped-ball detection.
 // Issue #77: Use session-prefixed keys to avoid collision across sessions.
+// Issue #79: Simplified - nodeActivity keys are already session-prefixed, no reverse index needed.
 func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedNodes map[string]bool) {
 	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
 	nodeActivities, ok := nodeStatesRaw.(map[string]idle.NodeActivity)
@@ -195,7 +196,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		return
 	}
 
-	// Issue #55: Build edge node set (safety net against non-edge nodes)
+	// Build edge filter set (simple names)
 	edgeNodes := make(map[string]bool)
 	for _, edge := range m.edges {
 		nodes := ParseEdgeNodes(edge.Raw)
@@ -204,43 +205,30 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		}
 	}
 
-	// Issue #77: Build reverse index from sessionNodes (simpleNodeName -> list of sessions)
-	nodeToSessions := make(map[string][]string)
-	for sessionName, nodes := range m.sessionNodes {
-		for _, nodeName := range nodes {
-			nodeToSessions[nodeName] = append(nodeToSessions[nodeName], sessionName)
+	for nodeKey, activity := range nodeActivities {
+		// Extract simple name for edge filter
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
 		}
-	}
-
-	// Issue #68: Apply edge filter only (removed session filter for global state consistency)
-	for nodeName, activity := range nodeActivities {
-		// Apply edge filter
-		if !edgeNodes[nodeName] {
+		if !edgeNodes[simpleName] {
 			continue
 		}
-		// Determine state: gray (no PONG) / dropped / holding / active (Issue #56: added dropped)
+
+		// Determine state
 		var state string
-		switch {
-		case !activity.PongReceived:
-			state = "gray"
-		case droppedNodes != nil && droppedNodes[nodeName]:
+		if droppedNodes != nil && droppedNodes[nodeKey] {
 			state = "dropped"
-		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
+		} else if !activity.PongReceived {
+			state = "waiting"
+		} else if !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent) {
 			state = "holding"
-		default:
+		} else {
 			state = "active"
 		}
 
-		// Issue #77: Store state with session-prefixed keys for all sessions containing this node
-		if sessions, found := nodeToSessions[nodeName]; found {
-			for _, sessionName := range sessions {
-				prefixedKey := sessionName + ":" + nodeName
-				m.nodeStates[prefixedKey] = state
-			}
-		} else {
-			// Fallback: if node not in any session (shouldn't happen), use simple name
-			m.nodeStates[nodeName] = state
-		}
+		// Direct assignment with session-prefixed key
+		m.nodeStates[nodeKey] = state
 	}
 }
 
@@ -468,17 +456,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pong_received":
 			// Issue #55: Mark node as active when PONG received
-			// Issue #77: Use session-prefixed keys to avoid collision across sessions
+			// Issue #79: Simplified - node key is already session-prefixed
 			if node, ok := msg.Details["node"].(string); ok {
-				// Find all sessions containing this node
-				for sessionName, nodes := range m.sessionNodes {
-					for _, nodeName := range nodes {
-						if nodeName == node {
-							prefixedKey := sessionName + ":" + nodeName
-							m.nodeStates[prefixedKey] = "active"
-						}
-					}
-				}
+				m.nodeStates[node] = "active"
 			}
 		case "ball_state_update":
 			// Issue #55: Update node states from idle tracking
