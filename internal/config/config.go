@@ -116,7 +116,6 @@ type WatchdogConfig struct {
 	CooldownSeconds          float64               `toml:"cooldown_seconds"`
 	HeartbeatIntervalSeconds float64               `toml:"heartbeat_interval_seconds"`
 	Capture                  WatchdogCaptureConfig `toml:"capture"`
-	Lock                     WatchdogLockConfig    `toml:"lock"`
 }
 
 // WatchdogCaptureConfig holds watchdog capture configuration.
@@ -128,10 +127,6 @@ type WatchdogCaptureConfig struct {
 }
 
 // WatchdogLockConfig holds watchdog lock configuration.
-type WatchdogLockConfig struct {
-	Path string `toml:"path"`
-}
-
 // DefaultConfig returns a Config with sane default values.
 func DefaultConfig() *Config {
 	return &Config{

@@ -718,10 +718,7 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 	}
 
 	// Acquire watchdog lock
-	lockPath := os.ExpandEnv(cfg.Watchdog.Lock.Path)
-	if lockPath == "" {
-		lockPath = filepath.Join(baseDir, "postman-watchdog.lock")
-	}
+	lockPath := filepath.Join(sessionDir, "postman-watchdog.lock")
 	watchdogLock, err := watchdog.AcquireLock(lockPath)
 	if err != nil {
 		return fmt.Errorf("acquiring watchdog lock: %w", err)

@@ -214,9 +214,6 @@ tail_lines = 100
 max_files = 10
 max_bytes = 1048576  # 1MB
 
-[watchdog.lock]
-path = "$HOME/.postman/postman-watchdog.lock"
-
 # =============================================================================
 # Node-Specific Configuration
 # =============================================================================
