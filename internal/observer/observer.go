@@ -1,7 +1,6 @@
 package observer
 
 import (
-	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -50,13 +49,23 @@ func SendObserverDigest(filename string, sender string, recipient string, nodes 
 		}
 
 		// Build digest message
-		digestItem := fmt.Sprintf("- Message: %s\n  From: %s", filename, sender)
+		// Issue #82: Use configurable template for digest item format
+		digestItemTemplate := cfg.DigestItemFormat
+		if digestItemTemplate == "" {
+			digestItemTemplate = "- Message: {filename}\n  From: {sender}"
+		}
+		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+		itemVars := map[string]string{
+			"filename": filename,
+			"sender":   sender,
+		}
+		digestItem := template.ExpandTemplate(digestItemTemplate, itemVars, timeout)
+
 		vars := map[string]string{
 			"sender":       sender,
 			"filename":     filename,
 			"digest_items": digestItem,
 		}
-		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 		content := template.ExpandTemplate(cfg.DigestTemplate, vars, timeout)
 
 		// Send directly to pane via tmux send-keys

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // ReminderState tracks the last reminder time for each pane to implement cooldown.
@@ -50,7 +53,8 @@ func (r *ReminderState) MarkReminderSent(paneID string) {
 // SendIdleReminder sends an idle reminder message via postman messaging.
 // Creates a message file in the post/ directory for delivery.
 // Issue #46: Added uiNode parameter to generalize target node.
-func SendIdleReminder(paneID, sessionDir, contextID, uiNode string, activity PaneActivity) error {
+// Issue #82: Added cfg parameter for configurable template.
+func SendIdleReminder(cfg *config.Config, paneID, sessionDir, contextID, uiNode string, activity PaneActivity) error {
 	now := time.Now()
 	// Use UnixNano for uniqueness to prevent filename collisions
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
@@ -60,6 +64,19 @@ func SendIdleReminder(paneID, sessionDir, contextID, uiNode string, activity Pan
 
 	// Calculate idle duration
 	idleDuration := time.Since(activity.LastActivityTime)
+
+	// Issue #82: Use configurable template for watchdog alert
+	alertTemplate := cfg.WatchdogAlertTemplate
+	if alertTemplate == "" {
+		alertTemplate = "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}"
+	}
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	vars := map[string]string{
+		"pane_id":       paneID,
+		"idle_duration": idleDuration.Round(time.Second).String(),
+		"last_activity": activity.LastActivityTime.Format(time.RFC3339),
+	}
+	alertBody := template.ExpandTemplate(alertTemplate, vars, timeout)
 
 	// Build message content
 	// Issue #46: Use uiNode parameter instead of hardcoded "orchestrator"
@@ -72,12 +89,8 @@ params:
   timestamp: %s
 ---
 
-## Idle Alert
-
-Pane %s has been idle for %s.
-
-Last activity: %s
-`, contextID, uiNode, now.Format(time.RFC3339), paneID, idleDuration.Round(time.Second), activity.LastActivityTime.Format(time.RFC3339))
+%s
+`, contextID, uiNode, now.Format(time.RFC3339), alertBody)
 
 	// Write message to post/ directory
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {

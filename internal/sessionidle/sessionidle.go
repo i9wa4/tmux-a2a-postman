@@ -13,6 +13,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // SessionIdleState tracks the last check time for each session to implement cooldown.
@@ -248,8 +249,21 @@ func SendWatchdogAlert(
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-postman-to-watchdog.md", ts)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: watchdog\n  timestamp: %s\n---\n\n## Idle Alert\n\ntmux session `%s` の全ノードが停止しています。\n\nIdle nodes: %s\n\n%s\n\nReply: `tmux-a2a-postman create-draft --to <node>`\n",
-		contextID, now.Format(time.RFC3339), sessionName, strings.Join(idleNodes, ", "), talksToLine)
+	// Issue #82: Use configurable template for session idle alert
+	alertTemplate := cfg.SessionIdleAlertTemplate
+	if alertTemplate == "" {
+		alertTemplate = "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`"
+	}
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	vars := map[string]string{
+		"session_name":   sessionName,
+		"idle_nodes":     strings.Join(idleNodes, ", "),
+		"talks_to_line":  talksToLine,
+	}
+	alertBody := template.ExpandTemplate(alertTemplate, vars, timeout)
+
+	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: watchdog\n  timestamp: %s\n---\n\n%s\n",
+		contextID, now.Format(time.RFC3339), alertBody)
 
 	// Write to watchdog inbox
 	watchdogInbox := filepath.Join(watchdogInfo.SessionDir, "inbox", "watchdog")

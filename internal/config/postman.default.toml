@@ -131,6 +131,41 @@ edges = []
 # Original message moved to dead-letter/.
 # """
 
+# Idle reminder header template (Issue #82)
+# idle_reminder_header_template = "## Idle Reminder"
+
+# Session idle alert template (Issue #82)
+# Variables: {session_name}, {idle_nodes}, {talks_to_line}
+# session_idle_alert_template = """
+# ## Idle Alert
+#
+# tmux session `{session_name}` の全ノードが停止しています。
+#
+# Idle nodes: {idle_nodes}
+#
+# {talks_to_line}
+#
+# Reply: `tmux-a2a-postman create-draft --to <node>`
+# """
+
+# Compaction detection header template (Issue #82)
+# compaction_header_template = "## Compaction Detected"
+
+# Watchdog idle alert template (Issue #82)
+# Variables: {pane_id}, {idle_duration}, {last_activity}
+# watchdog_alert_template = """
+# ## Idle Alert
+#
+# Pane {pane_id} has been idle for {idle_duration}.
+#
+# Last activity: {last_activity}
+# """
+
+# Observer digest item format (Issue #82)
+# Variables: {filename}, {sender}
+# digest_item_format = """- Message: {filename}
+#   From: {sender}"""
+
 # =============================================================================
 # Watchdog Configuration
 # =============================================================================

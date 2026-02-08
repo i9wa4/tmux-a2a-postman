@@ -779,7 +779,7 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 			// Send reminders for idle panes (Issue #46: added cfg.UINode parameter)
 			for _, activity := range idlePanes {
 				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
-					if err := watchdog.SendIdleReminder(activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
+					if err := watchdog.SendIdleReminder(cfg, activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
 						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
 					} else {
 						reminderState.MarkReminderSent(activity.PaneID)

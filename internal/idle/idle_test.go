@@ -250,10 +250,11 @@ func TestSendIdleReminder(t *testing.T) {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
+	cfg := config.DefaultConfig()
 	nodeName := "test-worker"
 	message := "Test idle reminder message"
 
-	if err := sendIdleReminder(nodeName, message, sessionDir); err != nil {
+	if err := sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
 		t.Fatalf("sendIdleReminder failed: %v", err)
 	}
 

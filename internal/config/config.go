@@ -44,6 +44,11 @@ type Config struct {
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                  // Issue #49: Shared template for all nodes
 	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
+	IdleReminderHeaderTemplate   string `toml:"idle_reminder_header_template"`   // Issue #82: Idle reminder header
+	SessionIdleAlertTemplate     string `toml:"session_idle_alert_template"`     // Issue #82: Session idle alert message
+	CompactionHeaderTemplate     string `toml:"compaction_header_template"`      // Issue #82: Compaction detection header
+	WatchdogAlertTemplate        string `toml:"watchdog_alert_template"`         // Issue #82: Watchdog idle alert message
+	DigestItemFormat             string `toml:"digest_item_format"`              // Issue #82: Observer digest item format
 
 	// Global settings
 	Edges        []string `toml:"edges"`
@@ -144,6 +149,11 @@ func DefaultConfig() *Config {
 		Edges:                []string{},
 		Nodes:                make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate: "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/.",
+		IdleReminderHeaderTemplate:   "## Idle Reminder",
+		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
+		CompactionHeaderTemplate:     "## Compaction Detected",
+		WatchdogAlertTemplate:        "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
+		DigestItemFormat:             "- Message: {filename}\n  From: {sender}",
 	}
 }
 

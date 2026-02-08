@@ -13,6 +13,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
@@ -169,8 +170,19 @@ func sendCompactionNotification(observerName, affectedNode string, cfg *config.C
 	}
 	messageBody = strings.ReplaceAll(messageBody, "{node}", affectedNode)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n  type: compaction-recovery\n---\n\n## Compaction Detected\n\n%s\n",
-		observerName, time.Now().Format(time.RFC3339), messageBody)
+	// Issue #82: Use configurable template for compaction header
+	headerTemplate := cfg.CompactionHeaderTemplate
+	if headerTemplate == "" {
+		headerTemplate = "## Compaction Detected"
+	}
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	vars := map[string]string{
+		"node": affectedNode,
+	}
+	header := template.ExpandTemplate(headerTemplate, vars, timeout)
+
+	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n  type: compaction-recovery\n---\n\n%s\n\n%s\n",
+		observerName, time.Now().Format(time.RFC3339), header, messageBody)
 
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing notification file: %w", err)

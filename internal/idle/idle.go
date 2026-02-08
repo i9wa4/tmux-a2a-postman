@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
@@ -220,7 +221,7 @@ func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDi
 			message = "Idle reminder: Are you still working?"
 		}
 
-		if err := sendIdleReminder(nodeName, message, sessionDir); err != nil {
+		if err := sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
 			_ = err // Suppress unused variable warning
 			continue
 		}
@@ -231,7 +232,8 @@ func checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDi
 }
 
 // sendIdleReminder sends an idle reminder message to the specified node.
-func sendIdleReminder(nodeName, message, sessionDir string) error {
+// Issue #82: Use configurable template for header.
+func sendIdleReminder(cfg *config.Config, nodeName, message, sessionDir string) error {
 	inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
 	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
 		return fmt.Errorf("creating inbox directory: %w", err)
@@ -241,8 +243,19 @@ func sendIdleReminder(nodeName, message, sessionDir string) error {
 	filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", timestamp, nodeName)
 	filePath := filepath.Join(inboxDir, filename)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Idle Reminder\n\n%s\n",
-		nodeName, time.Now().Format(time.RFC3339), message)
+	// Issue #82: Expand header template
+	headerTemplate := cfg.IdleReminderHeaderTemplate
+	if headerTemplate == "" {
+		headerTemplate = "## Idle Reminder"
+	}
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	vars := map[string]string{
+		"node": nodeName,
+	}
+	header := template.ExpandTemplate(headerTemplate, vars, timeout)
+
+	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n%s\n\n%s\n",
+		nodeName, time.Now().Format(time.RFC3339), header, message)
 
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing reminder file: %w", err)
