@@ -189,6 +189,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
+	// Issue #75: Generate RULES.md in session directory
+	if err := config.GenerateRulesFile(sessionDir, contextID, cfg); err != nil {
+		log.Printf("⚠️  postman: failed to generate RULES.md: %v\n", err)
+		// Non-fatal: continue without RULES.md
+	}
+
 	lockObj, err := lock.NewSessionLock(filepath.Join(sessionDir, "postman.lock"))
 	if err != nil {
 		return fmt.Errorf("acquiring lock: %w", err)

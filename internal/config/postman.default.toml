@@ -131,6 +131,30 @@ edges = []
 # Original message moved to dead-letter/.
 # """
 
+# Rules template (generated as RULES.md in session directory)
+# rules_template = """
+# ## Messaging Protocol
+#
+# ### Sending Messages
+#
+# 1. {reply_command}
+#    - Replace `<recipient>` with the target node name
+# 2. Edit the draft content
+# 3. Move from draft/ to post/:
+#    - draft path: {session_dir}/draft/
+#    - post path: {session_dir}/post/
+#
+# ### Receiving Messages
+#
+# - Messages arrive in inbox/{your-node}/
+# - After reading, move from inbox/ to read/:
+#    - read path: {session_dir}/read/
+#
+# ### Message Format
+#
+# See draft template for YAML frontmatter format.
+# """
+
 # Idle reminder header template (Issue #82)
 # idle_reminder_header_template = "## Idle Reminder"
 

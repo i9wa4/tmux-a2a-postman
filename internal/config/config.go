@@ -51,6 +51,7 @@ type Config struct {
 	DigestItemFormat             string `toml:"digest_item_format"`              // Issue #82: Observer digest item format
 	CompactionBodyTemplate       string `toml:"compaction_body_template"`        // Issue #82: Compaction notification body
 	DroppedBallEventTemplate     string `toml:"dropped_ball_event_template"`     // Issue #82: Dropped ball event message
+	RulesTemplate                string `toml:"rules_template"`                  // Issue #75: Shared protocol rules
 
 	// Global settings
 	Edges        []string `toml:"edges"`
@@ -159,6 +160,7 @@ func DefaultConfig() *Config {
 		DigestItemFormat:             "- Message: {filename}\n  From: {sender}",
 		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
+		RulesTemplate:                "",
 	}
 }
 

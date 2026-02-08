@@ -432,6 +432,12 @@ func RunDaemonLoop(
 						// Update shared state
 						cfg = newCfg
 						adjacency = newAdjacency
+
+						// Issue #75: Regenerate RULES.md on config reload
+						if err := config.GenerateRulesFile(sessionDir, contextID, newCfg); err != nil {
+							log.Printf("⚠️  postman: failed to regenerate RULES.md: %v\n", err)
+						}
+
 						// Send config update event
 						// Issue #37: Build edge list with activity data
 						edgeList := daemonState.BuildEdgeList(newCfg.Edges, newCfg)
