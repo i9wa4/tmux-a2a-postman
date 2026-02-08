@@ -384,22 +384,6 @@ func CreateMultiSessionDirs(contextDir, sessionName string) error {
 	return CreateSessionDirs(sessionDir)
 }
 
-// SaveConfig saves the configuration to a TOML file.
-// NOTE: This will remove comments from the TOML file.
-func SaveConfig(path string, cfg *Config) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("creating config file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if err := toml.NewEncoder(f).Encode(cfg); err != nil {
-		return fmt.Errorf("encoding config: %w", err)
-	}
-
-	return nil
-}
-
 // ResolveNodesDir returns the nodes directory path for the given config file path.
 // Returns empty string if nodes directory doesn't exist.
 func ResolveNodesDir(configPath string) string {
