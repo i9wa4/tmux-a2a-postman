@@ -329,12 +329,14 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection (Issue #55)
-	// NOTE: Exclude system messages (from/to "postman") from ball tracking
+	// NOTE: Exclude system messages (from/to "postman") from ball tracking.
+	// Both UpdateSendActivity and UpdateReceiveActivity skip when info.From == "postman"
+	// to prevent system-delivered messages from causing false "holding" state.
 	// Issue #79: Use session-prefixed keys for tracking
 	if info.From != "postman" {
 		idleTracker.UpdateSendActivity(sourceSessionName + ":" + info.From)
 	}
-	if info.To != "postman" {
+	if info.From != "postman" && info.To != "postman" {
 		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 

@@ -351,3 +351,79 @@ func TestPONG_Handling(t *testing.T) {
 		t.Error("PONG should not be in dead-letter/")
 	}
 }
+
+// TestPostmanMessage_NoHoldingState verifies that postman → node messages
+// do not cause false "holding" state (Issue #87).
+func TestPostmanMessage_NoHoldingState(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+
+	cfg := &config.Config{
+		Edges:                []string{"postman -- worker"},
+		Nodes:                map[string]config.NodeConfig{"worker": {}},
+		NotificationTemplate: "test notification",
+		TmuxTimeout:          1.0,
+	}
+
+	adjacency := map[string][]string{
+		"postman": {"worker"},
+		"worker":  {"postman"},
+	}
+
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	// Create postman → worker message in post/
+	filename := "20260209-120000-from-postman-to-worker.md"
+	content := `---
+method: message/send
+params:
+  contextId: test-ctx
+  taskId: 12345
+  from: postman
+  to: worker
+  timestamp: 2026-02-09T12:00:00+09:00
+---
+
+## Content
+
+PING from postman
+`
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Setup nodes
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:worker": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	idleTracker := idle.NewIdleTracker()
+
+	// Deliver message
+	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker)
+	if err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	// Verify: UpdateReceiveActivity was NOT called for worker
+	// (Because info.From == "postman", UpdateReceiveActivity is skipped)
+	nodeKey := "test-session:worker"
+	activity := idleTracker.GetNodeStates()[nodeKey]
+
+	// activity.LastReceived should be zero (not updated)
+	if !activity.LastReceived.IsZero() {
+		t.Errorf("LastReceived should be zero for postman → worker message, got %v", activity.LastReceived)
+	}
+
+	// Verify NOT holding (IsHoldingBall should return false)
+	if idleTracker.IsHoldingBall(nodeKey) {
+		t.Error("worker should NOT be holding ball after postman message")
+	}
+}
