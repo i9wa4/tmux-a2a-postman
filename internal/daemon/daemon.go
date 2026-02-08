@@ -95,18 +95,7 @@ func buildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 	edgeList := make([]tui.Edge, len(edges))
 	for i, e := range edges {
 		// Issue #42: Parse chain edge into node segments
-		var nodes []string
-		if strings.Contains(e, "-->") {
-			parts := strings.Split(e, "-->")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		} else if strings.Contains(e, "--") {
-			parts := strings.Split(e, "--")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		}
+		nodes := tui.ParseEdgeNodes(e)
 
 		// Calculate direction for each segment
 		var segmentDirections []string

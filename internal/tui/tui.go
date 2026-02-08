@@ -39,6 +39,25 @@ var (
 				Foreground(lipgloss.Color("196")) // red
 )
 
+// ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
+// Supports both directed ("-->") and undirected ("--") edges.
+// Also supports chain edges with multiple nodes (Issue #42).
+func ParseEdgeNodes(edgeString string) []string {
+	var nodes []string
+	if strings.Contains(edgeString, "-->") {
+		parts := strings.Split(edgeString, "-->")
+		for _, p := range parts {
+			nodes = append(nodes, strings.TrimSpace(p))
+		}
+	} else if strings.Contains(edgeString, "--") {
+		parts := strings.Split(edgeString, "--")
+		for _, p := range parts {
+			nodes = append(nodes, strings.TrimSpace(p))
+		}
+	}
+	return nodes
+}
+
 const (
 	minWidth  = 40
 	minHeight = 10
@@ -189,18 +208,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 	// Issue #55: Build edge node set (safety net against non-edge nodes)
 	edgeNodes := make(map[string]bool)
 	for _, edge := range m.edges {
-		var nodes []string
-		if strings.Contains(edge.Raw, "-->") {
-			parts := strings.Split(edge.Raw, "-->")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		} else if strings.Contains(edge.Raw, "--") {
-			parts := strings.Split(edge.Raw, "--")
-			for _, p := range parts {
-				nodes = append(nodes, strings.TrimSpace(p))
-			}
-		}
+		nodes := ParseEdgeNodes(edge.Raw)
 		for _, node := range nodes {
 			edgeNodes[node] = true
 		}
@@ -728,19 +736,7 @@ func (m Model) renderRoutingView(width, height int) string {
 
 		for _, edge := range m.edges {
 			// Parse nodes from edge
-			var nodes []string
-			line := edge.Raw
-			if strings.Contains(line, "-->") {
-				parts := strings.Split(line, "-->")
-				for _, p := range parts {
-					nodes = append(nodes, strings.TrimSpace(p))
-				}
-			} else if strings.Contains(line, "--") {
-				parts := strings.Split(line, "--")
-				for _, p := range parts {
-					nodes = append(nodes, strings.TrimSpace(p))
-				}
-			}
+			nodes := ParseEdgeNodes(edge.Raw)
 
 			// Check if ANY node is in selected session
 			anyMatch := false
@@ -782,18 +778,7 @@ func (m Model) renderRoutingView(width, height int) string {
 			// Issue #42: Replace each segment with colored directional arrow
 			if len(edge.SegmentDirections) > 0 {
 				// Parse nodes from edge
-				var nodes []string
-				if strings.Contains(line, "-->") {
-					parts := strings.Split(line, "-->")
-					for _, p := range parts {
-						nodes = append(nodes, strings.TrimSpace(p))
-					}
-				} else if strings.Contains(line, "--") {
-					parts := strings.Split(line, "--")
-					for _, p := range parts {
-						nodes = append(nodes, strings.TrimSpace(p))
-					}
-				}
+				nodes := ParseEdgeNodes(line)
 
 				// Rebuild line with styled arrows and colored node names (Issue #55)
 				if len(nodes) == len(edge.SegmentDirections)+1 {
