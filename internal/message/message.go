@@ -201,6 +201,37 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			}
 		}
 		if !allowed {
+			// Issue #80: Send warning message back to sender
+			senderInbox := filepath.Join(sourceSessionDir, "inbox", info.From)
+			if mkErr := os.MkdirAll(senderInbox, 0o755); mkErr == nil {
+				// Build list of allowed neighbors for sender
+				var neighbors []string
+				for _, senderKey := range []string{info.From, senderFullName} {
+					if nbrs, ok := adjacency[senderKey]; ok {
+						neighbors = append(neighbors, nbrs...)
+						break
+					}
+				}
+
+				now := time.Now()
+				warnTS := now.Format("20060102-150405")
+				warnFilename := fmt.Sprintf("%s-from-postman-to-%s.md", warnTS, info.From)
+				neighborsStr := strings.Join(neighbors, ", ")
+				if neighborsStr == "" {
+					neighborsStr = "none"
+				}
+				warnContent := fmt.Sprintf(
+					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\nRouting denied: you attempted to send to %q but your allowed edges are: %s.\n\nOriginal message moved to dead-letter/.\n",
+					contextID,
+					info.From,
+					now.Format(time.RFC3339),
+					info.To,
+					neighborsStr,
+				)
+				warnPath := filepath.Join(senderInbox, warnFilename)
+				_ = os.WriteFile(warnPath, []byte(warnContent), 0o644)
+			}
+
 			// Routing denied: move to dead-letter/ in source session
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
