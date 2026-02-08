@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -572,10 +573,22 @@ func RunDaemonLoop(
 					simpleName = parts[1]
 				}
 
+				// Issue #82: Use configurable template for dropped ball events
+				eventTemplate := cfg.DroppedBallEventTemplate
+				if eventTemplate == "" {
+					eventTemplate = "Dropped ball: {node} (holding for {duration})"
+				}
+				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+				vars := map[string]string{
+					"node":     nodeKey,
+					"duration": duration.Round(time.Second).String(),
+				}
+				eventMessage := template.ExpandTemplate(eventTemplate, vars, timeout)
+
 				// Emit dropped_ball event for Events pane
 				events <- tui.DaemonEvent{
 					Type:    "dropped_ball",
-					Message: fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeKey, duration.Round(time.Second)),
+					Message: eventMessage,
 					Details: map[string]interface{}{
 						"node":     nodeKey,
 						"duration": duration.Seconds(),
@@ -589,9 +602,7 @@ func RunDaemonLoop(
 					notification = "tui"
 				}
 				if notification == "display" || notification == "all" {
-					_ = exec.Command("tmux", "display-message",
-						fmt.Sprintf("Dropped ball: %s (holding for %s)", nodeKey, duration.Round(time.Second)),
-					).Run()
+					_ = exec.Command("tmux", "display-message", eventMessage).Run()
 				}
 			}
 

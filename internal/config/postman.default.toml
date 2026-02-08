@@ -166,6 +166,14 @@ edges = []
 # digest_item_format = """- Message: {filename}
 #   From: {sender}"""
 
+# Compaction notification body template (Issue #82)
+# Variables: {node}
+# compaction_body_template = "Compaction detected for node {node}. Please send status update."
+
+# Dropped ball event message template (Issue #82)
+# Variables: {node}, {duration}
+# dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
+
 # =============================================================================
 # Watchdog Configuration
 # =============================================================================

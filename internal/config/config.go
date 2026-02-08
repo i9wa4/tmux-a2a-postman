@@ -49,6 +49,8 @@ type Config struct {
 	CompactionHeaderTemplate     string `toml:"compaction_header_template"`      // Issue #82: Compaction detection header
 	WatchdogAlertTemplate        string `toml:"watchdog_alert_template"`         // Issue #82: Watchdog idle alert message
 	DigestItemFormat             string `toml:"digest_item_format"`              // Issue #82: Observer digest item format
+	CompactionBodyTemplate       string `toml:"compaction_body_template"`        // Issue #82: Compaction notification body
+	DroppedBallEventTemplate     string `toml:"dropped_ball_event_template"`     // Issue #82: Dropped ball event message
 
 	// Global settings
 	Edges        []string `toml:"edges"`
@@ -154,6 +156,8 @@ func DefaultConfig() *Config {
 		CompactionHeaderTemplate:     "## Compaction Detected",
 		WatchdogAlertTemplate:        "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
 		DigestItemFormat:             "- Message: {filename}\n  From: {sender}",
+		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
+		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
 	}
 }
 

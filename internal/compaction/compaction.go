@@ -164,9 +164,13 @@ func sendCompactionNotification(observerName, affectedNode string, cfg *config.C
 	filePath := filepath.Join(inboxDir, filename)
 
 	// Build message body from template
+	// Issue #82: Use configurable template for compaction body
 	messageBody := cfg.CompactionDetection.MessageTemplate.Body
 	if messageBody == "" {
-		messageBody = fmt.Sprintf("Compaction detected for node %s. Please send status update.", affectedNode)
+		messageBody = cfg.CompactionBodyTemplate
+		if messageBody == "" {
+			messageBody = "Compaction detected for node {node}. Please send status update."
+		}
 	}
 	messageBody = strings.ReplaceAll(messageBody, "{node}", affectedNode)
 
