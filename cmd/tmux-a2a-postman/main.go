@@ -29,7 +29,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
-	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 	"github.com/i9wa4/tmux-a2a-postman/internal/watchdog"
 )
@@ -385,33 +384,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			},
 		}
 	}
-
-	// Start UI pane status monitoring goroutine (Issue #46)
-	safeGo("ui-pane-monitor", daemonEvents, func() {
-		// Issue #46: Find target pane ID using configured UI node name
-		targetPaneID, _ := uipane.FindTargetPaneID(cfg.UINode)
-
-		ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				log.Println("postman: UI pane monitoring stopped")
-				return
-			case <-ticker.C:
-				paneInfo, err := uipane.GetPaneInfo(targetPaneID)
-				if err == nil && paneInfo != nil {
-					daemonEvents <- tui.DaemonEvent{
-						Type: "concierge_status_update",
-						Details: map[string]interface{}{
-							"pane_info": paneInfo,
-						},
-					}
-				}
-			}
-		}
-	})
 
 	// Start TUI or wait for shutdown
 	if noTUI {

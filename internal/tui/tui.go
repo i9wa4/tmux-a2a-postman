@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
-	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 )
 
 // Cached style objects (Issue #35)
@@ -80,7 +79,7 @@ type EventEntry struct {
 
 // DaemonEvent represents an event from the daemon goroutine.
 type DaemonEvent struct {
-	Type    string // "message_received", "status_update", "error", "config_update", "edge_update", "concierge_status_update"
+	Type    string // "message_received", "status_update", "error", "config_update", "edge_update"
 	Message string
 	Details map[string]interface{}
 }
@@ -113,9 +112,6 @@ type Model struct {
 	sessions        []SessionInfo
 	selectedSession int
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
-
-	// Target node status (Issue #45: renamed from "Concierge" in UI)
-	conciergeStatus *uipane.PaneInfo
 
 	// Node state tracking (Issue #55)
 	nodeStates map[string]string // "gray" / "active" / "holding"
@@ -247,7 +243,6 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessions:        []SessionInfo{},           // Issue #35: Requirement 3
 		selectedSession: 0,                         // Issue #35: Requirement 3
 		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
-		conciergeStatus: nil,
 		nodeStates:      make(map[string]string), // Issue #55: Node state tracking
 		daemonEvents:    daemonEvents,
 		tuiCommands:     tuiCommands,    // Issue #47: Command channel
@@ -456,11 +451,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedEdge < 0 {
 					m.selectedEdge = 0
 				}
-			}
-		case "concierge_status_update":
-			// Update concierge status from Details
-			if paneInfo, ok := msg.Details["pane_info"].(*uipane.PaneInfo); ok {
-				m.conciergeStatus = paneInfo
 			}
 		case "pong_received":
 			// Issue #55: Mark node as active when PONG received
