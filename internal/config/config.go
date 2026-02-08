@@ -33,12 +33,13 @@ type Config struct {
 	BaseDir string `toml:"base_dir"`
 
 	// Message templates
-	NotificationTemplate string `toml:"notification_template"`
-	PingTemplate         string `toml:"ping_template"`
-	DigestTemplate       string `toml:"digest_template"`
-	DraftTemplate        string `toml:"draft_template"`
-	ReminderMessage      string `toml:"reminder_message"`
-	CommonTemplate       string `toml:"common_template"` // Issue #49: Shared template for all nodes
+	NotificationTemplate         string `toml:"notification_template"`
+	PingTemplate                 string `toml:"ping_template"`
+	DigestTemplate               string `toml:"digest_template"`
+	DraftTemplate                string `toml:"draft_template"`
+	ReminderMessage              string `toml:"reminder_message"`
+	CommonTemplate               string `toml:"common_template"`                  // Issue #49: Shared template for all nodes
+	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
 
 	// Global settings
 	Edges        []string `toml:"edges"`
@@ -138,6 +139,7 @@ func DefaultConfig() *Config {
 		UINode:               "concierge", // Issue #46: Default UI target node
 		Edges:                []string{},
 		Nodes:                make(map[string]NodeConfig),
+		EdgeViolationWarningTemplate: "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/.",
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // DaemonEvent represents an event to be sent to the TUI (Issue #53).
@@ -220,13 +221,33 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				if neighborsStr == "" {
 					neighborsStr = "none"
 				}
+
+				// Issue #80: Use configurable template
+				warnTemplate := cfg.EdgeViolationWarningTemplate
+				if warnTemplate == "" {
+					warnTemplate = "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/."
+				}
+
+				// Build variables map for template expansion
+				vars := map[string]string{
+					"context_id":          contextID,
+					"node":                info.From,
+					"timestamp":           now.Format(time.RFC3339),
+					"attempted_recipient": info.To,
+					"allowed_edges":       neighborsStr,
+				}
+
+				// Expand template
+				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+				warnBody := template.ExpandTemplate(warnTemplate, vars, timeout)
+
+				// Build full message with header
 				warnContent := fmt.Sprintf(
-					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\nRouting denied: you attempted to send to %q but your allowed edges are: %s.\n\nOriginal message moved to dead-letter/.\n",
+					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\n%s\n",
 					contextID,
 					info.From,
 					now.Format(time.RFC3339),
-					info.To,
-					neighborsStr,
+					warnBody,
 				)
 				warnPath := filepath.Join(senderInbox, warnFilename)
 				_ = os.WriteFile(warnPath, []byte(warnContent), 0o644)
