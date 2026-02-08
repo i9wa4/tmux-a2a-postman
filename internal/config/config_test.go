@@ -455,20 +455,16 @@ scan_interval_seconds = 1.0
 		t.Fatalf("MkdirAll nodes failed: %v", err)
 	}
 
-	// Create nodes/worker.toml
-	workerContent := `
-[worker]
-template = "worker template from nodes"
+	// Create nodes/worker.toml (flat key-value format)
+	workerContent := `template = "worker template from nodes"
 role = "worker"
 `
 	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
 		t.Fatalf("WriteFile worker.toml failed: %v", err)
 	}
 
-	// Create nodes/orchestrator.toml
-	orchestratorContent := `
-[orchestrator]
-template = "orchestrator template from nodes"
+	// Create nodes/orchestrator.toml (flat key-value format)
+	orchestratorContent := `template = "orchestrator template from nodes"
 role = "orchestrator"
 `
 	if err := os.WriteFile(filepath.Join(nodesDir, "orchestrator.toml"), []byte(orchestratorContent), 0o644); err != nil {
@@ -516,10 +512,8 @@ role = "worker-main"
 		t.Fatalf("MkdirAll nodes failed: %v", err)
 	}
 
-	// Create nodes/worker.toml with different values
-	workerContent := `
-[worker]
-template = "worker template from nodes (override)"
+	// Create nodes/worker.toml with different values (flat key-value format)
+	workerContent := `template = "worker template from nodes (override)"
 role = "worker-override"
 `
 	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
@@ -560,17 +554,12 @@ scan_interval_seconds = 2.0
 		t.Fatalf("MkdirAll nodes failed: %v", err)
 	}
 
-	// Create nodes/reserved.toml with [postman] section (should be ignored)
-	reservedContent := `
-[postman]
-scan_interval_seconds = 999.0
-
-[worker]
-template = "worker template"
+	// Create nodes/worker.toml (flat key-value format)
+	workerContent := `template = "worker template"
 role = "worker"
 `
-	if err := os.WriteFile(filepath.Join(nodesDir, "reserved.toml"), []byte(reservedContent), 0o644); err != nil {
-		t.Fatalf("WriteFile reserved.toml failed: %v", err)
+	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
+		t.Fatalf("WriteFile worker.toml failed: %v", err)
 	}
 
 	// Load config
@@ -579,11 +568,11 @@ role = "worker"
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Verify [postman] from node file is ignored (main config value preserved)
+	// Verify postman config value is preserved
 	if cfg.ScanInterval != 2.0 {
-		t.Errorf("ScanInterval: got %v, want 2.0 (reserved section should be ignored)", cfg.ScanInterval)
+		t.Errorf("ScanInterval: got %v, want 2.0", cfg.ScanInterval)
 	}
-	// Verify [worker] from same file is loaded (non-reserved sections are OK)
+	// Verify worker node is loaded from flat format
 	if cfg.Nodes["worker"].Template != "worker template" {
 		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template")
 	}
@@ -608,10 +597,8 @@ scan_interval_seconds = 1.0
 		t.Fatalf("MkdirAll nodes failed: %v", err)
 	}
 
-	// Create nodes/worker.toml (valid)
-	workerContent := `
-[worker]
-template = "worker template"
+	// Create nodes/worker.toml (valid, flat key-value format)
+	workerContent := `template = "worker template"
 role = "worker"
 `
 	if err := os.WriteFile(filepath.Join(nodesDir, "worker.toml"), []byte(workerContent), 0o644); err != nil {
