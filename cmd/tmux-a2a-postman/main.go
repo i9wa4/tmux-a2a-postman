@@ -507,6 +507,7 @@ func runCreateDraft(args []string) error {
 	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
 	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
+	session := fs.String("session", "", "tmux session name (optional, auto-detect)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -536,7 +537,15 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("--from is required (or set A2A_NODE)")
 	}
 
-	draftDir := filepath.Join(baseDir, resolvedContextID, "draft")
+	sessionName := *session
+	if sessionName == "" {
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return fmt.Errorf("--session is required (or run inside tmux)")
+	}
+
+	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
 
 	if err := os.MkdirAll(draftDir, 0o755); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)

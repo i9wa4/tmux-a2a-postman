@@ -416,7 +416,7 @@ func ResolveContextID(explicitID string, baseDir string) (string, string, error)
 	}
 
 	// 3. current-context file based on tmux session
-	tmuxSession := getTmuxSessionName()
+	tmuxSession := GetTmuxSessionName()
 	if tmuxSession != "" {
 		contextFile := filepath.Join(baseDir, fmt.Sprintf("current-context-%s", tmuxSession))
 		if data, err := os.ReadFile(contextFile); err == nil {
@@ -430,9 +430,9 @@ func ResolveContextID(explicitID string, baseDir string) (string, string, error)
 	return "", "", fmt.Errorf("no context ID found (tried: flag, A2A_CONTEXT_ID env, current-context file)")
 }
 
-// getTmuxSessionName extracts the tmux session name using tmux command.
+// GetTmuxSessionName extracts the tmux session name using tmux command.
 // Returns empty string if not in tmux.
-func getTmuxSessionName() string {
+func GetTmuxSessionName() string {
 	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
