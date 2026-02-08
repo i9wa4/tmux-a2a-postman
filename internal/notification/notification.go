@@ -130,7 +130,12 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	return template.ExpandTemplate(cfg.NotificationTemplate, vars, timeout)
+	// Issue #83: Use ping_template for PING messages from postman
+	notifTemplate := cfg.NotificationTemplate
+	if sender == "postman" {
+		notifTemplate = cfg.PingTemplate
+	}
+	return template.ExpandTemplate(notifTemplate, vars, timeout)
 }
 
 // extractTimestamp extracts timestamp from filename.
