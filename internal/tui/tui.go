@@ -133,7 +133,7 @@ type Model struct {
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 
 	// Node state tracking (Issue #55)
-	nodeStates map[string]string // "gray" / "active" / "holding"
+	nodeStates map[string]string // "waiting" / "active" / "holding" / "dropped"
 
 	// Shared state
 	daemonEvents <-chan DaemonEvent
@@ -596,8 +596,9 @@ func (m Model) renderLeftPane(width, height int) string {
 				}
 
 				// Mail emoji for sessions with idle/waiting nodes
-				mailEmoji := ""
-				if m.sessionHasIdleNodes(sess.Name) {
+				// NOTE: Skip idle check for disabled sessions
+				mailEmoji := "  "
+				if sess.Enabled && m.sessionHasIdleNodes(sess.Name) {
 					mailEmoji = "📧"
 				}
 
@@ -816,7 +817,7 @@ func (m Model) renderRoutingView(width, height int) string {
 								nodeStyle = ballHolderStyle
 							case "dropped":
 								nodeStyle = droppedNodeStyle
-								// case "gray" or default: use default style
+								// case "waiting" or default: use default style
 							}
 						}
 						builder.WriteString(nodeStyle.Render(node))
