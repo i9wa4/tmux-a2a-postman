@@ -74,10 +74,11 @@ edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 # Routing edges (bidirectional)
 # Format: "node-a -- node-b" or "node-a --> node-b"
 # Example multi-hop: "node-a -- node-b -- node-c" creates edges A↔B, B↔C
-edges = [
-  "node-a -- node-b",
-  "node-b -- node-c",
-]
+# edges = [
+#   "node-a -- node-b",
+#   "node-b -- node-c",
+# ]
+edges = []
 
 # Global settings
 # reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
