@@ -507,7 +507,7 @@ func runCreateDraft(args []string) error {
 	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
 	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
-	session := fs.String("session", "", "tmux session name (optional, auto-detect)")
+	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -543,6 +543,12 @@ func runCreateDraft(args []string) error {
 	}
 	if sessionName == "" {
 		return fmt.Errorf("--session is required (or run inside tmux)")
+	}
+
+	// Issue #76: Validate session name (path traversal defense)
+	sessionName = filepath.Base(sessionName)
+	if sessionName == "." || sessionName == ".." || sessionName == "" {
+		return fmt.Errorf("invalid session name: %q", *session)
 	}
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
