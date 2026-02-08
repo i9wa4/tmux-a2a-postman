@@ -37,6 +37,10 @@ var (
 	// Issue #56: Dropped ball style
 	droppedNodeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("196")) // red
+
+	// Issue #89: Selected session row highlight
+	selectedSessionStyle = lipgloss.NewStyle().
+				Reverse(true)
 )
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
@@ -585,9 +589,10 @@ func (m Model) renderLeftPane(width, height int) string {
 				cursor = "> "
 			}
 
+			var line string
 			if sess.Name == "(All)" {
 				// "(All)" has no emoji prefix
-				b.WriteString(fmt.Sprintf("%s%s\n", cursor, sess.Name))
+				line = fmt.Sprintf("%s%s", cursor, sess.Name)
 			} else {
 				// Status emoji
 				statusEmoji := "⚫"
@@ -605,8 +610,14 @@ func (m Model) renderLeftPane(width, height int) string {
 				// Add space after emojis before session name
 				prefix := statusEmoji + mailEmoji + " "
 
-				b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, prefix, sess.Name))
+				line = fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 			}
+
+			// Issue #89: Apply reverse style with fixed width for full-line highlight
+			if i == m.selectedSession {
+				line = selectedSessionStyle.Width(width - 2).Render(line)
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 
