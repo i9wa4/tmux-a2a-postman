@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
+
+//go:embed default_postman.toml
+var defaultConfigData []byte
 
 // Config holds postman configuration loaded from TOML file.
 // Python format: [postman] section contains all settings.
@@ -143,17 +147,75 @@ func DefaultConfig() *Config {
 	}
 }
 
+// loadEmbeddedConfig loads configuration from embedded default_postman.toml.
+// Issue #81: Use go:embed to provide default configuration.
+func loadEmbeddedConfig() (*Config, error) {
+	// Parse embedded TOML data
+	var rootSections map[string]toml.Primitive
+	md, err := toml.Decode(string(defaultConfigData), &rootSections)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedded config: %w", err)
+	}
+
+	// Decode [postman] section (optional, uses defaults if not present)
+	cfg := DefaultConfig()
+	postmanPrim, ok := rootSections["postman"]
+	if ok {
+		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
+			return nil, fmt.Errorf("decoding embedded [postman] section: %w", err)
+		}
+	}
+
+	// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
+	cfg.Nodes = make(map[string]NodeConfig)
+	for name, prim := range rootSections {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+			continue
+		}
+
+		var node NodeConfig
+		if err := md.PrimitiveDecode(prim, &node); err != nil {
+			return nil, fmt.Errorf("decoding embedded [%s] section: %w", name, err)
+		}
+		cfg.Nodes[name] = node
+	}
+
+	// Decode [compaction_detection] section if exists
+	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
+		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
+			return nil, fmt.Errorf("decoding embedded [compaction_detection] section: %w", err)
+		}
+	}
+
+	// Decode [watchdog] section if exists
+	if watchdogPrim, ok := rootSections["watchdog"]; ok {
+		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
+			return nil, fmt.Errorf("decoding embedded [watchdog] section: %w", err)
+		}
+	}
+
+	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
+	if cfg.EdgeActivitySeconds <= 0 {
+		cfg.EdgeActivitySeconds = 1 // Force minimum
+	}
+	if cfg.EdgeActivitySeconds > 3600 {
+		cfg.EdgeActivitySeconds = 3600 // Force maximum
+	}
+
+	return cfg, nil
+}
+
 // LoadConfig loads configuration from a TOML file (Python format).
 // Python format requires [postman] section and [nodename] sections.
 // If path is empty, tries XDG config fallback chain.
-// If no file found, returns DefaultConfig().
+// Issue #81: If no file found, loads embedded default configuration.
 func LoadConfig(path string) (*Config, error) {
 	configPath := path
 	if configPath == "" {
 		configPath = ResolveConfigPath()
 		if configPath == "" {
-			// No config file found, use defaults
-			return DefaultConfig(), nil
+			// No user config: use embedded default
+			return loadEmbeddedConfig()
 		}
 	}
 
@@ -163,8 +225,8 @@ func LoadConfig(path string) (*Config, error) {
 			// Explicit path was provided but doesn't exist
 			return nil, fmt.Errorf("config file not found: %s", configPath)
 		}
-		// Fallback path doesn't exist, use defaults
-		return DefaultConfig(), nil
+		// Fallback path doesn't exist, use embedded default
+		return loadEmbeddedConfig()
 	}
 
 	// Parse TOML file with metadata (Python format)

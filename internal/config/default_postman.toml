@@ -1,0 +1,175 @@
+# Postman Configuration
+# File-based communication daemon for tmux panes
+
+# =============================================================================
+# Template Variables Reference
+# =============================================================================
+#
+# notification_template:
+#   {from_node}      - Sender node name
+#   {node}           - Recipient node name
+#   {timestamp}      - Message timestamp (YYYYMMDD-HHMMSS)
+#   {inbox_path}     - Full path to recipient's inbox directory
+#   {filename}       - Message filename
+#   {talks_to_line}  - Formatted list of nodes this node can communicate with
+#   {template}       - Node's role template (from [node].template)
+#   {reply_command}  - Command to create draft message
+#   {context_id}     - Current session context ID
+#   {session_dir}    - Session directory path
+#
+# ping_template:
+#   {context_id}     - Current session context ID
+#   {node}           - Target node name
+#   {timestamp}      - Message timestamp (YYYYMMDD-HHMMSS)
+#   {from_node}      - Sender node name (always "postman")
+#   {template}       - Node's role template
+#   {talks_to_line}  - Formatted list of nodes this node can communicate with
+#   {active_nodes}   - Comma-separated list of all active nodes
+#   {reply_command}  - Command to create draft message
+#   {session_dir}    - Session directory path
+#
+# digest_template:
+#   {digest_items}   - Formatted list of new messages
+#
+# draft_template:
+#   {context_id}     - Current session context ID
+#   {task_id}        - Unique task identifier
+#   {sender}         - Sender node name
+#   {recipient}      - Recipient node name
+#   {timestamp}      - ISO format timestamp
+#   {from}           - Alias for {sender} (backward compatibility)
+#   {to}             - Alias for {recipient} (backward compatibility)
+#
+# common_template:
+#   Shared template string prepended to all node templates.
+#   Applied in ping and notification contexts. Not applied to digest or draft.
+#
+# edge_violation_warning_template:
+#   {context_id}          - Current session context ID
+#   {node}                - Recipient node name (sender of the denied message)
+#   {timestamp}           - ISO format timestamp
+#   {attempted_recipient} - Node name that the sender attempted to send to
+#   {allowed_edges}       - Comma-separated list of allowed neighbors
+#
+# =============================================================================
+
+[postman]
+# A2A protocol version
+a2a_version = "1.0"
+
+# Timing settings
+scan_interval_seconds = 1.0        # Pane rescan interval
+tmux_timeout_seconds = 5.0         # Timeout for tmux commands
+enter_delay_seconds = 0.5          # Delay before sending Enter key
+startup_delay_seconds = 2.0        # Initial startup delay
+new_node_ping_delay_seconds = 3.0  # Delay before sending ping to newly joined nodes
+reminder_interval_seconds = 0.0    # Send reminder after N messages (0 = disabled)
+
+# TUI settings
+edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
+
+# Paths
+# base_dir = ""                    # Override session dir (default: XDG_STATE_HOME/postman)
+
+# Routing edges (bidirectional)
+# Format: "node-a -- node-b" or "node-a --> node-b"
+# Example multi-hop: "node-a -- node-b -- node-c" creates edges A↔B, B↔C
+edges = [
+  "node-a -- node-b",
+  "node-b -- node-c",
+]
+
+# Global settings
+# reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
+# ui_node = "concierge"            # TUI target node for watchdog alerts
+
+# Reminder message (sent periodically to nodes)
+# reminder_message = ""
+
+# Common template (prepended to all node templates)
+# common_template = ""
+
+# Notification template (when new message arrives)
+# notification_template = """
+# Message from {from_node}
+# File: {filename}
+# Inbox: {inbox_path}
+# """
+
+# Ping message template
+# ping_template = """
+# PING from postman
+# Reply with PONG to confirm you are active.
+# """
+
+# Observer digest template
+# digest_template = """
+# 📋 Carbon Copy: New messages.
+# {digest_items}
+# """
+
+# Draft message template
+# draft_template = """---
+# method: message/send
+# params:
+#   contextId: {context_id}
+#   taskId: {task_id}
+#   from: {sender}
+#   to: {recipient}
+#   timestamp: {timestamp}
+# ---
+#
+# ## Content
+#
+# """
+
+# Edge violation warning template
+# edge_violation_warning_template = """
+# Routing denied: you attempted to send to "{attempted_recipient}" but your allowed edges are: {allowed_edges}.
+#
+# Original message moved to dead-letter/.
+# """
+
+# =============================================================================
+# Watchdog Configuration
+# =============================================================================
+
+[watchdog]
+enabled = false                       # Enable watchdog monitoring
+idle_threshold_seconds = 300.0        # 5 minutes
+cooldown_seconds = 600.0              # 10 minutes
+heartbeat_interval_seconds = 60.0     # 1 minute
+
+[watchdog.capture]
+enabled = true
+tail_lines = 100
+max_files = 10
+max_bytes = 1048576  # 1MB
+
+[watchdog.lock]
+path = "$HOME/.postman/postman-watchdog.lock"
+
+# =============================================================================
+# Node-Specific Configuration
+# =============================================================================
+#
+# Example node configuration:
+#
+# [example-node]
+# role = "coordination, delegation"
+# on_join = "Welcome message sent when node joins"
+# template = """
+# # EXAMPLE-NODE
+#
+# - Node role and responsibilities
+# - Instructions and constraints
+# """
+# observes = ["other-node"]          # Nodes to observe (for digest messages)
+# reminder_interval_seconds = 0.0    # Node-specific reminder interval (overrides global)
+# reminder_message = ""              # Node-specific reminder message
+# idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)
+# idle_reminder_message = ""         # Idle reminder message
+# idle_reminder_cooldown_seconds = 0.0
+# dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
+# dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
+# dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
