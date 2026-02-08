@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# pre-commit hook: auto-format staged Go files with gofmt
+
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+
+if [ -z "$STAGED_GO_FILES" ]; then
+    exit 0
+fi
+
+# Format staged Go files
+NEEDS_FORMAT=false
+for file in $STAGED_GO_FILES; do
+    if [ -f "$file" ]; then
+        FORMATTED=$(gofmt -l "$file")
+        if [ -n "$FORMATTED" ]; then
+            gofmt -w "$file"
+            git add "$file"
+            NEEDS_FORMAT=true
+        fi
+    fi
+done
+
+if [ "$NEEDS_FORMAT" = true ]; then
+    echo "pre-commit: gofmt applied and re-staged"
+fi
+
+exit 0
