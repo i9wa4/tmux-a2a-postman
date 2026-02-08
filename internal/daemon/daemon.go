@@ -411,7 +411,7 @@ func RunDaemonLoop(
 			isConfigEvent := configPath != "" && eventPath == configPath
 			isNodesDirEvent := nodesDir != "" && strings.HasPrefix(eventPath, nodesDir+string(filepath.Separator))
 			if isConfigEvent || isNodesDirEvent {
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 					// Debounce config updates (200ms)
 					if configTimer != nil {
 						configTimer.Stop()
