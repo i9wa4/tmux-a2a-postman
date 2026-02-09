@@ -695,6 +695,9 @@ func RunDaemonLoop(
 
 			// Issue #99: Check node inactivity
 			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events)
+
+			// Issue #100: Check unreplied messages
+			daemonState.checkUnrepliedMessages(nodes, cfg, events)
 		}
 	}
 }
@@ -1043,5 +1046,104 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uipane.PaneInfo, 
 	ds.prevPaneStates = make(map[string]uipane.PaneInfo)
 	for paneID, info := range paneStates {
 		ds.prevPaneStates[paneID] = info
+	}
+}
+
+// checkUnrepliedMessages checks for messages in read/ without replies (Issue #100).
+// Warning: 10+ minutes since moved to read/ without reply.
+func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent) {
+	now := time.Now()
+
+	for nodeKey, nodeInfo := range nodes {
+		// Extract simple name
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+
+		// Build read/ path
+		readPath := filepath.Join(nodeInfo.SessionDir, "read")
+
+		// Read read/ directory
+		entries, err := os.ReadDir(readPath)
+		if err != nil {
+			continue // Skip if directory doesn't exist or can't be read
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+
+			// Parse message filename to extract recipient (to field)
+			msgInfo, err := message.ParseMessageFilename(entry.Name())
+			if err != nil {
+				continue // Skip files with invalid format
+			}
+
+			// Only check messages TO this node (not FROM this node)
+			if msgInfo.To != simpleName {
+				continue
+			}
+
+			// Get file modification time (when moved to read/)
+			fileInfo, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			movedToReadAt := fileInfo.ModTime()
+
+			// Calculate time since moved to read/
+			timeSinceRead := now.Sub(movedToReadAt)
+
+			// Check if threshold exceeded (10 minutes)
+			threshold := 10 * time.Minute
+			if timeSinceRead < threshold {
+				continue // Not yet exceeded
+			}
+
+			// Check if already notified
+			notifKey := filepath.Join(readPath, entry.Name()) + ":unreplied"
+			ds.notifiedInboxFilesMu.RLock() // Reuse notifiedInboxFiles for simplicity
+			lastNotified, notified := ds.notifiedInboxFiles[notifKey]
+			ds.notifiedInboxFilesMu.RUnlock()
+
+			// Skip if already notified within cooldown period (5 minutes)
+			if notified && now.Sub(lastNotified) < 5*time.Minute {
+				continue
+			}
+
+			// Record notification
+			ds.notifiedInboxFilesMu.Lock()
+			ds.notifiedInboxFiles[notifKey] = now
+			ds.notifiedInboxFilesMu.Unlock()
+
+			// Build notification message
+			message := fmt.Sprintf("Unreplied message [WARNING]: %s has message in read/ for %s without reply (from: %s, threshold: %s)",
+				simpleName,
+				timeSinceRead.Round(time.Second).String(),
+				msgInfo.From,
+				threshold.String(),
+			)
+
+			// Send TUI event
+			events <- tui.DaemonEvent{
+				Type:    "unreplied_message",
+				Message: message,
+				Details: map[string]interface{}{
+					"node":            simpleName,
+					"filename":        entry.Name(),
+					"time_since_read": timeSinceRead.Seconds(),
+					"threshold":       threshold.Seconds(),
+					"from":            msgInfo.From,
+					"to":              msgInfo.To,
+				},
+			}
+
+			// Send tmux notification to the pane
+			tmuxMsg := fmt.Sprintf("⚠️  %s", message)
+			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
+			// Ignore tmux command error (pane might not exist)
+		}
 	}
 }
