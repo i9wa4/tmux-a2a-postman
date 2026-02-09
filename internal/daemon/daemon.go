@@ -767,13 +767,14 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			// Determine severity
 			var severity string
 			var threshold time.Duration
-			if age >= 30*time.Minute {
+			switch {
+			case age >= 30*time.Minute:
 				severity = "critical"
 				threshold = 30 * time.Minute
-			} else if age >= 10*time.Minute {
+			case age >= 10*time.Minute:
 				severity = "warning"
 				threshold = 10 * time.Minute
-			} else {
+			default:
 				continue // No notification needed
 			}
 			
