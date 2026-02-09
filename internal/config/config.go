@@ -58,6 +58,7 @@ type Config struct {
 	Edges        []string `toml:"edges"`
 	ReplyCommand string   `toml:"reply_command"`
 	UINode       string   `toml:"ui_node"` // Issue #46: Generalized target node name
+	PingMode     string   `toml:"ping_mode"` // Issue #98: PING mode ("all", "ui_node_only", "disabled")
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -145,6 +146,7 @@ func DefaultConfig() *Config {
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
 		UINode:                       "concierge", // Issue #46: Default UI target node
+		PingMode:                     "all",       // Issue #98: Default to ping all nodes
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",

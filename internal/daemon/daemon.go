@@ -55,14 +55,16 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
-	edgeHistory            map[string]EdgeActivity
-	edgeHistoryMu          sync.RWMutex
-	enabledSessions        map[string]bool
-	enabledSessionsMu      sync.RWMutex
-	notifiedInboxFiles     map[string]time.Time // Issue #96: Track notified inbox files (filename -> notification time)
-	notifiedInboxFilesMu   sync.RWMutex         // Issue #96: Mutex for notifiedInboxFiles
-	notifiedNodeInactivity map[string]time.Time // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
-	notifiedNodeInactivityMu sync.RWMutex       // Issue #99: Mutex for notifiedNodeInactivity
+	edgeHistory              map[string]EdgeActivity
+	edgeHistoryMu            sync.RWMutex
+	enabledSessions          map[string]bool
+	enabledSessionsMu        sync.RWMutex
+	notifiedInboxFiles       map[string]time.Time                // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu     sync.RWMutex                        // Issue #96: Mutex for notifiedInboxFiles
+	notifiedNodeInactivity   map[string]time.Time                // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
+	notifiedNodeInactivityMu sync.RWMutex                        // Issue #99: Mutex for notifiedNodeInactivity
+	prevPaneStates           map[string]uipane.PaneInfo          // Issue #98: Track previous pane states for restart detection
+	prevPaneStatesMu         sync.RWMutex                        // Issue #98: Mutex for prevPaneStates
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -70,8 +72,9 @@ func NewDaemonState() *DaemonState {
 	return &DaemonState{
 		edgeHistory:            make(map[string]EdgeActivity),
 		enabledSessions:        make(map[string]bool),
-		notifiedInboxFiles:     make(map[string]time.Time), // Issue #96
-		notifiedNodeInactivity: make(map[string]time.Time), // Issue #99
+		notifiedInboxFiles:     make(map[string]time.Time),     // Issue #96
+		notifiedNodeInactivity: make(map[string]time.Time),     // Issue #99
+		prevPaneStates:         make(map[string]uipane.PaneInfo), // Issue #98
 	}
 }
 
@@ -664,6 +667,9 @@ func RunDaemonLoop(
 						},
 					}
 
+					// Issue #98: Check for pane restarts
+					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, adjacency, idleTracker)
+
 					// Update previous state
 					prevPaneStatesJSON = currentJSONStr
 				}
@@ -933,5 +939,109 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 		tmuxMsg := fmt.Sprintf("⚠️  %s", message)
 		_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
 		// Ignore tmux command error (pane might not exist)
+	}
+}
+
+// checkPaneRestarts detects pane restarts and sends PING (Issue #98).
+// Detects restart by comparing current paneStates with previous paneStates.
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uipane.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
+	ds.prevPaneStatesMu.Lock()
+	defer ds.prevPaneStatesMu.Unlock()
+
+	// Check PingMode
+	if cfg.PingMode == "disabled" {
+		return
+	}
+
+	// Build active nodes list for PING
+	activeNodes := make([]string, 0, len(nodes))
+	for nodeName := range nodes {
+		activeNodes = append(activeNodes, nodeName)
+	}
+
+	// Get PONG-active nodes for PING
+	pongActiveNodes := idleTracker.GetPongActiveNodes()
+
+	for currentPaneID, currentInfo := range paneStates {
+		nodeKey, exists := paneToNode[currentPaneID]
+		if !exists {
+			continue // No node mapped to this pane
+		}
+
+		nodeInfo, nodeExists := nodes[nodeKey]
+		if !nodeExists {
+			continue // Node not found
+		}
+
+		// Check if this pane existed before
+		_, prevExists := ds.prevPaneStates[currentPaneID]
+
+		if prevExists {
+			// Pane existed before - no restart detected
+			continue
+		}
+
+		// New pane detected - check if this is a restart
+		// Restart criteria: A node that previously had a different paneID now has a new paneID
+		// Search for previous pane with the same node
+		var oldPaneID string
+		for oldID, oldInfo := range ds.prevPaneStates {
+			if oldNodeKey, found := paneToNode[oldID]; found && oldNodeKey == nodeKey {
+				// Found old pane for the same node
+				oldPaneID = oldID
+				_ = oldInfo // Use oldInfo to avoid unused variable warning
+				break
+			}
+		}
+
+		if oldPaneID != "" {
+			// Restart detected: node had oldPaneID, now has currentPaneID
+			log.Printf("postman: pane restart detected for %s (old: %s, new: %s)\n", nodeKey, oldPaneID, currentPaneID)
+
+			// Send TUI event
+			events <- tui.DaemonEvent{
+				Type:    "pane_restart",
+				Message: fmt.Sprintf("Pane restart detected: %s (old: %s, new: %s)", nodeKey, oldPaneID, currentPaneID),
+				Details: map[string]interface{}{
+					"node":         nodeKey,
+					"old_pane_id":  oldPaneID,
+					"new_pane_id":  currentPaneID,
+					"pane_info":    currentInfo,
+				},
+			}
+
+			// Send PING after NewNodePingDelay
+			// Check PingMode filter
+			shouldPing := false
+			switch cfg.PingMode {
+			case "all":
+				shouldPing = true
+			case "ui_node_only":
+				// Extract simple name for UI node check
+				simpleName := nodeKey
+				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+					simpleName = parts[1]
+				}
+				shouldPing = (simpleName == cfg.UINode)
+			}
+
+			if shouldPing && cfg.NewNodePingDelay > 0 {
+				delay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
+				safeAfterFunc(delay, "pane-restart-ping", events, func() {
+					if err := ping.SendPingToNode(nodeInfo, contextID, nodeKey, cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
+						events <- tui.DaemonEvent{
+							Type:    "error",
+							Message: fmt.Sprintf("PING to restarted node %s failed: %v", nodeKey, err),
+						}
+					}
+				})
+			}
+		}
+	}
+
+	// Update prevPaneStates
+	ds.prevPaneStates = make(map[string]uipane.PaneInfo)
+	for paneID, info := range paneStates {
+		ds.prevPaneStates[paneID] = info
 	}
 }
