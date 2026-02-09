@@ -704,6 +704,9 @@ func RunDaemonLoop(
 					// Issue #98: Check for pane restarts
 					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, adjacency, idleTracker)
 
+					// Check for pane disappearance (killed panes)
+					daemonState.checkPaneDisappearance(paneStates, paneToNode, events)
+
 					// Update previous state
 					prevPaneStatesJSON = currentJSONStr
 				}
@@ -1080,6 +1083,33 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 	ds.prevPaneStates = make(map[string]ui_node.PaneInfo)
 	for paneID, info := range paneStates {
 		ds.prevPaneStates[paneID] = info
+	}
+}
+
+// checkPaneDisappearance detects disappeared panes and marks corresponding nodes as inactive.
+// When a pane is killed, it no longer appears in GetAllPanesInfo() output.
+// This function compares previous pane states with current pane states to detect disappearances.
+func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]ui_node.PaneInfo, paneToNode map[string]string, events chan<- tui.DaemonEvent) {
+	ds.prevPaneStatesMu.RLock()
+	defer ds.prevPaneStatesMu.RUnlock()
+
+	// Find panes that existed before but don't exist now
+	for prevPaneID := range ds.prevPaneStates {
+		if _, stillExists := currentPaneStates[prevPaneID]; !stillExists {
+			// Pane disappeared - find the node it belonged to
+			if nodeKey, found := paneToNode[prevPaneID]; found {
+				// Send pane_disappeared event to TUI
+				events <- tui.DaemonEvent{
+					Type:    "pane_disappeared",
+					Message: fmt.Sprintf("Pane disappeared: %s (node: %s)", prevPaneID, nodeKey),
+					Details: map[string]interface{}{
+						"pane_id": prevPaneID,
+						"node":    nodeKey,
+					},
+				}
+				log.Printf("postman: pane disappeared for node %s (paneID: %s)\n", nodeKey, prevPaneID)
+			}
+		}
 	}
 }
 

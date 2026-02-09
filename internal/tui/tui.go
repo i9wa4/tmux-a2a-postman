@@ -632,6 +632,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "pane_disappeared":
+			// Mark node as inactive when pane disappears (killed)
+			if node, ok := msg.Details["node"].(string); ok {
+				m.nodeStates[node] = "dropped" // Use "dropped" for disappeared panes
+			}
+			// Add event entry
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    SeverityDropped,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "channel_closed":
 			m.quitting = true
 			return m, tea.Quit
