@@ -10,6 +10,13 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 )
 
+// Issue #101: Event severity constants (observer review feedback - MINOR)
+const (
+	SeverityWarning  = "warning"
+	SeverityCritical = "critical"
+	SeverityDropped  = "dropped"
+)
+
 // Cached style objects (Issue #35)
 var (
 	borderStyle = lipgloss.NewStyle().
@@ -559,7 +566,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     fmt.Sprintf("ERROR: %s", msg.Message),
 				SessionName: "", // Error events have no specific session
 				Timestamp:   time.Now(),
-				Severity:    "critical", // Issue #101: Errors are critical
+				Severity:    SeverityCritical, // Issue #101: Errors are critical
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -570,7 +577,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -580,7 +587,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "critical",
+				Severity:    SeverityCritical,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -590,7 +597,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -600,7 +607,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "critical",
+				Severity:    SeverityCritical,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -610,7 +617,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "dropped",
+				Severity:    SeverityDropped,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -620,7 +627,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
 				Timestamp:   time.Now(),
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -639,6 +646,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // extractSessionFromDetails extracts session name from event Details (Issue #101).
 // Tries multiple common keys: "session", "node", and extracts session prefix from "node" if needed.
 func extractSessionFromDetails(details map[string]interface{}) string {
+	// IMPORTANT: Guard against nil Details (observer review feedback)
+	if details == nil {
+		return ""
+	}
 	// Try "session" key first
 	if session, ok := details["session"].(string); ok {
 		return session
@@ -897,11 +908,11 @@ func (m Model) renderEventsView(width, height int) string {
 			// Issue #101: Apply severity-based styling
 			styledMsg := msg
 			switch event.Severity {
-			case "warning":
+			case SeverityWarning:
 				styledMsg = eventWarningStyle.Render(msg)
-			case "critical":
+			case SeverityCritical:
 				styledMsg = eventCriticalStyle.Render(msg)
-			case "dropped":
+			case SeverityDropped:
 				styledMsg = eventDroppedStyle.Render(msg)
 			}
 			b.WriteString(fmt.Sprintf("  - %s\n", styledMsg))
