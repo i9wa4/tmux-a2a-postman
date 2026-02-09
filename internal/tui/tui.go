@@ -193,6 +193,35 @@ func (m Model) sessionHasIdleNodes(sessionName string) bool {
 	return false
 }
 
+// getSessionWorstState returns the worst node state for a session (Issue #97).
+// Priority: dropped > holding > waiting > active
+func (m Model) getSessionWorstState(sessionName string) string {
+	nodes, ok := m.sessionNodes[sessionName]
+	if !ok {
+		return "active" // Default: active (no nodes)
+	}
+
+	worstState := "active"
+	stateRank := map[string]int{
+		"active":  0,
+		"waiting": 1,
+		"holding": 2,
+		"dropped": 3,
+	}
+
+	for _, nodeName := range nodes {
+		// Construct session-prefixed key
+		prefixedKey := sessionName + ":" + nodeName
+		if state, exists := m.nodeStates[prefixedKey]; exists {
+			if stateRank[state] > stateRank[worstState] {
+				worstState = state
+			}
+		}
+	}
+
+	return worstState
+}
+
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 // Issue #56: Added droppedNodes parameter for dropped-ball detection.
 // Issue #77: Use session-prefixed keys to avoid collision across sessions.
@@ -645,6 +674,26 @@ func (m Model) renderLeftPane(width, height int) string {
 				prefix := statusEmoji + mailEmoji + " "
 
 				line = fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
+			}
+
+			// Issue #97: Apply session color based on worst node state
+			// Priority: dropped (red) > holding (orange) > waiting (gray) > active (green)
+			if i != m.selectedSession && sess.Name != "(All)" && sess.Enabled {
+				worstState := m.getSessionWorstState(sess.Name)
+				var sessionStyle lipgloss.Style
+				switch worstState {
+				case "dropped":
+					sessionStyle = droppedNodeStyle
+				case "holding":
+					sessionStyle = ballHolderStyle
+				case "waiting":
+					sessionStyle = waitingNodeStyle
+				case "active":
+					sessionStyle = activeNodeStyle
+				default:
+					sessionStyle = lipgloss.NewStyle() // No style
+				}
+				line = sessionStyle.Render(line)
 			}
 
 			// Issue #89: Apply reverse style with fixed width for full-line highlight
