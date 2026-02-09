@@ -225,8 +225,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 				// Issue #92: Use configurable template with mode support
 				warnTemplate := cfg.EdgeViolationWarningTemplate
-				if warnTemplate == "" {
-					warnTemplate = "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}."
+				isDefaultTemplate := (warnTemplate == "")
+				if isDefaultTemplate {
+					warnTemplate = "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/."
 				}
 
 				// Build variables map for template expansion
@@ -248,10 +249,16 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				if mode == "" {
 					mode = "compact"
 				}
-				if mode == "verbose" {
-					replyInstructions := fmt.Sprintf("\n\nSteps:\n\n1. %s --context-id %s --to <recipient>\n   - Replace `<recipient>` with one of: %s\n2. Edit the draft content\n3. mv from draft/ to post/",
-						cfg.ReplyCommand,
-						contextID,
+				if mode == "verbose" && isDefaultTemplate {
+					// IMPORTANT FIX: Only add reply instructions when using default template
+					// Custom templates should not be modified by verbose mode
+					// BLOCKING FIX: Avoid duplicate --context-id if already present
+					replyCmd := cfg.ReplyCommand
+					if !strings.Contains(replyCmd, "--context-id") {
+						replyCmd = fmt.Sprintf("%s --context-id %s", replyCmd, contextID)
+					}
+					replyInstructions := fmt.Sprintf("\n\nSteps:\n\n1. %s --to <recipient>\n   - Replace `<recipient>` with one of: %s\n2. Edit the draft content\n3. mv from draft/ to post/",
+						replyCmd,
 						neighborsStr,
 					)
 					warnBody += replyInstructions

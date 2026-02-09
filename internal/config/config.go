@@ -147,7 +147,7 @@ func DefaultConfig() *Config {
 		UINode:                       "concierge", // Issue #46: Default UI target node
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
-		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}.",
+		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
 		EdgeViolationWarningMode:     "compact", // Issue #92: Default to compact mode
 		IdleReminderHeaderTemplate:   "## Idle Reminder",
 		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",

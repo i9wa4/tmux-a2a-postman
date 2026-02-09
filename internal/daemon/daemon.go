@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os/exec"
@@ -199,6 +200,9 @@ func RunDaemonLoop(
 
 	// Track watched directories to avoid duplicates
 	watchedDirs := make(map[string]bool)
+
+	// Issue #94: Track previous pane states to avoid spam
+	var prevPaneStatesJSON string
 
 	// Issue #41: Periodic node discovery
 	scanInterval := time.Duration(cfg.ScanInterval * float64(time.Second))
@@ -628,20 +632,29 @@ func RunDaemonLoop(
 			// Issue #94: Monitor all panes with high frequency
 			paneStates, err := uipane.GetAllPanesInfo()
 			if err == nil {
-				// Build paneID -> nodeKey mapping for TUI
-				paneToNode := make(map[string]string)
-				for nodeKey, nodeInfo := range nodes {
-					paneToNode[nodeInfo.PaneID] = nodeKey
-				}
+				// IMPORTANT FIX: Only send event if pane states changed
+				currentJSON, _ := json.Marshal(paneStates)
+				currentJSONStr := string(currentJSON)
 
-				// Send pane_state_update event to TUI
-				events <- tui.DaemonEvent{
-					Type:    "pane_state_update",
-					Message: "Pane states updated",
-					Details: map[string]interface{}{
-						"pane_states":  paneStates,
-						"pane_to_node": paneToNode,
-					},
+				if currentJSONStr != prevPaneStatesJSON {
+					// Build paneID -> nodeKey mapping for TUI
+					paneToNode := make(map[string]string)
+					for nodeKey, nodeInfo := range nodes {
+						paneToNode[nodeInfo.PaneID] = nodeKey
+					}
+
+					// Send pane_state_update event to TUI
+					events <- tui.DaemonEvent{
+						Type:    "pane_state_update",
+						Message: "Pane states updated",
+						Details: map[string]interface{}{
+							"pane_states":  paneStates,
+							"pane_to_node": paneToNode,
+						},
+					}
+
+					// Update previous state
+					prevPaneStatesJSON = currentJSONStr
 				}
 			}
 

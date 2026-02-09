@@ -230,8 +230,12 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 			state = "dropped"
 		case !activity.PongReceived:
 			state = "waiting"
+		case activity.LastReceived.After(activity.LastSent) && !activity.LastReceived.IsZero():
+			// BLOCKING FIX: Preserve existing "holding" logic (ball possession)
+			// LastReceived > LastSent = recipient has received but not replied
+			state = "holding"
 		default:
-			// Issue #95: Time-based color changes
+			// Issue #95: Time-based color changes (only for active nodes)
 			// Calculate idle duration from max(LastSent, LastReceived)
 			now := time.Now()
 			lastActivity := activity.LastSent
