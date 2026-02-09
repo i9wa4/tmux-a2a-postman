@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
@@ -54,17 +55,20 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
-	edgeHistory       map[string]EdgeActivity
-	edgeHistoryMu     sync.RWMutex
-	enabledSessions   map[string]bool
-	enabledSessionsMu sync.RWMutex
+	edgeHistory         map[string]EdgeActivity
+	edgeHistoryMu       sync.RWMutex
+	enabledSessions     map[string]bool
+	enabledSessionsMu   sync.RWMutex
+	notifiedInboxFiles  map[string]time.Time // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu sync.RWMutex         // Issue #96: Mutex for notifiedInboxFiles
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 func NewDaemonState() *DaemonState {
 	return &DaemonState{
-		edgeHistory:     make(map[string]EdgeActivity),
-		enabledSessions: make(map[string]bool),
+		edgeHistory:        make(map[string]EdgeActivity),
+		enabledSessions:    make(map[string]bool),
+		notifiedInboxFiles: make(map[string]time.Time), // Issue #96
 	}
 }
 
@@ -208,6 +212,10 @@ func RunDaemonLoop(
 	scanInterval := time.Duration(cfg.ScanInterval * float64(time.Second))
 	scanTicker := time.NewTicker(scanInterval)
 	defer scanTicker.Stop()
+
+	// Issue #96: Periodic inbox stagnation check (30 seconds)
+	inboxCheckTicker := time.NewTicker(30 * time.Second)
+	defer inboxCheckTicker.Stop()
 
 	for {
 		select {
@@ -671,6 +679,10 @@ func RunDaemonLoop(
 					"dropped_nodes": droppedNodeMap,
 				},
 			}
+		case <-inboxCheckTicker.C:
+			// Issue #96: Check inbox stagnation
+			currentNode := os.Getenv("A2A_NODE")
+			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode)
 		}
 	}
 }
@@ -692,4 +704,121 @@ func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
 		return false // Default: disabled
 	}
 	return enabled
+}
+
+// parseMessageTimestamp extracts timestamp from message filename (Issue #96).
+// Filename format: YYYYMMDD-HHMMSS-from-{sender}-to-{recipient}.md
+// Example: 20260210-015513-from-orchestrator-to-worker.md
+func parseMessageTimestamp(filename string) (time.Time, error) {
+	// Extract first 15 characters: YYYYMMDD-HHMMSS
+	if len(filename) < 15 {
+		return time.Time{}, fmt.Errorf("invalid filename format: too short")
+	}
+	tsStr := filename[:15]
+	
+	// Parse as YYYYMMDD-HHMMSS
+	t, err := time.Parse("20060102-150405", tsStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+	return t, nil
+}
+
+// checkInboxStagnation checks for stagnant inbox messages and sends notifications (Issue #96).
+// Warning: 10+ minutes, Critical: 30+ minutes.
+func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName string) {
+	now := time.Now()
+	
+	for nodeKey, nodeInfo := range nodes {
+		// Extract simple name from session-prefixed key
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+		
+		// Skip self (current node's inbox)
+		if simpleName == currentNodeName {
+			continue
+		}
+		
+		// Build inbox path
+		inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+		
+		// Read inbox directory
+		entries, err := os.ReadDir(inboxPath)
+		if err != nil {
+			continue // Skip if directory doesn't exist or can't be read
+		}
+		
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			
+			// Parse message timestamp
+			msgTime, err := parseMessageTimestamp(entry.Name())
+			if err != nil {
+				continue // Skip files with invalid timestamp
+			}
+			
+			// Calculate age
+			age := now.Sub(msgTime)
+			
+			// Determine severity
+			var severity string
+			var threshold time.Duration
+			if age >= 30*time.Minute {
+				severity = "critical"
+				threshold = 30 * time.Minute
+			} else if age >= 10*time.Minute {
+				severity = "warning"
+				threshold = 10 * time.Minute
+			} else {
+				continue // No notification needed
+			}
+			
+			// Check if already notified at this severity level
+			fileKey := filepath.Join(inboxPath, entry.Name()) + ":" + severity
+			ds.notifiedInboxFilesMu.RLock()
+			lastNotified, notified := ds.notifiedInboxFiles[fileKey]
+			ds.notifiedInboxFilesMu.RUnlock()
+			
+			// Skip if already notified within cooldown period (5 minutes)
+			if notified && now.Sub(lastNotified) < 5*time.Minute {
+				continue
+			}
+			
+			// Record notification
+			ds.notifiedInboxFilesMu.Lock()
+			ds.notifiedInboxFiles[fileKey] = now
+			ds.notifiedInboxFilesMu.Unlock()
+			
+			// Build notification message
+			eventType := "inbox_stagnation_" + severity
+			message := fmt.Sprintf("Inbox stagnation [%s]: %s has unread message in inbox for %s (threshold: %s)",
+				strings.ToUpper(severity),
+				simpleName,
+				age.Round(time.Second).String(),
+				threshold.String(),
+			)
+			
+			// Send TUI event
+			events <- tui.DaemonEvent{
+				Type:    eventType,
+				Message: message,
+				Details: map[string]interface{}{
+					"node":      simpleName,
+					"filename":  entry.Name(),
+					"age":       age.Seconds(),
+					"threshold": threshold.Seconds(),
+					"severity":  severity,
+				},
+			}
+			
+			// Send tmux notification to the pane
+			tmuxMsg := fmt.Sprintf("⚠️  %s", message)
+			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
+			// Ignore tmux command error (pane might not exist)
+		}
+	}
 }
