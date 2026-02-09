@@ -72,6 +72,79 @@ func (nl *NotificationLog) GetNotifications(contextID string) []NotificationEntr
 	return result
 }
 
+// GetAllPanesInfo retrieves information for all tmux panes (Issue #94).
+// Returns map[paneID]PaneInfo with optimized batch processing.
+// Only queries window_active for panes where pane_active=0.
+func GetAllPanesInfo() (map[string]PaneInfo, error) {
+	// Get all pane info: pane_id, pane_active, pane_activity
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}:#{pane_active}:#{pane_activity}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-panes failed: %w", err)
+	}
+
+	result := make(map[string]PaneInfo)
+	inactivePanes := []string{}
+
+	// First pass: collect all panes, identify inactive ones
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) != 3 {
+			continue
+		}
+
+		paneID := parts[0]
+		paneActive := parts[1] == "1"
+		paneActivity, _ := strconv.ParseInt(parts[2], 10, 64)
+
+		if paneActive {
+			result[paneID] = PaneInfo{
+				PaneID:       paneID,
+				PaneActive:   true,
+				PaneActivity: paneActivity,
+				Status:       StatusVisible,
+				LastChecked:  time.Now(),
+			}
+		} else {
+			// Mark as inactive, will check window_active later
+			result[paneID] = PaneInfo{
+				PaneID:       paneID,
+				PaneActive:   false,
+				PaneActivity: paneActivity,
+				Status:       StatusUnknown,
+				LastChecked:  time.Now(),
+			}
+			inactivePanes = append(inactivePanes, paneID)
+		}
+	}
+
+	// Second pass: check window_active only for inactive panes (Issue #94 optimization)
+	for _, paneID := range inactivePanes {
+		cmd := exec.Command("tmux", "display-message", "-p", "-t", paneID, "#{window_active}")
+		windowActiveOutput, err := cmd.Output()
+		if err != nil {
+			// Keep StatusUnknown
+			continue
+		}
+
+		windowActive := strings.TrimSpace(string(windowActiveOutput)) == "1"
+		paneInfo := result[paneID]
+		paneInfo.WindowActive = windowActive
+		if windowActive {
+			paneInfo.Status = StatusWindowVisible
+		} else {
+			paneInfo.Status = StatusNotVisible
+		}
+		result[paneID] = paneInfo
+	}
+
+	return result, nil
+}
+
 // GetPaneInfo retrieves concierge pane information using tmux commands.
 // Returns PaneInfo with status based on pane and window active states.
 func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {

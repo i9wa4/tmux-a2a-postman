@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
 )
 
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
@@ -621,6 +622,26 @@ func RunDaemonLoop(
 				}
 				if notification == "display" || notification == "all" {
 					_ = exec.Command("tmux", "display-message", eventMessage).Run()
+				}
+			}
+
+			// Issue #94: Monitor all panes with high frequency
+			paneStates, err := uipane.GetAllPanesInfo()
+			if err == nil {
+				// Build paneID -> nodeKey mapping for TUI
+				paneToNode := make(map[string]string)
+				for nodeKey, nodeInfo := range nodes {
+					paneToNode[nodeInfo.PaneID] = nodeKey
+				}
+
+				// Send pane_state_update event to TUI
+				events <- tui.DaemonEvent{
+					Type:    "pane_state_update",
+					Message: "Pane states updated",
+					Details: map[string]interface{}{
+						"pane_states":  paneStates,
+						"pane_to_node": paneToNode,
+					},
 				}
 			}
 
