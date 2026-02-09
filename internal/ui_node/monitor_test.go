@@ -1,4 +1,4 @@
-package uipane
+package ui_node
 
 import (
 	"testing"

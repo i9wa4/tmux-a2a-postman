@@ -25,7 +25,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
-	"github.com/i9wa4/tmux-a2a-postman/internal/uipane"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ui_node"
 )
 
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
@@ -63,7 +63,7 @@ type DaemonState struct {
 	notifiedInboxFilesMu     sync.RWMutex                        // Issue #96: Mutex for notifiedInboxFiles
 	notifiedNodeInactivity   map[string]time.Time                // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
 	notifiedNodeInactivityMu sync.RWMutex                        // Issue #99: Mutex for notifiedNodeInactivity
-	prevPaneStates           map[string]uipane.PaneInfo          // Issue #98: Track previous pane states for restart detection
+	prevPaneStates           map[string]ui_node.PaneInfo          // Issue #98: Track previous pane states for restart detection
 	prevPaneStatesMu         sync.RWMutex                        // Issue #98: Mutex for prevPaneStates
 }
 
@@ -74,7 +74,7 @@ func NewDaemonState() *DaemonState {
 		enabledSessions:        make(map[string]bool),
 		notifiedInboxFiles:     make(map[string]time.Time),     // Issue #96
 		notifiedNodeInactivity: make(map[string]time.Time),     // Issue #99
-		prevPaneStates:         make(map[string]uipane.PaneInfo), // Issue #98
+		prevPaneStates:         make(map[string]ui_node.PaneInfo), // Issue #98
 	}
 }
 
@@ -678,7 +678,7 @@ func RunDaemonLoop(
 			}
 
 			// Issue #94: Monitor all panes with high frequency
-			paneStates, err := uipane.GetAllPanesInfo()
+			paneStates, err := ui_node.GetAllPanesInfo()
 			if err == nil {
 				// IMPORTANT FIX: Only send event if pane states changed
 				currentJSON, _ := json.Marshal(paneStates)
@@ -981,7 +981,7 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
-func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uipane.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
 
@@ -1077,7 +1077,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uipane.PaneInfo, 
 	}
 
 	// Update prevPaneStates
-	ds.prevPaneStates = make(map[string]uipane.PaneInfo)
+	ds.prevPaneStates = make(map[string]ui_node.PaneInfo)
 	for paneID, info := range paneStates {
 		ds.prevPaneStates[paneID] = info
 	}
