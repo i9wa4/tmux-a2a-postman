@@ -16,10 +16,10 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in {
         packages.default = pkgs.buildGoModule {
-          pname = "postman";
+          pname = "tmux-a2a-postman";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-qWQM+DlW/9/JlAv9M7QBUch3wSeOQFVgGxmkIm29yAM=";
+          vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
         };
         devShells = {
           default = pkgs.mkShell {
