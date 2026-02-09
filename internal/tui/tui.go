@@ -45,6 +45,16 @@ var (
 	// Issue #93: Legend styles
 	waitingNodeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")) // gray
+
+	// Issue #101: Event severity styles
+	eventWarningStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("226")) // yellow
+
+	eventCriticalStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")) // red
+
+	eventDroppedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")) // gray
 )
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
@@ -98,10 +108,12 @@ type SessionInfo struct {
 }
 
 // EventEntry holds event information with session context (Issue #59).
+// Issue #101: Added Severity field for color-coded display.
 type EventEntry struct {
 	Message     string
 	SessionName string
 	Timestamp   time.Time
+	Severity    string // Issue #101: "warning", "critical", "dropped", or "" (default)
 }
 
 // DaemonEvent represents an event from the daemon goroutine.
@@ -424,6 +436,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: sessionName,
 				Timestamp:   time.Now(),
+				Severity:    "", // Issue #101: Default severity
 			})
 			// Keep only last 10 events
 			if len(m.events) > 10 {
@@ -452,6 +465,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     msg.Message,
 				SessionName: sessionName,
 				Timestamp:   time.Now(),
+				Severity:    "", // Issue #101: Default severity
 			})
 			// Keep only last 10 events
 			if len(m.events) > 10 {
@@ -545,6 +559,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Message:     fmt.Sprintf("ERROR: %s", msg.Message),
 				SessionName: "", // Error events have no specific session
 				Timestamp:   time.Now(),
+				Severity:    "critical", // Issue #101: Errors are critical
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		// Issue #101: Handle abnormal event types
+		case "inbox_stagnation_warning":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "warning",
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "inbox_stagnation_critical":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "critical",
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "node_inactivity_warning":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "warning",
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "node_inactivity_critical":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "critical",
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "node_inactivity_dropped":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "dropped",
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "unreplied_message":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    "warning",
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -558,6 +634,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// extractSessionFromDetails extracts session name from event Details (Issue #101).
+// Tries multiple common keys: "session", "node", and extracts session prefix from "node" if needed.
+func extractSessionFromDetails(details map[string]interface{}) string {
+	// Try "session" key first
+	if session, ok := details["session"].(string); ok {
+		return session
+	}
+	// Try "node" key and extract session prefix (format: "session:node")
+	if node, ok := details["node"].(string); ok {
+		if parts := strings.SplitN(node, ":", 2); len(parts) == 2 {
+			return parts[0]
+		}
+	}
+	return ""
 }
 
 // View renders the TUI with left-right split layout (Issue #45).
@@ -802,7 +894,17 @@ func (m Model) renderEventsView(width, height int) string {
 			if maxMsgLen > 0 {
 				msg = truncateString(msg, maxMsgLen)
 			}
-			b.WriteString(fmt.Sprintf("  - %s\n", msg))
+			// Issue #101: Apply severity-based styling
+			styledMsg := msg
+			switch event.Severity {
+			case "warning":
+				styledMsg = eventWarningStyle.Render(msg)
+			case "critical":
+				styledMsg = eventCriticalStyle.Render(msg)
+			case "dropped":
+				styledMsg = eventDroppedStyle.Render(msg)
+			}
+			b.WriteString(fmt.Sprintf("  - %s\n", styledMsg))
 		}
 	}
 	return b.String()
