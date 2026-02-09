@@ -41,6 +41,10 @@ var (
 	// Issue #89: Selected session row highlight
 	selectedSessionStyle = lipgloss.NewStyle().
 				Reverse(true)
+
+	// Issue #93: Legend styles
+	waitingNodeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")) // gray
 )
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
@@ -226,10 +230,35 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 			state = "dropped"
 		case !activity.PongReceived:
 			state = "waiting"
-		case !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent):
-			state = "holding"
 		default:
-			state = "active"
+			// Issue #95: Time-based color changes
+			// Calculate idle duration from max(LastSent, LastReceived)
+			now := time.Now()
+			lastActivity := activity.LastSent
+			if activity.LastReceived.After(lastActivity) {
+				lastActivity = activity.LastReceived
+			}
+
+			idleDuration := time.Duration(0)
+			if !lastActivity.IsZero() {
+				idleDuration = now.Sub(lastActivity)
+			}
+
+			// Time-based state determination:
+			// 0-5min: active (green)
+			// 5-15min: holding (orange)
+			// 15-30min: dropped (red)
+			// 30min+: waiting (gray)
+			switch {
+			case idleDuration >= 30*time.Minute:
+				state = "waiting"
+			case idleDuration >= 15*time.Minute:
+				state = "dropped"
+			case idleDuration >= 5*time.Minute:
+				state = "holding"
+			default:
+				state = "active"
+			}
 		}
 
 		// Direct assignment with session-prefixed key
@@ -646,14 +675,22 @@ func (m Model) renderRightPane(width, height int) string {
 	} else {
 		b.WriteString("2:Routing")
 	}
-	b.WriteString("]\n\n")
+	b.WriteString("]\n")
+
+	// Issue #93: Legend display
+	legend := "Legend: " +
+		activeNodeStyle.Render("Active") + " | " +
+		ballHolderStyle.Render("Holding") + " | " +
+		droppedNodeStyle.Render("Dropped") + " | " +
+		waitingNodeStyle.Render("Waiting")
+	b.WriteString(legend + "\n\n")
 
 	// Content based on current view
 	switch m.currentView {
 	case ViewEvents:
-		b.WriteString(m.renderEventsView(width, height-6))
+		b.WriteString(m.renderEventsView(width, height-7))
 	case ViewRouting:
-		b.WriteString(m.renderRoutingView(width, height-6))
+		b.WriteString(m.renderRoutingView(width, height-7))
 	}
 
 	return b.String()
