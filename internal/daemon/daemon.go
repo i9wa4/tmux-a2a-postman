@@ -55,20 +55,23 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
-	edgeHistory         map[string]EdgeActivity
-	edgeHistoryMu       sync.RWMutex
-	enabledSessions     map[string]bool
-	enabledSessionsMu   sync.RWMutex
-	notifiedInboxFiles  map[string]time.Time // Issue #96: Track notified inbox files (filename -> notification time)
-	notifiedInboxFilesMu sync.RWMutex         // Issue #96: Mutex for notifiedInboxFiles
+	edgeHistory            map[string]EdgeActivity
+	edgeHistoryMu          sync.RWMutex
+	enabledSessions        map[string]bool
+	enabledSessionsMu      sync.RWMutex
+	notifiedInboxFiles     map[string]time.Time // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu   sync.RWMutex         // Issue #96: Mutex for notifiedInboxFiles
+	notifiedNodeInactivity map[string]time.Time // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
+	notifiedNodeInactivityMu sync.RWMutex       // Issue #99: Mutex for notifiedNodeInactivity
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 func NewDaemonState() *DaemonState {
 	return &DaemonState{
-		edgeHistory:        make(map[string]EdgeActivity),
-		enabledSessions:    make(map[string]bool),
-		notifiedInboxFiles: make(map[string]time.Time), // Issue #96
+		edgeHistory:            make(map[string]EdgeActivity),
+		enabledSessions:        make(map[string]bool),
+		notifiedInboxFiles:     make(map[string]time.Time), // Issue #96
+		notifiedNodeInactivity: make(map[string]time.Time), // Issue #99
 	}
 }
 
@@ -683,6 +686,9 @@ func RunDaemonLoop(
 			// Issue #96: Check inbox stagnation
 			currentNode := os.Getenv("A2A_NODE")
 			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode)
+
+			// Issue #99: Check node inactivity
+			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events)
 		}
 	}
 }
@@ -821,5 +827,111 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
 			// Ignore tmux command error (pane might not exist)
 		}
+	}
+}
+
+// checkNodeInactivity checks for inactive nodes and sends notifications (Issue #99).
+// Warning: 5-10 minutes, Critical: 15-20 minutes, Dropped: 30-60 minutes.
+func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, idleTracker *idle.IdleTracker, cfg *config.Config, events chan<- tui.DaemonEvent) {
+	now := time.Now()
+	nodeStates := idleTracker.GetNodeStates()
+
+	for nodeKey := range nodes {
+		activity, exists := nodeStates[nodeKey]
+		if !exists {
+			continue
+		}
+
+		// Calculate inactivity duration from max(LastSent, LastReceived)
+		lastActivity := activity.LastSent
+		if activity.LastReceived.After(lastActivity) {
+			lastActivity = activity.LastReceived
+		}
+
+		if lastActivity.IsZero() {
+			continue // No activity yet
+		}
+
+		inactiveDuration := now.Sub(lastActivity)
+
+		// Determine severity based on inactivity duration
+		var severity string
+		var threshold time.Duration
+		switch {
+		case inactiveDuration >= 30*time.Minute: // Dropped: 30-60 minutes
+			severity = "dropped"
+			threshold = 30 * time.Minute
+		case inactiveDuration >= 15*time.Minute: // Critical: 15-20 minutes
+			severity = "critical"
+			threshold = 15 * time.Minute
+		case inactiveDuration >= 5*time.Minute: // Warning: 5-10 minutes
+			severity = "warning"
+			threshold = 5 * time.Minute
+		default:
+			continue // No notification needed
+		}
+
+		// Check if already notified at this severity level
+		notifKey := nodeKey + ":" + severity
+		ds.notifiedNodeInactivityMu.RLock()
+		lastNotified, notified := ds.notifiedNodeInactivity[notifKey]
+		ds.notifiedNodeInactivityMu.RUnlock()
+
+		// Skip if already notified within cooldown period (5 minutes)
+		if notified && now.Sub(lastNotified) < 5*time.Minute {
+			continue
+		}
+
+		// Record notification
+		ds.notifiedNodeInactivityMu.Lock()
+		ds.notifiedNodeInactivity[notifKey] = now
+		ds.notifiedNodeInactivityMu.Unlock()
+
+		// Format timestamps for display
+		lastSentStr := "N/A"
+		if !activity.LastSent.IsZero() {
+			lastSentStr = activity.LastSent.Format("15:04:05")
+		}
+		lastReceivedStr := "N/A"
+		if !activity.LastReceived.IsZero() {
+			lastReceivedStr = activity.LastReceived.Format("15:04:05")
+		}
+		pongStatus := "Yes"
+		if !activity.PongReceived {
+			pongStatus = "No"
+		}
+
+		// Build notification message
+		eventType := "node_inactivity_" + severity
+		message := fmt.Sprintf("Node inactivity [%s]: %s inactive for %s (threshold: %s). Last sent: %s, Last received: %s, PONG received: %s",
+			strings.ToUpper(severity),
+			nodeKey,
+			inactiveDuration.Round(time.Second).String(),
+			threshold.String(),
+			lastSentStr,
+			lastReceivedStr,
+			pongStatus,
+		)
+
+		// Send TUI event
+		events <- tui.DaemonEvent{
+			Type:    eventType,
+			Message: message,
+			Details: map[string]interface{}{
+				"node":              nodeKey,
+				"inactive_duration": inactiveDuration.Seconds(),
+				"threshold":         threshold.Seconds(),
+				"severity":          severity,
+				"last_sent":         lastSentStr,
+				"last_received":     lastReceivedStr,
+				"pong_received":     activity.PongReceived,
+			},
+		}
+
+		// Send tmux notification to the pane
+		nodeInfo := nodes[nodeKey]
+		tmuxMsg := fmt.Sprintf("⚠️  %s", message)
+		_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
+		// Ignore tmux command error (pane might not exist)
 	}
 }
