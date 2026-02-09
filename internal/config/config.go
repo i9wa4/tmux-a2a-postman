@@ -44,6 +44,7 @@ type Config struct {
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
 	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
+	EdgeViolationWarningMode     string `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
 	IdleReminderHeaderTemplate   string `toml:"idle_reminder_header_template"`   // Issue #82: Idle reminder header
 	SessionIdleAlertTemplate     string `toml:"session_idle_alert_template"`     // Issue #82: Session idle alert message
 	CompactionHeaderTemplate     string `toml:"compaction_header_template"`      // Issue #82: Compaction detection header
@@ -146,7 +147,8 @@ func DefaultConfig() *Config {
 		UINode:                       "concierge", // Issue #46: Default UI target node
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
-		EdgeViolationWarningTemplate: "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/.",
+		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}.",
+		EdgeViolationWarningMode:     "compact", // Issue #92: Default to compact mode
 		IdleReminderHeaderTemplate:   "## Idle Reminder",
 		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
 		CompactionHeaderTemplate:     "## Compaction Detected",

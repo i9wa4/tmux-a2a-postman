@@ -223,10 +223,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					neighborsStr = "none"
 				}
 
-				// Issue #80: Use configurable template
+				// Issue #92: Use configurable template with mode support
 				warnTemplate := cfg.EdgeViolationWarningTemplate
 				if warnTemplate == "" {
-					warnTemplate = "Routing denied: you attempted to send to \"{attempted_recipient}\" but your allowed edges are: {allowed_edges}.\n\nOriginal message moved to dead-letter/."
+					warnTemplate = "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}."
 				}
 
 				// Build variables map for template expansion
@@ -236,11 +236,26 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					"timestamp":           now.Format(time.RFC3339),
 					"attempted_recipient": info.To,
 					"allowed_edges":       neighborsStr,
+					"reply_command":       cfg.ReplyCommand,
 				}
 
 				// Expand template
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				warnBody := template.ExpandTemplate(warnTemplate, vars, timeout)
+
+				// Issue #92: Add reply instructions for verbose mode
+				mode := cfg.EdgeViolationWarningMode
+				if mode == "" {
+					mode = "compact"
+				}
+				if mode == "verbose" {
+					replyInstructions := fmt.Sprintf("\n\nSteps:\n\n1. %s --context-id %s --to <recipient>\n   - Replace `<recipient>` with one of: %s\n2. Edit the draft content\n3. mv from draft/ to post/",
+						cfg.ReplyCommand,
+						contextID,
+						neighborsStr,
+					)
+					warnBody += replyInstructions
+				}
 
 				// Build full message with header
 				warnContent := fmt.Sprintf(

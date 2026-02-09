@@ -50,6 +50,7 @@
 #   {timestamp}           - ISO format timestamp
 #   {attempted_recipient} - Node name that the sender attempted to send to
 #   {allowed_edges}       - Comma-separated list of allowed neighbors
+#   {reply_command}       - Command to create draft message
 #
 # =============================================================================
 
@@ -124,11 +125,10 @@ edges = []
 #
 # """
 
-# Edge violation warning template
+# Edge violation warning template (Issue #92)
+# edge_violation_warning_mode = "compact"  # "compact" or "verbose" (default: compact)
 # edge_violation_warning_template = """
-# Routing denied: you attempted to send to "{attempted_recipient}" but your allowed edges are: {allowed_edges}.
-#
-# Original message moved to dead-letter/.
+# you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}.
 # """
 
 # Rules template (generated as RULES.md in session directory)
