@@ -283,8 +283,25 @@ func RunDaemonLoop(
 										}
 									}
 
-									// Send PING after delay
-									if cfg.NewNodePingDelay > 0 {
+									// Send PING after delay (Issue #98: Apply PingMode filter)
+									shouldPing := false
+									switch cfg.PingMode {
+									case "all":
+										shouldPing = true
+									case "ui_node_only":
+										// Extract simple name for UI node check
+										simpleName := nodeName
+										if parts := strings.SplitN(nodeName, ":", 2); len(parts) == 2 {
+											simpleName = parts[1]
+										}
+										shouldPing = (simpleName == cfg.UINode)
+									case "disabled":
+										shouldPing = false
+									default:
+										shouldPing = true // Default to "all" behavior
+									}
+
+									if shouldPing && cfg.NewNodePingDelay > 0 {
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 										capturedNode := nodeName
 										capturedNodeInfo := nodeInfo
@@ -540,8 +557,25 @@ func RunDaemonLoop(
 						}
 					}
 
-					// Send PING after delay
-					if cfg.NewNodePingDelay > 0 {
+					// Send PING after delay (Issue #98: Apply PingMode filter)
+					shouldPing := false
+					switch cfg.PingMode {
+					case "all":
+						shouldPing = true
+					case "ui_node_only":
+						// Extract simple name for UI node check
+						simpleName := nodeName
+						if parts := strings.SplitN(nodeName, ":", 2); len(parts) == 2 {
+							simpleName = parts[1]
+						}
+						shouldPing = (simpleName == cfg.UINode)
+					case "disabled":
+						shouldPing = false
+					default:
+						shouldPing = true // Default to "all" behavior
+					}
+
+					if shouldPing && cfg.NewNodePingDelay > 0 {
 						newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 						capturedNode := nodeName
 						capturedNodeInfo := nodeInfo
