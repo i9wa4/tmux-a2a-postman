@@ -223,6 +223,11 @@ func TestLoadConfig_Partial(t *testing.T) {
 [postman]
 scan_interval_seconds = 3.0
 base_dir = "/partial/base"
+
+edges = ["worker -- orchestrator"]
+
+[worker]
+[orchestrator]
 `
 
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -353,6 +358,11 @@ func TestConfig_Fallback(t *testing.T) {
 	content := `
 [postman]
 scan_interval_seconds = 5.0
+
+edges = ["worker -- orchestrator"]
+
+[worker]
+[orchestrator]
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
@@ -378,6 +388,11 @@ func TestLoadConfig_BaseDir(t *testing.T) {
 	content := `
 [postman]
 base_dir = "/custom/postman"
+
+edges = ["worker -- orchestrator"]
+
+[worker]
+[orchestrator]
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)

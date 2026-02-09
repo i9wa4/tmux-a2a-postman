@@ -193,25 +193,6 @@ func (m Model) getSelectedBorderColor() string {
 	return "10" // highlight color (green, matches session selection)
 }
 
-// sessionHasIdleNodes returns true if any node in the session has "holding" or "dropped" state (Issue #64).
-// Issue #77: Use session-prefixed keys (sessionName:nodeName) to avoid collision across sessions.
-func (m Model) sessionHasIdleNodes(sessionName string) bool {
-	nodes, ok := m.sessionNodes[sessionName]
-	if !ok {
-		return false
-	}
-	for _, nodeName := range nodes {
-		// Issue #77: Construct session-prefixed key
-		prefixedKey := sessionName + ":" + nodeName
-		if state, exists := m.nodeStates[prefixedKey]; exists {
-			if state == "holding" || state == "dropped" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // getSessionWorstState returns the worst node state for a session (Issue #97).
 // Priority: dropped > holding > waiting > active
 func (m Model) getSessionWorstState(sessionName string) string {
@@ -770,15 +751,8 @@ func (m Model) renderLeftPane(width, height int) string {
 				statusEmoji = "🟢"
 			}
 
-			// Mail emoji for sessions with idle/waiting nodes
-			// NOTE: Skip idle check for disabled sessions
-			mailEmoji := "  "
-			if sess.Enabled && m.sessionHasIdleNodes(sess.Name) {
-				mailEmoji = "📧"
-			}
-
-			// Add space after emojis before session name
-			prefix := statusEmoji + mailEmoji + " "
+			// Add space after emoji before session name
+			prefix := statusEmoji + " "
 
 			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 

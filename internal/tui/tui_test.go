@@ -312,44 +312,6 @@ func TestParseEdgeNodes(t *testing.T) {
 	}
 }
 
-func TestSessionHasIdleNodes(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil)
-	m.sessionNodes = map[string][]string{
-		"session-a": {"worker", "observer"},
-		"session-b": {"tester"},
-	}
-	// Issue #77: Use session-prefixed keys
-	m.nodeStates = map[string]string{
-		"session-a:worker":   "active",
-		"session-a:observer": "holding",
-		"session-b:tester":   "gray",
-	}
-
-	// session-a has "holding" node
-	if !m.sessionHasIdleNodes("session-a") {
-		t.Error("session-a should have idle nodes (observer is holding)")
-	}
-
-	// session-b has no holding/dropped nodes
-	if m.sessionHasIdleNodes("session-b") {
-		t.Error("session-b should not have idle nodes (tester is gray)")
-	}
-
-	// non-existent session
-	if m.sessionHasIdleNodes("session-c") {
-		t.Error("non-existent session should not have idle nodes")
-	}
-
-	// Test dropped state
-	m.nodeStates["session-b:tester"] = "dropped"
-	if !m.sessionHasIdleNodes("session-b") {
-		t.Error("session-b should have idle nodes (tester is dropped)")
-	}
-}
-
 func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
@@ -382,11 +344,6 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	// Verify disabled session has black emoji
 	if !strings.Contains(result, "\u26AB") { // ⚫
 		t.Error("renderLeftPane missing black circle emoji for disabled session")
-	}
-
-	// Verify mail emoji for session with idle nodes
-	if !strings.Contains(result, "\U0001F4E7") { // 📧
-		t.Error("renderLeftPane missing mail emoji for session with holding node")
 	}
 }
 
