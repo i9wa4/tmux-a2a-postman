@@ -177,10 +177,10 @@ func (m Model) Quitting() bool {
 	return m.quitting
 }
 
-// getSelectedSessionName returns the selected session name, or "" for "(All)" (Issue #59).
+// getSelectedSessionName returns the selected session name.
 func (m Model) getSelectedSessionName() string {
-	if m.selectedSession == 0 || m.selectedSession >= len(m.sessions) {
-		return "" // "" means "All"
+	if m.selectedSession < 0 || m.selectedSession >= len(m.sessions) {
+		return ""
 	}
 	return m.sessions[m.selectedSession].Name
 }
@@ -403,8 +403,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case " ", "enter":
 			// Session toggle via TUICommand
-			// Issue #59: Guard against "(All)" selection
-			if m.selectedSession > 0 && m.selectedSession < len(m.sessions) {
+			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
@@ -416,8 +415,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "p":
 			// Issue #47: Send PING to selected session
-			// Issue #59: Guard against "(All)" selection
-			if m.selectedSession > 0 && m.selectedSession < len(m.sessions) {
+			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
@@ -485,9 +483,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #36: Bug 2 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				// Issue #59: Prepend "(All)" virtual entry
-				allEntry := SessionInfo{Name: "(All)", Enabled: true}
-				m.sessions = append([]SessionInfo{allEntry}, sessionList...)
+				m.sessions = sessionList
 				// Clamp selection
 				if m.selectedSession >= len(m.sessions) {
 					m.selectedSession = len(m.sessions) - 1
@@ -515,9 +511,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				// Issue #59: Prepend "(All)" virtual entry
-				allEntry := SessionInfo{Name: "(All)", Enabled: true}
-				m.sessions = append([]SessionInfo{allEntry}, sessionList...)
+				m.sessions = sessionList
 				// Clamp selection
 				if m.selectedSession >= len(m.sessions) {
 					m.selectedSession = len(m.sessions) - 1
@@ -770,33 +764,27 @@ func (m Model) renderLeftPane(width, height int) string {
 				cursor = "> "
 			}
 
-			var line string
-			if sess.Name == "(All)" {
-				// "(All)" has no emoji prefix
-				line = fmt.Sprintf("%s%s", cursor, sess.Name)
-			} else {
-				// Status emoji
-				statusEmoji := "⚫"
-				if sess.Enabled {
-					statusEmoji = "🟢"
-				}
-
-				// Mail emoji for sessions with idle/waiting nodes
-				// NOTE: Skip idle check for disabled sessions
-				mailEmoji := "  "
-				if sess.Enabled && m.sessionHasIdleNodes(sess.Name) {
-					mailEmoji = "📧"
-				}
-
-				// Add space after emojis before session name
-				prefix := statusEmoji + mailEmoji + " "
-
-				line = fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
+			// Status emoji
+			statusEmoji := "⚫"
+			if sess.Enabled {
+				statusEmoji = "🟢"
 			}
+
+			// Mail emoji for sessions with idle/waiting nodes
+			// NOTE: Skip idle check for disabled sessions
+			mailEmoji := "  "
+			if sess.Enabled && m.sessionHasIdleNodes(sess.Name) {
+				mailEmoji = "📧"
+			}
+
+			// Add space after emojis before session name
+			prefix := statusEmoji + mailEmoji + " "
+
+			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 
 			// Issue #97: Apply session color based on worst node state
 			// Priority: dropped (red) > holding (orange) > waiting (gray) > active (green)
-			if i != m.selectedSession && sess.Name != "(All)" && sess.Enabled {
+			if i != m.selectedSession && sess.Enabled {
 				worstState := m.getSessionWorstState(sess.Name)
 				var sessionStyle lipgloss.Style
 				switch worstState {

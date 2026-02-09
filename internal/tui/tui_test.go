@@ -358,7 +358,6 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	m.width = 80
 	m.height = 24
 	m.sessions = []SessionInfo{
-		{Name: "(All)", Enabled: true},
 		{Name: "session-a", NodeCount: 2, Enabled: true},
 		{Name: "session-b", NodeCount: 1, Enabled: false},
 	}
@@ -374,11 +373,6 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	}
 
 	result := m.renderLeftPane(25, 20)
-
-	// Verify "(All)" has no emoji prefix
-	if !strings.Contains(result, "(All)") {
-		t.Error("renderLeftPane missing (All) entry")
-	}
 
 	// Verify enabled session has green emoji
 	if !strings.Contains(result, "\U0001F7E2") { // 🟢
