@@ -49,9 +49,6 @@ var (
 	selectedSessionStyle = lipgloss.NewStyle().
 				Reverse(true)
 
-	// Issue #93: Legend styles
-	waitingNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")) // gray
 
 	// Issue #101: Event severity styles
 	eventWarningStyle = lipgloss.NewStyle().
