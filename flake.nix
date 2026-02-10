@@ -14,12 +14,23 @@
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
+        version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
+        commit =
+          if (builtins.hasAttr "rev" self)
+          then (builtins.substring 0 7 self.rev)
+          else "unknown";
       in {
         packages.default = pkgs.buildGoModule {
           pname = "tmux-a2a-postman";
-          version = "dev";
+          inherit version;
           src = ./.;
           vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
+          ldflags = [
+            "-s"
+            "-w"
+            "-X internal/version.Version=${version}"
+            "-X internal/version.Commit=${commit}"
+          ];
         };
         devShells = {
           default = pkgs.mkShell {

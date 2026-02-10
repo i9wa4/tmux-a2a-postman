@@ -11,6 +11,7 @@ builds:
     ldflags:
       - -s -w
       - -X internal/version.Version={{.Version}}
+      - -X internal/version.Commit={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -37,6 +38,8 @@ release:
     name: tmux-a2a-postman
   draft: false
   prerelease: auto
+  # NOTE: Tag and release are created by scripts/upsert-gh-release.sh
+  # GoReleaser only builds and uploads assets to the existing release
 
 changelog:
   sort: asc
