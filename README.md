@@ -91,6 +91,7 @@ Edges define bidirectional communication paths between nodes. You can build any 
 
 ```mermaid
 graph TD
+    user([User]) -.-> concierge
     concierge --- orchestrator
     orchestrator --- worker
     orchestrator --- observer-a-leader
