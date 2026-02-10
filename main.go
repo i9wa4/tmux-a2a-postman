@@ -329,6 +329,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start idle check goroutine
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir)
 
+	// Start pane capture check goroutine (hybrid idle detection)
+	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID)
+
 	// Start session-level idle check goroutine
 	sessionidle.StartSessionIdleCheck(baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
 

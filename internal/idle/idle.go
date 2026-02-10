@@ -3,13 +3,16 @@ package idle
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -21,10 +24,19 @@ type NodeActivity struct {
 	LastNotifiedDropped time.Time // Issue #56: cooldown tracking for dropped-ball alerts
 }
 
+// PaneCaptureState holds pane capture state for hybrid idle detection.
+type PaneCaptureState struct {
+	LastHash      uint32    // CRC32 hash of pane content
+	LastChangeAt  time.Time // Last time content change was detected
+	ChangeCount   int       // Consecutive change count (2 = active)
+	LastCaptureAt time.Time // Last capture time
+}
+
 // IdleTracker manages idle detection state (Issue #71).
 type IdleTracker struct {
 	nodeActivity     map[string]NodeActivity
 	lastReminderSent map[string]time.Time
+	paneCaptureState map[string]PaneCaptureState // paneKey -> PaneCaptureState
 	mu               sync.Mutex
 }
 
@@ -33,6 +45,7 @@ func NewIdleTracker() *IdleTracker {
 	return &IdleTracker{
 		nodeActivity:     make(map[string]NodeActivity),
 		lastReminderSent: make(map[string]time.Time),
+		paneCaptureState: make(map[string]PaneCaptureState),
 	}
 }
 
@@ -310,4 +323,151 @@ func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, se
 	}
 
 	return nil
+}
+
+// capturePaneContent captures the visible content of a tmux pane.
+// Returns the content as a string, or empty string on error.
+func capturePaneContent(paneID string) (string, error) {
+	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
+	}
+	return string(output), nil
+}
+
+// hashContentCRC32 computes CRC32 hash of the content.
+func hashContentCRC32(content string) uint32 {
+	return crc32.ChecksumIEEE([]byte(content))
+}
+
+// checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
+// Issue #xxx: Hybrid idle detection with screen capture.
+func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) {
+	if !cfg.PaneCaptureEnabled {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Get all pane IDs
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Failed to list panes - skip this check
+		return
+	}
+
+	// Build paneID -> nodeKey mapping from nodes
+	paneToNode := make(map[string]string) // paneID -> nodeKey (session:node format)
+	for nodeName, nodeInfo := range nodes {
+		sessionKey := nodeInfo.SessionName + ":" + nodeName
+		paneToNode[nodeInfo.PaneID] = sessionKey
+	}
+
+	// Parse pane IDs (limit to max_panes)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	maxPanes := cfg.PaneCaptureMaxPanes
+	if maxPanes <= 0 {
+		maxPanes = 10 // Fallback default
+	}
+	if len(lines) > maxPanes {
+		lines = lines[:maxPanes]
+	}
+
+	now := time.Now()
+
+	for _, line := range lines {
+		paneID := strings.TrimSpace(line)
+		if paneID == "" {
+			continue
+		}
+
+		// Capture pane content
+		content, err := capturePaneContent(paneID)
+		if err != nil {
+			// Capture failed - treat as "unmeasurable", skip this pane
+			// Clean up state if pane disappeared
+			delete(t.paneCaptureState, paneID)
+			continue
+		}
+
+		// Compute CRC32 hash
+		currentHash := hashContentCRC32(content)
+
+		// Get previous state
+		state, exists := t.paneCaptureState[paneID]
+		if !exists {
+			// First time seeing this pane - initialize state
+			t.paneCaptureState[paneID] = PaneCaptureState{
+				LastHash:      currentHash,
+				LastChangeAt:  now,
+				ChangeCount:   0,
+				LastCaptureAt: now,
+			}
+			continue
+		}
+
+		// Update last capture time
+		state.LastCaptureAt = now
+
+		// Check if content changed
+		if currentHash != state.LastHash {
+			// Content changed - increment change count
+			state.LastHash = currentHash
+			state.LastChangeAt = now
+			state.ChangeCount++
+
+			// Check if this is the 2nd consecutive change (within 120 seconds)
+			if state.ChangeCount >= 2 {
+				// Mark as active - update NodeActivity
+				nodeKey, hasNode := paneToNode[paneID]
+				if hasNode {
+					activity := t.nodeActivity[nodeKey]
+					// Update activity timestamp (use LastReceived as activity indicator)
+					activity.LastReceived = now
+					t.nodeActivity[nodeKey] = activity
+				}
+				// Reset change count after marking active
+				state.ChangeCount = 0
+			}
+		} else {
+			// Content unchanged - reset change count
+			state.ChangeCount = 0
+		}
+
+		// Save updated state
+		t.paneCaptureState[paneID] = state
+	}
+}
+
+// StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
+// Issue #xxx: Hybrid idle detection with screen capture.
+func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string) {
+	if !cfg.PaneCaptureEnabled || cfg.PaneCaptureIntervalSeconds <= 0 {
+		return // Pane capture disabled
+	}
+
+	interval := time.Duration(cfg.PaneCaptureIntervalSeconds * float64(time.Second))
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Discover nodes
+				nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+				if err != nil {
+					continue
+				}
+
+				// Perform pane capture check
+				t.checkPaneCapture(cfg, nodes)
+			}
+		}
+	}()
 }

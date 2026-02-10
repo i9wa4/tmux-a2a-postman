@@ -33,6 +33,11 @@ type Config struct {
 	// TUI settings (Issue #37)
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
 
+	// Pane capture settings (hybrid idle detection)
+	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
+	PaneCaptureIntervalSeconds float64 `toml:"pane_capture_interval_seconds"`
+	PaneCaptureMaxPanes        int     `toml:"pane_capture_max_panes"`
+
 	// Paths
 	BaseDir string `toml:"base_dir"`
 
@@ -138,6 +143,9 @@ func DefaultConfig() *Config {
 		NewNodePingDelay:             3.0,
 		ReminderInterval:             0.0,
 		EdgeActivitySeconds:          300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
+		PaneCaptureEnabled:           true,
+		PaneCaptureIntervalSeconds:   60.0,
+		PaneCaptureMaxPanes:          10,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
