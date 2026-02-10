@@ -348,7 +348,7 @@ func TestParseEdges(t *testing.T) {
 func TestConfig_Fallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	xdgConfigHome := filepath.Join(tmpDir, "xdg-config")
-	configDir := filepath.Join(xdgConfigHome, "postman")
+	configDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
 	configPath := filepath.Join(configDir, "postman.toml")
 
 	if err := os.MkdirAll(configDir, 0o755); err != nil {

@@ -343,17 +343,17 @@ func LoadConfig(path string) (*Config, error) {
 // ResolveConfigPath returns the first existing config file in the fallback chain.
 // Returns empty string if no config file is found.
 func ResolveConfigPath() string {
-	// Try XDG_CONFIG_HOME/postman/postman.toml
+	// Try XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml
 	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
-		path := filepath.Join(xdgConfigHome, "postman", "postman.toml")
+		path := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.toml")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 
-	// Try ~/.config/postman/postman.toml
+	// Try ~/.config/tmux-a2a-postman/postman.toml
 	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".config", "postman", "postman.toml")
+		path := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.toml")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
@@ -428,7 +428,7 @@ func GetTalksTo(adjacency map[string][]string, nodeName string) []string {
 // Priority:
 // 1. POSTMAN_HOME env var (explicit override)
 // 2. configBaseDir (if non-empty, from config file)
-// 3. XDG_STATE_HOME/postman/ (or ~/.local/state/postman/)
+// 3. XDG_STATE_HOME/tmux-a2a-postman/ (or ~/.local/state/tmux-a2a-postman/)
 func ResolveBaseDir(configBaseDir string) string {
 	// 1. Explicit override
 	if v := os.Getenv("POSTMAN_HOME"); v != "" {
@@ -446,7 +446,7 @@ func ResolveBaseDir(configBaseDir string) string {
 			stateHome = filepath.Join(home, ".local", "state")
 		}
 	}
-	return filepath.Join(stateHome, "postman")
+	return filepath.Join(stateHome, "tmux-a2a-postman")
 }
 
 // CreateSessionDirs creates the session directory structure.

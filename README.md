@@ -36,13 +36,13 @@ tmux-a2a-postman
 
 postman uses XDG Base Directory Specification:
 
-- **Config**: `$XDG_CONFIG_HOME/postman/postman.toml` (default: `~/.config/postman/`)
-- **State**: `$XDG_STATE_HOME/postman/` (default: `~/.local/state/postman/`)
+- **Config**: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` (default: `~/.config/tmux-a2a-postman/`)
+- **State**: `$XDG_STATE_HOME/tmux-a2a-postman/` (default: `~/.local/state/tmux-a2a-postman/`)
 
 ### 4.1. Session Directory Structure
 
 ```text
-$XDG_STATE_HOME/postman/
+$XDG_STATE_HOME/tmux-a2a-postman/
 └── session-{contextId}/
     ├── inbox/{node}/   # Incoming messages per node
     ├── post/           # Outgoing messages
@@ -75,7 +75,7 @@ Additional environment variables (`POSTMAN_HOME`, `A2A_CONTEXT_ID`, etc.) are av
 
 ## 6. Configuration
 
-postman reads configuration from `$XDG_CONFIG_HOME/postman/postman.toml` (or use `--config` flag).
+postman reads configuration from `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` (or use `--config` flag).
 
 Configuration files define:
 
@@ -105,7 +105,7 @@ Nodes can only communicate when an edge exists between them. If only "concierge 
 
 ### 6.2. Complete Configuration Example
 
-File: `$XDG_CONFIG_HOME/postman/postman.toml`
+File: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`
 
 ```toml
 [postman]
