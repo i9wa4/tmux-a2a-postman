@@ -725,11 +725,12 @@ func RunDaemonLoop(
 						},
 					}
 
-					// Issue #98: Check for pane restarts
-					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, adjacency, idleTracker)
-
-					// Check for pane disappearance (killed panes)
+					// Check for pane disappearance (killed panes) - MUST run before checkPaneRestarts
+					// because checkPaneRestarts updates prevPaneStates
 					daemonState.checkPaneDisappearance(paneStates, daemonState.prevPaneToNode, events)
+
+					// Issue #98: Check for pane restarts (updates prevPaneStates at end)
+					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, adjacency, idleTracker)
 
 					// Update previous state
 					prevPaneStatesJSON = currentJSONStr

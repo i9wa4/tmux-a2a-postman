@@ -150,7 +150,7 @@ func DefaultConfig() *Config {
 		NodeStaleSeconds:             900.0, // 15min+: stale (red)
 		PaneCaptureEnabled:           true,
 		PaneCaptureIntervalSeconds:   60.0,
-		PaneCaptureMaxPanes:          10,
+		PaneCaptureMaxPanes:          0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
