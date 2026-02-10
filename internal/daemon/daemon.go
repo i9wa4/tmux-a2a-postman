@@ -58,13 +58,13 @@ type DaemonState struct {
 	edgeHistoryMu            sync.RWMutex
 	enabledSessions          map[string]bool
 	enabledSessionsMu        sync.RWMutex
-	notifiedInboxFiles       map[string]time.Time                // Issue #96: Track notified inbox files (filename -> notification time)
-	notifiedInboxFilesMu     sync.RWMutex                        // Issue #96: Mutex for notifiedInboxFiles
-	notifiedNodeInactivity   map[string]time.Time                // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
-	notifiedNodeInactivityMu sync.RWMutex                        // Issue #99: Mutex for notifiedNodeInactivity
-	prevPaneStates           map[string]ui_node.PaneInfo          // Issue #98: Track previous pane states for restart detection
-	prevPaneStatesMu         sync.RWMutex                        // Issue #98: Mutex for prevPaneStates
-	prevPaneToNode           map[string]string                   // Track previous pane ID -> node key mapping for restart detection
+	notifiedInboxFiles       map[string]time.Time        // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu     sync.RWMutex                // Issue #96: Mutex for notifiedInboxFiles
+	notifiedNodeInactivity   map[string]time.Time        // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
+	notifiedNodeInactivityMu sync.RWMutex                // Issue #99: Mutex for notifiedNodeInactivity
+	prevPaneStates           map[string]ui_node.PaneInfo // Issue #98: Track previous pane states for restart detection
+	prevPaneStatesMu         sync.RWMutex                // Issue #98: Mutex for prevPaneStates
+	prevPaneToNode           map[string]string           // Track previous pane ID -> node key mapping for restart detection
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -72,10 +72,10 @@ func NewDaemonState() *DaemonState {
 	return &DaemonState{
 		edgeHistory:            make(map[string]EdgeActivity),
 		enabledSessions:        make(map[string]bool),
-		notifiedInboxFiles:     make(map[string]time.Time),     // Issue #96
-		notifiedNodeInactivity: make(map[string]time.Time),     // Issue #99
+		notifiedInboxFiles:     make(map[string]time.Time),        // Issue #96
+		notifiedNodeInactivity: make(map[string]time.Time),        // Issue #99
 		prevPaneStates:         make(map[string]ui_node.PaneInfo), // Issue #98
-		prevPaneToNode:         make(map[string]string),        // paneID -> nodeKey mapping
+		prevPaneToNode:         make(map[string]string),           // paneID -> nodeKey mapping
 	}
 }
 
@@ -164,12 +164,12 @@ func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.E
 				var nodeAtoB, nodeBtoA bool
 				if nodeA == sortedNodes[0] {
 					// nodeA is sorted[0], nodeB is sorted[1]
-					nodeAtoB = forwardActive   // sorted[0]->sorted[1] = nodeA->nodeB
-					nodeBtoA = backwardActive  // sorted[1]->sorted[0] = nodeB->nodeA
+					nodeAtoB = forwardActive  // sorted[0]->sorted[1] = nodeA->nodeB
+					nodeBtoA = backwardActive // sorted[1]->sorted[0] = nodeB->nodeA
 				} else {
 					// nodeA is sorted[1], nodeB is sorted[0]
-					nodeAtoB = backwardActive  // sorted[1]->sorted[0] = nodeA->nodeB
-					nodeBtoA = forwardActive   // sorted[0]->sorted[1] = nodeB->nodeA
+					nodeAtoB = backwardActive // sorted[1]->sorted[0] = nodeA->nodeB
+					nodeBtoA = forwardActive  // sorted[0]->sorted[1] = nodeB->nodeA
 				}
 
 				switch {
@@ -791,7 +791,7 @@ func parseMessageTimestamp(filename string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid filename format: too short")
 	}
 	tsStr := filename[:15]
-	
+
 	// Parse as YYYYMMDD-HHMMSS
 	t, err := time.Parse("20060102-150405", tsStr)
 	if err != nil {
@@ -804,42 +804,42 @@ func parseMessageTimestamp(filename string) (time.Time, error) {
 // Warning: 10+ minutes, Critical: 30+ minutes.
 func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName string) {
 	now := time.Now()
-	
+
 	for nodeKey, nodeInfo := range nodes {
 		// Extract simple name from session-prefixed key
 		simpleName := nodeKey
 		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
 			simpleName = parts[1]
 		}
-		
+
 		// Skip self (current node's inbox)
 		if simpleName == currentNodeName {
 			continue
 		}
-		
+
 		// Build inbox path
 		inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
-		
+
 		// Read inbox directory
 		entries, err := os.ReadDir(inboxPath)
 		if err != nil {
 			continue // Skip if directory doesn't exist or can't be read
 		}
-		
+
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
-			
+
 			// Parse message timestamp
 			msgTime, err := parseMessageTimestamp(entry.Name())
 			if err != nil {
 				continue // Skip files with invalid timestamp
 			}
-			
+
 			// Calculate age
 			age := now.Sub(msgTime)
-			
+
 			// Determine severity
 			var severity string
 			var threshold time.Duration
@@ -853,23 +853,23 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			default:
 				continue // No notification needed
 			}
-			
+
 			// Check if already notified at this severity level
 			fileKey := filepath.Join(inboxPath, entry.Name()) + ":" + severity
 			ds.notifiedInboxFilesMu.RLock()
 			lastNotified, notified := ds.notifiedInboxFiles[fileKey]
 			ds.notifiedInboxFilesMu.RUnlock()
-			
+
 			// Skip if already notified within cooldown period (5 minutes)
 			if notified && now.Sub(lastNotified) < 5*time.Minute {
 				continue
 			}
-			
+
 			// Record notification
 			ds.notifiedInboxFilesMu.Lock()
 			ds.notifiedInboxFiles[fileKey] = now
 			ds.notifiedInboxFilesMu.Unlock()
-			
+
 			// Build notification message
 			eventType := "inbox_stagnation_" + severity
 			message := fmt.Sprintf("Inbox stagnation [%s]: %s has unread message in inbox for %s (threshold: %s)",
@@ -878,7 +878,7 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				age.Round(time.Second).String(),
 				threshold.String(),
 			)
-			
+
 			// Send TUI event
 			events <- tui.DaemonEvent{
 				Type:    eventType,
@@ -1142,10 +1142,10 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 				Type:    "pane_restart",
 				Message: fmt.Sprintf("Pane restart detected: %s (old: %s, new: %s)", nodeKey, oldPaneID, currentPaneID),
 				Details: map[string]interface{}{
-					"node":         nodeKey,
-					"old_pane_id":  oldPaneID,
-					"new_pane_id":  currentPaneID,
-					"pane_info":    currentInfo,
+					"node":        nodeKey,
+					"old_pane_id": oldPaneID,
+					"new_pane_id": currentPaneID,
+					"pane_info":   currentInfo,
 				},
 			}
 

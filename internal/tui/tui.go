@@ -50,7 +50,6 @@ var (
 	selectedSessionStyle = lipgloss.NewStyle().
 				Reverse(true)
 
-
 	// Issue #101: Event severity styles
 	eventWarningStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("226")) // yellow

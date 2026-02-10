@@ -68,32 +68,6 @@ func TestValidateConfig_PostmanInEdges(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_InvalidObservesTarget(t *testing.T) {
-	cfg := &Config{
-		Nodes: map[string]NodeConfig{
-			"observer": {
-				Observes: []string{"nonexistent"},
-			},
-		},
-	}
-
-	errors := ValidateConfig(cfg)
-	if len(errors) == 0 {
-		t.Fatal("expected validation error for nonexistent observes target")
-	}
-
-	foundError := false
-	for _, err := range errors {
-		if err.Severity == "error" && err.Field == "nodes.observer.observes[0]" {
-			foundError = true
-			break
-		}
-	}
-	if !foundError {
-		t.Errorf("expected error for nodes.observer.observes[0], got: %v", errors)
-	}
-}
-
 func TestValidateConfig_ReservedNodeName(t *testing.T) {
 	cfg := &Config{
 		Nodes: map[string]NodeConfig{

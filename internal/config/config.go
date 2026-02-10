@@ -65,8 +65,8 @@ type Config struct {
 	// Global settings
 	Edges                []string `toml:"edges"`
 	ReplyCommand         string   `toml:"reply_command"`
-	UINode               string   `toml:"ui_node"`                 // Issue #46: Generalized target node name
-	PingMode             string   `toml:"ping_mode"`               // Issue #98: PING mode ("all", "ui_node_only", "disabled")
+	UINode               string   `toml:"ui_node"`                // Issue #46: Generalized target node name
+	PingMode             string   `toml:"ping_mode"`              // Issue #98: PING mode ("all", "ui_node_only", "disabled")
 	InboxUnreadThreshold int      `toml:"inbox_unread_threshold"` // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
 
 	// Node-specific configurations (loaded from [nodename] sections)

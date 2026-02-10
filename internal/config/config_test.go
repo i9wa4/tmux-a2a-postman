@@ -103,7 +103,6 @@ reminder_interval_seconds = 60.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
 ping_template = "Custom ping"
-digest_template = "Custom digest"
 draft_template = "Custom draft"
 reminder_message = "Custom reminder"
 reply_command = "custom-reply"
@@ -161,9 +160,6 @@ on_join = ""
 	if cfg.PingTemplate != "Custom ping" {
 		t.Errorf("PingTemplate: got %q, want %q", cfg.PingTemplate, "Custom ping")
 	}
-	if cfg.DigestTemplate != "Custom digest" {
-		t.Errorf("DigestTemplate: got %q, want %q", cfg.DigestTemplate, "Custom digest")
-	}
 	if cfg.DraftTemplate != "Custom draft" {
 		t.Errorf("DraftTemplate: got %q, want %q", cfg.DraftTemplate, "Custom draft")
 	}
@@ -206,9 +202,6 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
-	}
-	if cfg.DigestTemplate != "" {
-		t.Errorf("default DigestTemplate: got %q, want empty", cfg.DigestTemplate)
 	}
 	if cfg.DraftTemplate != "" {
 		t.Errorf("default DraftTemplate: got %q, want empty", cfg.DraftTemplate)

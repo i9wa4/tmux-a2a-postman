@@ -27,19 +27,6 @@ func safeGo(name string, fn func()) {
 	}()
 }
 
-// safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
-func safeAfterFunc(d time.Duration, name string, fn func()) *time.Timer {
-	return time.AfterFunc(d, func() {
-		defer func() {
-			if r := recover(); r != nil {
-				stack := debug.Stack()
-				log.Printf("🚨 PANIC in timer callback %q: %v\n%s\n", name, r, string(stack))
-			}
-		}()
-		fn()
-	})
-}
-
 // CompactionTracker manages compaction detection state (Issue #71).
 type CompactionTracker struct {
 	compactionDetected map[string]time.Time
@@ -119,4 +106,3 @@ func checkForCompaction(output, pattern string) bool {
 	}
 	return strings.Contains(output, pattern)
 }
-
