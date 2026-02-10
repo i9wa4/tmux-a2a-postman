@@ -34,6 +34,14 @@ func ClassifyMessageType(filename, sender, recipient string) string {
 // Issue #32: Skip postman-to-postman messages (system internal messages).
 // Issue #62: Filter by observes config instead of subscribe_digest.
 func SendObserverDigest(filename string, sender string, recipient string, nodes map[string]discovery.NodeInfo, cfg *config.Config, digestedFiles map[string]bool) {
+	// Build reverse lookup map: simple name -> NodeInfo
+	simpleNameToNode := make(map[string]discovery.NodeInfo)
+	for fullKey, info := range nodes {
+		if parts := strings.SplitN(fullKey, ":", 2); len(parts) == 2 {
+			simpleNameToNode[parts[1]] = info
+		}
+	}
+
 	// Loop prevention: skip observer messages
 	if strings.HasPrefix(sender, "observer") {
 		return
@@ -76,7 +84,7 @@ func SendObserverDigest(filename string, sender string, recipient string, nodes 
 			}
 		}
 
-		nodeInfo, found := nodes[nodeName]
+		nodeInfo, found := simpleNameToNode[nodeName]
 		if !found {
 			continue
 		}

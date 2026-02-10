@@ -157,7 +157,7 @@ func DefaultConfig() *Config {
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
-		DigestTemplate:               "",
+		DigestTemplate:               "[Digest] {sender}: {filename}",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
