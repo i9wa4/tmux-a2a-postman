@@ -65,6 +65,7 @@ type DaemonState struct {
 	notifiedNodeInactivityMu sync.RWMutex                        // Issue #99: Mutex for notifiedNodeInactivity
 	prevPaneStates           map[string]ui_node.PaneInfo          // Issue #98: Track previous pane states for restart detection
 	prevPaneStatesMu         sync.RWMutex                        // Issue #98: Mutex for prevPaneStates
+	prevPaneToNode           map[string]string                   // Track previous pane ID -> node key mapping for restart detection
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -75,6 +76,7 @@ func NewDaemonState() *DaemonState {
 		notifiedInboxFiles:     make(map[string]time.Time),     // Issue #96
 		notifiedNodeInactivity: make(map[string]time.Time),     // Issue #99
 		prevPaneStates:         make(map[string]ui_node.PaneInfo), // Issue #98
+		prevPaneToNode:         make(map[string]string),        // paneID -> nodeKey mapping
 	}
 }
 
@@ -1050,11 +1052,10 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 		// Restart criteria: A node that previously had a different paneID now has a new paneID
 		// Search for previous pane with the same node
 		var oldPaneID string
-		for oldID, oldInfo := range ds.prevPaneStates {
-			if oldNodeKey, found := paneToNode[oldID]; found && oldNodeKey == nodeKey {
+		for oldID := range ds.prevPaneStates {
+			if oldNodeKey, found := ds.prevPaneToNode[oldID]; found && oldNodeKey == nodeKey {
 				// Found old pane for the same node
 				oldPaneID = oldID
-				_ = oldInfo // Use oldInfo to avoid unused variable warning
 				break
 			}
 		}
@@ -1108,6 +1109,12 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 	ds.prevPaneStates = make(map[string]ui_node.PaneInfo)
 	for paneID, info := range paneStates {
 		ds.prevPaneStates[paneID] = info
+	}
+
+	// Update prevPaneToNode
+	ds.prevPaneToNode = make(map[string]string)
+	for paneID, nodeKey := range paneToNode {
+		ds.prevPaneToNode[paneID] = nodeKey
 	}
 }
 
