@@ -1,4 +1,5 @@
 package version
 
 // Version is the current version of tmux-a2a-postman
-const Version = "0.1.0"
+// Set via ldflags during build: -X internal/version.Version=x.y.z
+var Version = "dev"
