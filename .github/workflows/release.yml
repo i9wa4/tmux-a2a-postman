@@ -52,4 +52,4 @@ jobs:
       - name: Run GoReleaser
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: nix-shell -p goreleaser --run 'goreleaser release --clean'
+        run: nix develop .#cd -c goreleaser release --clean

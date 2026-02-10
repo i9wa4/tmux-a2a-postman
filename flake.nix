@@ -36,6 +36,11 @@
               govulncheck
             ];
           };
+          cd = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              goreleaser
+            ];
+          };
         };
       }
     );
