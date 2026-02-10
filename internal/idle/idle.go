@@ -366,30 +366,37 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		paneToNode[nodeInfo.PaneID] = sessionKey
 	}
 
-	// Parse pane IDs (limit to max_panes)
+	// Parse pane IDs and filter to node panes only (MUST 3: node panes first)
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	maxPanes := cfg.PaneCaptureMaxPanes
-	if maxPanes <= 0 {
-		maxPanes = 10 // Fallback default
-	}
-	if len(lines) > maxPanes {
-		lines = lines[:maxPanes]
-	}
-
-	now := time.Now()
-
+	var nodePaneIDs []string
 	for _, line := range lines {
 		paneID := strings.TrimSpace(line)
 		if paneID == "" {
 			continue
 		}
+		// Only include panes that belong to nodes
+		if _, isNode := paneToNode[paneID]; isNode {
+			nodePaneIDs = append(nodePaneIDs, paneID)
+		}
+	}
 
+	// Apply max_panes limit after filtering to node panes
+	maxPanes := cfg.PaneCaptureMaxPanes
+	if maxPanes <= 0 {
+		maxPanes = 10 // Fallback default
+	}
+	if len(nodePaneIDs) > maxPanes {
+		nodePaneIDs = nodePaneIDs[:maxPanes]
+	}
+
+	now := time.Now()
+
+	for _, paneID := range nodePaneIDs {
 		// Capture pane content
 		content, err := capturePaneContent(paneID)
 		if err != nil {
-			// Capture failed - treat as "unmeasurable", skip this pane
-			// Clean up state if pane disappeared
-			delete(t.paneCaptureState, paneID)
+			// MUST 2: Capture failed - treat as "unmeasurable", skip but keep state
+			// Do NOT delete state - carry forward to next poll
 			continue
 		}
 
@@ -414,10 +421,19 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 
 		// Check if content changed
 		if currentHash != state.LastHash {
-			// Content changed - increment change count
+			// MUST 1: Check if within 120-second time window from last change
+			timeSinceLastChange := now.Sub(state.LastChangeAt)
+			if timeSinceLastChange > 120*time.Second {
+				// Too much time elapsed - reset change count
+				state.ChangeCount = 1
+			} else {
+				// Within time window - increment change count
+				state.ChangeCount++
+			}
+
+			// Update hash and timestamp
 			state.LastHash = currentHash
 			state.LastChangeAt = now
-			state.ChangeCount++
 
 			// Check if this is the 2nd consecutive change (within 120 seconds)
 			if state.ChangeCount >= 2 {
@@ -441,9 +457,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		t.paneCaptureState[paneID] = state
 	}
 
-	// Clean up stale entries (memory leak prevention)
+	// MUST 5: Clean up stale entries (memory leak prevention)
 	// Remove entries where LastCaptureAt is older than stale threshold
-	staleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
+	staleThreshold := time.Duration(cfg.NodeStaleSeconds * float64(time.Second))
 	for paneID, state := range t.paneCaptureState {
 		if !state.LastCaptureAt.IsZero() && now.Sub(state.LastCaptureAt) > staleThreshold {
 			delete(t.paneCaptureState, paneID)

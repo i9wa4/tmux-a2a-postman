@@ -277,13 +277,13 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 				idleDuration = now.Sub(lastActivity)
 			}
 
-			// Time-based state determination (configurable thresholds)
+			// MUST 4: Time-based state determination (configurable thresholds)
 			// Default: 0-5min active, 5-15min idle, 15min+ stale
 			activeThreshold := time.Duration(m.config.NodeActiveSeconds * float64(time.Second))
-			idleThreshold := time.Duration(m.config.NodeIdleSeconds * float64(time.Second))
+			staleThreshold := time.Duration(m.config.NodeStaleSeconds * float64(time.Second))
 
 			switch {
-			case idleDuration >= idleThreshold:
+			case idleDuration >= staleThreshold:
 				state = "stale"
 			case idleDuration >= activeThreshold:
 				state = "idle"

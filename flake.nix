@@ -17,9 +17,10 @@
       in {
         packages.default = pkgs.buildGoModule {
           pname = "tmux-a2a-postman";
-          version = "dev";
+          version = "0.1.0";
           src = ./.;
           vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
+          ldflags = [ "-X internal/version.Version=${version}" ];
         };
         devShells = {
           default = pkgs.mkShell {
@@ -38,6 +39,7 @@
           };
           cd = pkgs.mkShell {
             buildInputs = with pkgs; [
+              go_1_24
               goreleaser
             ];
           };
