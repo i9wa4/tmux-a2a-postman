@@ -611,7 +611,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pane_disappeared":
 			// Mark node as inactive when pane disappears (killed)
 			if node, ok := msg.Details["node"].(string); ok {
-				m.nodeStates[node] = "dropped" // Use "dropped" for disappeared panes
+				m.nodeStates[node] = "stale" // Use "stale" for disappeared panes
 			}
 			// Add event entry
 			m.events = append(m.events, EventEntry{
