@@ -126,7 +126,7 @@ notification_template = """
 Message from {from_node}
 
 File: {filename}
-Inbox: {inbox_path}
+Inbox: {session_dir}/inbox/{node}/
 
 Reply:
 1. {reply_command}
@@ -157,8 +157,12 @@ template = """
 **Key features**:
 
 - **`{reply_command}`**: Automatically expands to include the current context ID, so recipients know exactly how to reply
-- **Template variables**: `{from_node}`, `{filename}`, `{inbox_path}`, and `{reply_command}` are automatically filled when messages arrive
-- **Single file**: All configuration (`[postman]`, `[orchestrator]`, `[worker]`) in one place
+- **Template variables**: `{from_node}`, `{filename}`, `{session_dir}`, `{node}`, and `{reply_command}` are automatically filled when messages arrive
+  - `{session_dir}/inbox/{node}/`: Incoming messages directory
+  - `{session_dir}/read/`: Processed messages directory
+  - `{session_dir}/draft/`: Message drafts directory
+  - `{session_dir}/post/`: Outgoing messages directory
+- **Configuration files**: Supports both single file (`postman.toml`) and split files (`postman.toml` + `nodes/*.toml`)
 
 ### 6.3. Routing Management
 
