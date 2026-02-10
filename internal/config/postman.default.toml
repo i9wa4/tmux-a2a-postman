@@ -77,7 +77,7 @@ node_stale_seconds = 900           # Memory cleanup threshold for pane capture s
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
 pane_capture_interval_seconds = 60.0
-pane_capture_max_panes = 10
+pane_capture_max_panes = 0          # 0 = unlimited, >0 = limit pane count
 
 # Paths
 # base_dir = ""                    # Override session dir (default: XDG_STATE_HOME/tmux-a2a-postman)

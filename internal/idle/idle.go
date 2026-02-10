@@ -22,6 +22,7 @@ type NodeActivity struct {
 	LastSent            time.Time
 	PongReceived        bool
 	LastNotifiedDropped time.Time // Issue #56: cooldown tracking for dropped-ball alerts
+	LastScreenChange    time.Time // Last screen content change (for debug/display only, not used for idle detection)
 }
 
 // PaneCaptureState holds pane capture state for hybrid idle detection.
@@ -380,12 +381,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		}
 	}
 
-	// Apply max_panes limit after filtering to node panes
+	// Apply max_panes limit after filtering to node panes (0 = unlimited)
 	maxPanes := cfg.PaneCaptureMaxPanes
-	if maxPanes <= 0 {
-		maxPanes = 10 // Fallback default
-	}
-	if len(nodePaneIDs) > maxPanes {
+	if maxPanes > 0 && len(nodePaneIDs) > maxPanes {
 		nodePaneIDs = nodePaneIDs[:maxPanes]
 	}
 
@@ -441,8 +439,8 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				nodeKey, hasNode := paneToNode[paneID]
 				if hasNode {
 					activity := t.nodeActivity[nodeKey]
-					// Update activity timestamp (use LastReceived as activity indicator)
-					activity.LastReceived = now
+					// Update screen change timestamp (for debug/display only)
+					activity.LastScreenChange = now
 					t.nodeActivity[nodeKey] = activity
 				}
 				// Reset change count after marking active
