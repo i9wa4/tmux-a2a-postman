@@ -160,7 +160,7 @@ type Model struct {
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 
 	// Node state tracking (Issue #55)
-	nodeStates map[string]string // "waiting" / "active" / "holding" / "dropped"
+	nodeStates map[string]string // "active" / "idle" / "stale"
 
 	// Shared state
 	daemonEvents <-chan DaemonEvent
@@ -194,7 +194,7 @@ func (m Model) getSelectedBorderColor() string {
 }
 
 // getSessionWorstState returns the worst node state for a session (Issue #97).
-// Priority: dropped > holding > waiting > active
+// Priority: stale > idle > active
 func (m Model) getSessionWorstState(sessionName string) string {
 	nodes, ok := m.sessionNodes[sessionName]
 	if !ok {
@@ -203,10 +203,9 @@ func (m Model) getSessionWorstState(sessionName string) string {
 
 	worstState := "active"
 	stateRank := map[string]int{
-		"active":  0,
-		"waiting": 1,
-		"holding": 2,
-		"dropped": 3,
+		"active": 0,
+		"idle":   1,
+		"stale":  2,
 	}
 
 	for _, nodeName := range nodes {
@@ -279,16 +278,13 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 
 			// Time-based state determination:
 			// 0-5min: active (green)
-			// 5-15min: holding (orange)
-			// 15-30min: dropped (red)
-			// 30min+: waiting (gray)
+			// 5-15min: idle (orange)
+			// 15min+: stale (red)
 			switch {
-			case idleDuration >= 30*time.Minute:
-				state = "waiting"
 			case idleDuration >= 15*time.Minute:
-				state = "dropped"
+				state = "stale"
 			case idleDuration >= 5*time.Minute:
-				state = "holding"
+				state = "idle"
 			default:
 				state = "active"
 			}
@@ -757,17 +753,15 @@ func (m Model) renderLeftPane(width, height int) string {
 			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 
 			// Issue #97: Apply session color based on worst node state
-			// Priority: dropped (red) > holding (orange) > waiting (gray) > active (green)
+			// Priority: stale (red) > idle (orange) > active (green)
 			if i != m.selectedSession && sess.Enabled {
 				worstState := m.getSessionWorstState(sess.Name)
 				var sessionStyle lipgloss.Style
 				switch worstState {
-				case "dropped":
+				case "stale":
 					sessionStyle = droppedNodeStyle
-				case "holding":
+				case "idle":
 					sessionStyle = ballHolderStyle
-				case "waiting":
-					sessionStyle = waitingNodeStyle
 				case "active":
 					sessionStyle = activeNodeStyle
 				default:
@@ -813,9 +807,8 @@ func (m Model) renderRightPane(width, height int) string {
 	// Issue #93: Legend display
 	legend := "Legend: " +
 		activeNodeStyle.Render("Active") + " | " +
-		ballHolderStyle.Render("Holding") + " | " +
-		droppedNodeStyle.Render("Dropped") + " | " +
-		waitingNodeStyle.Render("Waiting")
+		ballHolderStyle.Render("Idle") + " | " +
+		droppedNodeStyle.Render("Stale")
 	b.WriteString(legend + "\n\n")
 
 	// Content based on current view
@@ -1005,11 +998,11 @@ func (m Model) renderRoutingView(width, height int) string {
 							switch state {
 							case "active":
 								nodeStyle = activeNodeStyle
-							case "holding":
+							case "idle":
 								nodeStyle = ballHolderStyle
-							case "dropped":
+							case "stale":
 								nodeStyle = droppedNodeStyle
-								// case "waiting" or default: use default style
+								// default: use default style
 							}
 						}
 						builder.WriteString(nodeStyle.Render(node))
