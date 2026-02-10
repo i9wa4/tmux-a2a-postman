@@ -35,8 +35,8 @@ type Config struct {
 
 	// Node state thresholds (Issue #xxx)
 	NodeActiveSeconds float64 `toml:"node_active_seconds"` // 0-N seconds: active (green)
-	NodeIdleSeconds   float64 `toml:"node_idle_seconds"`   // active+N seconds: idle (orange)
-	NodeStaleSeconds  float64 `toml:"node_stale_seconds"`  // idle+N seconds: stale (red)
+	NodeIdleSeconds   float64 `toml:"node_idle_seconds"`   // N+ seconds: idle (orange) or stale (red)
+	NodeStaleSeconds  float64 `toml:"node_stale_seconds"`  // Memory cleanup threshold for pane capture
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`

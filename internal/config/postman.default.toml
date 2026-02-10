@@ -71,8 +71,8 @@ edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 
 # Node state thresholds
 node_active_seconds = 300          # 0-5min: active (green)
-node_idle_seconds = 900            # 5-15min: idle (orange), cumulative from start
-node_stale_seconds = 900           # 15min+: stale (red), cumulative from idle start
+node_idle_seconds = 900            # 5-15min: idle (orange), 15min+: stale (red)
+node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
