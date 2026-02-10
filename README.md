@@ -5,7 +5,7 @@ tmux agent-to-agent message delivery daemon.
 ## 1. Installation
 
 ```sh
-go install github.com/i9wa4/tmux-a2a-postman/cmd/tmux-a2a-postman@latest
+go install github.com/i9wa4/tmux-a2a-postman@latest
 ```
 
 ## 2. How it Works
