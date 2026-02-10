@@ -101,6 +101,8 @@ graph TD
 
 Each edge creates bidirectional routes. For example, `"A -- B"` allows both A→B and B→A communication.
 
+Nodes can only communicate when an edge exists between them. If only "concierge -- orchestrator" is defined, `worker` cannot send messages directly to `concierge`.
+
 ### 6.2. Complete Configuration Example
 
 File: `$XDG_CONFIG_HOME/postman/postman.toml`
