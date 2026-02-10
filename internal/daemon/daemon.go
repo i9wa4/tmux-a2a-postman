@@ -146,14 +146,32 @@ func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.E
 				}
 
 				// Determine segment direction
+				// NOTE: forward/backward in edgeHistory are based on sorted node order:
+				//   forward = sorted[0] -> sorted[1]
+				//   backward = sorted[1] -> sorted[0]
+				// We need to map this to nodeA->nodeB direction based on edge definition order.
+				sortedNodes := []string{nodeA, nodeB}
+				sort.Strings(sortedNodes)
+
+				var nodeAtoB, nodeBtoA bool
+				if nodeA == sortedNodes[0] {
+					// nodeA is sorted[0], nodeB is sorted[1]
+					nodeAtoB = forwardActive   // sorted[0]->sorted[1] = nodeA->nodeB
+					nodeBtoA = backwardActive  // sorted[1]->sorted[0] = nodeB->nodeA
+				} else {
+					// nodeA is sorted[1], nodeB is sorted[0]
+					nodeAtoB = backwardActive  // sorted[1]->sorted[0] = nodeA->nodeB
+					nodeBtoA = forwardActive   // sorted[0]->sorted[1] = nodeB->nodeA
+				}
+
 				switch {
-				case forwardActive && backwardActive:
+				case nodeAtoB && nodeBtoA:
 					segmentDir = "bidirectional"
 					isActive = true
-				case forwardActive:
+				case nodeAtoB:
 					segmentDir = "forward"
 					isActive = true
-				case backwardActive:
+				case nodeBtoA:
 					segmentDir = "backward"
 					isActive = true
 				}
