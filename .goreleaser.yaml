@@ -7,7 +7,7 @@ before:
 builds:
   - id: tmux-a2a-postman
     binary: tmux-a2a-postman
-    main: ./cmd/tmux-a2a-postman
+    main: ./
     ldflags:
       - -s -w
       - -X main.revision={{.ShortCommit}}
