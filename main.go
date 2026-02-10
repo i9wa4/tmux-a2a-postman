@@ -315,9 +315,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		knownNodes[nodeName] = true
 	}
 
-	// Track digested files for observer digest (duplicate prevention)
-	digestedFiles := make(map[string]bool)
-
 	// Reminder state for per-node message counters
 	reminderState := reminder.NewReminderState()
 
@@ -341,7 +338,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, digestedFiles, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker)
 	})
 
 	// Build session info from nodes (all disabled by default)

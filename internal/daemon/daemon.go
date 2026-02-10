@@ -19,7 +19,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
-	"github.com/i9wa4/tmux-a2a-postman/internal/observer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
@@ -218,7 +217,6 @@ func RunDaemonLoop(
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
-	digestedFiles map[string]bool,
 	reminderState *reminder.ReminderState,
 	events chan<- tui.DaemonEvent,
 	configPath string,
@@ -441,7 +439,6 @@ func RunDaemonLoop(
 											},
 										}
 
-										observer.SendObserverDigest(filename, info.From, info.To, nodes, cfg, digestedFiles)
 										// Increment reminder counter for recipient
 										reminderState.Increment(info.To, nodes, cfg)
 

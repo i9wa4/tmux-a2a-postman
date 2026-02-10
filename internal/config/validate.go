@@ -70,20 +70,7 @@ func ValidateConfig(cfg *Config) []ValidationError {
 		}
 	}
 
-	// Rule 2: Observes target check (severity: error)
-	for nodeName, nodeConfig := range cfg.Nodes {
-		for i, target := range nodeConfig.Observes {
-			if _, exists := cfg.Nodes[target]; !exists {
-				errors = append(errors, ValidationError{
-					Field:    fmt.Sprintf("nodes.%s.observes[%d]", nodeName, i),
-					Message:  fmt.Sprintf("target node %q not found in nodes configuration", target),
-					Severity: "error",
-				})
-			}
-		}
-	}
-
-	// Rule 3: Reserved section name check (severity: error)
+	// Rule 2: Reserved section name check (severity: error)
 	// Reserved names: "postman", "compaction_detection", "watchdog"
 	reservedNames := []string{"postman", "compaction_detection", "watchdog"}
 	for nodeName := range cfg.Nodes {
@@ -98,7 +85,7 @@ func ValidateConfig(cfg *Config) []ValidationError {
 		}
 	}
 
-	// Rule 4: Duplicate edges check (severity: warning)
+	// Rule 3: Duplicate edges check (severity: warning)
 	edgeMap := make(map[string]int)
 	for i, edge := range cfg.Edges {
 		normalizedEdge := normalizeEdge(edge)
@@ -113,7 +100,7 @@ func ValidateConfig(cfg *Config) []ValidationError {
 		}
 	}
 
-	// Rule 5: Deprecated fields (none currently, placeholder for future)
+	// Rule 4: Deprecated fields (none currently, placeholder for future)
 	// Add deprecated field checks here as needed
 
 	return errors

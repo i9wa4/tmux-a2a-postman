@@ -49,7 +49,6 @@ type Config struct {
 	// Message templates
 	NotificationTemplate         string `toml:"notification_template"`
 	PingTemplate                 string `toml:"ping_template"`
-	DigestTemplate               string `toml:"digest_template"`
 	DraftTemplate                string `toml:"draft_template"`
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
@@ -59,7 +58,6 @@ type Config struct {
 	SessionIdleAlertTemplate     string `toml:"session_idle_alert_template"`     // Issue #82: Session idle alert message
 	CompactionHeaderTemplate     string `toml:"compaction_header_template"`      // Issue #82: Compaction detection header
 	WatchdogAlertTemplate        string `toml:"watchdog_alert_template"`         // Issue #82: Watchdog idle alert message
-	DigestItemFormat             string `toml:"digest_item_format"`              // Issue #82: Observer digest item format
 	CompactionBodyTemplate       string `toml:"compaction_body_template"`        // Issue #82: Compaction notification body
 	DroppedBallEventTemplate     string `toml:"dropped_ball_event_template"`     // Issue #82: Dropped ball event message
 	RulesTemplate                string `toml:"rules_template"`                  // Issue #75: Shared protocol rules
@@ -83,19 +81,17 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template                    string   `toml:"template"`
-	OnJoin                      string   `toml:"on_join"`
-	Observes                    []string `toml:"observes"`
-	Role                        string   `toml:"role"`
-	ReminderInterval            float64  `toml:"reminder_interval_seconds"`
-	ReminderMessage             string   `toml:"reminder_message"`
-	IdleTimeoutSeconds          float64  `toml:"idle_timeout_seconds"`
-	IdleReminderMessage         string   `toml:"idle_reminder_message"`
-	IdleReminderCooldownSeconds float64  `toml:"idle_reminder_cooldown_seconds"`
-	DroppedBallTimeoutSeconds   int      `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
-	DroppedBallCooldownSeconds  int      `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
-	DroppedBallNotification     string   `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
-	DigestExcludeTypes          []string `toml:"digest_exclude_types"`          // Issue #72: exclude message types from digest
+	Template                    string  `toml:"template"`
+	OnJoin                      string  `toml:"on_join"`
+	Role                        string  `toml:"role"`
+	ReminderInterval            float64 `toml:"reminder_interval_seconds"`
+	ReminderMessage             string  `toml:"reminder_message"`
+	IdleTimeoutSeconds          float64 `toml:"idle_timeout_seconds"`
+	IdleReminderMessage         string  `toml:"idle_reminder_message"`
+	IdleReminderCooldownSeconds float64 `toml:"idle_reminder_cooldown_seconds"`
+	DroppedBallTimeoutSeconds   int     `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
+	DroppedBallCooldownSeconds  int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
+	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 }
 
 // AgentCard holds agent card information.
@@ -158,7 +154,6 @@ func DefaultConfig() *Config {
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
-		DigestTemplate:               "[Digest] {sender}: {filename}",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
@@ -173,7 +168,6 @@ func DefaultConfig() *Config {
 		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
 		CompactionHeaderTemplate:     "## Compaction Detected",
 		WatchdogAlertTemplate:        "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
-		DigestItemFormat:             "- Message: {filename}\n  From: {sender}",
 		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
 		RulesTemplate:                "",

@@ -28,9 +28,6 @@
 #   {reply_command}  - Command to create draft message
 #   {session_dir}    - Session directory path
 #
-# digest_template:
-#   {digest_items}   - Formatted list of new messages
-#
 # draft_template:
 #   {context_id}     - Current session context ID
 #   {task_id}        - Unique task identifier
@@ -42,7 +39,7 @@
 #
 # common_template:
 #   Shared template string prepended to all node templates.
-#   Applied in ping and notification contexts. Not applied to digest or draft.
+#   Applied in ping and notification contexts. Not applied to draft.
 #
 # edge_violation_warning_template:
 #   {context_id}          - Current session context ID
@@ -112,12 +109,6 @@ edges = []
 # ping_template = """
 # PING from postman
 # Reply with PONG to confirm you are active.
-# """
-
-# Observer digest template
-# digest_template = """
-# 📋 Carbon Copy: New messages.
-# {digest_items}
 # """
 
 # Draft message template
@@ -195,11 +186,6 @@ edges = []
 # Last activity: {last_activity}
 # """
 
-# Observer digest item format (Issue #82)
-# Variables: {filename}, {sender}
-# digest_item_format = """- Message: {filename}
-#   From: {sender}"""
-
 # Compaction notification body template (Issue #82)
 # Variables: {node}
 # compaction_body_template = "Compaction detected for node {node}. Please send status update."
@@ -239,7 +225,6 @@ max_bytes = 1048576  # 1MB
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# observes = ["other-node"]          # Nodes to observe (for digest messages)
 # reminder_interval_seconds = 0.0    # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
 # idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)
@@ -248,4 +233,3 @@ max_bytes = 1048576  # 1MB
 # dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
 # dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
 # dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
-# digest_exclude_types = ["system", "pong"]  # Exclude message types from digest notifications
