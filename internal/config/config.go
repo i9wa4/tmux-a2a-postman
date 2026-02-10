@@ -137,7 +137,7 @@ func DefaultConfig() *Config {
 		StartupDelay:                 2.0,
 		NewNodePingDelay:             3.0,
 		ReminderInterval:             0.0,
-		EdgeActivitySeconds:          60.0, // Issue #37: Default 60 seconds
+		EdgeActivitySeconds:          300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
