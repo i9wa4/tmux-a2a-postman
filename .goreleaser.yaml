@@ -38,8 +38,8 @@ release:
     name: tmux-a2a-postman
   draft: false
   prerelease: auto
-  # NOTE: Tag and release are created by scripts/upsert-gh-release.sh
-  # GoReleaser only builds and uploads assets to the existing release
+  # NOTE: Tag is created by release.yml workflow before GoReleaser runs
+  # GoReleaser creates the release and uploads build assets
 
 changelog:
   sort: asc

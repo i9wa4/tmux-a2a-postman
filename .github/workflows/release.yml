@@ -3,7 +3,7 @@ name: release
 on:
   push:
     branches: [main]
-    paths: ["VERSION"]
+    paths: [VERSION]
 
 permissions:
   contents: write
@@ -17,6 +17,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create and push tag
+        run: |
+          VERSION=$(cat VERSION)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if tag already exists
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists, skipping tag creation"
+          else
+            git tag -a "$VERSION" -m "Release $VERSION"
+            git push origin "$VERSION"
+          fi
+
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
         with:
           github_access_token: ${{ github.token }}
@@ -24,11 +38,7 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
-      - name: Build and release
+      - name: Run GoReleaser
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          nix develop .#cd -c bash -c '
-            upload_url=$(./scripts/upsert-gh-release.sh)
-            goreleaser release --clean
-          '
+        run: nix develop .#cd -c goreleaser release --clean
