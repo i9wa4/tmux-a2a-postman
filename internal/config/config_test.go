@@ -38,8 +38,8 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 		// NOTE: .postman does NOT exist in CWD
 
-		if got := ResolveBaseDir(""); got != "/tmp/xdg-state/postman" {
-			t.Errorf("XDG_STATE_HOME: got %q, want %q", got, "/tmp/xdg-state/postman")
+		if got := ResolveBaseDir(""); got != "/tmp/xdg-state/tmux-a2a-postman" {
+			t.Errorf("XDG_STATE_HOME: got %q, want %q", got, "/tmp/xdg-state/tmux-a2a-postman")
 		}
 	})
 
@@ -59,8 +59,8 @@ func TestResolveBaseDir(t *testing.T) {
 		}
 		// NOTE: HOME is empty, so UserHomeDir() fails
 
-		if got := ResolveBaseDir(""); got != "postman" {
-			t.Errorf("fallback: got %q, want %q", got, "postman")
+		if got := ResolveBaseDir(""); got != "tmux-a2a-postman" {
+			t.Errorf("fallback: got %q, want %q", got, "tmux-a2a-postman")
 		}
 	})
 }
