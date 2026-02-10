@@ -894,9 +894,85 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 					"severity":  severity,
 				},
 			}
-			
+
 			// Send tmux notification to the pane
 			tmuxMsg := fmt.Sprintf("⚠️  %s", message)
+			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
+			// Ignore tmux command error (pane might not exist)
+		}
+	}
+
+	// Node-level inbox unread summary (Issue #xxx)
+	if cfg.InboxUnreadThreshold > 0 {
+		for nodeKey, nodeInfo := range nodes {
+			// Extract simple name from session-prefixed key
+			simpleName := nodeKey
+			if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+				simpleName = parts[1]
+			}
+
+			// Skip self (current node's inbox)
+			if simpleName == currentNodeName {
+				continue
+			}
+
+			// Build inbox path
+			inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+
+			// Count inbox files
+			entries, err := os.ReadDir(inboxPath)
+			if err != nil {
+				continue // Skip if directory doesn't exist or can't be read
+			}
+
+			inboxCount := 0
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+					inboxCount++
+				}
+			}
+
+			// Check if count exceeds threshold
+			if inboxCount < cfg.InboxUnreadThreshold {
+				continue
+			}
+
+			// Check cooldown (use separate key for summary notifications)
+			summaryKey := nodeKey + ":inbox_summary"
+			ds.notifiedInboxFilesMu.RLock()
+			lastNotified, notified := ds.notifiedInboxFiles[summaryKey]
+			ds.notifiedInboxFilesMu.RUnlock()
+
+			// Skip if already notified within cooldown period (5 minutes)
+			if notified && now.Sub(lastNotified) < 5*time.Minute {
+				continue
+			}
+
+			// Record notification
+			ds.notifiedInboxFilesMu.Lock()
+			ds.notifiedInboxFiles[summaryKey] = now
+			ds.notifiedInboxFilesMu.Unlock()
+
+			// Build notification message
+			message := fmt.Sprintf("Inbox unread summary: %s has %d unread messages (threshold: %d)",
+				simpleName,
+				inboxCount,
+				cfg.InboxUnreadThreshold,
+			)
+
+			// Send TUI event
+			events <- tui.DaemonEvent{
+				Type:    "inbox_unread_summary",
+				Message: message,
+				Details: map[string]interface{}{
+					"node":      simpleName,
+					"count":     inboxCount,
+					"threshold": cfg.InboxUnreadThreshold,
+				},
+			}
+
+			// Send tmux notification to the pane
+			tmuxMsg := fmt.Sprintf("📬 %s", message)
 			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
 			// Ignore tmux command error (pane might not exist)
 		}
