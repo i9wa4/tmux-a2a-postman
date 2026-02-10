@@ -70,7 +70,7 @@ reminder_interval_seconds = 0.0    # Send reminder after N messages (0 = disable
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 
 # Paths
-# base_dir = ""                    # Override session dir (default: XDG_STATE_HOME/postman)
+# base_dir = ""                    # Override session dir (default: XDG_STATE_HOME/tmux-a2a-postman)
 
 # Routing edges (bidirectional)
 # Format: "node-a -- node-b" or "node-a --> node-b"

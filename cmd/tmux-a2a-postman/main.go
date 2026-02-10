@@ -66,19 +66,19 @@ func main() {
 	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/tmux-a2a-postman/{contextID}/postman.log)")
 
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: postman [options] [command]")
+		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman [options] [command]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Options:")
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  start        Start postman daemon (default)")
+		fmt.Fprintln(os.Stderr, "  start        Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  create-draft Create message draft")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  postman --no-tui                    # Start daemon without TUI")
-		fmt.Fprintln(os.Stderr, "  postman --context-id my-session     # Start with specific context")
-		fmt.Fprintln(os.Stderr, "  postman create-draft --to worker    # Create draft message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
 	}
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -89,7 +89,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Printf("postman %s\n", version.Version)
+		fmt.Printf("tmux-a2a-postman %s\n", version.Version)
 		return
 	}
 
