@@ -25,7 +25,8 @@ jobs:
 
           # Check if tag already exists
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists, skipping tag creation"
+            echo "Tag $VERSION already exists, skipping release workflow"
+            exit 0
           else
             git tag -a "$VERSION" -m "Release $VERSION"
             git push origin "$VERSION"
