@@ -1,8 +1,13 @@
 name: release
-run-name: Release ${{ github.ref_name }}
+run-name: Release ${{ inputs.tag }}
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,6 +20,28 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Delete existing tag if present
+          if git rev-parse "${{ inputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ inputs.tag }} already exists locally, deleting..."
+            git tag -d "${{ inputs.tag }}"
+          fi
+
+          # Delete remote tag if present
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ inputs.tag }}"; then
+            echo "Tag ${{ inputs.tag }} already exists on remote, deleting..."
+            git push --delete origin "${{ inputs.tag }}" || true
+          fi
+
+          # Create and push new tag
+          git tag -a "${{ inputs.tag }}" -m "Release ${{ inputs.tag }}"
+          git push origin "${{ inputs.tag }}"
+
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
         with:
           github_access_token: ${{ github.token }}
