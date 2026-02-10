@@ -17,10 +17,9 @@
       in {
         packages.default = pkgs.buildGoModule {
           pname = "tmux-a2a-postman";
-          version = "0.1.0";
+          version = "dev";
           src = ./.;
           vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
-          ldflags = [ "-X internal/version.Version=${version}" ];
         };
         devShells = {
           default = pkgs.mkShell {
