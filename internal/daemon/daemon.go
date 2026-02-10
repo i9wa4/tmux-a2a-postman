@@ -105,6 +105,13 @@ func (ds *DaemonState) RecordEdgeActivity(from, to string, timestamp time.Time) 
 	ds.edgeHistory[key] = activity
 }
 
+// ClearEdgeHistory clears all edge activity history (called on session switch).
+func (ds *DaemonState) ClearEdgeHistory() {
+	ds.edgeHistoryMu.Lock()
+	defer ds.edgeHistoryMu.Unlock()
+	ds.edgeHistory = make(map[string]EdgeActivity)
+}
+
 // BuildEdgeList builds edge list with activity data (Issue #37, #42, #71).
 func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
 	ds.edgeHistoryMu.RLock()

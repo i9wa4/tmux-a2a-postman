@@ -371,11 +371,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			if m.selectedSession < len(m.sessions)-1 {
 				m.selectedSession++
+				// Clear edge history when switching sessions
+				if m.tuiCommands != nil {
+					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
+				}
 			}
 			return m, nil
 		case "k", "up":
 			if m.selectedSession > 0 {
 				m.selectedSession--
+				// Clear edge history when switching sessions
+				if m.tuiCommands != nil {
+					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
+				}
 			}
 			return m, nil
 		case " ", "enter":

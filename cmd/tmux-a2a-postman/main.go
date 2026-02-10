@@ -487,6 +487,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							Type:    "message_received",
 							Message: fmt.Sprintf("Session %s toggled %s", cmd.Target, stateStr),
 						}
+					case "clear_edge_history":
+						// Clear edge activity history when switching sessions
+						daemonState.ClearEdgeHistory()
+						log.Println("postman: Edge history cleared (session switch)")
 					}
 				}
 			}
