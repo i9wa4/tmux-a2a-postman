@@ -33,6 +33,11 @@ type Config struct {
 	// TUI settings (Issue #37)
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
 
+	// Node state thresholds (Issue #xxx)
+	NodeActiveSeconds float64 `toml:"node_active_seconds"` // 0-N seconds: active (green)
+	NodeIdleSeconds   float64 `toml:"node_idle_seconds"`   // active+N seconds: idle (orange)
+	NodeStaleSeconds  float64 `toml:"node_stale_seconds"`  // idle+N seconds: stale (red)
+
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
 	PaneCaptureIntervalSeconds float64 `toml:"pane_capture_interval_seconds"`
@@ -143,6 +148,9 @@ func DefaultConfig() *Config {
 		NewNodePingDelay:             3.0,
 		ReminderInterval:             0.0,
 		EdgeActivitySeconds:          300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
+		NodeActiveSeconds:            300.0, // 0-5min: active (green)
+		NodeIdleSeconds:              900.0, // 5-15min: idle (orange)
+		NodeStaleSeconds:             900.0, // 15min+: stale (red)
 		PaneCaptureEnabled:           true,
 		PaneCaptureIntervalSeconds:   60.0,
 		PaneCaptureMaxPanes:          10,

@@ -69,6 +69,11 @@ reminder_interval_seconds = 0.0    # Send reminder after N messages (0 = disable
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 
+# Node state thresholds
+node_active_seconds = 300          # 0-5min: active (green)
+node_idle_seconds = 900            # 5-15min: idle (orange), cumulative from start
+node_stale_seconds = 900           # 15min+: stale (red), cumulative from idle start
+
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
 pane_capture_interval_seconds = 60.0

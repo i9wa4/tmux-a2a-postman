@@ -499,7 +499,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			}
 		})
 
-		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands))
+		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands, cfg))
 		log.Println("postman: TUI starting")
 		finalModel, err := p.Run()
 		if err != nil {

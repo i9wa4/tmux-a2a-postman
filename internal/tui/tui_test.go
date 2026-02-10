@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 func TestTUI_InitialModel(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	if m.status != "Starting..." {
 		t.Errorf("initial status: got %q, want %q", m.status, "Starting...")
@@ -31,7 +32,7 @@ func TestTUI_Update_Quit(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Test 'q' key
 	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -49,7 +50,7 @@ func TestTUI_Update_MessageReceived(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Send message received event
 	event := DaemonEventMsg{
@@ -75,7 +76,7 @@ func TestTUI_Update_StatusUpdate(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Send status update event
 	event := DaemonEventMsg{
@@ -101,7 +102,7 @@ func TestTUI_View(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.status = "Running"
 	m.nodeCount = 3
 	m.events = []EventEntry{
@@ -141,7 +142,7 @@ func TestTUI_View_Quitting(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.quitting = true
 
 	view := m.View()
@@ -155,7 +156,7 @@ func TestTUI_MessageTruncation(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Add 15 messages (should keep only last 10)
 	for i := 1; i <= 15; i++ {
@@ -176,7 +177,7 @@ func TestTUI_RoutingView_AddEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.currentView = ViewRouting
 
 	// Send config_update event with edges
@@ -206,7 +207,7 @@ func TestTUI_RoutingView_RemoveEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.currentView = ViewRouting
 	m.edges = []Edge{
 		{Raw: "orchestrator -- worker"},
@@ -240,7 +241,7 @@ func TestTUI_HotReload(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Initial edges
 	edgeList1 := []Edge{
@@ -316,7 +317,7 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil)
+	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.width = 80
 	m.height = 24
 	m.sessions = []SessionInfo{

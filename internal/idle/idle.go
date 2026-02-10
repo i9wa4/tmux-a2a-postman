@@ -440,6 +440,15 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Save updated state
 		t.paneCaptureState[paneID] = state
 	}
+
+	// Clean up stale entries (memory leak prevention)
+	// Remove entries where LastCaptureAt is older than stale threshold
+	staleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
+	for paneID, state := range t.paneCaptureState {
+		if !state.LastCaptureAt.IsZero() && now.Sub(state.LastCaptureAt) > staleThreshold {
+			delete(t.paneCaptureState, paneID)
+		}
+	}
 }
 
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.

@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 )
 
@@ -167,6 +168,9 @@ type Model struct {
 	nodeCount    int
 	lastEvent    string
 	quitting     bool
+
+	// Config reference (for node state thresholds)
+	config *config.Config
 }
 
 // Quitting returns true if the TUI is in quitting state (Issue #57).
@@ -273,14 +277,15 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 				idleDuration = now.Sub(lastActivity)
 			}
 
-			// Time-based state determination:
-			// 0-5min: active (green)
-			// 5-15min: idle (orange)
-			// 15min+: stale (red)
+			// Time-based state determination (configurable thresholds)
+			// Default: 0-5min active, 5-15min idle, 15min+ stale
+			activeThreshold := time.Duration(m.config.NodeActiveSeconds * float64(time.Second))
+			idleThreshold := time.Duration(m.config.NodeIdleSeconds * float64(time.Second))
+
 			switch {
-			case idleDuration >= 15*time.Minute:
+			case idleDuration >= idleThreshold:
 				state = "stale"
-			case idleDuration >= 5*time.Minute:
+			case idleDuration >= activeThreshold:
 				state = "idle"
 			default:
 				state = "active"
@@ -295,7 +300,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 // InitialModel creates the initial TUI model.
 // Issue #45: Removed messageList and selectedMsg initialization
 // Issue #47: Added tuiCommands channel parameter
-func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand) Model {
+func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand, cfg *config.Config) Model {
 	return Model{
 		currentView:     ViewEvents,
 		width:           80, // Default width (Issue #35)
@@ -306,6 +311,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		selectedSession: 0,                         // Issue #35: Requirement 3
 		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
 		nodeStates:      make(map[string]string),   // Issue #55: Node state tracking
+		config:          cfg,
 		daemonEvents:    daemonEvents,
 		tuiCommands:     tuiCommands,    // Issue #47: Command channel
 		events:          []EventEntry{}, // Issue #59: Session-tagged events
