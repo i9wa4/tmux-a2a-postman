@@ -63,7 +63,7 @@ func main() {
 	noTUI := fs.Bool("no-tui", false, "run without TUI")
 	contextID := fs.String("context-id", "", "session context ID (auto-generated if not specified)")
 	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
-	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/postman/postman.log)")
+	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/tmux-a2a-postman/{contextID}/postman.log)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: postman [options] [command]")
