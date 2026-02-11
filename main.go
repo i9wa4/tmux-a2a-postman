@@ -146,6 +146,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// Validate configuration
+	if cfg.PingMode == "ui_node_only" && cfg.UINode == "" {
+		log.Printf("⚠️  WARNING: ping_mode=ui_node_only is set but ui_node is empty. No PING will be sent.\n")
+	}
+
 	// Parse edge definitions for routing
 	adjacency, err := config.ParseEdges(cfg.Edges)
 	if err != nil {

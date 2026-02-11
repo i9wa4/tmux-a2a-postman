@@ -266,10 +266,10 @@ func TestParseEdges(t *testing.T) {
 		},
 		{
 			name:  "chain syntax (A -- B -- C)",
-			edges: []string{"concierge -- orchestrator -- worker"},
+			edges: []string{"messenger -- orchestrator -- worker"},
 			want: map[string][]string{
-				"concierge":    {"orchestrator"},
-				"orchestrator": {"concierge", "worker"},
+				"messenger":    {"orchestrator"},
+				"orchestrator": {"messenger", "worker"},
 				"worker":       {"orchestrator"},
 			},
 		},

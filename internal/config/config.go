@@ -157,7 +157,7 @@ func DefaultConfig() *Config {
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
-		UINode:                       "concierge", // Issue #46: Default UI target node
+		UINode:                       "", // Issue #46: Default UI target node (empty = no default)
 		PingMode:                     "all",       // Issue #98: Default to ping all nodes
 		InboxUnreadThreshold:         3,           // Default threshold for inbox unread summary notification
 		Edges:                        []string{},

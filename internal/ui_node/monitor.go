@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Status represents concierge pane visibility status.
+// Status represents target pane visibility status.
 type Status string
 
 const (
@@ -20,7 +20,7 @@ const (
 	StatusInactive      Status = "INACTIVE"       // tmux detached
 )
 
-// PaneInfo holds concierge pane monitoring data.
+// PaneInfo holds target pane monitoring data.
 type PaneInfo struct {
 	PaneID       string
 	PaneActive   bool
@@ -145,10 +145,10 @@ func GetAllPanesInfo() (map[string]PaneInfo, error) {
 	return result, nil
 }
 
-// GetPaneInfo retrieves concierge pane information using tmux commands.
+// GetPaneInfo retrieves target pane information using tmux commands.
 // Returns PaneInfo with status based on pane and window active states.
-func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
-	if conciergePaneID == "" {
+func GetPaneInfo(targetPaneID string) (*PaneInfo, error) {
+	if targetPaneID == "" {
 		return &PaneInfo{Status: StatusUnknown, LastChecked: time.Now()}, nil
 	}
 
@@ -172,7 +172,7 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 		if len(parts) != 3 {
 			continue
 		}
-		if parts[0] == conciergePaneID {
+		if parts[0] == targetPaneID {
 			found = true
 			paneActive = parts[1] == "1"
 			paneActivity, _ = strconv.ParseInt(parts[2], 10, 64)
@@ -187,7 +187,7 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 	// If pane is active, it's visible
 	if paneActive {
 		return &PaneInfo{
-			PaneID:       conciergePaneID,
+			PaneID:       targetPaneID,
 			PaneActive:   true,
 			PaneActivity: paneActivity,
 			Status:       StatusVisible,
@@ -200,7 +200,7 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 	_, err = cmd.Output()
 	if err != nil {
 		return &PaneInfo{
-			PaneID:       conciergePaneID,
+			PaneID:       targetPaneID,
 			PaneActive:   false,
 			PaneActivity: paneActivity,
 			Status:       StatusUnknown,
@@ -209,11 +209,11 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 	}
 
 	// Find which window contains our pane
-	cmd = exec.Command("tmux", "display-message", "-p", "-t", conciergePaneID, "#{window_active}")
+	cmd = exec.Command("tmux", "display-message", "-p", "-t", targetPaneID, "#{window_active}")
 	windowActiveOutput, err := cmd.Output()
 	if err != nil {
 		return &PaneInfo{
-			PaneID:       conciergePaneID,
+			PaneID:       targetPaneID,
 			PaneActive:   false,
 			PaneActivity: paneActivity,
 			Status:       StatusUnknown,
@@ -229,7 +229,7 @@ func GetPaneInfo(conciergePaneID string) (*PaneInfo, error) {
 	}
 
 	return &PaneInfo{
-		PaneID:       conciergePaneID,
+		PaneID:       targetPaneID,
 		PaneActive:   false,
 		WindowActive: windowActive,
 		PaneActivity: paneActivity,

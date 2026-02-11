@@ -91,8 +91,8 @@ Edges define bidirectional communication paths between nodes. You can build any 
 
 ```mermaid
 graph TD
-    user([User]) -.- concierge
-    concierge --- orchestrator
+    user([User]) -.- messenger
+    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- observer-a-leader
     orchestrator --- observer-b-leader
@@ -101,7 +101,7 @@ graph TD
 
 Each edge creates bidirectional routes. For example, `"A -- B"` allows both A→B and B→A communication.
 
-Nodes can only communicate when an edge exists between them. If only "concierge -- orchestrator" is defined, `worker` cannot send messages directly to `concierge`.
+Nodes can only communicate when an edge exists between them. If only "messenger -- orchestrator" is defined, `worker` cannot send messages directly to `messenger`.
 
 ### 6.2. Complete Configuration Example
 
@@ -111,7 +111,7 @@ File: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`
 [postman]
 # Routing edges (bidirectional)
 edges = [
-  "concierge -- orchestrator",
+  "messenger -- orchestrator",
   "orchestrator -- worker",
   "orchestrator -- observer-a-leader",
   "orchestrator -- observer-b-leader",

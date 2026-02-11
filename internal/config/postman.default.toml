@@ -90,7 +90,7 @@ edges = []
 
 # Global settings
 # reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
-# ui_node = "concierge"            # TUI target node for watchdog alerts
+# ui_node = "messenger"            # TUI target node for watchdog alerts
 
 # Reminder message (sent periodically to nodes)
 # reminder_message = ""
