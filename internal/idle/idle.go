@@ -108,22 +108,23 @@ func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
 }
 
 // GetPaneActivityStatus returns pane activity status based on idle.go logic.
-// Returns map of paneID -> isActive (true if 2+ content changes within 120s window).
+// Returns map of paneID -> isActive (true if 2+ content changes within activity window).
 // Issue #120: Expose paneCaptureState for get-session-status-oneline command.
-func (t *IdleTracker) GetPaneActivityStatus() map[string]bool {
+func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	result := make(map[string]bool)
 	now := time.Now()
+	activityWindow := time.Duration(cfg.ActivityWindowSeconds) * time.Second
 
 	for paneID, state := range t.paneCaptureState {
 		// A pane is considered active if:
-		// 1. It has had content changes recently (within 120s)
+		// 1. It has had content changes recently (within activity window)
 		// 2. The change count reached 2+ (indicating consecutive changes)
-		// We check if the last change was within 120s and change count is recent
+		// We check if the last change was within the activity window and change count is recent
 		timeSinceLastChange := now.Sub(state.LastChangeAt)
-		isActive := timeSinceLastChange <= 120*time.Second && state.ChangeCount > 0
+		isActive := timeSinceLastChange <= activityWindow && state.ChangeCount > 0
 		result[paneID] = isActive
 	}
 
@@ -132,8 +133,8 @@ func (t *IdleTracker) GetPaneActivityStatus() map[string]bool {
 
 // ExportPaneActivityToFile writes pane activity status to a JSON file.
 // Issue #120: Export state for get-session-status-oneline command.
-func (t *IdleTracker) ExportPaneActivityToFile(filepath string) error {
-	status := t.GetPaneActivityStatus()
+func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filepath string) error {
+	status := t.GetPaneActivityStatus(cfg)
 	data, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("marshaling pane activity: %w", err)
@@ -454,9 +455,10 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 
 		// Check if content changed
 		if currentHash != state.LastHash {
-			// MUST 1: Check if within 120-second time window from last change
+			// MUST 1: Check if within activity window from last change
+			activityWindow := time.Duration(cfg.ActivityWindowSeconds) * time.Second
 			timeSinceLastChange := now.Sub(state.LastChangeAt)
-			if timeSinceLastChange > 120*time.Second {
+			if timeSinceLastChange > activityWindow {
 				// Too much time elapsed - reset change count
 				state.ChangeCount = 1
 			} else {
@@ -528,7 +530,7 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 
 				// Issue #120: Export pane activity status to file for CLI access
 				stateFile := filepath.Join(baseDir, contextID, "pane-activity.json")
-				_ = t.ExportPaneActivityToFile(stateFile)
+				_ = t.ExportPaneActivityToFile(cfg, stateFile)
 			}
 		}
 	}()

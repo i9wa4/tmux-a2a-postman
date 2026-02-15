@@ -42,6 +42,7 @@ type Config struct {
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
 	PaneCaptureIntervalSeconds float64 `toml:"pane_capture_interval_seconds"`
 	PaneCaptureMaxPanes        int     `toml:"pane_capture_max_panes"`
+	ActivityWindowSeconds      float64 `toml:"activity_window_seconds"`
 
 	// Paths
 	BaseDir string `toml:"base_dir"`
@@ -151,6 +152,7 @@ func DefaultConfig() *Config {
 		PaneCaptureEnabled:           true,
 		PaneCaptureIntervalSeconds:   60.0,
 		PaneCaptureMaxPanes:          0,
+		ActivityWindowSeconds:        120.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
