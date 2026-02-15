@@ -333,6 +333,16 @@ func RunDaemonLoop(
 										shouldPing = true // Default to "all" behavior
 									}
 
+											// Issue #119: Check session enabled state
+											if shouldPing {
+												parts := strings.SplitN(nodeName, ":", 2)
+												if len(parts) == 2 {
+													sessionName := parts[0]
+													if !daemonState.IsSessionEnabled(sessionName) {
+														shouldPing = false
+													}
+												}
+											}
 									if shouldPing && cfg.NewNodePingDelay > 0 {
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 										capturedNode := nodeName
@@ -616,6 +626,16 @@ func RunDaemonLoop(
 						shouldPing = true // Default to "all" behavior
 					}
 
+					// Issue #119: Check session enabled state
+					if shouldPing {
+						parts := strings.SplitN(nodeName, ":", 2)
+						if len(parts) == 2 {
+							sessionName := parts[0]
+							if !daemonState.IsSessionEnabled(sessionName) {
+								shouldPing = false
+							}
+						}
+					}
 					if shouldPing && cfg.NewNodePingDelay > 0 {
 						newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 						capturedNode := nodeName
@@ -1269,6 +1289,16 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 				shouldPing = (simpleName == cfg.UINode)
 			}
 
+			// Issue #119: Check session enabled state
+			if shouldPing {
+				parts := strings.SplitN(nodeKey, ":", 2)
+				if len(parts) == 2 {
+					sessionName := parts[0]
+					if !ds.IsSessionEnabled(sessionName) {
+						shouldPing = false
+					}
+				}
+			}
 			if shouldPing && cfg.NewNodePingDelay > 0 {
 				delay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 				safeAfterFunc(delay, "pane-restart-ping", events, func() {
