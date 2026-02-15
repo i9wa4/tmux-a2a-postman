@@ -2,8 +2,9 @@ name: release
 
 on:
   push:
-    branches: [main]
-    paths: [VERSION]
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,21 +17,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-
-      - name: Create and push tag
-        run: |
-          VERSION=$(cat VERSION)
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Check if tag already exists
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists, skipping release workflow"
-            exit 0
-          else
-            git tag -a "$VERSION" -m "Release $VERSION"
-            git push origin "$VERSION"
-          fi
 
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
         with:

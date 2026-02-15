@@ -38,7 +38,7 @@ release:
     name: tmux-a2a-postman
   draft: false
   prerelease: auto
-  # NOTE: Tag is created by release.yml workflow before GoReleaser runs
+  # NOTE: Tag is created manually by developer before release workflow triggers
   # GoReleaser creates the release and uploads build assets
 
 changelog:
