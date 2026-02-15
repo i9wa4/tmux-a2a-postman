@@ -152,7 +152,7 @@ func DefaultConfig() *Config {
 		PaneCaptureEnabled:           true,
 		PaneCaptureIntervalSeconds:   60.0,
 		PaneCaptureMaxPanes:          0,
-		ActivityWindowSeconds:        120.0,
+		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
 		PingTemplate:                 "PING from postman",
