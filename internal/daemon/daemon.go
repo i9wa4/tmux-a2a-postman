@@ -65,6 +65,8 @@ type DaemonState struct {
 	prevPaneStates           map[string]ui_node.PaneInfo // Issue #98: Track previous pane states for restart detection
 	prevPaneStatesMu         sync.RWMutex                // Issue #98: Mutex for prevPaneStates
 	prevPaneToNode           map[string]string           // Track previous pane ID -> node key mapping for restart detection
+	lastAlertTimestamp       map[string]time.Time        // Issue #118: Track last alert timestamps (alertKey -> time)
+	lastAlertTimestampMu     sync.RWMutex                // Issue #118: Mutex for lastAlertTimestamp
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -76,6 +78,7 @@ func NewDaemonState() *DaemonState {
 		notifiedNodeInactivity: make(map[string]time.Time),        // Issue #99
 		prevPaneStates:         make(map[string]ui_node.PaneInfo), // Issue #98
 		prevPaneToNode:         make(map[string]string),           // paneID -> nodeKey mapping
+		lastAlertTimestamp:     make(map[string]time.Time),        // Issue #118
 	}
 }
 
@@ -757,7 +760,7 @@ func RunDaemonLoop(
 					daemonState.checkPaneDisappearance(paneStates, daemonState.prevPaneToNode, events)
 
 					// Issue #98: Check for pane restarts (updates prevPaneStates at end)
-					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, adjacency, idleTracker)
+					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, sessionDir, adjacency, idleTracker)
 
 					// Update previous state
 					prevPaneStatesJSON = currentJSONStr
@@ -780,13 +783,13 @@ func RunDaemonLoop(
 		case <-inboxCheckTicker.C:
 			// Issue #96: Check inbox stagnation
 			currentNode := os.Getenv("A2A_NODE")
-			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode)
+			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode, sessionDir, contextID)
 
 			// Issue #99: Check node inactivity
-			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events)
+			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events, sessionDir, contextID)
 
 			// Issue #100: Check unreplied messages
-			daemonState.checkUnrepliedMessages(nodes, cfg, events)
+			daemonState.checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID)
 		}
 	}
 }
@@ -810,6 +813,57 @@ func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
 	return enabled
 }
 
+// ShouldSendAlert checks if enough time has passed since the last alert (Issue #118).
+// Returns true if the alert should be sent (cooldown expired or first time).
+func (ds *DaemonState) ShouldSendAlert(alertKey string, cooldownSeconds float64) bool {
+	ds.lastAlertTimestampMu.Lock()
+	defer ds.lastAlertTimestampMu.Unlock()
+
+	if cooldownSeconds <= 0 {
+		return true
+	}
+
+	lastSent, exists := ds.lastAlertTimestamp[alertKey]
+	if !exists {
+		return true
+	}
+
+	return time.Since(lastSent) > time.Duration(cooldownSeconds*float64(time.Second))
+}
+
+// MarkAlertSent records the current time as the last alert sent time (Issue #118).
+func (ds *DaemonState) MarkAlertSent(alertKey string) {
+	ds.lastAlertTimestampMu.Lock()
+	defer ds.lastAlertTimestampMu.Unlock()
+	ds.lastAlertTimestamp[alertKey] = time.Now()
+}
+
+// sendAlertToUINode sends an alert message to the ui_node inbox (Issue #118).
+// Replaces tmux display-message calls with postman messaging.
+func sendAlertToUINode(sessionDir, contextID, uiNode, message, alertType string) error {
+	now := time.Now()
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
+	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
+	postPath := filepath.Join(sessionDir, "post", filename)
+
+	content := fmt.Sprintf(`---
+method: message/send
+params:
+  contextId: %s
+  from: daemon
+  to: %s
+  timestamp: %s
+  alertType: %s
+---
+
+## Alert: %s
+
+%s
+`, contextID, uiNode, now.Format(time.RFC3339), alertType, alertType, message)
+
+	return os.WriteFile(postPath, []byte(content), 0o644)
+}
+
 // parseMessageTimestamp extracts timestamp from message filename (Issue #96).
 // Filename format: YYYYMMDD-HHMMSS-from-{sender}-to-{recipient}.md
 // Example: 20260210-015513-from-orchestrator-to-worker.md
@@ -830,7 +884,8 @@ func parseMessageTimestamp(filename string) (time.Time, error) {
 
 // checkInboxStagnation checks for stagnant inbox messages and sends notifications (Issue #96).
 // Warning: 10+ minutes, Critical: 30+ minutes.
-func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName string) {
+// Issue #118: Added sessionDir and contextID for alert messaging.
+func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName, sessionDir, contextID string) {
 	now := time.Now()
 
 	for nodeKey, nodeInfo := range nodes {
@@ -920,10 +975,17 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				},
 			}
 
-			// Send tmux notification to the pane
-			tmuxMsg := fmt.Sprintf("⚠️  %s", message)
-			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
-			// Ignore tmux command error (pane might not exist)
+
+		// Issue #118: Send alert to ui_node with rate-limiting
+		alertKey := fmt.Sprintf("inbox_stagnation:%s:%s", nodeKey, severity)
+		cooldown := 300.0 // 5 minutes
+
+		if ds.ShouldSendAlert(alertKey, cooldown) {
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_stagnation")
+			if err == nil {
+				ds.MarkAlertSent(alertKey)
+			}
+		}
 		}
 	}
 
@@ -996,17 +1058,25 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				},
 			}
 
-			// Send tmux notification to the pane
-			tmuxMsg := fmt.Sprintf("📬 %s", message)
-			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
-			// Ignore tmux command error (pane might not exist)
+
+		// Issue #118: Send alert to ui_node with rate-limiting
+		alertKey := fmt.Sprintf("unreplied_messages:%s", nodeKey)
+		cooldown := 300.0 // 5 minutes
+
+		if ds.ShouldSendAlert(alertKey, cooldown) {
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_unread_summary")
+			if err == nil {
+				ds.MarkAlertSent(alertKey)
+			}
+		}
 		}
 	}
 }
 
 // checkNodeInactivity checks for inactive nodes and sends notifications (Issue #99).
 // Warning: 5-10 minutes, Critical: 15-20 minutes, Dropped: 30-60 minutes.
-func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, idleTracker *idle.IdleTracker, cfg *config.Config, events chan<- tui.DaemonEvent) {
+// Issue #118: Added sessionDir and contextID for alert messaging.
+func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, idleTracker *idle.IdleTracker, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string) {
 	now := time.Now()
 	nodeStates := idleTracker.GetNodeStates()
 
@@ -1102,17 +1172,24 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 			},
 		}
 
-		// Send tmux notification to the pane
-		nodeInfo := nodes[nodeKey]
-		tmuxMsg := fmt.Sprintf("⚠️  %s", message)
-		_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
-		// Ignore tmux command error (pane might not exist)
+
+		// Issue #118: Send alert to ui_node with rate-limiting
+		alertKey := fmt.Sprintf("node_inactivity:%s:%s", nodeKey, severity)
+		cooldown := 300.0 // 5 minutes
+
+		if ds.ShouldSendAlert(alertKey, cooldown) {
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "node_inactivity")
+			if err == nil {
+				ds.MarkAlertSent(alertKey)
+			}
+		}
 	}
 }
 
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
-func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
+// Issue #118: Added sessionDir for alert messaging.
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
 
@@ -1248,7 +1325,8 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]ui_no
 
 // checkUnrepliedMessages checks for messages in read/ without replies (Issue #100).
 // Warning: 10+ minutes since moved to read/ without reply.
-func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent) {
+// Issue #118: Added sessionDir and contextID for alert messaging.
+func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string) {
 	now := time.Now()
 
 	for nodeKey, nodeInfo := range nodes {
@@ -1337,10 +1415,17 @@ func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInf
 				},
 			}
 
-			// Send tmux notification to the pane
-			tmuxMsg := fmt.Sprintf("⚠️  %s", message)
-			_ = exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID, tmuxMsg).Run()
-			// Ignore tmux command error (pane might not exist)
+
+		// Issue #118: Send alert to ui_node with rate-limiting
+		alertKey := fmt.Sprintf("unreplied_message:%s:%s", nodeKey, entry.Name())
+		cooldown := 300.0 // 5 minutes
+
+		if ds.ShouldSendAlert(alertKey, cooldown) {
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "unreplied_message")
+			if err == nil {
+				ds.MarkAlertSent(alertKey)
+			}
+		}
 		}
 	}
 }
