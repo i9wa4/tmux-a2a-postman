@@ -216,14 +216,21 @@ Show all tmux sessions' pane status in a single line:
 tmux-a2a-postman get-session-status-oneline
 ```
 
-**Output format:** `[S<n>:window_panes:window_panes:...]`
+**Requirements:**
+- Daemon must be running (uses daemon's idle tracking state)
+- Pane capture must be enabled in config (default: enabled)
+
+**Output format:** `[SessionName:window_panes:window_panes:...]`
 
 Example:
 ```
-[S0:🟢🟢🟢🔴:🟢🔴] [S1:🔴🔴🔴🔴:🔴🔴]
+[session-20260215-140445-17d0:🟢🟢🟢🔴:🟢🔴] [my-session:🔴🔴🔴🔴:🔴🔴]
 ```
 
-- 🟢 = Active/healthy pane
-- 🔴 = Inactive/disconnected pane
-- Sessions ordered by index (S0, S1, ...)
+**Status indicators:**
+- 🟢 = Active pane (2+ content changes within 120-second window)
+- 🔴 = Inactive pane (no recent content changes)
+- Sessions ordered by name
 - Windows separated by `:` within each session
+
+**Note:** Uses time-based activity detection from `internal/idle/idle.go` rather than keyboard focus. A pane is considered active when its content has changed at least twice within a 120-second window, indicating real activity rather than just cursor focus.

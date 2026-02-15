@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -650,9 +651,41 @@ func runCreateDraft(args []string) error {
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
-// Output format: [S0:window0_panes:window1_panes:...] [S1:...]
-// Pane status: 🟢 = active (#{pane_active}=1), 🔴 = inactive (#{pane_active}=0)
+// Output format: [SessionName:window0_panes:window1_panes:...] [SessionName:...]
+// Pane status: 🟢 = active (idle.go: 2+ changes in 120s), 🔴 = inactive
+// Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 func runGetSessionStatusOneline(args []string) error {
+	// Load config to get base directory
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	// Resolve context ID (auto-detect if not specified)
+	contextID, _, err := config.ResolveContextID("", baseDir)
+	if err != nil {
+		return fmt.Errorf("resolving context ID: %w", err)
+	}
+
+	// Read pane activity status from daemon's exported state
+	stateFile := filepath.Join(baseDir, contextID, "pane-activity.json")
+	stateData, err := os.ReadFile(stateFile)
+	if err != nil {
+		// If file doesn't exist, daemon might not be running or no state yet
+		// Fall back to showing all panes as inactive
+		if os.IsNotExist(err) {
+			return fmt.Errorf("daemon state file not found (is daemon running?): %s", stateFile)
+		}
+		return fmt.Errorf("reading pane activity state: %w", err)
+	}
+
+	var paneActivity map[string]bool
+	if err := json.Unmarshal(stateData, &paneActivity); err != nil {
+		return fmt.Errorf("parsing pane activity state: %w", err)
+	}
+
 	// Get all tmux sessions
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
@@ -672,7 +705,7 @@ func runGetSessionStatusOneline(args []string) error {
 
 	var output []string
 
-	for sessionIndex, sessionName := range sessions {
+	for _, sessionName := range sessions {
 		if sessionName == "" {
 			continue
 		}
@@ -691,9 +724,9 @@ func runGetSessionStatusOneline(args []string) error {
 				continue
 			}
 
-			// Get all panes in this window
+			// Get all panes in this window with their IDs
 			target := fmt.Sprintf("%s:%s", sessionName, windowIndex)
-			panesOutput, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_active}").Output()
+			panesOutput, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").Output()
 			if err != nil {
 				return fmt.Errorf("listing panes for %s: %w", target, err)
 			}
@@ -701,11 +734,13 @@ func runGetSessionStatusOneline(args []string) error {
 			panes := strings.Split(strings.TrimSpace(string(panesOutput)), "\n")
 			var paneStatuses string
 
-			for _, paneActive := range panes {
-				if paneActive == "" {
+			for _, paneID := range panes {
+				if paneID == "" {
 					continue
 				}
-				if paneActive == "1" {
+				// Check if pane is active based on idle.go state
+				isActive := paneActivity[paneID]
+				if isActive {
 					paneStatuses += "🟢"
 				} else {
 					paneStatuses += "🔴"
@@ -715,8 +750,8 @@ func runGetSessionStatusOneline(args []string) error {
 			windowStatuses = append(windowStatuses, paneStatuses)
 		}
 
-		// Build session status: [Sn:window0:window1:...]
-		sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIndex, strings.Join(windowStatuses, ":"))
+		// Build session status: [SessionName:window0:window1:...]
+		sessionStatus := fmt.Sprintf("[%s:%s]", sessionName, strings.Join(windowStatuses, ":"))
 		output = append(output, sessionStatus)
 	}
 

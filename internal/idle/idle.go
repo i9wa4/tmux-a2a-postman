@@ -2,6 +2,7 @@ package idle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -104,6 +105,40 @@ func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
 		}
 	}
 	return result
+}
+
+// GetPaneActivityStatus returns pane activity status based on idle.go logic.
+// Returns map of paneID -> isActive (true if 2+ content changes within 120s window).
+// Issue #120: Expose paneCaptureState for get-session-status-oneline command.
+func (t *IdleTracker) GetPaneActivityStatus() map[string]bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	result := make(map[string]bool)
+	now := time.Now()
+
+	for paneID, state := range t.paneCaptureState {
+		// A pane is considered active if:
+		// 1. It has had content changes recently (within 120s)
+		// 2. The change count reached 2+ (indicating consecutive changes)
+		// We check if the last change was within 120s and change count is recent
+		timeSinceLastChange := now.Sub(state.LastChangeAt)
+		isActive := timeSinceLastChange <= 120*time.Second && state.ChangeCount > 0
+		result[paneID] = isActive
+	}
+
+	return result
+}
+
+// ExportPaneActivityToFile writes pane activity status to a JSON file.
+// Issue #120: Export state for get-session-status-oneline command.
+func (t *IdleTracker) ExportPaneActivityToFile(filepath string) error {
+	status := t.GetPaneActivityStatus()
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("marshaling pane activity: %w", err)
+	}
+	return os.WriteFile(filepath, data, 0o644)
 }
 
 // IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).
@@ -490,6 +525,10 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 
 				// Perform pane capture check
 				t.checkPaneCapture(cfg, nodes)
+
+				// Issue #120: Export pane activity status to file for CLI access
+				stateFile := filepath.Join(baseDir, contextID, "pane-activity.json")
+				_ = t.ExportPaneActivityToFile(stateFile)
 			}
 		}
 	}()
