@@ -207,3 +207,23 @@ tmux-a2a-postman create-draft --to <recipient> --context-id <session-id> --from 
 # Show version
 tmux-a2a-postman version
 ```
+
+### 8.1. Session Status at a Glance
+
+Show all tmux sessions' pane status in a single line:
+
+```sh
+tmux-a2a-postman get-session-status-oneline
+```
+
+**Output format:** `[S<n>:window_panes:window_panes:...]`
+
+Example:
+```
+[S0:🟢🟢🟢🔴:🟢🔴] [S1:🔴🔴🔴🔴:🔴🔴]
+```
+
+- 🟢 = Active/healthy pane
+- 🔴 = Inactive/disconnected pane
+- Sessions ordered by index (S0, S1, ...)
+- Windows separated by `:` within each session

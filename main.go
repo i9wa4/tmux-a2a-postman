@@ -72,8 +72,9 @@ func main() {
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  start        Start tmux-a2a-postman daemon (default)")
-		fmt.Fprintln(os.Stderr, "  create-draft Create message draft")
+		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
+		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
+		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
@@ -123,6 +124,11 @@ func main() {
 	case "create-draft":
 		if err := runCreateDraft(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman create-draft: %v\n", err)
+			os.Exit(1)
+		}
+	case "get-session-status-oneline":
+		if err := runGetSessionStatusOneline(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman get-session-status-oneline: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -640,6 +646,81 @@ func runCreateDraft(args []string) error {
 	}
 
 	fmt.Println(draftPath)
+	return nil
+}
+
+// runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
+// Output format: [S0:window0_panes:window1_panes:...] [S1:...]
+// Pane status: 🟢 = active (#{pane_active}=1), 🔴 = inactive (#{pane_active}=0)
+func runGetSessionStatusOneline(args []string) error {
+	// Get all tmux sessions
+	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		// Check if no server running
+		if strings.Contains(string(sessionsOutput), "no server running") {
+			// No tmux sessions - output nothing
+			return nil
+		}
+		return fmt.Errorf("listing sessions: %w", err)
+	}
+
+	sessions := strings.Split(strings.TrimSpace(string(sessionsOutput)), "\n")
+	if len(sessions) == 0 || sessions[0] == "" {
+		// No sessions - output nothing
+		return nil
+	}
+
+	var output []string
+
+	for sessionIndex, sessionName := range sessions {
+		if sessionName == "" {
+			continue
+		}
+
+		// Get all windows in this session
+		windowsOutput, err := exec.Command("tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}").Output()
+		if err != nil {
+			return fmt.Errorf("listing windows for session %s: %w", sessionName, err)
+		}
+
+		windows := strings.Split(strings.TrimSpace(string(windowsOutput)), "\n")
+		var windowStatuses []string
+
+		for _, windowIndex := range windows {
+			if windowIndex == "" {
+				continue
+			}
+
+			// Get all panes in this window
+			target := fmt.Sprintf("%s:%s", sessionName, windowIndex)
+			panesOutput, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_active}").Output()
+			if err != nil {
+				return fmt.Errorf("listing panes for %s: %w", target, err)
+			}
+
+			panes := strings.Split(strings.TrimSpace(string(panesOutput)), "\n")
+			var paneStatuses string
+
+			for _, paneActive := range panes {
+				if paneActive == "" {
+					continue
+				}
+				if paneActive == "1" {
+					paneStatuses += "🟢"
+				} else {
+					paneStatuses += "🔴"
+				}
+			}
+
+			windowStatuses = append(windowStatuses, paneStatuses)
+		}
+
+		// Build session status: [Sn:window0:window1:...]
+		sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIndex, strings.Join(windowStatuses, ":"))
+		output = append(output, sessionStatus)
+	}
+
+	fmt.Println(strings.Join(output, " "))
 	return nil
 }
 
