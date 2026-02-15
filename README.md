@@ -18,6 +18,8 @@ tmux-a2a-postman automatically discovers and connects agents running in the same
 
 **Current limitation**: Communication works within a single tmux session only. Cross-session messaging is planned for future releases.
 
+**Note**: The TUI displays all tmux sessions (including those without A2A nodes) for monitoring purposes, even though message routing is limited to the active session.
+
 ## 3. Quick Start
 
 Start the postman daemon:
@@ -27,19 +29,43 @@ Start the postman daemon:
 tmux-a2a-postman
 
 # The TUI allows you to:
-# - Select tmux sessions to monitor
+# - View all tmux sessions (including those without A2A nodes)
+# - Toggle sessions enabled/disabled for automatic PING
 # - Send PING to nodes (press 'p')
 # - View message events in real-time
 ```
 
-## 4. Directory Structure (XDG Base Directory)
+## 4. Session Management
+
+Sessions can be toggled between enabled and disabled states in the TUI. This controls automatic PING behavior:
+
+### 4.1. Session States
+
+- **Enabled**: Session receives automatic PING when new nodes are detected
+- **Disabled**: Session does NOT receive automatic PING (default for new sessions)
+
+### 4.2. Automatic PING Paths
+
+Automatic PING is sent to new nodes at three detection points:
+
+1. **New node detection** (message delivery): When a node is discovered during message routing
+2. **Periodic discovery scan**: When the daemon detects a new node during its scan interval
+3. **Pane restart detection**: When a pane restart is detected for an existing node
+
+All three paths respect the session enabled state. Disabled sessions will not receive automatic PING at any of these paths.
+
+### 4.3. Manual PING
+
+Manual PING (via 'p' key in TUI) always works regardless of session state. This allows you to manually initialize nodes in disabled sessions if needed.
+
+## 5. Directory Structure (XDG Base Directory)
 
 postman uses XDG Base Directory Specification:
 
 - **Config**: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` (default: `~/.config/tmux-a2a-postman/`)
 - **State**: `$XDG_STATE_HOME/tmux-a2a-postman/` (default: `~/.local/state/tmux-a2a-postman/`)
 
-### 4.1. Session Directory Structure
+### 5.1. Session Directory Structure
 
 ```text
 $XDG_STATE_HOME/tmux-a2a-postman/
@@ -51,9 +77,9 @@ $XDG_STATE_HOME/tmux-a2a-postman/
     └── dead-letter/    # Undeliverable messages
 ```
 
-## 5. Environment Variables
+## 6. Environment Variables
 
-### 5.1. A2A_NODE
+### 6.1. A2A_NODE
 
 **Required** for agent nodes to be discovered by postman.
 
@@ -69,11 +95,11 @@ export A2A_NODE=orchestrator
 export A2A_NODE=worker
 ```
 
-### 5.2. Other Variables
+### 6.2. Other Variables
 
 Additional environment variables (`POSTMAN_HOME`, `A2A_CONTEXT_ID`, etc.) are available for advanced configuration. See `internal/config/postman.default.toml` for details.
 
-## 6. Configuration
+## 7. Configuration
 
 postman reads configuration from `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` (or use `--config` flag).
 
@@ -83,7 +109,7 @@ Configuration files define:
 - **Node templates**: Instructions shown to each node when they join
 - **Message templates**: Format for notifications and drafts
 
-### 6.1. Flexible Routing with Edges
+### 7.1. Flexible Routing with Edges
 
 Edges define bidirectional communication paths between nodes. You can build any topology by combining edge definitions.
 
@@ -103,7 +129,7 @@ Each edge creates bidirectional routes. For example, `"A -- B"` allows both A→
 
 Nodes can only communicate when an edge exists between them. If only "messenger -- orchestrator" is defined, `worker` cannot send messages directly to `messenger`.
 
-### 6.2. Complete Configuration Example
+### 7.2. Complete Configuration Example
 
 File: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`
 
@@ -164,12 +190,12 @@ template = """
   - `{session_dir}/post/`: Outgoing messages directory
 - **Configuration files**: Supports both single file (`postman.toml`) and split files (`postman.toml` + `nodes/*.toml`)
 
-### 6.3. Routing Management
+### 7.3. Routing Management
 
 **NOTE:** Editing edges via TUI will remove comments from postman.toml.
 Manual editing is recommended for preserving comments.
 
-## 7. Usage
+## 8. Usage
 
 ```sh
 # Start daemon
