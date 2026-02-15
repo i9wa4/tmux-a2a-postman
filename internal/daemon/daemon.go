@@ -239,6 +239,10 @@ func RunDaemonLoop(
 	// Issue #94: Track previous pane states to avoid spam
 	var prevPaneStatesJSON string
 
+	// Issue #117: Track previous node and session counts to avoid spam
+	prevNodeCount := 0
+	prevSessionCount := 0
+
 	// Issue #41: Periodic node discovery
 	scanInterval := time.Duration(cfg.ScanInterval * float64(time.Second))
 	scanTicker := time.NewTicker(scanInterval)
@@ -345,6 +349,12 @@ func RunDaemonLoop(
 							}
 							nodes = freshNodes
 
+							// Issue #117: Discover all tmux sessions
+							allSessions, _ := discovery.DiscoverAllSessions()
+							if allSessions == nil {
+								allSessions = []string{}
+							}
+
 							// Issue #36: Bug 2 - Build session info from nodes
 							sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 							for nodeName := range nodes {
@@ -356,7 +366,7 @@ func RunDaemonLoop(
 									sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 								}
 							}
-							sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
+							sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
 
 							// Update node count and session info
 							events <- tui.DaemonEvent{
@@ -502,6 +512,12 @@ func RunDaemonLoop(
 						// Issue #37: Build edge list with activity data
 						edgeList := daemonState.BuildEdgeList(newCfg.Edges, newCfg)
 
+						// Issue #117: Discover all tmux sessions
+						allSessions, _ := discovery.DiscoverAllSessions()
+						if allSessions == nil {
+							allSessions = []string{}
+						}
+
 						// Issue #35: Requirement 3 - build session info from nodes
 						sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
 						for nodeName := range nodes {
@@ -513,7 +529,7 @@ func RunDaemonLoop(
 								sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 							}
 						}
-						sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
+						sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
 
 						events <- tui.DaemonEvent{
 							Type: "config_update",
@@ -552,11 +568,9 @@ func RunDaemonLoop(
 			}
 
 			// Detect new nodes and send PING
-			newNodesDetected := false
 			for nodeName, nodeInfo := range freshNodes {
 				if !knownNodes[nodeName] {
 					knownNodes[nodeName] = true
-					newNodesDetected = true
 
 					// Ensure session directories exist for new node
 					if err := config.CreateSessionDirs(nodeInfo.SessionDir); err != nil {
@@ -617,23 +631,34 @@ func RunDaemonLoop(
 				}
 			}
 
-			// Update nodes map and send status update if new nodes detected
-			if newNodesDetected {
-				nodes = freshNodes
+			// Issue #117: Always update nodes map (removes dead nodes)
+			nodes = freshNodes
 
-				// Build session info from nodes
-				sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
-				for nodeName := range nodes {
-					parts := strings.SplitN(nodeName, ":", 2)
-					if len(parts) == 2 {
-						sessionName := parts[0]
-						simpleNodeName := parts[1]
-						sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
-					}
+			// Issue #117: Discover all tmux sessions (not just A2A sessions)
+			allSessions, err := discovery.DiscoverAllSessions()
+			if err != nil {
+				// Log error but continue with A2A sessions only
+				events <- tui.DaemonEvent{
+					Type:    "error",
+					Message: fmt.Sprintf("failed to discover all sessions: %v", err),
 				}
-				sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
+				allSessions = []string{}
+			}
 
-				// Update node count and session info
+			// Build session info from nodes
+			sessionNodes := make(map[string][]string) // Issue #59: session -> simple node names
+			for nodeName := range nodes {
+				parts := strings.SplitN(nodeName, ":", 2)
+				if len(parts) == 2 {
+					sessionName := parts[0]
+					simpleNodeName := parts[1]
+					sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
+				}
+			}
+			sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+
+			// Issue #117: Send event only on state change (avoid spam)
+			if len(nodes) != prevNodeCount || len(sessionList) != prevSessionCount {
 				events <- tui.DaemonEvent{
 					Type:    "status_update",
 					Message: "Running",
@@ -643,6 +668,8 @@ func RunDaemonLoop(
 						"session_nodes": sessionNodes, // Issue #59: Session-node mapping
 					},
 				}
+				prevNodeCount = len(nodes)
+				prevSessionCount = len(sessionList)
 			}
 
 			// Issue #56: Check dropped balls

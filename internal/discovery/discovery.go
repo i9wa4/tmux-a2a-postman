@@ -66,3 +66,24 @@ func validatePID(pid string) error {
 	}
 	return nil
 }
+
+// DiscoverAllSessions returns all tmux session names.
+// Issue #117: Returns ALL sessions (not just those with A2A nodes).
+func DiscoverAllSessions() ([]string, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if err != nil {
+		// If no server running, return empty list (not an error)
+		if strings.Contains(string(out), "no server running") {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %w: %s", err, out)
+	}
+
+	sessions := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			sessions = append(sessions, line)
+		}
+	}
+	return sessions, nil
+}

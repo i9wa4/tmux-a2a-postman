@@ -346,8 +346,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker)
 	})
 
+	// Issue #117: Discover all tmux sessions
+	allSessions, _ := discovery.DiscoverAllSessions()
+	if allSessions == nil {
+		allSessions = []string{}
+	}
+
 	// Build session info from nodes (all disabled by default)
-	sessionList := session.BuildSessionList(nodes, daemonState.IsSessionEnabled)
+	sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{

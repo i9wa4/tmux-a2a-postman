@@ -10,8 +10,10 @@ import (
 
 // BuildSessionList builds a sorted list of SessionInfo from discovered nodes.
 // It extracts session names from "session:node" format and counts nodes per session.
+// Issue #117: allSessions parameter includes ALL tmux sessions (not just A2A sessions).
+// Sessions without A2A nodes will show NodeCount=0.
 // The isSessionEnabled function is used to determine the Enabled status of each session.
-func BuildSessionList(nodes map[string]discovery.NodeInfo, isSessionEnabled func(string) bool) []tui.SessionInfo {
+func BuildSessionList(nodes map[string]discovery.NodeInfo, allSessions []string, isSessionEnabled func(string) bool) []tui.SessionInfo {
 	sessionNodeCount := make(map[string]int)
 	for nodeName := range nodes {
 		parts := strings.SplitN(nodeName, ":", 2)
@@ -21,8 +23,15 @@ func BuildSessionList(nodes map[string]discovery.NodeInfo, isSessionEnabled func
 		}
 	}
 
-	sessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-	for sessionName, nodeCount := range sessionNodeCount {
+	// Issue #117: Merge all sessions (include sessions with 0 nodes)
+	sessionSet := make(map[string]bool)
+	for _, sessionName := range allSessions {
+		sessionSet[sessionName] = true
+	}
+
+	sessionList := make([]tui.SessionInfo, 0, len(sessionSet))
+	for sessionName := range sessionSet {
+		nodeCount := sessionNodeCount[sessionName] // Defaults to 0 if not in map
 		sessionList = append(sessionList, tui.SessionInfo{
 			Name:      sessionName,
 			NodeCount: nodeCount,
