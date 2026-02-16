@@ -8,6 +8,38 @@ tmux agent-to-agent message delivery daemon.
 go install github.com/i9wa4/tmux-a2a-postman@latest
 ```
 
+### 1.1. Version Handling
+
+This project uses git tags as the single source of truth for versions.
+
+**Version format depends on build context:**
+
+| Build Type     | Version Format   | Example     |
+| -------------- | ---------------- | ----------- |
+| GitHub release | Semantic version | v0.2.0      |
+| Local clean    | Commit hash      | git-cb6db3c |
+| Local dirty    | Generic dev      | dev         |
+
+**Technical limitation:** Nix flakes don't expose git tag information to local builds.
+
+- Running `nix build` locally will show commit hash, even if a tag exists
+- To verify release versions: `nix build github:i9wa4/tmux-a2a-postman?ref=v0.2.0`
+
+This is a constraint of Nix's architecture, not a design choice.
+
+**Check your version:**
+
+```sh
+# From official release (shows semantic version)
+tmux-a2a-postman --version
+# Output: tmux-a2a-postman v0.2.0
+
+# From local nix build (shows commit hash)
+nix build
+./result/bin/tmux-a2a-postman --version
+# Output: tmux-a2a-postman git-abc1234
+```
+
 ## 2. How it Works
 
 tmux-a2a-postman automatically discovers and connects agents running in the same tmux session:

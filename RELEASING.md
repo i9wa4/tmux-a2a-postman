@@ -1,47 +1,50 @@
 # Release Process
 
-## 1. Steps
+## Version Behavior
 
-1. Update the VERSION file with the new version (e.g., `v0.2.0`)
-   ```bash
-   printf "v0.2.0" > VERSION
-   ```
+This project uses git tags as the single source of truth for versions.
 
-   ⚠️ **IMPORTANT:** VERSION file must match git tag exactly
-   - VERSION file is used by Nix builds (flake.nix)
-   - Git tag is used by release workflow and goreleaser
-   - Mismatch will cause version inconsistency
+**Local development builds:**
+- Clean working tree: `git-abc1234` (7-character commit hash)
+- Dirty working tree: `dev`
+- Why: Nix flakes don't expose tag information to local builds (technical limitation)
 
-2. Commit the VERSION change
-   ```bash
-   git add VERSION
-   git commit -m "chore: bump version to v0.2.0"
-   ```
+**Tagged release builds (GitHub):**
+- Building with `?ref=v0.2.0`: Shows `v0.2.0` (semantic version)
+- Why: Nix sets `self.ref` attribute for remote references
 
-3. Create annotated git tag
+**To verify version before release:**
+```bash
+# Local build (will show commit hash)
+nix build
+./result/bin/tmux-a2a-postman --version
+
+# Simulated GitHub build (will show semantic version)
+nix build github:i9wa4/tmux-a2a-postman?ref=v0.2.0
+./result/bin/tmux-a2a-postman --version
+```
+
+## Release Steps
+
+1. Commit all changes to main branch
+2. Create and push annotated tag:
    ```bash
    git tag -a v0.2.0 -m "Release v0.2.0"
-   ```
-
-   **Tag requirements:**
-   - Must be annotated (`-a` flag)
-   - Must start with `v` followed by digit (e.g., v0.2.0, v1.0.0)
-   - Message format: `"Release v{version}"`
-
-4. Push commit and tag to origin
-   ```bash
-   git push origin main
    git push origin v0.2.0
    ```
+3. GitHub Actions automatically creates release with goreleaser
 
-The CI workflow will automatically:
+**Version verification:**
+```bash
+# Test GitHub build shows semantic version
+nix build github:i9wa4/tmux-a2a-postman?ref=v0.2.0
+./result/bin/tmux-a2a-postman --version
+# Expected: v0.2.0
+```
 
-- Detect tag push (trigger: `tags: v[0-9]*`)
-- Build binaries via GoReleaser
-- Create GitHub Release with auto-generated CHANGELOG
-- Attach release assets
+**Note:** Local builds show `git-abc1234` (commit hash). Only GitHub builds show `v0.2.0` (semantic version).
 
-## 2. Manual Release Trigger (Fallback)
+## Manual Release Trigger (Fallback)
 
 If automatic tag trigger fails, manually trigger the workflow:
 
@@ -50,23 +53,21 @@ If automatic tag trigger fails, manually trigger the workflow:
 3. Select branch/tag to release from
 4. Click "Run workflow"
 
-## 3. Verify Release
+## Verify Release
 
 1. Wait for [release workflow](https://github.com/i9wa4/tmux-a2a-postman/actions/workflows/release.yml) completion
 2. Check [Releases page](https://github.com/i9wa4/tmux-a2a-postman/releases)
 3. Verify release assets are attached
 
-## 4. Notes
+## Notes
 
-- VERSION file format: `v{major}.{minor}.{patch}` (e.g., `v0.2.0`)
-- No trailing newline in VERSION file
 - Release workflow triggers when git tag matching `v[0-9]*` is pushed
 - Tag must be annotated (use `-a` flag)
 - GoReleaser extracts version from git tag automatically
 - Version is embedded in binaries via ldflags during build
 - Manual trigger available as fallback (workflow_dispatch)
 
-## 5. Testing (Before Real Release)
+## Testing (Before Real Release)
 
 To test the workflow without creating a real release:
 

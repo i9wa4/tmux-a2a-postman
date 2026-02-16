@@ -16,18 +16,22 @@
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # DEBUG: Print ALL self attributes for investigation
-        debugInfo = builtins.trace "=== SELF ATTRIBUTES DEBUG ===" (
-          builtins.trace "self.ref: ${if builtins.hasAttr "ref" self then self.ref else "UNDEFINED"}" (
-          builtins.trace "self.rev: ${if builtins.hasAttr "rev" self then builtins.substring 0 12 self.rev else "UNDEFINED"}" (
-          builtins.trace "self.shortRev: ${if builtins.hasAttr "shortRev" self then self.shortRev else "UNDEFINED"}" (
-          builtins.trace "self.lastModified: ${if builtins.hasAttr "lastModified" self then toString self.lastModified else "UNDEFINED"}" (
-          builtins.trace "self.narHash: ${if builtins.hasAttr "narHash" self then self.narHash else "UNDEFINED"}" (
-          builtins.trace "Available attrs: ${builtins.toString (builtins.attrNames self)}" (
-          builtins.trace "===========================" null
-        )))))));
-
-        version = builtins.seq debugInfo (builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION));
+        # Version extraction strategy:
+        # - Tagged releases (GitHub ?ref=v0.2.0): Use semantic version from tag
+        # - Local clean builds: Use git commit hash (git-abc1234)
+        # - Dirty working tree: Use "dev"
+        # Note: self.ref only available for remote builds, not local
+        version =
+          # Tagged releases: Extract semantic version from git reference
+          # (Only available when building from GitHub with ?ref=v0.2.0)
+          if (builtins.hasAttr "ref" self && builtins.match "v[0-9]+\\.[0-9]+\\.[0-9]+" self.ref != null)
+          then self.ref
+          # Local/dev builds: Use 7-character commit hash
+          # (self.shortRev available in clean working tree)
+          else if (builtins.hasAttr "shortRev" self)
+          then "git-${self.shortRev}"
+          # Dirty working tree: Generic dev version
+          else "dev";
         commit =
           if (builtins.hasAttr "rev" self)
           then (builtins.substring 0 7 self.rev)
