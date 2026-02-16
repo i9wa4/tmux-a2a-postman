@@ -15,7 +15,11 @@
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
-        version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
+
+        # DEBUG: Print self attributes for investigation
+        version = builtins.trace "DEBUG self.ref = ${if builtins.hasAttr "ref" self then self.ref else "UNDEFINED"}"
+                  (builtins.trace "DEBUG self.rev = ${if builtins.hasAttr "rev" self then builtins.substring 0 10 self.rev else "UNDEFINED"}"
+                  (builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION)));
         commit =
           if (builtins.hasAttr "rev" self)
           then (builtins.substring 0 7 self.rev)
