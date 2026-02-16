@@ -651,8 +651,9 @@ func runCreateDraft(args []string) error {
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
-// Output format: [SessionName:window0_panes:window1_panes:...] [SessionName:...]
-// Pane status: 🟢 = active (idle.go: 2+ changes in 120s), 🔴 = inactive
+// Output format: [S0:window0_panes:window1_panes:...] [S1:window0_panes:...]
+// Example: [S0:🟢🟢🔴:🟢🟢] [S1:🟢🟢🟢]
+// Pane status: 🟢 = active (idle.go: 2+ changes in activity_window_seconds), 🔴 = inactive
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 func runGetSessionStatusOneline(args []string) error {
 	// Load config to get base directory
@@ -705,7 +706,7 @@ func runGetSessionStatusOneline(args []string) error {
 
 	var output []string
 
-	for _, sessionName := range sessions {
+	for sessionIdx, sessionName := range sessions {
 		if sessionName == "" {
 			continue
 		}
@@ -750,8 +751,8 @@ func runGetSessionStatusOneline(args []string) error {
 			windowStatuses = append(windowStatuses, paneStatuses)
 		}
 
-		// Build session status: [SessionName:window0:window1:...]
-		sessionStatus := fmt.Sprintf("[%s:%s]", sessionName, strings.Join(windowStatuses, ":"))
+		// Build session status: [S<n>:window0:window1:...]
+		sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIdx, strings.Join(windowStatuses, ":"))
 		output = append(output, sessionStatus)
 	}
 
