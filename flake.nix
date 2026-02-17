@@ -45,8 +45,8 @@
           ldflags = [
             "-s"
             "-w"
-            "-X internal/version.Version=${version}"
-            "-X internal/version.Commit=${commit}"
+            "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Version=${version}"
+            "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Commit=${commit}"
           ];
         };
         devShells = {

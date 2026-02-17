@@ -10,8 +10,8 @@ builds:
     main: ./
     ldflags:
       - -s -w
-      - -X internal/version.Version={{.Version}}
-      - -X internal/version.Commit={{.ShortCommit}}
+      - -X github.com/i9wa4/tmux-a2a-postman/internal/version.Version={{.Version}}
+      - -X github.com/i9wa4/tmux-a2a-postman/internal/version.Commit={{.ShortCommit}}
     env:
       - CGO_ENABLED=0
     goos:
