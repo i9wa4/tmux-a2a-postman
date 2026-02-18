@@ -519,10 +519,18 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Discover nodes
+				// Discover nodes (edge-filtered)
 				nodes, err := discovery.DiscoverNodes(baseDir, contextID)
 				if err != nil {
 					continue
+				}
+				edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+				for nodeName := range nodes {
+					parts := strings.SplitN(nodeName, ":", 2)
+					rawName := parts[len(parts)-1]
+					if !edgeNodes[rawName] {
+						delete(nodes, nodeName)
+					}
 				}
 
 				// Perform pane capture check
