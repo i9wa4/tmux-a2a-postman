@@ -238,46 +238,28 @@ func GetPaneInfo(targetPaneID string) (*PaneInfo, error) {
 	}, nil
 }
 
-// FindTargetPaneID finds the pane_id for A2A_NODE=nodeName.
+// FindTargetPaneID finds the pane_id for the pane whose title matches nodeName.
 // Issue #46: Generalized from FindConciergePaneID to accept any node name.
 // Returns empty string if not found.
 func FindTargetPaneID(nodeName string) (string, error) {
-	// Get all panes with their environment
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
+	// Get all panes with their id and title
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_title}")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux list-panes failed: %w", err)
 	}
 
-	// Issue #46: Construct the search string from nodeName parameter
-	searchStr := fmt.Sprintf("A2A_NODE=%s", nodeName)
-
 	for _, line := range strings.Split(string(output), "\n") {
-		paneID := strings.TrimSpace(line)
-		if paneID == "" {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-
-		// Check A2A_NODE environment variable for this pane
-		cmd := exec.Command("tmux", "display-message", "-p", "-t", paneID, "#{pane_pid}")
-		pidOutput, err := cmd.Output()
-		if err != nil {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
 			continue
 		}
-		pid := strings.TrimSpace(string(pidOutput))
-		if pid == "" {
-			continue
-		}
-
-		// Check process environment (platform-specific, simplified check)
-		// NOTE: This is best-effort - may not work on all platforms
-		cmd = exec.Command("ps", "eww", pid)
-		envOutput, err := cmd.Output()
-		if err != nil {
-			continue
-		}
-
-		if strings.Contains(string(envOutput), searchStr) {
+		paneID, paneTitle := parts[0], parts[1]
+		if paneTitle == nodeName {
 			return paneID, nil
 		}
 	}

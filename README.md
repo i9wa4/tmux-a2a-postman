@@ -44,7 +44,7 @@ nix build
 
 tmux-a2a-postman automatically discovers and connects agents running in the same tmux session:
 
-1. Detects panes with `A2A_NODE` environment variable set (e.g., `A2A_NODE=worker`)
+1. Detects panes with a tmux pane title set (e.g., `tmux rename-pane worker`)
 2. Sends PING messages to discovered nodes to establish communication
 3. Routes messages between nodes based on configured edges
 
@@ -111,21 +111,23 @@ $XDG_STATE_HOME/tmux-a2a-postman/
 
 ## 6. Environment Variables
 
-### 6.1. A2A_NODE
+### 6.1. Pane Title (Node Identity)
 
 **Required** for agent nodes to be discovered by postman.
 
-Set the node name for the current agent process. postman discovers nodes by scanning tmux panes for this environment variable.
+Set the tmux pane title to identify a pane as an agent node. postman discovers nodes by reading the pane title directly.
 
 **Examples**:
 
 ```sh
-# Set node name for orchestrator
-export A2A_NODE=orchestrator
+# Set pane title for orchestrator
+tmux rename-pane orchestrator
 
-# Set node name for worker
-export A2A_NODE=worker
+# Set pane title for worker
+tmux rename-pane worker
 ```
+
+**Watchdog mode**: a pane with title `watchdog` runs the watchdog daemon instead of the regular daemon.
 
 ### 6.2. Other Variables
 

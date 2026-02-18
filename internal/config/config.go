@@ -426,6 +426,22 @@ func ParseEdges(edges []string) (map[string][]string, error) {
 	return result, nil
 }
 
+// GetEdgeNodeNames extracts all unique node names from edge definitions.
+func GetEdgeNodeNames(edges []string) map[string]bool {
+	adjacency, err := ParseEdges(edges)
+	if err != nil {
+		return map[string]bool{}
+	}
+	nodes := make(map[string]bool)
+	for node, neighbors := range adjacency {
+		nodes[node] = true
+		for _, neighbor := range neighbors {
+			nodes[neighbor] = true
+		}
+	}
+	return nodes
+}
+
 // GetTalksTo returns the list of nodes that the specified node can communicate with.
 // Returns nodes that have an edge to the specified node in the adjacency map.
 func GetTalksTo(adjacency map[string][]string, nodeName string) []string {
@@ -541,6 +557,17 @@ func ResolveContextID(explicitID string, baseDir string) (string, string, error)
 // Returns empty string if not in tmux.
 func GetTmuxSessionName() string {
 	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// GetTmuxPaneName returns the current tmux pane title.
+// Returns empty string if not in tmux or pane has no title set.
+func GetTmuxPaneName() string {
+	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_title}")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""

@@ -209,6 +209,19 @@ func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.E
 	return edgeList
 }
 
+// filterNodesByEdges removes nodes from the map whose raw name (after session prefix)
+// is not listed in the configured edges. Modifies the map in place.
+func filterNodesByEdges(nodes map[string]discovery.NodeInfo, edges []string) {
+	allowed := config.GetEdgeNodeNames(edges)
+	for nodeName := range nodes {
+		parts := strings.SplitN(nodeName, ":", 2)
+		rawName := parts[len(parts)-1]
+		if !allowed[rawName] {
+			delete(nodes, nodeName)
+		}
+	}
+}
+
 // RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).
 func RunDaemonLoop(
 	ctx context.Context,
@@ -279,8 +292,9 @@ func RunDaemonLoop(
 				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
-						// Re-discover nodes before each delivery
+						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, err := discovery.DiscoverNodes(baseDir, contextID); err == nil {
+							filterNodesByEdges(freshNodes, cfg.Edges)
 							// Build active nodes list
 							activeNodes := make([]string, 0, len(freshNodes))
 							for nodeName := range freshNodes {
@@ -568,11 +582,12 @@ func RunDaemonLoop(
 				Message: fmt.Sprintf("watcher error: %v", err),
 			}
 		case <-scanTicker.C:
-			// Issue #41: Periodic node discovery
+			// Issue #41: Periodic node discovery (edge-filtered)
 			freshNodes, err := discovery.DiscoverNodes(baseDir, contextID)
 			if err != nil {
 				continue
 			}
+			filterNodesByEdges(freshNodes, cfg.Edges)
 
 			// Build active nodes list
 			activeNodes := make([]string, 0, len(freshNodes))
@@ -802,7 +817,7 @@ func RunDaemonLoop(
 			}
 		case <-inboxCheckTicker.C:
 			// Issue #96: Check inbox stagnation
-			currentNode := os.Getenv("A2A_NODE")
+			currentNode := config.GetTmuxPaneName()
 			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode, sessionDir, contextID)
 
 			// Issue #99: Check node inactivity

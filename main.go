@@ -111,7 +111,7 @@ func main() {
 	switch command {
 	case "start":
 		// Check if this should run as watchdog
-		if os.Getenv("A2A_NODE") == "watchdog" {
+		if config.GetTmuxPaneName() == "watchdog" {
 			if err := runWatchdog(*contextID, *configPath, *logFilePath); err != nil {
 				fmt.Fprintf(os.Stderr, "❌ postman watchdog: %v\n", err)
 				os.Exit(1)
@@ -386,7 +386,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	// Send initial inbox messages (worker node)
-	if nodeName := os.Getenv("A2A_NODE"); nodeName != "" {
+	if nodeName := config.GetTmuxPaneName(); nodeName != "" {
 		msgList := message.ScanInboxMessages(filepath.Join(inboxDir, nodeName))
 		daemonEvents <- tui.DaemonEvent{
 			Type: "inbox_update",
@@ -541,7 +541,7 @@ func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
-	from := fs.String("from", "", "sender node name (defaults to $A2A_NODE)")
+	from := fs.String("from", "", "sender node name (defaults to current pane title)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -566,10 +566,10 @@ func runCreateDraft(args []string) error {
 
 	sender := *from
 	if sender == "" {
-		sender = os.Getenv("A2A_NODE")
+		sender = config.GetTmuxPaneName()
 	}
 	if sender == "" {
-		return fmt.Errorf("--from is required (or set A2A_NODE)")
+		return fmt.Errorf("--from is required (or set tmux pane title)")
 	}
 
 	sessionName := *session
@@ -818,7 +818,7 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	return nil
 }
 
-// runWatchdog runs the watchdog daemon when A2A_NODE=watchdog.
+// runWatchdog runs the watchdog daemon when the pane title is "watchdog".
 func runWatchdog(contextID, configPath, logFilePath string) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {

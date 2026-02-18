@@ -10,8 +10,8 @@ func TestDiscoverNodes_WithChildProcess(t *testing.T) {
 	t.Skip("Requires tmux environment - deferred to integration testing")
 }
 
-func TestGetNodeFromProcessOS_ChildProcess(t *testing.T) {
-	// NOTE: This test requires spawning child processes with A2A_NODE env
+func TestDiscoverNodes_WithPaneTitle(t *testing.T) {
+	// NOTE: This test requires spawning tmux panes with named titles
 	// Deferred to integration testing
-	t.Skip("Requires process spawning - deferred to integration testing")
+	t.Skip("Requires tmux environment with named panes - deferred to integration testing")
 }
