@@ -653,28 +653,33 @@ func runGetSessionStatusOneline(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	// Resolve context ID (auto-detect if not specified)
-	// If no context is active, output nothing (used from status bars)
-	contextID, _, err := config.ResolveContextID("", baseDir)
-	if err != nil {
-		return nil
+	// Scan all session-*/pane-activity.json files in baseDir.
+	// Only include files updated within 2x PaneCaptureIntervalSeconds (liveness check).
+	// When multiple instances write the same paneID, true (active) takes priority.
+	livenessThreshold := time.Duration(cfg.PaneCaptureIntervalSeconds*2) * time.Second
+	if livenessThreshold <= 0 {
+		livenessThreshold = 120 * time.Second
 	}
-
-	// Read pane activity status from daemon's exported state
-	stateFile := filepath.Join(baseDir, contextID, "pane-activity.json")
-	stateData, err := os.ReadFile(stateFile)
-	if err != nil {
-		// If file doesn't exist, daemon might not be running or no state yet
-		// Fall back to showing all panes as inactive
-		if os.IsNotExist(err) {
-			return fmt.Errorf("daemon state file not found (is daemon running?): %s", stateFile)
+	paneActivity := make(map[string]bool)
+	dirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*", "pane-activity.json"))
+	for _, stateFile := range dirs {
+		fi, err := os.Stat(stateFile)
+		if err != nil || time.Since(fi.ModTime()) > livenessThreshold {
+			continue // stale or missing
 		}
-		return fmt.Errorf("reading pane activity state: %w", err)
-	}
-
-	var paneActivity map[string]bool
-	if err := json.Unmarshal(stateData, &paneActivity); err != nil {
-		return fmt.Errorf("parsing pane activity state: %w", err)
+		stateData, err := os.ReadFile(stateFile)
+		if err != nil {
+			continue
+		}
+		var partial map[string]bool
+		if err := json.Unmarshal(stateData, &partial); err != nil {
+			continue
+		}
+		for paneID, active := range partial {
+			if active || !paneActivity[paneID] {
+				paneActivity[paneID] = active // active wins on conflict
+			}
+		}
 	}
 
 	// Get all tmux sessions
