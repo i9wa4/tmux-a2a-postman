@@ -108,24 +108,31 @@ func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
 }
 
 // GetPaneActivityStatus returns pane activity status based on idle.go logic.
-// Returns map of paneID -> isActive (true if 2+ content changes within activity window).
+// Returns map of paneID -> status ("active"/"idle"/"stale").
 // Issue #120: Expose paneCaptureState for get-session-status-oneline command.
-func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]bool {
+func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	result := make(map[string]bool)
+	result := make(map[string]string)
 	now := time.Now()
-	activityWindow := time.Duration(cfg.ActivityWindowSeconds) * time.Second
+	activeThreshold := time.Duration(cfg.NodeActiveSeconds) * time.Second
+	idleThreshold := time.Duration(cfg.NodeIdleSeconds) * time.Second
 
 	for paneID, state := range t.paneCaptureState {
-		// A pane is considered active if:
-		// 1. It has had content changes recently (within activity window)
-		// 2. The change count reached 2+ (indicating consecutive changes)
-		// We check if the last change was within the activity window and change count is recent
+		if state.LastChangeAt.IsZero() || state.ChangeCount == 0 {
+			result[paneID] = "stale"
+			continue
+		}
 		timeSinceLastChange := now.Sub(state.LastChangeAt)
-		isActive := timeSinceLastChange <= activityWindow && state.ChangeCount > 0
-		result[paneID] = isActive
+		switch {
+		case timeSinceLastChange <= activeThreshold:
+			result[paneID] = "active"
+		case timeSinceLastChange <= idleThreshold:
+			result[paneID] = "idle"
+		default:
+			result[paneID] = "stale"
+		}
 	}
 
 	return result

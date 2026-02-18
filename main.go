@@ -660,7 +660,8 @@ func runGetSessionStatusOneline(args []string) error {
 	if livenessThreshold <= 0 {
 		livenessThreshold = 120 * time.Second
 	}
-	paneActivity := make(map[string]bool)
+	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
+	paneActivity := make(map[string]string)
 	dirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*", "pane-activity.json"))
 	for _, stateFile := range dirs {
 		fi, err := os.Stat(stateFile)
@@ -671,14 +672,26 @@ func runGetSessionStatusOneline(args []string) error {
 		if err != nil {
 			continue
 		}
-		var partial map[string]bool
+		var partial map[string]string
 		if err := json.Unmarshal(stateData, &partial); err != nil {
 			continue
 		}
-		for paneID, active := range partial {
-			if active || !paneActivity[paneID] {
-				paneActivity[paneID] = active // active wins on conflict
+		for paneID, status := range partial {
+			existing, exists := paneActivity[paneID]
+			if !exists || statusPriority[status] > statusPriority[existing] {
+				paneActivity[paneID] = status // higher priority wins on conflict
 			}
+		}
+	}
+
+	// Build edge node set and pane title map for filtering
+	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_title}").Output()
+	paneTitles := make(map[string]string) // paneID -> paneTitle
+	for _, line := range strings.Split(strings.TrimSpace(string(paneTitleOutput)), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			paneTitles[parts[0]] = parts[1]
 		}
 	}
 
@@ -734,11 +747,17 @@ func runGetSessionStatusOneline(args []string) error {
 				if paneID == "" {
 					continue
 				}
-				// Check if pane is active based on idle.go state
-				isActive := paneActivity[paneID]
-				if isActive {
+				// Edge filter: only show panes in edge list
+				if !edgeNodes[paneTitles[paneID]] {
+					continue
+				}
+				// Check pane status (🟢 active / 🟡 idle / 🔴 stale)
+				switch paneActivity[paneID] {
+				case "active":
 					paneStatuses += "🟢"
-				} else {
+				case "idle":
+					paneStatuses += "🟡"
+				default:
 					paneStatuses += "🔴"
 				}
 			}
