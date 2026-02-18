@@ -813,18 +813,17 @@ func (m Model) renderRightPane(width, height int) string {
 	}
 	b.WriteString("]\n")
 
-	// Issue #93: Legend display
-	legend := "Legend: " +
-		activeNodeStyle.Render("Active") + " | " +
-		ballHolderStyle.Render("Idle") + " | " +
-		droppedNodeStyle.Render("Stale")
-	b.WriteString(legend + "\n\n")
-
 	// Content based on current view
 	switch m.currentView {
 	case ViewEvents:
+		b.WriteString("\n")
 		b.WriteString(m.renderEventsView(width, height-7))
 	case ViewRouting:
+		legend := "Legend: " +
+			activeNodeStyle.Render("Active") + " | " +
+			ballHolderStyle.Render("Idle") + " | " +
+			droppedNodeStyle.Render("Stale")
+		b.WriteString(legend + "\n\n")
 		b.WriteString(m.renderRoutingView(width, height-7))
 	}
 
