@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -472,27 +471,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
-						// Rebuild session list and send status update
-						sessionNodeCount := make(map[string]int)
-						for nodeName := range nodes {
-							parts := strings.SplitN(nodeName, ":", 2)
-							if len(parts) == 2 {
-								sessionName := parts[0]
-								sessionNodeCount[sessionName]++
-							}
-						}
-						updatedSessionList := make([]tui.SessionInfo, 0, len(sessionNodeCount))
-						for sessionName, nodeCount := range sessionNodeCount {
-							updatedSessionList = append(updatedSessionList, tui.SessionInfo{
-								Name:      sessionName,
-								NodeCount: nodeCount,
-								Enabled:   daemonState.IsSessionEnabled(sessionName),
-							})
-						}
-						// Sort session list by name to maintain consistent order
-						sort.Slice(updatedSessionList, func(i, j int) bool {
-							return updatedSessionList[i].Name < updatedSessionList[j].Name
-						})
+						// Rebuild session list and send status update (all sessions, not just nodes)
+						allSessions, _ := discovery.DiscoverAllSessions()
+						updatedSessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
 
 						// Send status update
 						daemonEvents <- tui.DaemonEvent{
