@@ -762,15 +762,21 @@ func runGetSessionStatusOneline(args []string) error {
 				}
 			}
 
-			windowStatuses = append(windowStatuses, paneStatuses)
+			if paneStatuses != "" {
+				windowStatuses = append(windowStatuses, paneStatuses)
+			}
 		}
 
 		// Build session status: [S<n>:window0:window1:...]
-		sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIdx, strings.Join(windowStatuses, ":"))
-		output = append(output, sessionStatus)
+		if len(windowStatuses) > 0 {
+			sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIdx, strings.Join(windowStatuses, ":"))
+			output = append(output, sessionStatus)
+		}
 	}
 
-	fmt.Println(strings.Join(output, " "))
+	if len(output) > 0 {
+		fmt.Println(strings.Join(output, " "))
+	}
 	return nil
 }
 
