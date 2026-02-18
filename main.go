@@ -654,9 +654,10 @@ func runGetSessionStatusOneline(args []string) error {
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
 	// Resolve context ID (auto-detect if not specified)
+	// If no context is active, output nothing (used from status bars)
 	contextID, _, err := config.ResolveContextID("", baseDir)
 	if err != nil {
-		return fmt.Errorf("resolving context ID: %w", err)
+		return nil
 	}
 
 	// Read pane activity status from daemon's exported state
