@@ -388,7 +388,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-		case " ", "enter":
+		case "enter":
 			// Session toggle via TUICommand
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
@@ -788,7 +788,7 @@ func (m Model) renderLeftPane(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: session on/off] [p: ping]\n")
+	b.WriteString("[enter: session on/off] [p: ping]\n")
 
 	return b.String()
 }
