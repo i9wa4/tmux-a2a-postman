@@ -823,20 +823,16 @@ func (m Model) renderLeftPane(width, height int) string {
 func (m Model) renderRightPane(width, height int) string {
 	var b strings.Builder
 
-	// Tab display
-	b.WriteString("[")
+	// Tab display (* always reserved to avoid layout shift on toggle)
+	eventsMarker := " "
 	if m.currentView == ViewEvents {
-		b.WriteString("1:Events*")
-	} else {
-		b.WriteString("1:Events")
+		eventsMarker = "*"
 	}
-	b.WriteString(" | ")
+	routingMarker := " "
 	if m.currentView == ViewRouting {
-		b.WriteString("2:Routing*")
-	} else {
-		b.WriteString("2:Routing")
+		routingMarker = "*"
 	}
-	b.WriteString("]\n")
+	b.WriteString("[1:Events" + eventsMarker + " | 2:Routing" + routingMarker + "]\n")
 
 	// Content based on current view
 	switch m.currentView {
