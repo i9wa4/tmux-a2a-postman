@@ -154,7 +154,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Validate configuration
 	if cfg.PingMode == "ui_node_only" && cfg.UINode == "" {
-		log.Printf("⚠️  WARNING: ping_mode=ui_node_only is set but ui_node is empty. No PING will be sent.\n")
+		log.Println("⚠️  WARNING: ping_mode=ui_node_only is set but ui_node is empty. No PING will be sent.")
 	}
 
 	// Parse edge definitions for routing

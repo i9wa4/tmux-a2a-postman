@@ -877,7 +877,7 @@ func (m Model) renderEventsView(width, height int) string {
 	selectedName := m.getSelectedSessionName()
 	var filteredEvents []EventEntry
 	for _, event := range m.events {
-		if selectedName == "" || event.SessionName == "" || event.SessionName == selectedName {
+		if selectedName == "" || event.SessionName == selectedName {
 			filteredEvents = append(filteredEvents, event)
 		}
 	}
