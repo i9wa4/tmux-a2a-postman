@@ -246,12 +246,20 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	defer func() { _ = watcher.Close() }()
 
-	// Discover nodes at startup (before watching)
+	// Discover nodes at startup (before watching, edge-filtered)
 	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
 		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
 		nodes = make(map[string]discovery.NodeInfo)
+	}
+	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+	for nodeName := range nodes {
+		parts := strings.SplitN(nodeName, ":", 2)
+		rawName := parts[len(parts)-1]
+		if !edgeNodes[rawName] {
+			delete(nodes, nodeName)
+		}
 	}
 
 	// Watch all discovered session directories

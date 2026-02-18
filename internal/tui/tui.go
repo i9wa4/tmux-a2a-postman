@@ -720,7 +720,6 @@ func (m Model) renderLeftPane(width, height int) string {
 	var b strings.Builder
 
 	b.WriteString("Sessions\n")
-	b.WriteString(strings.Repeat("─", width-2) + "\n")
 
 	if len(m.sessions) == 0 {
 		b.WriteString("(no sessions)\n")
