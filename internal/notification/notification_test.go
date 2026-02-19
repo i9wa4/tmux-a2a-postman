@@ -163,3 +163,61 @@ func TestSendToPane_InvalidPane(t *testing.T) {
 		t.Error("SendToPane() with invalid pane should return error")
 	}
 }
+
+// TestBuildNotification_FromInjection tests --from injection in reply_command
+func TestBuildNotification_FromInjection(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%1", SessionName: "test"},
+	}
+	adjacency := map[string][]string{}
+	pongActiveNodes := map[string]bool{}
+
+	tests := []struct {
+		name        string
+		replyCmd    string
+		recipient   string
+		wantContain string
+		wantCount   int
+	}{
+		{
+			name:        "inject --from before --to when absent",
+			replyCmd:    "postman create-draft --to <recipient>",
+			recipient:   "worker",
+			wantContain: "--from worker --to",
+			wantCount:   1,
+		},
+		{
+			name:        "skip injection when --from already present",
+			replyCmd:    "postman create-draft --from worker --to <recipient>",
+			recipient:   "worker",
+			wantContain: "--from worker",
+			wantCount:   1,
+		},
+		{
+			name:        "inject --from at end when no --to",
+			replyCmd:    "postman create-draft",
+			recipient:   "worker",
+			wantContain: "--from worker",
+			wantCount:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				NotificationTemplate: "{reply_command}",
+				TmuxTimeout:          5.0,
+				ReplyCommand:         tt.replyCmd,
+			}
+			notification := BuildNotification(cfg, adjacency, nodes, "ctx", tt.recipient, "sender", "test", "/path/file.md", pongActiveNodes)
+			if !strings.Contains(notification, tt.wantContain) {
+				t.Errorf("notification = %q, want to contain %q", notification, tt.wantContain)
+			}
+			// Verify --from appears exactly once
+			count := strings.Count(notification, "--from")
+			if count != tt.wantCount {
+				t.Errorf("notification has %d --from occurrences, want %d; notification = %q", count, tt.wantCount, notification)
+			}
+		})
+	}
+}

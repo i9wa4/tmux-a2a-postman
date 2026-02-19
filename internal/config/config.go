@@ -554,8 +554,19 @@ func ResolveContextID(explicitID string, baseDir string) (string, string, error)
 }
 
 // GetTmuxSessionName extracts the tmux session name using tmux command.
-// Returns empty string if not in tmux.
+// Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
+// Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxSessionName() string {
+	paneID := os.Getenv("TMUX_PANE")
+	if paneID != "" {
+		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{session_name}")
+		output, err := cmd.Output()
+		if err != nil {
+			return "" // fail closed
+		}
+		return strings.TrimSpace(string(output))
+	}
+	// TMUX_PANE absent: untargeted fallback (existing behavior)
 	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
@@ -565,8 +576,19 @@ func GetTmuxSessionName() string {
 }
 
 // GetTmuxPaneName returns the current tmux pane title.
-// Returns empty string if not in tmux or pane has no title set.
+// Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
+// Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxPaneName() string {
+	paneID := os.Getenv("TMUX_PANE")
+	if paneID != "" {
+		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_title}")
+		output, err := cmd.Output()
+		if err != nil {
+			return "" // fail closed
+		}
+		return strings.TrimSpace(string(output))
+	}
+	// TMUX_PANE absent: untargeted fallback (existing behavior)
 	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_title}")
 	output, err := cmd.Output()
 	if err != nil {

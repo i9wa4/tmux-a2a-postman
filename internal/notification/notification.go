@@ -110,6 +110,16 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		}
 	}
 
+	// Inject --from <recipient> so create-draft correctly identifies sender
+	if strings.Contains(replyCmd, "create-draft") && !strings.Contains(replyCmd, "--from") {
+		if strings.Contains(replyCmd, "--to") {
+			replyCmd = strings.Replace(replyCmd, "--to",
+				fmt.Sprintf("--from %s --to", recipient), 1)
+		} else {
+			replyCmd = fmt.Sprintf("%s --from %s", replyCmd, recipient)
+		}
+	}
+
 	// CRITICAL FIX: Expand {context_id} placeholder in reply_command template
 	// This handles cases where reply_command contains {context_id} literally in config
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)

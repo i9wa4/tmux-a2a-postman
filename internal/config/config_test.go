@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -735,4 +736,118 @@ func TestResolveNodesDir(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetTmuxPaneName(t *testing.T) {
+	t.Run("TMUX_PANE set uses targeted lookup", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		argsFile := filepath.Join(tmpDir, "args.txt")
+		fakeTmux := filepath.Join(tmpDir, "tmux")
+		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-pane-title'\n"
+		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		origPath := os.Getenv("PATH")
+		t.Setenv("PATH", tmpDir+":"+origPath)
+		t.Setenv("TMUX_PANE", "%42")
+
+		got := GetTmuxPaneName()
+		if got != "test-pane-title" {
+			t.Errorf("GetTmuxPaneName() = %q, want %q", got, "test-pane-title")
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("ReadFile args failed: %v", err)
+		}
+		args := strings.TrimSpace(string(argsData))
+		if !strings.Contains(args, "-t") {
+			t.Errorf("tmux args %q: want '-t' for targeted path", args)
+		}
+		if !strings.Contains(args, "%42") {
+			t.Errorf("tmux args %q: want '%%42' for targeted path", args)
+		}
+	})
+
+	t.Run("TMUX_PANE unset uses untargeted fallback", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		argsFile := filepath.Join(tmpDir, "args.txt")
+		fakeTmux := filepath.Join(tmpDir, "tmux")
+		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-pane-title'\n"
+		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		origPath := os.Getenv("PATH")
+		t.Setenv("PATH", tmpDir+":"+origPath)
+		t.Setenv("TMUX_PANE", "")
+
+		got := GetTmuxPaneName()
+		if got != "test-pane-title" {
+			t.Errorf("GetTmuxPaneName() = %q, want %q", got, "test-pane-title")
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("ReadFile args failed: %v", err)
+		}
+		args := strings.TrimSpace(string(argsData))
+		if strings.Contains(args, "-t") {
+			t.Errorf("tmux args %q: should NOT contain '-t' for untargeted path", args)
+		}
+	})
+}
+
+func TestGetTmuxSessionName(t *testing.T) {
+	t.Run("TMUX_PANE set uses targeted lookup", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		argsFile := filepath.Join(tmpDir, "args.txt")
+		fakeTmux := filepath.Join(tmpDir, "tmux")
+		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-session'\n"
+		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		origPath := os.Getenv("PATH")
+		t.Setenv("PATH", tmpDir+":"+origPath)
+		t.Setenv("TMUX_PANE", "%7")
+
+		got := GetTmuxSessionName()
+		if got != "test-session" {
+			t.Errorf("GetTmuxSessionName() = %q, want %q", got, "test-session")
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("ReadFile args failed: %v", err)
+		}
+		args := strings.TrimSpace(string(argsData))
+		if !strings.Contains(args, "-t") {
+			t.Errorf("tmux args %q: want '-t' for targeted path", args)
+		}
+		if !strings.Contains(args, "%7") {
+			t.Errorf("tmux args %q: want '%%7' for targeted path", args)
+		}
+	})
+
+	t.Run("TMUX_PANE unset uses untargeted fallback", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		argsFile := filepath.Join(tmpDir, "args.txt")
+		fakeTmux := filepath.Join(tmpDir, "tmux")
+		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-session'\n"
+		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+		origPath := os.Getenv("PATH")
+		t.Setenv("PATH", tmpDir+":"+origPath)
+		t.Setenv("TMUX_PANE", "")
+
+		got := GetTmuxSessionName()
+		if got != "test-session" {
+			t.Errorf("GetTmuxSessionName() = %q, want %q", got, "test-session")
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("ReadFile args failed: %v", err)
+		}
+		args := strings.TrimSpace(string(argsData))
+		if strings.Contains(args, "-t") {
+			t.Errorf("tmux args %q: should NOT contain '-t' for untargeted path", args)
+		}
+	})
 }
