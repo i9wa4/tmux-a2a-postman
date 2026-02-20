@@ -933,6 +933,9 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 	// Initialize reminder state
 	reminderState := watchdog.NewReminderState()
 
+	// Issue #124: Compute edge node names once (config is static).
+	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+
 	log.Printf("watchdog: started (pid=%d)\n", os.Getpid())
 
 	// Main watchdog loop
@@ -951,6 +954,15 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 				log.Printf("watchdog: idle check failed: %v\n", err)
 				continue
 			}
+
+			// Issue #124: Filter idle panes to edge panes only.
+			// On tmux failure, fall back to all panes (over-inclusive, never suppress alerts).
+			paneTitles, err := watchdog.GetPaneTitles()
+			if err != nil {
+				log.Printf("watchdog: failed to get pane titles for edge filtering, falling back to all panes: %v\n", err)
+				paneTitles = nil // nil triggers fallback in FilterToEdgePanes
+			}
+			idlePanes = watchdog.FilterToEdgePanes(idlePanes, paneTitles, edgeNodes)
 
 			// Send reminders for idle panes (Issue #46: added cfg.UINode parameter)
 			for _, activity := range idlePanes {

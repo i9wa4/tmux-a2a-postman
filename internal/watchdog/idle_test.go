@@ -95,3 +95,76 @@ func TestGetIdlePanesFromActivityFile_SchemaError(t *testing.T) {
 		t.Errorf("expected empty slice for malformed JSON, got %d entries", len(result))
 	}
 }
+
+// Issue #124: Tests for FilterToEdgePanes
+
+func TestFilterToEdgePanes_FiltersToEdgeOnly(t *testing.T) {
+	panes := []PaneActivity{
+		{PaneID: "%1", LastActivityTime: time.Now()},
+		{PaneID: "%2", LastActivityTime: time.Now()},
+		{PaneID: "%3", LastActivityTime: time.Now()},
+	}
+	paneTitles := map[string]string{
+		"%1": "worker",
+		"%2": "messenger",
+		"%3": "watchdog",
+	}
+	edgeNodes := map[string]bool{
+		"worker":    true,
+		"messenger": true,
+		// watchdog is NOT an edge node
+	}
+
+	result := FilterToEdgePanes(panes, paneTitles, edgeNodes)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 edge panes, got %d: %v", len(result), result)
+	}
+	for _, pa := range result {
+		title := paneTitles[pa.PaneID]
+		if !edgeNodes[title] {
+			t.Errorf("pane %s (title %q) should not pass edge filter", pa.PaneID, title)
+		}
+	}
+}
+
+func TestFilterToEdgePanes_FallbackOnNilTitles(t *testing.T) {
+	// nil paneTitles = tmux failure fallback: return all panes unchanged
+	panes := []PaneActivity{
+		{PaneID: "%1"},
+		{PaneID: "%2"},
+	}
+	edgeNodes := map[string]bool{"worker": true}
+
+	result := FilterToEdgePanes(panes, nil, edgeNodes)
+	if len(result) != 2 {
+		t.Errorf("expected all 2 panes on nil paneTitles (fallback), got %d", len(result))
+	}
+}
+
+func TestFilterToEdgePanes_FallbackOnEmptyEdgeNodes(t *testing.T) {
+	// Empty edgeNodes (no edges configured): return all panes unchanged
+	panes := []PaneActivity{
+		{PaneID: "%1"},
+		{PaneID: "%2"},
+	}
+	paneTitles := map[string]string{"%1": "worker", "%2": "messenger"}
+
+	result := FilterToEdgePanes(panes, paneTitles, map[string]bool{})
+	if len(result) != 2 {
+		t.Errorf("expected all 2 panes on empty edgeNodes (fallback), got %d", len(result))
+	}
+}
+
+func TestFilterToEdgePanes_PaneNotInTitles(t *testing.T) {
+	// Pane ID not found in paneTitles: excluded from result
+	panes := []PaneActivity{
+		{PaneID: "%99"}, // not in paneTitles
+	}
+	paneTitles := map[string]string{"%1": "worker"}
+	edgeNodes := map[string]bool{"worker": true}
+
+	result := FilterToEdgePanes(panes, paneTitles, edgeNodes)
+	if len(result) != 0 {
+		t.Errorf("expected 0 panes for unknown pane ID, got %d", len(result))
+	}
+}
