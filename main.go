@@ -964,23 +964,16 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 			}
 			idlePanes = watchdog.FilterToEdgePanes(idlePanes, paneTitles, edgeNodes)
 
-			// Send reminders for idle panes (Issue #46: added cfg.UINode parameter)
+			// Issue #125: Process idle panes — capture FIRST, then send reminder.
 			for _, activity := range idlePanes {
-				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
-					if err := watchdog.SendIdleReminder(cfg, activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
-						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
-					} else {
-						reminderState.MarkReminderSent(activity.PaneID)
-						log.Printf("watchdog: reminder sent for %s\n", activity.PaneID)
-					}
-				}
-
-				// Capture pane if enabled
+				// 1. Capture pane FIRST (record state before disturbing it with a notification).
+				// On failure: log and continue — never suppress the idle alert.
 				if cfg.Watchdog.Capture.Enabled {
 					captureDir := filepath.Join(sessionDir, "capture")
 					capturePath, err := watchdog.CapturePane(activity.PaneID, captureDir, cfg.Watchdog.Capture.TailLines)
 					if err != nil {
 						log.Printf("watchdog: capture failed for %s: %v\n", activity.PaneID, err)
+						// Capture failure does not suppress the reminder — fall through.
 					} else {
 						log.Printf("watchdog: captured %s -> %s\n", activity.PaneID, capturePath)
 
@@ -988,6 +981,16 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 						if err := watchdog.RotateCaptures(captureDir, cfg.Watchdog.Capture.MaxFiles, int64(cfg.Watchdog.Capture.MaxBytes)); err != nil {
 							log.Printf("watchdog: rotation failed: %v\n", err)
 						}
+					}
+				}
+
+				// 2. Send idle reminder (Issue #46: added cfg.UINode parameter).
+				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
+					if err := watchdog.SendIdleReminder(cfg, activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
+						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
+					} else {
+						reminderState.MarkReminderSent(activity.PaneID)
+						log.Printf("watchdog: reminder sent for %s\n", activity.PaneID)
 					}
 				}
 			}
