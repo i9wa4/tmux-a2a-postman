@@ -120,7 +120,7 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 	idleThreshold := time.Duration(cfg.NodeIdleSeconds) * time.Second
 
 	for paneID, state := range t.paneCaptureState {
-		if state.LastChangeAt.IsZero() || state.ChangeCount == 0 {
+		if state.LastChangeAt.IsZero() {
 			result[paneID] = "stale"
 			continue
 		}
