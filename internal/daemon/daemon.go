@@ -352,6 +352,7 @@ func RunDaemonLoop(
 												parts := strings.SplitN(nodeName, ":", 2)
 												if len(parts) == 2 {
 													sessionName := parts[0]
+														daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 													if !daemonState.IsSessionEnabled(sessionName) {
 														shouldPing = false
 													}
@@ -646,6 +647,7 @@ func RunDaemonLoop(
 						parts := strings.SplitN(nodeName, ":", 2)
 						if len(parts) == 2 {
 							sessionName := parts[0]
+						daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 							if !daemonState.IsSessionEnabled(sessionName) {
 								shouldPing = false
 							}
@@ -834,6 +836,17 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessionsMu.Lock()
 	defer ds.enabledSessionsMu.Unlock()
 	ds.enabledSessions[sessionName] = enabled
+}
+
+// AutoEnableSessionIfNew enables a session if it has never been configured (Issue #91).
+// Called on first discovery of a new pane to allow auto-PING without TUI intervention.
+// Does nothing if the session is already tracked (operator's explicit state is preserved).
+func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
+	ds.enabledSessionsMu.Lock()
+	defer ds.enabledSessionsMu.Unlock()
+	if _, exists := ds.enabledSessions[sessionName]; !exists {
+		ds.enabledSessions[sessionName] = true
+	}
 }
 
 // IsSessionEnabled checks if a session is enabled (Issue #71).
@@ -1309,6 +1322,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 				parts := strings.SplitN(nodeKey, ":", 2)
 				if len(parts) == 2 {
 					sessionName := parts[0]
+				ds.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 					if !ds.IsSessionEnabled(sessionName) {
 						shouldPing = false
 					}
