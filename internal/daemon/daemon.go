@@ -347,17 +347,17 @@ func RunDaemonLoop(
 										shouldPing = true // Default to "all" behavior
 									}
 
-											// Issue #119: Check session enabled state
-											if shouldPing {
-												parts := strings.SplitN(nodeName, ":", 2)
-												if len(parts) == 2 {
-													sessionName := parts[0]
-														daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
-													if !daemonState.IsSessionEnabled(sessionName) {
-														shouldPing = false
-													}
-												}
+									// Issue #119: Check session enabled state
+									if shouldPing {
+										parts := strings.SplitN(nodeName, ":", 2)
+										if len(parts) == 2 {
+											sessionName := parts[0]
+											daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
+											if !daemonState.IsSessionEnabled(sessionName) {
+												shouldPing = false
 											}
+										}
+									}
 									if shouldPing && cfg.NewNodePingDelay > 0 {
 										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
 										capturedNode := nodeName
@@ -647,7 +647,7 @@ func RunDaemonLoop(
 						parts := strings.SplitN(nodeName, ":", 2)
 						if len(parts) == 2 {
 							sessionName := parts[0]
-						daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
+							daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 							if !daemonState.IsSessionEnabled(sessionName) {
 								shouldPing = false
 							}
@@ -1023,17 +1023,16 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				},
 			}
 
+			// Issue #118: Send alert to ui_node with rate-limiting
+			alertKey := fmt.Sprintf("inbox_stagnation:%s:%s", nodeKey, severity)
+			cooldown := 300.0 // 5 minutes
 
-		// Issue #118: Send alert to ui_node with rate-limiting
-		alertKey := fmt.Sprintf("inbox_stagnation:%s:%s", nodeKey, severity)
-		cooldown := 300.0 // 5 minutes
-
-		if ds.ShouldSendAlert(alertKey, cooldown) {
-			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_stagnation")
-			if err == nil {
-				ds.MarkAlertSent(alertKey)
+			if ds.ShouldSendAlert(alertKey, cooldown) {
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_stagnation")
+				if err == nil {
+					ds.MarkAlertSent(alertKey)
+				}
 			}
-		}
 		}
 	}
 
@@ -1106,17 +1105,16 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				},
 			}
 
+			// Issue #118: Send alert to ui_node with rate-limiting
+			alertKey := fmt.Sprintf("unreplied_messages:%s", nodeKey)
+			cooldown := 300.0 // 5 minutes
 
-		// Issue #118: Send alert to ui_node with rate-limiting
-		alertKey := fmt.Sprintf("unreplied_messages:%s", nodeKey)
-		cooldown := 300.0 // 5 minutes
-
-		if ds.ShouldSendAlert(alertKey, cooldown) {
-			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_unread_summary")
-			if err == nil {
-				ds.MarkAlertSent(alertKey)
+			if ds.ShouldSendAlert(alertKey, cooldown) {
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_unread_summary")
+				if err == nil {
+					ds.MarkAlertSent(alertKey)
+				}
 			}
-		}
 		}
 	}
 }
@@ -1220,7 +1218,6 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 			},
 		}
 
-
 		// Issue #118: Send alert to ui_node with rate-limiting
 		alertKey := fmt.Sprintf("node_inactivity:%s:%s", nodeKey, severity)
 		cooldown := 300.0 // 5 minutes
@@ -1322,7 +1319,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 				parts := strings.SplitN(nodeKey, ":", 2)
 				if len(parts) == 2 {
 					sessionName := parts[0]
-				ds.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
+					ds.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 					if !ds.IsSessionEnabled(sessionName) {
 						shouldPing = false
 					}
@@ -1474,17 +1471,16 @@ func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInf
 				},
 			}
 
+			// Issue #118: Send alert to ui_node with rate-limiting
+			alertKey := fmt.Sprintf("unreplied_message:%s:%s", nodeKey, entry.Name())
+			cooldown := 300.0 // 5 minutes
 
-		// Issue #118: Send alert to ui_node with rate-limiting
-		alertKey := fmt.Sprintf("unreplied_message:%s:%s", nodeKey, entry.Name())
-		cooldown := 300.0 // 5 minutes
-
-		if ds.ShouldSendAlert(alertKey, cooldown) {
-			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "unreplied_message")
-			if err == nil {
-				ds.MarkAlertSent(alertKey)
+			if ds.ShouldSendAlert(alertKey, cooldown) {
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "unreplied_message")
+				if err == nil {
+					ds.MarkAlertSent(alertKey)
+				}
 			}
-		}
 		}
 	}
 }

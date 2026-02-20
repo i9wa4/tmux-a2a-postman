@@ -159,9 +159,9 @@ func DefaultConfig() *Config {
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
-		UINode:                       "", // Issue #46: Default UI target node (empty = no default)
-		PingMode:                     "all",       // Issue #98: Default to ping all nodes
-		InboxUnreadThreshold:         3,           // Default threshold for inbox unread summary notification
+		UINode:                       "",    // Issue #46: Default UI target node (empty = no default)
+		PingMode:                     "all", // Issue #98: Default to ping all nodes
+		InboxUnreadThreshold:         3,     // Default threshold for inbox unread summary notification
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
