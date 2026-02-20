@@ -672,11 +672,26 @@ func runGetSessionStatusOneline(args []string) error {
 		if err != nil {
 			continue
 		}
-		var partial map[string]string
-		if err := json.Unmarshal(stateData, &partial); err != nil {
+		// Issue #123: Dual-format reader — supports both legacy map[string]string and
+		// new map[string]PaneActivityExport formats.
+		var rawMap map[string]json.RawMessage
+		if err := json.Unmarshal(stateData, &rawMap); err != nil {
 			continue
 		}
-		for paneID, status := range partial {
+		for paneID, raw := range rawMap {
+			var status string
+			// Try legacy format: plain string value
+			if err := json.Unmarshal(raw, &status); err != nil {
+				// Try new format: PaneActivityExport struct
+				var export idle.PaneActivityExport
+				if err := json.Unmarshal(raw, &export); err != nil {
+					continue // skip on schema mismatch
+				}
+				status = export.Status
+			}
+			if status == "" {
+				continue
+			}
 			existing, exists := paneActivity[paneID]
 			if !exists || statusPriority[status] > statusPriority[existing] {
 				paneActivity[paneID] = status // higher priority wins on conflict

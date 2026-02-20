@@ -1,12 +1,21 @@
 package watchdog
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// paneActivityExport mirrors idle.PaneActivityExport for local JSON parsing.
+// Defined locally to avoid importing internal/idle (separation of concerns).
+type paneActivityExport struct {
+	Status       string    `json:"status"`
+	LastChangeAt time.Time `json:"lastChangeAt"`
+}
 
 // PaneActivity holds pane activity information.
 type PaneActivity struct {
@@ -66,6 +75,51 @@ func CheckIdle(activity PaneActivity, idleThresholdSeconds float64) bool {
 	threshold := time.Duration(idleThresholdSeconds * float64(time.Second))
 	timeSinceActivity := time.Since(activity.LastActivityTime)
 	return timeSinceActivity > threshold
+}
+
+// GetIdlePanesFromActivityFile reads pane activity from a pane-activity.json file
+// and returns panes with status "idle".
+// Issue #123: Supports both legacy map[string]string and new map[string]PaneActivityExport formats.
+// Returns empty slice (not error) on: file missing, stale, parse error, schema mismatch.
+func GetIdlePanesFromActivityFile(path string) ([]PaneActivity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []PaneActivity{}, nil // file missing or unreadable
+	}
+
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return []PaneActivity{}, nil // parse error
+	}
+
+	var result []PaneActivity
+	for paneID, raw := range rawMap {
+		var status string
+		var lastChangeAt time.Time
+
+		// Try legacy format: plain string value
+		if err := json.Unmarshal(raw, &status); err != nil {
+			// Try new format: paneActivityExport struct
+			var export paneActivityExport
+			if err := json.Unmarshal(raw, &export); err != nil {
+				continue // schema mismatch, skip entry
+			}
+			status = export.Status
+			lastChangeAt = export.LastChangeAt
+		}
+
+		if status == "idle" {
+			result = append(result, PaneActivity{
+				PaneID:           paneID,
+				LastActivityTime: lastChangeAt,
+			})
+		}
+	}
+
+	if result == nil {
+		return []PaneActivity{}, nil
+	}
+	return result, nil
 }
 
 // GetIdlePanes returns a list of panes that have been idle for longer than the threshold.
