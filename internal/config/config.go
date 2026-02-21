@@ -234,99 +234,428 @@ func loadEmbeddedConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// LoadConfig loads configuration from a TOML file (Python format).
-// Python format requires [postman] section and [nodename] sections.
-// If path is empty, tries XDG config fallback chain.
-// Issue #81: If no file found, loads embedded default configuration.
-func LoadConfig(path string) (*Config, error) {
-	configPath := path
-	if configPath == "" {
-		configPath = ResolveConfigPath()
-		if configPath == "" {
-			// No user config: use embedded default
-			return loadEmbeddedConfig()
-		}
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if path != "" {
-			// Explicit path was provided but doesn't exist
-			return nil, fmt.Errorf("config file not found: %s", configPath)
-		}
-		// Fallback path doesn't exist, use embedded default
-		return loadEmbeddedConfig()
-	}
-
-	// Parse TOML file with metadata (Python format)
-	var rootSections map[string]toml.Primitive
-	md, err := toml.DecodeFile(configPath, &rootSections)
+// resolveProjectLocalConfig searches upward from cwd for .tmux-a2a-postman/postman.toml.
+// Stops before the home directory. Deduplicates against xdgPath via EvalSymlinks.
+// Returns the project-local config path, or "" if not found.
+// Issue #121: Project-local config support.
+func resolveProjectLocalConfig(cwd, xdgPath string) (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("parsing config file: %w", err)
+		return "", nil // cannot determine home; skip project-local
+	}
+	homeResolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		homeResolved = home
+	}
+	xdgResolved := ""
+	if xdgPath != "" {
+		r, err := filepath.EvalSymlinks(xdgPath)
+		if err == nil {
+			xdgResolved = r
+		} else {
+			xdgResolved = xdgPath
+		}
+	}
+	dir := cwd
+	for {
+		candidate := filepath.Join(dir, ".tmux-a2a-postman", "postman.toml")
+		if _, err := os.Stat(candidate); err == nil {
+			candidateResolved, err := filepath.EvalSymlinks(candidate)
+			if err != nil {
+				candidateResolved = candidate
+			}
+			if candidateResolved != xdgResolved {
+				return candidate, nil
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil // filesystem root reached
+		}
+		parentResolved, err := filepath.EvalSymlinks(parent)
+		if err != nil {
+			parentResolved = parent
+		}
+		if parentResolved == homeResolved {
+			return "", nil // stop before home directory
+		}
+		dir = parent
+	}
+}
+
+// loadConfigFile parses a TOML config file into a zero-value Config.
+// Unlike LoadConfig, starts from zero-value (not DefaultConfig) so only
+// explicitly-set fields are non-zero. Does not load sibling nodes/ directory.
+// Issue #121: Used for project-local config overlay.
+func loadConfigFile(path string) (*Config, error) {
+	var rootSections map[string]toml.Primitive
+	md, err := toml.DecodeFile(path, &rootSections)
+	if err != nil {
+		return nil, fmt.Errorf("parsing project-local config %s: %w", path, err)
 	}
 
-	// Decode [postman] section (optional, uses defaults if not present)
-	cfg := DefaultConfig()
-	postmanPrim, ok := rootSections["postman"]
-	if ok {
+	cfg := &Config{Nodes: make(map[string]NodeConfig)}
+
+	if postmanPrim, ok := rootSections["postman"]; ok {
 		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
-			return nil, fmt.Errorf("decoding [postman] section: %w", err)
+			return nil, fmt.Errorf("decoding [postman] in %s: %w", path, err)
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
-	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
 		if name == "postman" || name == "compaction_detection" || name == "watchdog" {
 			continue
 		}
-
 		var node NodeConfig
 		if err := md.PrimitiveDecode(prim, &node); err != nil {
-			return nil, fmt.Errorf("decoding [%s] section: %w", name, err)
+			return nil, fmt.Errorf("decoding [%s] in %s: %w", name, path, err)
 		}
 		cfg.Nodes[name] = node
 	}
 
-	// Decode [compaction_detection] section if exists
 	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
 		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
-			return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
+			return nil, fmt.Errorf("decoding [compaction_detection] in %s: %w", path, err)
 		}
 	}
 
-	// Decode [watchdog] section if exists
 	if watchdogPrim, ok := rootSections["watchdog"]; ok {
 		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
-			return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
+			return nil, fmt.Errorf("decoding [watchdog] in %s: %w", path, err)
 		}
 	}
 
-	// Issue #50: Load node files from nodes/ directory
-	configDir := filepath.Dir(configPath)
-	nodesDir := filepath.Join(configDir, "nodes")
-	if info, err := os.Stat(nodesDir); err == nil && info.IsDir() {
-		nodeFiles, _ := filepath.Glob(filepath.Join(nodesDir, "*.toml"))
-		sort.Strings(nodeFiles) // deterministic alphabetical order
-		for _, nodeFile := range nodeFiles {
-			var sections map[string]toml.Primitive
-			md2, err := toml.DecodeFile(nodeFile, &sections)
-			if err != nil {
-				log.Printf("warning: skipping %s: %v", nodeFile, err)
-				continue
-			}
-			for name, prim := range sections {
-				if name == "postman" || name == "compaction_detection" || name == "watchdog" {
-					continue // skip reserved sections
-				}
-				var node NodeConfig
-				if err := md2.PrimitiveDecode(prim, &node); err != nil {
-					log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
-					continue
-				}
-				cfg.Nodes[name] = node // override if exists in postman.toml
+	return cfg, nil
+}
+
+// mergeConfig merges override fields into base using "non-zero wins" semantics.
+// Non-zero override values replace base values. Bool fields cannot be overridden to false.
+// Edges are replaced when override has at least one entry. Nodes are merged field-by-field.
+// Issue #121: Used to apply project-local config on top of XDG/embedded config.
+func mergeConfig(base, override *Config) {
+	// String fields
+	if override.A2AVersion != "" {
+		base.A2AVersion = override.A2AVersion
+	}
+	if override.BaseDir != "" {
+		base.BaseDir = override.BaseDir
+	}
+	if override.NotificationTemplate != "" {
+		base.NotificationTemplate = override.NotificationTemplate
+	}
+	if override.PingTemplate != "" {
+		base.PingTemplate = override.PingTemplate
+	}
+	if override.DraftTemplate != "" {
+		base.DraftTemplate = override.DraftTemplate
+	}
+	if override.ReminderMessage != "" {
+		base.ReminderMessage = override.ReminderMessage
+	}
+	if override.CommonTemplate != "" {
+		base.CommonTemplate = override.CommonTemplate
+	}
+	if override.EdgeViolationWarningTemplate != "" {
+		base.EdgeViolationWarningTemplate = override.EdgeViolationWarningTemplate
+	}
+	if override.EdgeViolationWarningMode != "" {
+		base.EdgeViolationWarningMode = override.EdgeViolationWarningMode
+	}
+	if override.IdleReminderHeaderTemplate != "" {
+		base.IdleReminderHeaderTemplate = override.IdleReminderHeaderTemplate
+	}
+	if override.SessionIdleAlertTemplate != "" {
+		base.SessionIdleAlertTemplate = override.SessionIdleAlertTemplate
+	}
+	if override.CompactionHeaderTemplate != "" {
+		base.CompactionHeaderTemplate = override.CompactionHeaderTemplate
+	}
+	if override.WatchdogAlertTemplate != "" {
+		base.WatchdogAlertTemplate = override.WatchdogAlertTemplate
+	}
+	if override.CompactionBodyTemplate != "" {
+		base.CompactionBodyTemplate = override.CompactionBodyTemplate
+	}
+	if override.DroppedBallEventTemplate != "" {
+		base.DroppedBallEventTemplate = override.DroppedBallEventTemplate
+	}
+	if override.RulesTemplate != "" {
+		base.RulesTemplate = override.RulesTemplate
+	}
+	if override.ReplyCommand != "" {
+		base.ReplyCommand = override.ReplyCommand
+	}
+	if override.UINode != "" {
+		base.UINode = override.UINode
+	}
+	if override.PingMode != "" {
+		base.PingMode = override.PingMode
+	}
+
+	// Float64 fields
+	if override.ScanInterval != 0 {
+		base.ScanInterval = override.ScanInterval
+	}
+	if override.EnterDelay != 0 {
+		base.EnterDelay = override.EnterDelay
+	}
+	if override.TmuxTimeout != 0 {
+		base.TmuxTimeout = override.TmuxTimeout
+	}
+	if override.StartupDelay != 0 {
+		base.StartupDelay = override.StartupDelay
+	}
+	if override.NewNodePingDelay != 0 {
+		base.NewNodePingDelay = override.NewNodePingDelay
+	}
+	if override.ReminderInterval != 0 {
+		base.ReminderInterval = override.ReminderInterval
+	}
+	if override.EdgeActivitySeconds != 0 {
+		base.EdgeActivitySeconds = override.EdgeActivitySeconds
+	}
+	if override.NodeActiveSeconds != 0 {
+		base.NodeActiveSeconds = override.NodeActiveSeconds
+	}
+	if override.NodeIdleSeconds != 0 {
+		base.NodeIdleSeconds = override.NodeIdleSeconds
+	}
+	if override.NodeStaleSeconds != 0 {
+		base.NodeStaleSeconds = override.NodeStaleSeconds
+	}
+	if override.PaneCaptureIntervalSeconds != 0 {
+		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds
+	}
+	if override.ActivityWindowSeconds != 0 {
+		base.ActivityWindowSeconds = override.ActivityWindowSeconds
+	}
+
+	// Int fields
+	if override.PaneCaptureMaxPanes != 0 {
+		base.PaneCaptureMaxPanes = override.PaneCaptureMaxPanes
+	}
+	if override.InboxUnreadThreshold != 0 {
+		base.InboxUnreadThreshold = override.InboxUnreadThreshold
+	}
+
+	// Bool fields (cannot override to false via project-local)
+	if override.PaneCaptureEnabled {
+		base.PaneCaptureEnabled = true
+	}
+
+	// Edges: replace if override is non-empty
+	if len(override.Edges) > 0 {
+		base.Edges = override.Edges
+	}
+
+	// Nodes: field-level merge per node
+	for name, overNode := range override.Nodes {
+		baseNode := base.Nodes[name]
+		if overNode.Template != "" {
+			baseNode.Template = overNode.Template
+		}
+		if overNode.OnJoin != "" {
+			baseNode.OnJoin = overNode.OnJoin
+		}
+		if overNode.Role != "" {
+			baseNode.Role = overNode.Role
+		}
+		if overNode.ReminderInterval != 0 {
+			baseNode.ReminderInterval = overNode.ReminderInterval
+		}
+		if overNode.ReminderMessage != "" {
+			baseNode.ReminderMessage = overNode.ReminderMessage
+		}
+		if overNode.IdleTimeoutSeconds != 0 {
+			baseNode.IdleTimeoutSeconds = overNode.IdleTimeoutSeconds
+		}
+		if overNode.IdleReminderMessage != "" {
+			baseNode.IdleReminderMessage = overNode.IdleReminderMessage
+		}
+		if overNode.IdleReminderCooldownSeconds != 0 {
+			baseNode.IdleReminderCooldownSeconds = overNode.IdleReminderCooldownSeconds
+		}
+		if overNode.DroppedBallTimeoutSeconds != 0 {
+			baseNode.DroppedBallTimeoutSeconds = overNode.DroppedBallTimeoutSeconds
+		}
+		if overNode.DroppedBallCooldownSeconds != 0 {
+			baseNode.DroppedBallCooldownSeconds = overNode.DroppedBallCooldownSeconds
+		}
+		if overNode.DroppedBallNotification != "" {
+			baseNode.DroppedBallNotification = overNode.DroppedBallNotification
+		}
+		base.Nodes[name] = baseNode
+	}
+
+	// CompactionDetection: field-level merge
+	if override.CompactionDetection.Enabled {
+		base.CompactionDetection.Enabled = true
+	}
+	if override.CompactionDetection.Pattern != "" {
+		base.CompactionDetection.Pattern = override.CompactionDetection.Pattern
+	}
+	if override.CompactionDetection.DelaySeconds != 0 {
+		base.CompactionDetection.DelaySeconds = override.CompactionDetection.DelaySeconds
+	}
+	if override.CompactionDetection.MessageTemplate.Type != "" {
+		base.CompactionDetection.MessageTemplate.Type = override.CompactionDetection.MessageTemplate.Type
+	}
+	if override.CompactionDetection.MessageTemplate.Body != "" {
+		base.CompactionDetection.MessageTemplate.Body = override.CompactionDetection.MessageTemplate.Body
+	}
+
+	// Watchdog: field-level merge
+	if override.Watchdog.Enabled {
+		base.Watchdog.Enabled = true
+	}
+	if override.Watchdog.IdleThresholdSeconds != 0 {
+		base.Watchdog.IdleThresholdSeconds = override.Watchdog.IdleThresholdSeconds
+	}
+	if override.Watchdog.CooldownSeconds != 0 {
+		base.Watchdog.CooldownSeconds = override.Watchdog.CooldownSeconds
+	}
+	if override.Watchdog.HeartbeatIntervalSeconds != 0 {
+		base.Watchdog.HeartbeatIntervalSeconds = override.Watchdog.HeartbeatIntervalSeconds
+	}
+	if override.Watchdog.Capture.Enabled {
+		base.Watchdog.Capture.Enabled = true
+	}
+	if override.Watchdog.Capture.MaxFiles != 0 {
+		base.Watchdog.Capture.MaxFiles = override.Watchdog.Capture.MaxFiles
+	}
+	if override.Watchdog.Capture.MaxBytes != 0 {
+		base.Watchdog.Capture.MaxBytes = override.Watchdog.Capture.MaxBytes
+	}
+	if override.Watchdog.Capture.TailLines != 0 {
+		base.Watchdog.Capture.TailLines = override.Watchdog.Capture.TailLines
+	}
+}
+
+// LoadConfig loads configuration from a TOML file (Python format).
+// Python format requires [postman] section and [nodename] sections.
+// If path is empty, tries XDG config fallback chain, then project-local config
+// (.tmux-a2a-postman/postman.toml walked up from CWD, stopping before home dir).
+// Issue #81: If no file found, loads embedded default configuration.
+// Issue #121: Project-local config is merged on top of XDG/embedded config.
+func LoadConfig(path string) (*Config, error) {
+	configPath := path
+	localPath := ""
+
+	if configPath == "" {
+		xdgPath := ResolveConfigPath()
+
+		// Resolve project-local config before any early return (#121).
+		if cwd, err := os.Getwd(); err == nil {
+			localPath, _ = resolveProjectLocalConfig(cwd, xdgPath)
+		}
+
+		if xdgPath == "" && localPath == "" {
+			// No user config anywhere: use embedded default
+			return loadEmbeddedConfig()
+		}
+		configPath = xdgPath
+	}
+
+	// Load base config.
+	var cfg *Config
+	if configPath == "" {
+		// No XDG config but project-local exists: start from embedded defaults.
+		var err error
+		cfg, err = loadEmbeddedConfig()
+		if err != nil {
+			return nil, err
+		}
+	} else if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if path != "" {
+			// Explicit path was provided but doesn't exist
+			return nil, fmt.Errorf("config file not found: %s", configPath)
+		}
+		// XDG path doesn't exist: start from embedded defaults.
+		var embErr error
+		cfg, embErr = loadEmbeddedConfig()
+		if embErr != nil {
+			return nil, embErr
+		}
+	} else {
+		// Parse TOML file with metadata (Python format)
+		var rootSections map[string]toml.Primitive
+		md, err := toml.DecodeFile(configPath, &rootSections)
+		if err != nil {
+			return nil, fmt.Errorf("parsing config file: %w", err)
+		}
+
+		// Decode [postman] section (optional, uses defaults if not present)
+		cfg = DefaultConfig()
+		postmanPrim, ok := rootSections["postman"]
+		if ok {
+			if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
+				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 		}
+
+		// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
+		cfg.Nodes = make(map[string]NodeConfig)
+		for name, prim := range rootSections {
+			if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+				continue
+			}
+
+			var node NodeConfig
+			if err := md.PrimitiveDecode(prim, &node); err != nil {
+				return nil, fmt.Errorf("decoding [%s] section: %w", name, err)
+			}
+			cfg.Nodes[name] = node
+		}
+
+		// Decode [compaction_detection] section if exists
+		if compactionPrim, ok := rootSections["compaction_detection"]; ok {
+			if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
+				return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
+			}
+		}
+
+		// Decode [watchdog] section if exists
+		if watchdogPrim, ok := rootSections["watchdog"]; ok {
+			if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
+				return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
+			}
+		}
+
+		// Issue #50: Load node files from nodes/ directory
+		configDir := filepath.Dir(configPath)
+		nodesDir := filepath.Join(configDir, "nodes")
+		if info, err := os.Stat(nodesDir); err == nil && info.IsDir() {
+			nodeFiles, _ := filepath.Glob(filepath.Join(nodesDir, "*.toml"))
+			sort.Strings(nodeFiles) // deterministic alphabetical order
+			for _, nodeFile := range nodeFiles {
+				var sections map[string]toml.Primitive
+				md2, err := toml.DecodeFile(nodeFile, &sections)
+				if err != nil {
+					log.Printf("warning: skipping %s: %v", nodeFile, err)
+					continue
+				}
+				for name, prim := range sections {
+					if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+						continue // skip reserved sections
+					}
+					var node NodeConfig
+					if err := md2.PrimitiveDecode(prim, &node); err != nil {
+						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
+						continue
+					}
+					cfg.Nodes[name] = node // override if exists in postman.toml
+				}
+			}
+		}
+	}
+
+	// Issue #121: Apply project-local config on top if found.
+	if localPath != "" {
+		localCfg, err := loadConfigFile(localPath)
+		if err != nil {
+			return nil, err
+		}
+		mergeConfig(cfg, localCfg)
 	}
 
 	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)

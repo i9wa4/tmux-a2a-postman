@@ -851,3 +851,306 @@ func TestGetTmuxSessionName(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveProjectLocalConfig_FoundInCWD(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	configPath := filepath.Join(configDir, "postman.toml")
+	if err := os.WriteFile(configPath, []byte("[postman]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	got, err := resolveProjectLocalConfig(tmpDir, "")
+	if err != nil {
+		t.Fatalf("resolveProjectLocalConfig failed: %v", err)
+	}
+	if got != configPath {
+		t.Errorf("resolveProjectLocalConfig = %q, want %q", got, configPath)
+	}
+}
+
+func TestResolveProjectLocalConfig_FoundInParent(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "sub", "nested")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir failed: %v", err)
+	}
+	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll configDir failed: %v", err)
+	}
+	configPath := filepath.Join(configDir, "postman.toml")
+	if err := os.WriteFile(configPath, []byte("[postman]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	got, err := resolveProjectLocalConfig(subDir, "")
+	if err != nil {
+		t.Fatalf("resolveProjectLocalConfig failed: %v", err)
+	}
+	if got != configPath {
+		t.Errorf("resolveProjectLocalConfig = %q, want %q", got, configPath)
+	}
+}
+
+func TestResolveProjectLocalConfig_StopsBeforeHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir failed: %v", err)
+	}
+	// Config is inside home — walk should stop before reaching it
+	configDir := filepath.Join(fakeHome, ".tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll configDir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "postman.toml"), []byte("[postman]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	t.Setenv("HOME", fakeHome)
+
+	got, err := resolveProjectLocalConfig(subDir, "")
+	if err != nil {
+		t.Fatalf("resolveProjectLocalConfig failed: %v", err)
+	}
+	if got != "" {
+		t.Errorf("resolveProjectLocalConfig = %q, want empty (should stop before home)", got)
+	}
+}
+
+func TestResolveProjectLocalConfig_SkipsXDGDuplicate(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	configPath := filepath.Join(configDir, "postman.toml")
+	if err := os.WriteFile(configPath, []byte("[postman]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Same path passed as xdgPath — should be skipped
+	got, err := resolveProjectLocalConfig(tmpDir, configPath)
+	if err != nil {
+		t.Fatalf("resolveProjectLocalConfig failed: %v", err)
+	}
+	if got != "" {
+		t.Errorf("resolveProjectLocalConfig = %q, want empty (XDG duplicate should be skipped)", got)
+	}
+}
+
+func TestResolveProjectLocalConfig_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir) // walk stops before tmpDir (== home)
+
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	got, err := resolveProjectLocalConfig(subDir, "")
+	if err != nil {
+		t.Fatalf("resolveProjectLocalConfig failed: %v", err)
+	}
+	if got != "" {
+		t.Errorf("resolveProjectLocalConfig = %q, want empty", got)
+	}
+}
+
+func TestMergeConfig_ScalarOverride(t *testing.T) {
+	base := DefaultConfig()
+	base.ScanInterval = 1.0
+	base.BaseDir = ""
+	base.PingMode = "all"
+
+	override := &Config{
+		Nodes:        make(map[string]NodeConfig),
+		ScanInterval: 5.0,
+		BaseDir:      "/project/base",
+		PingMode:     "disabled",
+	}
+
+	mergeConfig(base, override)
+
+	if base.ScanInterval != 5.0 {
+		t.Errorf("ScanInterval: got %v, want 5.0", base.ScanInterval)
+	}
+	if base.BaseDir != "/project/base" {
+		t.Errorf("BaseDir: got %q, want %q", base.BaseDir, "/project/base")
+	}
+	if base.PingMode != "disabled" {
+		t.Errorf("PingMode: got %q, want %q", base.PingMode, "disabled")
+	}
+	// Unset override field should not change base
+	if base.EnterDelay != 0.5 {
+		t.Errorf("EnterDelay: got %v, want 0.5 (unset override should not change base)", base.EnterDelay)
+	}
+}
+
+func TestMergeConfig_NodeMerge(t *testing.T) {
+	base := DefaultConfig()
+	base.Nodes = map[string]NodeConfig{
+		"worker": {Template: "base template", Role: "worker"},
+	}
+
+	override := &Config{
+		Nodes: map[string]NodeConfig{
+			"worker": {Role: "worker-override"},
+			"new":    {Template: "new template", Role: "new-role"},
+		},
+	}
+
+	mergeConfig(base, override)
+
+	// worker.Template unchanged (override field is zero)
+	if base.Nodes["worker"].Template != "base template" {
+		t.Errorf("worker.Template: got %q, want %q", base.Nodes["worker"].Template, "base template")
+	}
+	// worker.Role overridden
+	if base.Nodes["worker"].Role != "worker-override" {
+		t.Errorf("worker.Role: got %q, want %q", base.Nodes["worker"].Role, "worker-override")
+	}
+	// New node added
+	if base.Nodes["new"].Template != "new template" {
+		t.Errorf("new.Template: got %q, want %q", base.Nodes["new"].Template, "new template")
+	}
+}
+
+func TestLoadConfig_ProjectLocal_Only(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir failed: %v", err)
+	}
+
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir failed: %v", err)
+	}
+	localConfig := `
+[postman]
+scan_interval_seconds = 7.0
+base_dir = "/project/data"
+edges = ["worker -- orchestrator"]
+
+[worker]
+role = "worker"
+
+[orchestrator]
+role = "orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "/nonexistent")
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.ScanInterval != 7.0 {
+		t.Errorf("ScanInterval: got %v, want 7.0", cfg.ScanInterval)
+	}
+	if cfg.BaseDir != "/project/data" {
+		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/project/data")
+	}
+	// Default fields should come from embedded defaults
+	if cfg.EnterDelay != 0.5 {
+		t.Errorf("EnterDelay: got %v, want 0.5 (from embedded defaults)", cfg.EnterDelay)
+	}
+	if len(cfg.Nodes) != 2 {
+		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	}
+}
+
+func TestLoadConfig_ProjectLocal_Overrides_XDG(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+
+	// Create XDG config
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir failed: %v", err)
+	}
+	xdgConfig := `
+[postman]
+scan_interval_seconds = 2.0
+enter_delay_seconds = 1.0
+edges = ["worker -- orchestrator"]
+
+[worker]
+role = "worker"
+
+[orchestrator]
+role = "orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config failed: %v", err)
+	}
+
+	// Create project-local config in subDir
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir failed: %v", err)
+	}
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir failed: %v", err)
+	}
+	localConfig := `
+[postman]
+scan_interval_seconds = 9.0
+`
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile local config failed: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// project-local overrides XDG scan_interval
+	if cfg.ScanInterval != 9.0 {
+		t.Errorf("ScanInterval: got %v, want 9.0 (project-local override)", cfg.ScanInterval)
+	}
+	// XDG enter_delay not overridden by local
+	if cfg.EnterDelay != 1.0 {
+		t.Errorf("EnterDelay: got %v, want 1.0 (from XDG, not overridden)", cfg.EnterDelay)
+	}
+	// XDG nodes still present
+	if len(cfg.Nodes) != 2 {
+		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	}
+}
