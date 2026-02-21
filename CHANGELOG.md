@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - feat: load project-local config via upward CWD traversal with field-level merge (#121)
 - feat: enrich pane-activity.json with lastChangeAt; dual-format reader (#123)
+- `enter_count` field in `nodes` config to send multiple Enter keystrokes for Codex CLI nodes (#126)
 
 ### Fixed
 
