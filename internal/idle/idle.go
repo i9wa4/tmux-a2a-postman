@@ -26,6 +26,13 @@ type NodeActivity struct {
 	LastScreenChange    time.Time // Last screen content change (for debug/display only, not used for idle detection)
 }
 
+// PaneActivityExport holds pane activity data for JSON export.
+// Issue #123: Enriched format with lastChangeAt for external consumers.
+type PaneActivityExport struct {
+	Status       string    `json:"status"`
+	LastChangeAt time.Time `json:"lastChangeAt"`
+}
+
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
 	LastHash      uint32    // CRC32 hash of pane content
@@ -140,13 +147,39 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 
 // ExportPaneActivityToFile writes pane activity status to a JSON file.
 // Issue #120: Export state for get-session-status-oneline command.
-func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filepath string) error {
-	status := t.GetPaneActivityStatus(cfg)
-	data, err := json.Marshal(status)
+// Issue #123: Enriched format — writes map[string]PaneActivityExport instead of map[string]string.
+func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath string) error {
+	t.mu.Lock()
+	now := time.Now()
+	activeThreshold := time.Duration(cfg.NodeActiveSeconds) * time.Second
+	idleThreshold := time.Duration(cfg.NodeIdleSeconds) * time.Second
+	export := make(map[string]PaneActivityExport, len(t.paneCaptureState))
+	for paneID, state := range t.paneCaptureState {
+		var status string
+		if state.LastChangeAt.IsZero() {
+			status = "stale"
+		} else {
+			switch elapsed := now.Sub(state.LastChangeAt); {
+			case elapsed <= activeThreshold:
+				status = "active"
+			case elapsed <= idleThreshold:
+				status = "idle"
+			default:
+				status = "stale"
+			}
+		}
+		export[paneID] = PaneActivityExport{
+			Status:       status,
+			LastChangeAt: state.LastChangeAt,
+		}
+	}
+	t.mu.Unlock()
+
+	data, err := json.Marshal(export)
 	if err != nil {
 		return fmt.Errorf("marshaling pane activity: %w", err)
 	}
-	return os.WriteFile(filepath, data, 0o644)
+	return os.WriteFile(filePath, data, 0o644)
 }
 
 // IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).

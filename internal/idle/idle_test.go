@@ -1,6 +1,7 @@
 package idle
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -420,6 +421,173 @@ func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
 
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped nodes (detection disabled), got %d", len(dropped))
+	}
+}
+
+// Issue #123: Test for ExportPaneActivityToFile — verifies new JSON schema (struct format)
+func TestExportPaneActivityToFile(t *testing.T) {
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 300.0,
+		NodeIdleSeconds:   900.0,
+	}
+	now := time.Now()
+
+	// Set up pane states
+	tracker.mu.Lock()
+	tracker.paneCaptureState["%20"] = PaneCaptureState{
+		LastHash:      111,
+		LastChangeAt:  now.Add(-10 * time.Second), // active
+		ChangeCount:   0,
+		LastCaptureAt: now,
+	}
+	tracker.paneCaptureState["%21"] = PaneCaptureState{
+		LastHash:      222,
+		LastChangeAt:  now.Add(-500 * time.Second), // idle (between 300s and 900s)
+		ChangeCount:   0,
+		LastCaptureAt: now,
+	}
+	tracker.mu.Unlock()
+
+	tmpFile := filepath.Join(t.TempDir(), "pane-activity.json")
+	if err := tracker.ExportPaneActivityToFile(cfg, tmpFile); err != nil {
+		t.Fatalf("ExportPaneActivityToFile failed: %v", err)
+	}
+
+	data, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatalf("reading exported file: %v", err)
+	}
+
+	// Verify new struct format (not plain string)
+	var exported map[string]PaneActivityExport
+	if err := json.Unmarshal(data, &exported); err != nil {
+		t.Fatalf("unmarshaling as map[string]PaneActivityExport: %v", err)
+	}
+
+	pane20, ok := exported["%20"]
+	if !ok {
+		t.Fatal("expected %%20 in exported data")
+	}
+	if pane20.Status != "active" {
+		t.Errorf("expected %%20 status 'active', got %q", pane20.Status)
+	}
+	if pane20.LastChangeAt.IsZero() {
+		t.Errorf("expected %%20 LastChangeAt to be set")
+	}
+
+	pane21, ok := exported["%21"]
+	if !ok {
+		t.Fatal("expected %%21 in exported data")
+	}
+	if pane21.Status != "idle" {
+		t.Errorf("expected %%21 status 'idle', got %q", pane21.Status)
+	}
+}
+
+// Issue #122: Tests for GetPaneActivityStatus
+func TestGetPaneActivityStatus_ChangeCountZeroAfterActive(t *testing.T) {
+	// Bug case: ChangeCount==0 (reset after 2 consecutive changes) but LastChangeAt is recent.
+	// Before fix: returned "stale". After fix: returns "active".
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 300.0,
+		NodeIdleSeconds:   900.0,
+	}
+	now := time.Now()
+	tracker.mu.Lock()
+	tracker.paneCaptureState["%10"] = PaneCaptureState{
+		LastHash:      12345,
+		LastChangeAt:  now.Add(-10 * time.Second), // Recent change
+		ChangeCount:   0,                           // Reset after marking active
+		LastCaptureAt: now,
+	}
+	tracker.mu.Unlock()
+
+	result := tracker.GetPaneActivityStatus(cfg)
+	if result["%10"] != "active" {
+		t.Errorf("expected 'active' for recent LastChangeAt with ChangeCount==0, got %q", result["%10"])
+	}
+}
+
+func TestGetPaneActivityStatus_StaleWhenLastChangeAtZero(t *testing.T) {
+	// Pane just initialized: LastChangeAt is zero -> stale.
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 300.0,
+		NodeIdleSeconds:   900.0,
+	}
+	tracker.mu.Lock()
+	tracker.paneCaptureState["%11"] = PaneCaptureState{
+		LastHash:      0,
+		LastChangeAt:  time.Time{}, // Zero
+		ChangeCount:   1,
+		LastCaptureAt: time.Now(),
+	}
+	tracker.mu.Unlock()
+
+	result := tracker.GetPaneActivityStatus(cfg)
+	if result["%11"] != "stale" {
+		t.Errorf("expected 'stale' for zero LastChangeAt, got %q", result["%11"])
+	}
+}
+
+func TestGetPaneActivityStatus_IdlePane(t *testing.T) {
+	// LastChangeAt between active and idle thresholds -> "idle".
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 60.0,
+		NodeIdleSeconds:   600.0,
+	}
+	now := time.Now()
+	tracker.mu.Lock()
+	tracker.paneCaptureState["%12"] = PaneCaptureState{
+		LastHash:      999,
+		LastChangeAt:  now.Add(-120 * time.Second), // 2 min ago: beyond active (60s), within idle (600s)
+		ChangeCount:   0,
+		LastCaptureAt: now,
+	}
+	tracker.mu.Unlock()
+
+	result := tracker.GetPaneActivityStatus(cfg)
+	if result["%12"] != "idle" {
+		t.Errorf("expected 'idle', got %q", result["%12"])
+	}
+}
+
+func TestGetPaneActivityStatus_StalePane(t *testing.T) {
+	// LastChangeAt older than idle threshold -> "stale".
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 60.0,
+		NodeIdleSeconds:   600.0,
+	}
+	now := time.Now()
+	tracker.mu.Lock()
+	tracker.paneCaptureState["%13"] = PaneCaptureState{
+		LastHash:      111,
+		LastChangeAt:  now.Add(-700 * time.Second), // beyond idle threshold
+		ChangeCount:   0,
+		LastCaptureAt: now,
+	}
+	tracker.mu.Unlock()
+
+	result := tracker.GetPaneActivityStatus(cfg)
+	if result["%13"] != "stale" {
+		t.Errorf("expected 'stale' for old LastChangeAt, got %q", result["%13"])
+	}
+}
+
+func TestGetPaneActivityStatus_EmptyState(t *testing.T) {
+	// No pane capture state -> empty result.
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		NodeActiveSeconds: 300.0,
+		NodeIdleSeconds:   900.0,
+	}
+	result := tracker.GetPaneActivityStatus(cfg)
+	if len(result) != 0 {
+		t.Errorf("expected empty result for no pane state, got %v", result)
 	}
 }
 

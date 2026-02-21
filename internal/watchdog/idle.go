@@ -1,12 +1,21 @@
 package watchdog
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// paneActivityExport mirrors idle.PaneActivityExport for local JSON parsing.
+// Defined locally to avoid importing internal/idle (separation of concerns).
+type paneActivityExport struct {
+	Status       string    `json:"status"`
+	LastChangeAt time.Time `json:"lastChangeAt"`
+}
 
 // PaneActivity holds pane activity information.
 type PaneActivity struct {
@@ -66,6 +75,88 @@ func CheckIdle(activity PaneActivity, idleThresholdSeconds float64) bool {
 	threshold := time.Duration(idleThresholdSeconds * float64(time.Second))
 	timeSinceActivity := time.Since(activity.LastActivityTime)
 	return timeSinceActivity > threshold
+}
+
+// GetIdlePanesFromActivityFile reads pane activity from a pane-activity.json file
+// and returns panes with status "idle".
+// Issue #123: Supports both legacy map[string]string and new map[string]PaneActivityExport formats.
+// Returns empty slice (not error) on: file missing, stale, parse error, schema mismatch.
+func GetIdlePanesFromActivityFile(path string) ([]PaneActivity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []PaneActivity{}, nil // file missing or unreadable
+	}
+
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return []PaneActivity{}, nil // parse error
+	}
+
+	var result []PaneActivity
+	for paneID, raw := range rawMap {
+		var status string
+		var lastChangeAt time.Time
+
+		// Try legacy format: plain string value
+		if err := json.Unmarshal(raw, &status); err != nil {
+			// Try new format: paneActivityExport struct
+			var export paneActivityExport
+			if err := json.Unmarshal(raw, &export); err != nil {
+				continue // schema mismatch, skip entry
+			}
+			status = export.Status
+			lastChangeAt = export.LastChangeAt
+		}
+
+		if status == "idle" {
+			result = append(result, PaneActivity{
+				PaneID:           paneID,
+				LastActivityTime: lastChangeAt,
+			})
+		}
+	}
+
+	if result == nil {
+		return []PaneActivity{}, nil
+	}
+	return result, nil
+}
+
+// GetPaneTitles returns a map of pane IDs to pane titles using tmux list-panes.
+// Issue #124: Used for edge-pane filtering in idle alert dispatch.
+func GetPaneTitles() (map[string]string, error) {
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_title}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("listing pane titles: %w: %s", err, output)
+	}
+
+	titles := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			titles[parts[0]] = parts[1]
+		}
+	}
+	return titles, nil
+}
+
+// FilterToEdgePanes filters pane activities to only those whose pane title is in edgeNodes.
+// Issue #124: Pure function for testability.
+// If paneTitles is nil (tmux failure fallback), returns all panes unchanged.
+// If edgeNodes is empty (no edges configured), returns all panes unchanged.
+func FilterToEdgePanes(panes []PaneActivity, paneTitles map[string]string, edgeNodes map[string]bool) []PaneActivity {
+	if paneTitles == nil || len(edgeNodes) == 0 {
+		return panes // fallback: return all panes
+	}
+
+	var filtered []PaneActivity
+	for _, pa := range panes {
+		if title, ok := paneTitles[pa.PaneID]; ok && edgeNodes[title] {
+			filtered = append(filtered, pa)
+		}
+	}
+	return filtered
 }
 
 // GetIdlePanes returns a list of panes that have been idle for longer than the threshold.
