@@ -161,7 +161,8 @@ func extractTimestamp(filename string) string {
 // SendToPane sends a message to a tmux pane using set-buffer + paste-buffer.
 // Security: Sanitizes message before passing to tmux set-buffer.
 // Error handling: Logs errors but does not fail (graceful degradation).
-func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration) error {
+// enterCount controls how many Enter (C-m) keystrokes to send; 0 or 1 sends one, 2+ sends two.
+func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int) error {
 	// Security: Sanitize message for tmux set-buffer
 	sanitized := sanitizeForTmux(message)
 
@@ -188,6 +189,15 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to send Enter to pane %s: %v\n", paneID, err)
 		return err
+	}
+
+	// 5. If enterCount >= 2, send a second C-m after enterDelay (#126).
+	if enterCount >= 2 {
+		time.Sleep(enterDelay)
+		cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to send second Enter: %w", err)
+		}
 	}
 
 	return nil

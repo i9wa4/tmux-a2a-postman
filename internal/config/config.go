@@ -93,6 +93,7 @@ type NodeConfig struct {
 	DroppedBallTimeoutSeconds   int     `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
 	DroppedBallCooldownSeconds  int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
 	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
+	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 }
 
 // AgentCard holds agent card information.
@@ -483,6 +484,9 @@ func mergeConfig(base, override *Config) {
 		}
 		if overNode.DroppedBallNotification != "" {
 			baseNode.DroppedBallNotification = overNode.DroppedBallNotification
+		}
+		if overNode.EnterCount != 0 {
+			baseNode.EnterCount = overNode.EnterCount
 		}
 		base.Nodes[name] = baseNode
 	}

@@ -346,7 +346,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, pongActiveNodes)
 	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout)
+	enterCount := cfg.Nodes[info.To].EnterCount
+	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 

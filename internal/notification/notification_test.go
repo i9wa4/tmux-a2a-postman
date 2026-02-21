@@ -1,6 +1,8 @@
 package notification
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -158,9 +160,49 @@ func TestSanitizeForTmux(t *testing.T) {
 
 func TestSendToPane_InvalidPane(t *testing.T) {
 	// Test that SendToPane gracefully handles invalid pane
-	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second)
+	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second, 1)
 	if err == nil {
 		t.Error("SendToPane() with invalid pane should return error")
+	}
+}
+
+func TestSendToPane_EnterCount2(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	// Fake tmux: always succeeds, records each invocation on a separate line
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 2)
+	if err != nil {
+		t.Fatalf("SendToPane failed: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile argsFile failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	// Expected calls: set-buffer, paste-buffer -t %99, send-keys -t %99 C-m, send-keys -t %99 C-m
+	if len(lines) != 4 {
+		t.Errorf("expected 4 tmux calls, got %d: %v", len(lines), lines)
+	}
+
+	// Count send-keys invocations (should be exactly 2)
+	sendKeyCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "send-keys") {
+			sendKeyCount++
+		}
+	}
+	if sendKeyCount != 2 {
+		t.Errorf("expected 2 send-keys calls (enterCount=2), got %d; lines: %v", sendKeyCount, lines)
 	}
 }
 
