@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- feat: load project-local config via upward CWD traversal with field-level merge (#121)
 - feat: enrich pane-activity.json with lastChangeAt; dual-format reader (#123)
 
 ### Fixed
