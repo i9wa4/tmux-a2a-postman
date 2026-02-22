@@ -4,6 +4,39 @@ import (
 	"testing"
 )
 
+func TestResolveTailLines(t *testing.T) {
+	tests := []struct {
+		name      string
+		tailLines int
+		expected  int
+	}{
+		{
+			name:      "zero falls back to 10",
+			tailLines: 0,
+			expected:  10,
+		},
+		{
+			name:      "negative falls back to 10",
+			tailLines: -5,
+			expected:  10,
+		},
+		{
+			name:      "positive value used as-is",
+			tailLines: 50,
+			expected:  50,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolveTailLines(tt.tailLines)
+			if result != tt.expected {
+				t.Errorf("resolveTailLines(%d) = %d, want %d", tt.tailLines, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestCheckForCompaction(t *testing.T) {
 	tests := []struct {
 		name     string

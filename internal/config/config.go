@@ -114,6 +114,7 @@ type CompactionDetectionConfig struct {
 	Enabled         bool                      `toml:"enabled"`
 	Pattern         string                    `toml:"pattern"`
 	DelaySeconds    float64                   `toml:"delay_seconds"`
+	TailLines       int                       `toml:"tail_lines"` // Issue #133: Lines to capture for compaction check (default: 10)
 	MessageTemplate CompactionMessageTemplate `toml:"message_template"`
 }
 
@@ -179,6 +180,9 @@ func DefaultConfig() *Config {
 		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
 		RulesTemplate:                "",
+		CompactionDetection: CompactionDetectionConfig{
+			TailLines: 10, // Issue #133: Default tail lines for compaction check
+		},
 	}
 }
 
@@ -516,6 +520,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.CompactionDetection.DelaySeconds != 0 {
 		base.CompactionDetection.DelaySeconds = override.CompactionDetection.DelaySeconds
+	}
+	if override.CompactionDetection.TailLines != 0 {
+		base.CompactionDetection.TailLines = override.CompactionDetection.TailLines
 	}
 	if override.CompactionDetection.MessageTemplate.Type != "" {
 		base.CompactionDetection.MessageTemplate.Type = override.CompactionDetection.MessageTemplate.Type
