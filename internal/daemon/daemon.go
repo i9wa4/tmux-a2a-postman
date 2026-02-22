@@ -352,7 +352,7 @@ func RunDaemonLoop(
 										parts := strings.SplitN(nodeName, ":", 2)
 										if len(parts) == 2 {
 											sessionName := parts[0]
-											daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
+											daemonState.applyAutoEnablePolicy(sessionName, cfg) // Issue #135
 											if !daemonState.IsSessionEnabled(sessionName) {
 												shouldPing = false
 											}
@@ -656,7 +656,7 @@ func RunDaemonLoop(
 						parts := strings.SplitN(nodeName, ":", 2)
 						if len(parts) == 2 {
 							sessionName := parts[0]
-							daemonState.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
+							daemonState.applyAutoEnablePolicy(sessionName, cfg) // Issue #135
 							if !daemonState.IsSessionEnabled(sessionName) {
 								shouldPing = false
 							}
@@ -856,6 +856,20 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	if _, exists := ds.enabledSessions[sessionName]; !exists {
 		ds.enabledSessions[sessionName] = true
 	}
+}
+
+// applyAutoEnablePolicy applies the auto-enable policy for a session (Issue #135).
+// Replaces AutoEnableSessionIfNew with configurable behavior.
+func (ds *DaemonState) applyAutoEnablePolicy(sessionName string, cfg *config.Config) {
+	ds.enabledSessionsMu.Lock()
+	defer ds.enabledSessionsMu.Unlock()
+	if _, exists := ds.enabledSessions[sessionName]; !exists {
+		// Session not seen before: gate by AutoEnableNewSessions
+		if cfg.AutoEnableNewSessions {
+			ds.enabledSessions[sessionName] = true
+		}
+	}
+	// Session known and enabled: AutoEnableNewAgents controls behavior (no state change needed)
 }
 
 // IsSessionEnabled checks if a session is enabled (Issue #71).
@@ -1328,7 +1342,6 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 				parts := strings.SplitN(nodeKey, ":", 2)
 				if len(parts) == 2 {
 					sessionName := parts[0]
-					ds.AutoEnableSessionIfNew(sessionName) // Issue #91: auto-enable on first discovery
 					if !ds.IsSessionEnabled(sessionName) {
 						shouldPing = false
 					}

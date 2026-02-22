@@ -69,6 +69,8 @@ type Config struct {
 	UINode               string   `toml:"ui_node"`                // Issue #46: Generalized target node name
 	PingMode             string   `toml:"ping_mode"`              // Issue #98: PING mode ("all", "ui_node_only", "disabled")
 	InboxUnreadThreshold int      `toml:"inbox_unread_threshold"` // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
+	AutoEnableNewSessions bool    `toml:"auto_enable_new_sessions"` // Issue #135: default false
+	AutoEnableNewAgents   bool    `toml:"auto_enable_new_agents"`   // Issue #135: default true
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -164,6 +166,8 @@ func DefaultConfig() *Config {
 		UINode:                       "",    // Issue #46: Default UI target node (empty = no default)
 		PingMode:                     "all", // Issue #98: Default to ping all nodes
 		InboxUnreadThreshold:         3,     // Default threshold for inbox unread summary notification
+		AutoEnableNewSessions:        false, // Issue #135: do not auto-enable brand-new sessions
+		AutoEnableNewAgents:          true,  // Issue #135: auto-enable agents in already-enabled sessions
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
@@ -392,6 +396,14 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.PingMode != "" {
 		base.PingMode = override.PingMode
+	}
+	// AutoEnableNewSessions: standard false->true direction (default false)
+	if override.AutoEnableNewSessions {
+		base.AutoEnableNewSessions = true
+	}
+	// AutoEnableNewAgents: default true; standard pattern
+	if override.AutoEnableNewAgents {
+		base.AutoEnableNewAgents = true
 	}
 
 	// Float64 fields

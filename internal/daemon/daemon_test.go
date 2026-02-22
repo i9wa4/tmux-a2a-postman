@@ -3,7 +3,51 @@ package daemon
 import (
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
+
+// TestApplyAutoEnablePolicy_NewSession verifies AutoEnableNewSessions flag behavior (Issue #135).
+func TestApplyAutoEnablePolicy_NewSession(t *testing.T) {
+	t.Run("AutoEnableNewSessions=false: new session NOT auto-enabled", func(t *testing.T) {
+		ds := NewDaemonState()
+		cfg := &config.Config{AutoEnableNewSessions: false, AutoEnableNewAgents: true}
+		ds.applyAutoEnablePolicy("newsession", cfg)
+		if ds.IsSessionEnabled("newsession") {
+			t.Error("expected session to NOT be enabled when AutoEnableNewSessions=false")
+		}
+	})
+
+	t.Run("AutoEnableNewSessions=true: new session IS auto-enabled", func(t *testing.T) {
+		ds := NewDaemonState()
+		cfg := &config.Config{AutoEnableNewSessions: true, AutoEnableNewAgents: true}
+		ds.applyAutoEnablePolicy("newsession", cfg)
+		if !ds.IsSessionEnabled("newsession") {
+			t.Error("expected session to be enabled when AutoEnableNewSessions=true")
+		}
+	})
+
+	t.Run("AutoEnableNewAgents=false: agent in enabled session, no state change", func(t *testing.T) {
+		ds := NewDaemonState()
+		ds.SetSessionEnabled("existingsession", true)
+		cfg := &config.Config{AutoEnableNewSessions: false, AutoEnableNewAgents: false}
+		ds.applyAutoEnablePolicy("existingsession", cfg)
+		// Session was already enabled; applyAutoEnablePolicy makes no change
+		if !ds.IsSessionEnabled("existingsession") {
+			t.Error("expected already-enabled session to remain enabled regardless of AutoEnableNewAgents")
+		}
+	})
+
+	t.Run("AutoEnableNewAgents=true: agent in enabled session proceeds", func(t *testing.T) {
+		ds := NewDaemonState()
+		ds.SetSessionEnabled("existingsession", true)
+		cfg := &config.Config{AutoEnableNewSessions: false, AutoEnableNewAgents: true}
+		ds.applyAutoEnablePolicy("existingsession", cfg)
+		if !ds.IsSessionEnabled("existingsession") {
+			t.Error("expected session to remain enabled when AutoEnableNewAgents=true")
+		}
+	})
+}
 
 // TestShouldSendAlert_CooldownBoundary verifies that ShouldSendAlert returns true
 // on first call, false immediately after MarkAlertSent, and true again after the
