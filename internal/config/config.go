@@ -94,6 +94,7 @@ type NodeConfig struct {
 	DroppedBallCooldownSeconds  int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
 	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
+	EnterDelay                  float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 }
 
 // AgentCard holds agent card information.
@@ -111,6 +112,7 @@ type CompactionDetectionConfig struct {
 	Enabled         bool                      `toml:"enabled"`
 	Pattern         string                    `toml:"pattern"`
 	DelaySeconds    float64                   `toml:"delay_seconds"`
+	TailLines       int                       `toml:"tail_lines"` // Issue #133: Lines to capture for compaction check (default: 10)
 	MessageTemplate CompactionMessageTemplate `toml:"message_template"`
 }
 
@@ -174,6 +176,9 @@ func DefaultConfig() *Config {
 		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
 		RulesTemplate:                "",
+		CompactionDetection: CompactionDetectionConfig{
+			TailLines: 10, // Issue #133: Default tail lines for compaction check
+		},
 	}
 }
 
@@ -488,6 +493,9 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterCount != 0 {
 			baseNode.EnterCount = overNode.EnterCount
 		}
+		if overNode.EnterDelay != 0 {
+			baseNode.EnterDelay = overNode.EnterDelay
+		}
 		base.Nodes[name] = baseNode
 	}
 
@@ -500,6 +508,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.CompactionDetection.DelaySeconds != 0 {
 		base.CompactionDetection.DelaySeconds = override.CompactionDetection.DelaySeconds
+	}
+	if override.CompactionDetection.TailLines != 0 {
+		base.CompactionDetection.TailLines = override.CompactionDetection.TailLines
 	}
 	if override.CompactionDetection.MessageTemplate.Type != "" {
 		base.CompactionDetection.MessageTemplate.Type = override.CompactionDetection.MessageTemplate.Type

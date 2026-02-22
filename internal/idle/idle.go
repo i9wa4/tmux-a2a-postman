@@ -560,7 +560,7 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 				return
 			case <-ticker.C:
 				// Discover nodes (edge-filtered)
-				nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+				nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 				if err != nil {
 					continue
 				}

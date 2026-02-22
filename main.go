@@ -206,11 +206,20 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		// Non-fatal: continue without RULES.md
 	}
 
-	lockObj, err := lock.NewSessionLock(filepath.Join(sessionDir, "postman.lock"))
-	if err != nil {
-		return fmt.Errorf("acquiring lock: %w", err)
+	tmuxSessionName := config.GetTmuxSessionName()
+	if tmuxSessionName == "" {
+		log.Println("warning: postman: could not determine tmux session name; running without session lock")
+	} else {
+		lockDir := filepath.Join(baseDir, "lock")
+		if err := os.MkdirAll(lockDir, 0o755); err != nil {
+			return fmt.Errorf("creating lock directory: %w", err)
+		}
+		lockObj, err := lock.NewSessionLock(filepath.Join(lockDir, tmuxSessionName+".lock"))
+		if err != nil {
+			return fmt.Errorf("acquiring lock: %w", err)
+		}
+		defer func() { _ = lockObj.Release() }()
 	}
-	defer func() { _ = lockObj.Release() }()
 
 	pidPath := filepath.Join(sessionDir, "postman.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
@@ -246,11 +255,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	defer func() { _ = watcher.Close() }()
 
 	// Discover nodes at startup (before watching, edge-filtered)
-	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+	nodes, startupCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
 		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
 		nodes = make(map[string]discovery.NodeInfo)
+		startupCollisions = nil
 	}
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
 	for nodeName := range nodes {
@@ -259,6 +269,15 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if !edgeNodes[rawName] {
 			delete(nodes, nodeName)
 		}
+	}
+	// Log collisions for edge nodes after edge filter
+	for _, collision := range startupCollisions {
+		parts := strings.SplitN(collision.NodeKey, ":", 2)
+		rawName := parts[len(parts)-1]
+		if !edgeNodes[rawName] {
+			continue
+		}
+		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
 	}
 
 	// Watch all discovered session directories

@@ -293,7 +293,7 @@ func RunDaemonLoop(
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						// Re-discover nodes before each delivery (edge-filtered)
-						if freshNodes, err := discovery.DiscoverNodes(baseDir, contextID); err == nil {
+						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
 							// Build active nodes list
 							activeNodes := make([]string, 0, len(freshNodes))
@@ -584,11 +584,20 @@ func RunDaemonLoop(
 			}
 		case <-scanTicker.C:
 			// Issue #41: Periodic node discovery (edge-filtered)
-			freshNodes, err := discovery.DiscoverNodes(baseDir, contextID)
+			freshNodes, scanCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 			if err != nil {
 				continue
 			}
 			filterNodesByEdges(freshNodes, cfg.Edges)
+			for _, collision := range scanCollisions {
+				alertKey := "pane_collision:" + collision.WinnerPaneID + ":" + collision.LoserPaneID
+				if daemonState.ShouldSendAlert(alertKey, 300) {
+					events <- tui.DaemonEvent{Type: "pane_collision", Message: fmt.Sprintf(
+						"[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID,
+					)}
+					daemonState.MarkAlertSent(alertKey)
+				}
+			}
 
 			// Build active nodes list
 			activeNodes := make([]string, 0, len(freshNodes))

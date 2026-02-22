@@ -161,7 +161,7 @@ func extractTimestamp(filename string) string {
 // SendToPane sends a message to a tmux pane using set-buffer + paste-buffer.
 // Security: Sanitizes message before passing to tmux set-buffer.
 // Error handling: Logs errors but does not fail (graceful degradation).
-// enterCount controls how many Enter (C-m) keystrokes to send; 0 or 1 sends one, 2+ sends two.
+// enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int) error {
 	// Security: Sanitize message for tmux set-buffer
 	sanitized := sanitizeForTmux(message)
@@ -183,20 +183,20 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	// 3. Wait enter_delay
 	time.Sleep(enterDelay)
 
-	// 4. Send carriage return (C-m) to submit in Codex CLI multi-line readline mode.
-	// "Enter" key name adds a newline in multi-line mode instead of submitting (#126).
+	// 4. Send C-m to submit. C-m (carriage return) submits reliably in both Codex CLI and claude-chill.
+	// "Enter" key name adds a newline in Codex CLI multi-line readline instead of submitting (#126).
 	cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to send Enter to pane %s: %v\n", paneID, err)
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
 		return err
 	}
 
-	// 5. If enterCount >= 2, send a second C-m after enterDelay (#126).
-	if enterCount >= 2 {
+	// 5. Send additional C-m keystrokes up to enterCount total
+	for i := 1; i < enterCount; i++ {
 		time.Sleep(enterDelay)
 		cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to send second Enter: %w", err)
+			return fmt.Errorf("failed to send C-m %d to pane %s: %w", i+1, paneID, err)
 		}
 	}
 
