@@ -65,9 +65,10 @@ func (ct *CompactionTracker) checkAllNodesForCompaction(cfg *config.Config, node
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 
+	tailLines := resolveTailLines(cfg.CompactionDetection.TailLines)
 	for nodeName, nodeInfo := range nodes {
-		// Capture pane output (last 10 lines only)
-		output, err := capturePaneOutput(nodeInfo.PaneID)
+		// Capture pane output
+		output, err := capturePaneOutput(nodeInfo.PaneID, tailLines)
 		if err != nil {
 			// Silent skip - node may not be available
 			continue
@@ -88,10 +89,18 @@ func (ct *CompactionTracker) checkAllNodesForCompaction(cfg *config.Config, node
 	}
 }
 
-// capturePaneOutput captures the last 10 lines from a tmux pane.
+// resolveTailLines returns tailLines if > 0, otherwise returns 10 (Issue #133).
+func resolveTailLines(tailLines int) int {
+	if tailLines <= 0 {
+		return 10
+	}
+	return tailLines
+}
+
+// capturePaneOutput captures the last N lines from a tmux pane.
 // Returns empty string if capture fails (e.g., pane doesn't exist).
-func capturePaneOutput(paneID string) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-t", paneID, "-p", "-S", "-10")
+func capturePaneOutput(paneID string, tailLines int) (string, error) {
+	cmd := exec.Command("tmux", "capture-pane", "-t", paneID, "-p", "-S", fmt.Sprintf("-%d", tailLines))
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane failed: %w", err)
