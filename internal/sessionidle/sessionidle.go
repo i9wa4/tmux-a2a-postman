@@ -307,7 +307,7 @@ func StartSessionIdleCheck(
 				return
 			case <-ticker.C:
 				// Discover nodes
-				nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+				nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 				if err != nil {
 					continue
 				}

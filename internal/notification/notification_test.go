@@ -206,6 +206,154 @@ func TestSendToPane_EnterCount2(t *testing.T) {
 	}
 }
 
+func TestSendToPane_EnterCount3(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 3)
+	if err != nil {
+		t.Fatalf("SendToPane failed: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile argsFile failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	// Expected calls: set-buffer, paste-buffer, send-keys x3
+	if len(lines) != 5 {
+		t.Errorf("expected 5 tmux calls (set-buffer+paste-buffer+3 send-keys), got %d: %v", len(lines), lines)
+	}
+
+	sendKeyCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "send-keys") {
+			sendKeyCount++
+		}
+	}
+	if sendKeyCount != 3 {
+		t.Errorf("expected 3 send-keys calls (enterCount=3), got %d; lines: %v", sendKeyCount, lines)
+	}
+}
+
+func TestSendToPane_EnterCount1(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1)
+	if err != nil {
+		t.Fatalf("SendToPane failed: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile argsFile failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	// Expected calls: set-buffer, paste-buffer, send-keys x1
+	if len(lines) != 3 {
+		t.Errorf("expected 3 tmux calls (set-buffer+paste-buffer+1 send-keys), got %d: %v", len(lines), lines)
+	}
+
+	sendKeyCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "send-keys") {
+			sendKeyCount++
+		}
+	}
+	if sendKeyCount != 1 {
+		t.Errorf("expected 1 send-keys call (enterCount=1), got %d; lines: %v", sendKeyCount, lines)
+	}
+}
+
+func TestSendToPane_EnterCount0(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 0)
+	if err != nil {
+		t.Fatalf("SendToPane failed: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile argsFile failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	// Expected: set-buffer, paste-buffer, send-keys x1 (0 treated same as 1)
+	if len(lines) != 3 {
+		t.Errorf("expected 3 tmux calls (enterCount=0 sends one Enter), got %d: %v", len(lines), lines)
+	}
+
+	sendKeyCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "send-keys") {
+			sendKeyCount++
+		}
+	}
+	if sendKeyCount != 1 {
+		t.Errorf("expected 1 send-keys call (enterCount=0), got %d; lines: %v", sendKeyCount, lines)
+	}
+}
+
+func TestSendToPane_EnterCountNegative(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	// Negative enterCount: loop does not execute, no panic; sends exactly 1 Enter
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, -1)
+	if err != nil {
+		t.Fatalf("SendToPane with negative enterCount should not error: %v", err)
+	}
+
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile argsFile failed: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	sendKeyCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "send-keys") {
+			sendKeyCount++
+		}
+	}
+	if sendKeyCount != 1 {
+		t.Errorf("expected 1 send-keys call for negative enterCount, got %d; lines: %v", sendKeyCount, lines)
+	}
+}
+
 // TestBuildNotification_FromInjection tests --from injection in reply_command
 func TestBuildNotification_FromInjection(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{

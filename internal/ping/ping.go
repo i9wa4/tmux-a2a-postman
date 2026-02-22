@@ -95,7 +95,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 func SendPingToAll(baseDir, contextID string, cfg *config.Config, idleTracker *idle.IdleTracker) {
 	log.Println("📮 postman: SendPingToAll starting...")
 
-	nodes, err := discovery.DiscoverNodes(baseDir, contextID)
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ postman: discovery failed: %v\n", err)
 		return
