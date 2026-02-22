@@ -206,6 +206,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		// Non-fatal: continue without RULES.md
 	}
 
+	// Issue #134: Materialize per-node template files at startup
+	config.MaterializeNodeTemplates(baseDir, contextID, cfg)
+
 	tmuxSessionName := config.GetTmuxSessionName()
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")

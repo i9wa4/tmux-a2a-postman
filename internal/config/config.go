@@ -80,6 +80,9 @@ type Config struct {
 
 	// Watchdog
 	Watchdog WatchdogConfig
+
+	// Runtime state (not serialized from TOML)
+	MaterializedPaths map[string]string // Issue #134: node name -> absolute path of materialized template file
 }
 
 // NodeConfig holds per-node configuration.
@@ -97,6 +100,7 @@ type NodeConfig struct {
 	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                  float64 `toml:"enter_delay_seconds"`           // 0 = use global default
+	MaterializeTemplate         bool    `toml:"materialize_template"`          // Issue #134: write template as state file; reference via @path
 }
 
 // AgentCard holds agent card information.

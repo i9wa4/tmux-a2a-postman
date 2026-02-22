@@ -50,15 +50,20 @@ func resolveNodeNameForNotification(nodeName, sourceSessionName string, knownNod
 func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, pongActiveNodes map[string]bool) string {
 	// Get recipient's template (use simple name for config lookup)
 	recipientTemplate := ""
-	if nodeConfig, ok := cfg.Nodes[recipient]; ok {
-		recipientTemplate = nodeConfig.Template
-	}
-	// Issue #49: Prepend common_template if present
-	if cfg.CommonTemplate != "" {
-		if recipientTemplate != "" {
-			recipientTemplate = cfg.CommonTemplate + "\n\n" + recipientTemplate
-		} else {
-			recipientTemplate = cfg.CommonTemplate
+	if matPath, ok := cfg.MaterializedPaths[recipient]; ok {
+		// Issue #134: Template materialized as file; reference by @path. CommonTemplate excluded per spec.
+		recipientTemplate = "@" + matPath
+	} else {
+		if nodeConfig, ok := cfg.Nodes[recipient]; ok {
+			recipientTemplate = nodeConfig.Template
+		}
+		// Issue #49: Prepend common_template if present
+		if cfg.CommonTemplate != "" {
+			if recipientTemplate != "" {
+				recipientTemplate = cfg.CommonTemplate + "\n\n" + recipientTemplate
+			} else {
+				recipientTemplate = cfg.CommonTemplate
+			}
 		}
 	}
 

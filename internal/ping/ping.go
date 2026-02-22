@@ -36,17 +36,22 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	simpleName := ExtractSimpleName(nodeName)
 
 	// Get node config for template (use simple name)
-	nodeConfig, hasNodeConfig := cfg.Nodes[simpleName]
+	_, hasNodeConfig := cfg.Nodes[simpleName]
 	nodeTemplate := ""
-	if hasNodeConfig {
-		nodeTemplate = nodeConfig.Template
-	}
-	// Issue #49: Prepend common_template if present
-	if cfg.CommonTemplate != "" {
-		if nodeTemplate != "" {
-			nodeTemplate = cfg.CommonTemplate + "\n\n" + nodeTemplate
-		} else {
-			nodeTemplate = cfg.CommonTemplate
+	if matPath, ok := cfg.MaterializedPaths[simpleName]; ok {
+		// Issue #134: Template materialized as file; reference by @path. CommonTemplate excluded per spec.
+		nodeTemplate = "@" + matPath
+	} else {
+		if hasNodeConfig {
+			nodeTemplate = cfg.Nodes[simpleName].Template
+		}
+		// Issue #49: Prepend common_template if present
+		if cfg.CommonTemplate != "" {
+			if nodeTemplate != "" {
+				nodeTemplate = cfg.CommonTemplate + "\n\n" + nodeTemplate
+			} else {
+				nodeTemplate = cfg.CommonTemplate
+			}
 		}
 	}
 
