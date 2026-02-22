@@ -167,7 +167,7 @@ func DefaultConfig() *Config {
 		UINode:                       "",    // Issue #46: Default UI target node (empty = no default)
 		PingMode:                     "all", // Issue #98: Default to ping all nodes
 		InboxUnreadThreshold:         3,     // Default threshold for inbox unread summary notification
-		AutoEnableNewSessions:        false, // Issue #135: do not auto-enable brand-new sessions
+		AutoEnableNewSessions:        true, // Issue #135: default true restores pre-#135 behavior; set false to opt out
 		AutoEnableNewAgents:          true,  // Issue #135: auto-enable agents in already-enabled sessions
 		Edges:                        []string{},
 		Nodes:                        make(map[string]NodeConfig),
@@ -401,7 +401,11 @@ func mergeConfig(base, override *Config) {
 	if override.PingMode != "" {
 		base.PingMode = override.PingMode
 	}
-	// AutoEnableNewSessions: standard false->true direction (default false)
+	// NOTE: bool merge only propagates true values (Go zero-value = false is indistinguishable
+	// from "field not set in override"). Setting auto_enable_new_sessions = false or
+	// auto_enable_new_agents = false in a project-local config will NOT override a global
+	// true default. Use *bool fields if bidirectional override is needed (Issue #135 v2).
+	// AutoEnableNewSessions: standard false->true direction (default true)
 	if override.AutoEnableNewSessions {
 		base.AutoEnableNewSessions = true
 	}
