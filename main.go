@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -273,6 +274,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			delete(nodes, nodeName)
 		}
 	}
+	// Shared node snapshot for background periodic refresh (Issue #139)
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes.Store(&nodes)
+
 	// Log collisions for edge nodes after edge filter
 	for _, collision := range startupCollisions {
 		parts := strings.SplitN(collision.NodeKey, ":", 2)
@@ -379,7 +384,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, &sharedNodes)
 	})
 
 	// Issue #117: Discover all tmux sessions
@@ -447,12 +452,22 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						// Fresh discovery to include nodes added after startup (Issue #new)
 						freshNodes, _, freshErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 						if freshErr != nil {
-							log.Printf("❌ postman: send_ping discovery failed: %v\n", freshErr)
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "message_received",
-								Message: fmt.Sprintf("PING failed: node discovery error: %v", freshErr),
+							cachedPtr := sharedNodes.Load()
+							if cachedPtr == nil {
+								log.Printf("❌ postman: send_ping discovery failed: %v\n", freshErr)
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING failed: node discovery error: %v", freshErr),
+								}
+								break
 							}
-							break
+							// Deep-copy: edge-filter uses delete() on freshNodes; must not mutate shared map.
+							cached := *cachedPtr
+							freshNodes = make(map[string]discovery.NodeInfo, len(cached))
+							for k, v := range cached {
+								freshNodes[k] = v
+							}
+							log.Printf("⚠️  postman: send_ping using cached nodes (discovery failed): %v\n", freshErr)
 						}
 						// Edge-filter fresh nodes (replicate startup logic, main.go:268-274)
 						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)

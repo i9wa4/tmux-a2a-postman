@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -239,6 +240,7 @@ func RunDaemonLoop(
 	nodesDir string,
 	daemonState *DaemonState,
 	idleTracker *idle.IdleTracker,
+	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 ) {
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
@@ -376,6 +378,10 @@ func RunDaemonLoop(
 								}
 							}
 							nodes = freshNodes
+							if sharedNodes != nil {
+								nodesSnapshot := freshNodes
+								sharedNodes.Store(&nodesSnapshot)
+							}
 
 							// Issue #117: Discover all tmux sessions
 							allSessions, _ := discovery.DiscoverAllSessions()
@@ -682,6 +688,10 @@ func RunDaemonLoop(
 
 			// Issue #117: Always update nodes map (removes dead nodes)
 			nodes = freshNodes
+			if sharedNodes != nil {
+				nodesSnapshot := freshNodes
+				sharedNodes.Store(&nodesSnapshot)
+			}
 
 			// Issue #117: Discover all tmux sessions (not just A2A sessions)
 			allSessions, err := discovery.DiscoverAllSessions()
