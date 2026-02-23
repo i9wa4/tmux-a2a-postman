@@ -2,6 +2,7 @@ package sessionidle
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +10,13 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
+
+func requireTmux(t *testing.T) {
+	t.Helper()
+	if err := exec.Command("tmux", "info").Run(); err != nil {
+		t.Skip("tmux not available:", err)
+	}
+}
 
 func TestHashContent(t *testing.T) {
 	tests := []struct {
@@ -80,6 +88,7 @@ func TestCheckSessionIdle_DisabledThreshold(t *testing.T) {
 }
 
 func TestCheckSessionIdle_NoConnectedNodes(t *testing.T) {
+	requireTmux(t)
 	s := NewSessionIdleState()
 	nodes := map[string]discovery.NodeInfo{
 		"worker": {PaneID: "%fake-test-pane-001", SessionName: "test-session"},
@@ -97,6 +106,7 @@ func TestCheckSessionIdle_NoConnectedNodes(t *testing.T) {
 }
 
 func TestCheckSessionIdle_NodeIdle(t *testing.T) {
+	requireTmux(t)
 	s := NewSessionIdleState()
 	// Pre-seed activity far in the past (exceeds 1s threshold)
 	s.lastActivityMap["test-session"] = map[string]time.Time{
@@ -119,6 +129,7 @@ func TestCheckSessionIdle_NodeIdle(t *testing.T) {
 }
 
 func TestCheckSessionIdle_NodeActive(t *testing.T) {
+	requireTmux(t)
 	s := NewSessionIdleState()
 	// Pre-seed activity very recently (within 10s threshold)
 	s.lastActivityMap["test-session"] = map[string]time.Time{
@@ -140,6 +151,7 @@ func TestCheckSessionIdle_NodeActive(t *testing.T) {
 }
 
 func TestCheckSessionIdle_CooldownActive(t *testing.T) {
+	requireTmux(t)
 	s := NewSessionIdleState()
 	// Pre-seed old activity (exceeds threshold)
 	s.lastActivityMap["test-session"] = map[string]time.Time{
