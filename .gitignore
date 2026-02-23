@@ -36,5 +36,6 @@ go.work.sum
 
 # Nix
 .direnv/
+.envrc
 /result
 /result-*
