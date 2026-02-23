@@ -444,47 +444,70 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					// Issue #47: Handle TUI commands
 					switch cmd.Type {
 					case "send_ping":
-						// Send PING to all nodes in the target session (Issue #52)
+						// Fresh discovery to include nodes added after startup (Issue #new)
+						freshNodes, _, freshErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+						if freshErr != nil {
+							log.Printf("❌ postman: send_ping discovery failed: %v\n", freshErr)
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("PING failed: node discovery error: %v", freshErr),
+							}
+							break
+						}
+						// Edge-filter fresh nodes (replicate startup logic, main.go:268-274)
+						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
+						for nodeName := range freshNodes {
+							parts := strings.SplitN(nodeName, ":", 2)
+							rawName := parts[len(parts)-1]
+							if !edgeNodesFilter[rawName] {
+								delete(freshNodes, nodeName)
+							}
+						}
 						targetNodes := make(map[string]discovery.NodeInfo)
-						for k, v := range nodes {
+						for k, v := range freshNodes {
 							if v.SessionName == cmd.Target {
 								targetNodes[k] = v
 							}
 						}
-						if len(targetNodes) > 0 {
-							// Build active nodes list (use simple names for display)
-							activeNodes := make([]string, 0, len(nodes))
-							for nodeName := range nodes {
-								simpleName := ping.ExtractSimpleName(nodeName)
-								activeNodes = append(activeNodes, simpleName)
-							}
-							// Send PING to each node in the target session
-							successCount := 0
-							failCount := 0
-							pongActiveNodes := idleTracker.GetPongActiveNodes()
-							for nodeName, nodeInfo := range targetNodes {
-								if err := ping.SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
-									log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
-									failCount++
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "message_received",
-										Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
-									}
-								} else {
-									log.Printf("📮 postman: PING sent to %s\n", nodeName)
-									successCount++
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "message_received",
-										Message: fmt.Sprintf("PING sent to %s", nodeName),
-									}
-								}
-							}
-							// Send summary event
-							totalCount := successCount + failCount
+						if len(targetNodes) == 0 {
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "message_received",
-								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
+								Message: fmt.Sprintf("PING: no nodes found for session %s", cmd.Target),
 							}
+							break
+						}
+						// Build active nodes from freshNodes (not stale startup nodes)
+						activeNodes := make([]string, 0, len(freshNodes))
+						for nodeName := range freshNodes {
+							simpleName := ping.ExtractSimpleName(nodeName)
+							activeNodes = append(activeNodes, simpleName)
+						}
+						// Send PING to each node in the target session
+						successCount := 0
+						failCount := 0
+						pongActiveNodes := idleTracker.GetPongActiveNodes()
+						for nodeName, nodeInfo := range targetNodes {
+							if err := ping.SendPingToNode(nodeInfo, contextID, nodeName,
+								cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
+								log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
+								failCount++
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
+								}
+							} else {
+								log.Printf("📮 postman: PING sent to %s\n", nodeName)
+								successCount++
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING sent to %s", nodeName),
+								}
+							}
+						}
+						totalCount := successCount + failCount
+						daemonEvents <- tui.DaemonEvent{
+							Type:    "message_received",
+							Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 						}
 					case "session_toggle":
 						// Toggle session enable/disable

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -351,6 +352,17 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	enterCount := cfg.Nodes[info.To].EnterCount
+
+	// Runtime-aware adjustment: clamp to 1 for non-Codex runtimes (Issue #new).
+	// Prevents unintended 2nd C-m from submitting buffered commands in claude-chill.
+	if enterCount > 1 {
+		cmdOut, err := exec.Command("tmux", "display-message", "-t", paneID,
+			"-p", "#{pane_current_command}").Output()
+		if err != nil || strings.TrimSpace(string(cmdOut)) != "codex" {
+			enterCount = 1 // Safe default: clamp on error OR non-codex runtime
+		}
+	}
+
 	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
