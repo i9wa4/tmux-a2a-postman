@@ -25,7 +25,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
-	"github.com/i9wa4/tmux-a2a-postman/internal/ui_node"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
@@ -59,15 +59,15 @@ type DaemonState struct {
 	edgeHistoryMu            sync.RWMutex
 	enabledSessions          map[string]bool
 	enabledSessionsMu        sync.RWMutex
-	notifiedInboxFiles       map[string]time.Time        // Issue #96: Track notified inbox files (filename -> notification time)
-	notifiedInboxFilesMu     sync.RWMutex                // Issue #96: Mutex for notifiedInboxFiles
-	notifiedNodeInactivity   map[string]time.Time        // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
-	notifiedNodeInactivityMu sync.RWMutex                // Issue #99: Mutex for notifiedNodeInactivity
-	prevPaneStates           map[string]ui_node.PaneInfo // Issue #98: Track previous pane states for restart detection
-	prevPaneStatesMu         sync.RWMutex                // Issue #98: Mutex for prevPaneStates
-	prevPaneToNode           map[string]string           // Track previous pane ID -> node key mapping for restart detection
-	lastAlertTimestamp       map[string]time.Time        // Issue #118: Track last alert timestamps (alertKey -> time)
-	lastAlertTimestampMu     sync.RWMutex                // Issue #118: Mutex for lastAlertTimestamp
+	notifiedInboxFiles       map[string]time.Time       // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu     sync.RWMutex               // Issue #96: Mutex for notifiedInboxFiles
+	notifiedNodeInactivity   map[string]time.Time       // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
+	notifiedNodeInactivityMu sync.RWMutex               // Issue #99: Mutex for notifiedNodeInactivity
+	prevPaneStates           map[string]uinode.PaneInfo // Issue #98: Track previous pane states for restart detection
+	prevPaneStatesMu         sync.RWMutex               // Issue #98: Mutex for prevPaneStates
+	prevPaneToNode           map[string]string          // Track previous pane ID -> node key mapping for restart detection
+	lastAlertTimestamp       map[string]time.Time       // Issue #118: Track last alert timestamps (alertKey -> time)
+	lastAlertTimestampMu     sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -75,11 +75,11 @@ func NewDaemonState() *DaemonState {
 	return &DaemonState{
 		edgeHistory:            make(map[string]EdgeActivity),
 		enabledSessions:        make(map[string]bool),
-		notifiedInboxFiles:     make(map[string]time.Time),        // Issue #96
-		notifiedNodeInactivity: make(map[string]time.Time),        // Issue #99
-		prevPaneStates:         make(map[string]ui_node.PaneInfo), // Issue #98
-		prevPaneToNode:         make(map[string]string),           // paneID -> nodeKey mapping
-		lastAlertTimestamp:     make(map[string]time.Time),        // Issue #118
+		notifiedInboxFiles:     make(map[string]time.Time),       // Issue #96
+		notifiedNodeInactivity: make(map[string]time.Time),       // Issue #99
+		prevPaneStates:         make(map[string]uinode.PaneInfo), // Issue #98
+		prevPaneToNode:         make(map[string]string),          // paneID -> nodeKey mapping
+		lastAlertTimestamp:     make(map[string]time.Time),       // Issue #118
 	}
 }
 
@@ -788,7 +788,7 @@ func RunDaemonLoop(
 			}
 
 			// Issue #94: Monitor all panes with high frequency
-			paneStates, err := ui_node.GetAllPanesInfo()
+			paneStates, err := uinode.GetAllPanesInfo()
 			if err == nil {
 				// IMPORTANT FIX: Only send event if pane states changed
 				currentJSON, _ := json.Marshal(paneStates)
@@ -1267,7 +1267,7 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
 // Issue #118: Added sessionDir for alert messaging.
-func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
 
@@ -1372,7 +1372,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 	}
 
 	// Update prevPaneStates
-	ds.prevPaneStates = make(map[string]ui_node.PaneInfo)
+	ds.prevPaneStates = make(map[string]uinode.PaneInfo)
 	for paneID, info := range paneStates {
 		ds.prevPaneStates[paneID] = info
 	}
@@ -1387,7 +1387,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]ui_node.PaneInfo,
 // checkPaneDisappearance detects disappeared panes and marks corresponding nodes as inactive.
 // When a pane is killed, it no longer appears in GetAllPanesInfo() output.
 // This function compares previous pane states with current pane states to detect disappearances.
-func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]ui_node.PaneInfo, prevPaneToNode map[string]string, events chan<- tui.DaemonEvent) {
+func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinode.PaneInfo, prevPaneToNode map[string]string, events chan<- tui.DaemonEvent) {
 	ds.prevPaneStatesMu.RLock()
 	defer ds.prevPaneStatesMu.RUnlock()
 

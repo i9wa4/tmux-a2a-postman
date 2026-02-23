@@ -13,6 +13,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -38,17 +39,6 @@ func NewSessionIdleState() *SessionIdleState {
 type PaneActivity struct {
 	PaneID           string
 	LastActivityTime time.Time
-}
-
-// capturePaneContent captures the visible content of a tmux pane.
-// Returns the content as a string, or empty string on error.
-func capturePaneContent(paneID string) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
-	}
-	return string(output), nil
 }
 
 // hashContent computes SHA256 hash of the content.
@@ -79,7 +69,7 @@ func (s *SessionIdleState) GetPaneActivities() ([]PaneActivity, error) {
 		}
 
 		// Capture pane content
-		content, err := capturePaneContent(paneID)
+		content, err := paneutil.CaptureContent(paneID)
 		if err != nil {
 			// Skip panes that fail to capture (e.g., closed panes)
 			continue

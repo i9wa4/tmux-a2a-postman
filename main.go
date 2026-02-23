@@ -557,6 +557,13 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					case "clear_edge_history":
 						// Clear edge activity history when switching sessions
 						daemonState.ClearEdgeHistory()
+						edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
+						daemonEvents <- tui.DaemonEvent{
+							Type: "edge_update",
+							Details: map[string]interface{}{
+								"edges": edgeList,
+							},
+						}
 						log.Println("postman: Edge history cleared (session switch)")
 					}
 				}

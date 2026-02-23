@@ -1,4 +1,4 @@
-package ui_node
+package uinode
 
 import (
 	"fmt"
