@@ -76,7 +76,20 @@ Sessions can be toggled between enabled and disabled states in the TUI. This con
 - **Enabled**: Session receives automatic PING when new nodes are detected
 - **Disabled**: Session does NOT receive automatic PING (default for new sessions)
 
-### 4.2. Automatic PING Paths
+### 4.2. Automatic Session Enable Behavior
+
+Two config fields control how sessions and agents are auto-enabled:
+
+| Field                      | Default | Behavior                                                         |
+| -------------------------- | ------- | ---------------------------------------------------------------- |
+| `auto_enable_new_sessions` | `false` | Whether newly discovered sessions are automatically enabled      |
+| `auto_enable_new_agents`   | `true`  | Whether new agents in an already-enabled session are auto-pinged |
+
+By default, new sessions require explicit enabling in the TUI before they receive automatic PING. This opt-in design prevents unintentional PING delivery to newly joined sessions.
+
+**Bool merge limitation**: Setting `auto_enable_new_sessions = false` in a project-local config file will NOT override an XDG-level `true`. Bool fields only propagate `true` values — the Go zero-value (`false`) is indistinguishable from "field not set". Use the XDG config to set these fields definitively.
+
+### 4.3. Automatic PING Paths
 
 Automatic PING is sent to new nodes at three detection points:
 
@@ -86,9 +99,11 @@ Automatic PING is sent to new nodes at three detection points:
 
 All three paths respect the session enabled state. Disabled sessions will not receive automatic PING at any of these paths.
 
-### 4.3. Manual PING
+### 4.4. Manual PING
 
 Manual PING (via 'p' key in TUI) always works regardless of session state. This allows you to manually initialize nodes in disabled sessions if needed.
+
+Manual PING uses fresh node discovery at invocation time and falls back to the daemon's cached node snapshot if discovery fails.
 
 ## 5. Directory Structure (XDG Base Directory)
 
@@ -159,7 +174,7 @@ graph TD
     observer-a-leader --- observer-b-leader
 ```
 
-Each edge creates bidirectional routes. For example, `"A -- B"` allows both A→B and B→A communication.
+Each edge creates bidirectional routes. For example, `"A -- B"` allows both A->B and B->A communication.
 
 Nodes can only communicate when an edge exists between them. If only "messenger -- orchestrator" is defined, `worker` cannot send messages directly to `messenger`.
 
@@ -194,9 +209,19 @@ Reply:
 3. mv from draft/ to post/
 """
 
+# Auto-enable behavior (default: opt-in)
+auto_enable_new_sessions = false  # Set true to auto-enable all new sessions
+auto_enable_new_agents = true     # Auto-ping new agents in already-enabled sessions
+
+# Reminder feature: send reminder message after N messages delivered to a node
+# Set to 0 to disable (default: 0)
+reminder_interval_seconds = 0
+reminder_message = ""
+
 # Node configurations
 [orchestrator]
 role = "coordination, delegation"
+enter_count = 2
 template = """
 # ORCHESTRATOR (READONLY)
 
@@ -206,6 +231,7 @@ template = """
 
 [worker]
 role = "implementation"
+enter_count = 2
 template = """
 # WORKER (WRITABLE)
 
@@ -224,7 +250,57 @@ template = """
   - `{session_dir}/post/`: Outgoing messages directory
 - **Configuration files**: Supports both single file (`postman.toml`) and split files (`postman.toml` + `nodes/*.toml`)
 
-### 7.3. Routing Management
+### 7.3. Node Configuration: enter_count
+
+The `enter_count` field controls how many Enter keystrokes are sent after each message notification. This is important for agent runtimes that require a specific number of keystrokes to submit input.
+
+```toml
+[worker]
+enter_count = 2
+```
+
+| Value      | Behavior               |
+| ---------- | ---------------------- |
+| `0` or `1` | Single Enter (default) |
+| `2`        | Double Enter           |
+
+**Runtime-aware behavior**: When `enter_count = 2` is set, postman detects the actual runtime running in the target pane at delivery time using `tmux display-message -p '#{pane_current_command}'`. If the runtime is not `codex` (Codex CLI), the count is clamped to 1 to prevent unintended command submission in other runtimes (e.g., claude-chill). This means:
+
+- Codex CLI panes: receives the configured `enter_count` (e.g., 2)
+- All other runtimes: always receives 1 Enter regardless of `enter_count`
+
+Setting `enter_count = 2` in all node configs is safe — the runtime detection handles the per-runtime behavior automatically.
+
+### 7.4. Reminder Feature
+
+postman can send a reminder message to a node after it has received a configured number of messages.
+
+```toml
+[postman]
+reminder_interval_seconds = 5  # Send reminder every 5 messages delivered
+reminder_message = "REMINDER: You have {count} pending messages for {node}"
+```
+
+> NOTE: Despite the `_seconds` suffix, `reminder_interval_seconds` counts
+> delivered messages, not elapsed time.
+
+Per-node override is also supported:
+
+```toml
+[worker]
+reminder_interval_seconds = 3
+reminder_message = "Worker: {count} messages pending"
+```
+
+**Template variables**: `{node}` (node name), `{count}` (message count since last reminder).
+
+The counter increments on each message delivered to the node and resets after the reminder fires. The reminder is not based on whether the node has replied — it tracks delivery count only.
+
+When the reminder fires, postman sends the expanded message to the node's pane using the standard `SendToPane` path (same as regular message delivery), including runtime-aware `enter_count` behavior.
+
+Set `reminder_interval_seconds = 0` (default) to disable the reminder feature.
+
+### 7.5. Routing Management
 
 **NOTE:** Editing edges via TUI will remove comments from postman.toml.
 Manual editing is recommended for preserving comments.
@@ -239,7 +315,7 @@ tmux-a2a-postman start --context-id <session-id> [--config path/to/config.toml]
 tmux-a2a-postman create-draft --to <recipient> --context-id <session-id> --from <sender>
 
 # Show version
-tmux-a2a-postman version
+tmux-a2a-postman --version
 ```
 
 ### 8.1. Session Status at a Glance
@@ -262,10 +338,11 @@ Example:
 ```
 
 **Status indicators:**
-- 🟢 = Active pane (2+ content changes within activity_window_seconds, default 300s)
-- 🔴 = Inactive pane (no recent content changes)
+- 🟢 Active: last content change within `node_active_seconds` (default 300s / 5 min)
+- 🟡 Idle: last content change between `node_active_seconds` and `node_idle_seconds` ago (defaults: 5-15 min)
+- 🔴 Stale: last content change more than `node_idle_seconds` ago (default 900s / 15 min)
 - Sessions ordered by name
 - Windows separated by `:` within each session
 - Session IDs (S0, S1, ...) correspond to the session index order
 
-**Note:** Uses time-based activity detection from `internal/idle/idle.go` rather than keyboard focus. A pane is considered active when its content has changed at least twice within the activity_window_seconds window (default: 300s), indicating real activity rather than just cursor focus.
+**Note:** Status thresholds are configurable via `node_active_seconds` (default: 300) and `node_idle_seconds` (default: 900) in `postman.toml`.
