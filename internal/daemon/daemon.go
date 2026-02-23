@@ -484,7 +484,7 @@ func RunDaemonLoop(
 										}
 
 										// Increment reminder counter for recipient
-										reminderState.Increment(info.To, nodes, cfg)
+										reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
 
 										// Issue #55: Emit ball state update after message delivery
 										nodeStates := idleTracker.GetNodeStates()

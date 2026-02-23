@@ -3,11 +3,13 @@ package reminder
 import (
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -25,7 +27,7 @@ func NewReminderState() *ReminderState {
 }
 
 // Increment increments the counter for a node and sends reminder if threshold is reached.
-func (r *ReminderState) Increment(nodeName string, nodes map[string]discovery.NodeInfo, cfg *config.Config) {
+func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map[string]discovery.NodeInfo, cfg *config.Config) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -50,7 +52,31 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]discovery.No
 
 		// Send reminder if interval is configured
 		if reminderInterval > 0 && count >= int(reminderInterval) {
-			nodeInfo, found := nodes[nodeName]
+			// Phase 1: exact match (supports tests and non-prefixed maps)
+			var nodeInfo discovery.NodeInfo
+			found := false
+			if info, ok := nodes[nodeName]; ok {
+				nodeInfo = info
+				found = true
+			}
+			// Phase 2: deterministic session-prefixed lookup (current session first)
+			if !found && sessionName != "" {
+				if info, ok := nodes[sessionName+":"+nodeName]; ok {
+					nodeInfo = info
+					found = true
+				}
+			}
+			// Phase 3: generic suffix scan (fallback for other sessions)
+			if !found {
+				for key, info := range nodes {
+					parts := strings.SplitN(key, ":", 2)
+					if len(parts) == 2 && parts[1] == nodeName {
+						nodeInfo = info
+						found = true
+						break
+					}
+				}
+			}
 			if found && reminderMessage != "" {
 				vars := map[string]string{
 					"node":  nodeName,
@@ -59,9 +85,19 @@ func (r *ReminderState) Increment(nodeName string, nodes map[string]discovery.No
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				content := template.ExpandTemplate(reminderMessage, vars, timeout)
 
-				if err := exec.Command("tmux", "send-keys", "-t", nodeInfo.PaneID, content, "Enter").Run(); err != nil {
-					_ = err // Suppress unused variable warning
+				enterCount := cfg.Nodes[nodeName].EnterCount
+				if enterCount > 1 {
+					cmdOut, err := exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID,
+						"-p", "#{pane_current_command}").Output()
+					if err != nil || strings.TrimSpace(string(cmdOut)) != "codex" {
+						enterCount = 1
+					}
 				}
+				enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+				if nodeEnterDelay := cfg.Nodes[nodeName].EnterDelay; nodeEnterDelay != 0 {
+					enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
+				}
+				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount)
 			}
 			// Reset counter after sending reminder
 			r.counters[nodeName] = 0

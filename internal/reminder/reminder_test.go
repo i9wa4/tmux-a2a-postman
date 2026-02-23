@@ -36,7 +36,7 @@ func TestReminderIncrement(t *testing.T) {
 
 	// Increment counter below threshold
 	for i := 1; i <= 3; i++ {
-		state.Increment("worker", nodes, cfg)
+		state.Increment("worker", "", nodes, cfg)
 		state.mu.Lock()
 		count := state.counters["worker"]
 		state.mu.Unlock()
@@ -64,7 +64,7 @@ func TestReminderThreshold(t *testing.T) {
 
 	// Increment to threshold
 	for i := 1; i <= 3; i++ {
-		state.Increment("worker", nodes, cfg)
+		state.Increment("worker", "", nodes, cfg)
 	}
 
 	// After reaching threshold, counter should be reset to 0
@@ -77,7 +77,7 @@ func TestReminderThreshold(t *testing.T) {
 	}
 
 	// Increment again - should start from 0
-	state.Increment("worker", nodes, cfg)
+	state.Increment("worker", "", nodes, cfg)
 	state.mu.Lock()
 	count = state.counters["worker"]
 	state.mu.Unlock()
@@ -109,8 +109,8 @@ func TestReminderNodeSpecificConfig(t *testing.T) {
 	}
 
 	// Increment to node-specific threshold (2)
-	state.Increment("worker", nodes, cfg)
-	state.Increment("worker", nodes, cfg)
+	state.Increment("worker", "", nodes, cfg)
+	state.Increment("worker", "", nodes, cfg)
 
 	// After reaching node-specific threshold, counter should be reset
 	state.mu.Lock()
@@ -148,7 +148,7 @@ func TestReminderThreadSafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incrementsPerGoroutine; j++ {
-				state.Increment("worker", nodes, cfg)
+				state.Increment("worker", "", nodes, cfg)
 			}
 		}()
 	}
@@ -184,7 +184,7 @@ func TestReminderDisabled(t *testing.T) {
 
 	// Increment many times
 	for i := 0; i < 10; i++ {
-		state.Increment("worker", nodes, cfg)
+		state.Increment("worker", "", nodes, cfg)
 	}
 
 	// Counter should keep incrementing (no reset since reminder is disabled)
@@ -194,5 +194,53 @@ func TestReminderDisabled(t *testing.T) {
 
 	if count != 10 {
 		t.Errorf("With reminder disabled, counter = %d, want 10", count)
+	}
+}
+
+func TestReminderPhaseTwoLookup(t *testing.T) {
+	state := NewReminderState()
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:worker": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+	cfg := &config.Config{
+		TmuxTimeout:      5.0,
+		ReminderInterval: 2.0,
+		ReminderMessage:  "",
+		Nodes:            map[string]config.NodeConfig{},
+	}
+	state.Increment("worker", "test-session", nodes, cfg)
+	state.Increment("worker", "test-session", nodes, cfg)
+	state.mu.Lock()
+	count := state.counters["worker"]
+	state.mu.Unlock()
+	if count != 0 {
+		t.Errorf("Phase 2 lookup: after threshold, counter = %d, want 0", count)
+	}
+}
+
+func TestReminderPhaseThreeLookup(t *testing.T) {
+	state := NewReminderState()
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:worker": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+		},
+	}
+	cfg := &config.Config{
+		TmuxTimeout:      5.0,
+		ReminderInterval: 2.0,
+		ReminderMessage:  "",
+		Nodes:            map[string]config.NodeConfig{},
+	}
+	state.Increment("worker", "", nodes, cfg)
+	state.Increment("worker", "", nodes, cfg)
+	state.mu.Lock()
+	count := state.counters["worker"]
+	state.mu.Unlock()
+	if count != 0 {
+		t.Errorf("Phase 3 lookup: after threshold, counter = %d, want 0", count)
 	}
 }
