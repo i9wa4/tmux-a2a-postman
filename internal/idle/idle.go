@@ -114,6 +114,22 @@ func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
 	return result
 }
 
+// statusForState returns "active", "idle", or "stale" for a pane capture state.
+// Lock-free — caller must hold t.mu.
+func statusForState(state PaneCaptureState, now time.Time, cfg *config.Config) string {
+	if state.LastChangeAt.IsZero() {
+		return "stale"
+	}
+	switch elapsed := now.Sub(state.LastChangeAt); {
+	case elapsed <= time.Duration(cfg.NodeActiveSeconds)*time.Second:
+		return "active"
+	case elapsed <= time.Duration(cfg.NodeIdleSeconds)*time.Second:
+		return "idle"
+	default:
+		return "stale"
+	}
+}
+
 // GetPaneActivityStatus returns pane activity status based on idle.go logic.
 // Returns map of paneID -> status ("active"/"idle"/"stale").
 // Issue #120: Expose paneCaptureState for get-session-status-oneline command.
@@ -123,23 +139,9 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 
 	result := make(map[string]string)
 	now := time.Now()
-	activeThreshold := time.Duration(cfg.NodeActiveSeconds) * time.Second
-	idleThreshold := time.Duration(cfg.NodeIdleSeconds) * time.Second
 
 	for paneID, state := range t.paneCaptureState {
-		if state.LastChangeAt.IsZero() {
-			result[paneID] = "stale"
-			continue
-		}
-		timeSinceLastChange := now.Sub(state.LastChangeAt)
-		switch {
-		case timeSinceLastChange <= activeThreshold:
-			result[paneID] = "active"
-		case timeSinceLastChange <= idleThreshold:
-			result[paneID] = "idle"
-		default:
-			result[paneID] = "stale"
-		}
+		result[paneID] = statusForState(state, now, cfg)
 	}
 
 	return result
@@ -151,25 +153,10 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath string) error {
 	t.mu.Lock()
 	now := time.Now()
-	activeThreshold := time.Duration(cfg.NodeActiveSeconds) * time.Second
-	idleThreshold := time.Duration(cfg.NodeIdleSeconds) * time.Second
 	export := make(map[string]PaneActivityExport, len(t.paneCaptureState))
 	for paneID, state := range t.paneCaptureState {
-		var status string
-		if state.LastChangeAt.IsZero() {
-			status = "stale"
-		} else {
-			switch elapsed := now.Sub(state.LastChangeAt); {
-			case elapsed <= activeThreshold:
-				status = "active"
-			case elapsed <= idleThreshold:
-				status = "idle"
-			default:
-				status = "stale"
-			}
-		}
 		export[paneID] = PaneActivityExport{
-			Status:       status,
+			Status:       statusForState(state, now, cfg),
 			LastChangeAt: state.LastChangeAt,
 		}
 	}
