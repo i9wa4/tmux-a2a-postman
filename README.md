@@ -248,19 +248,7 @@ template = """
   - `{session_dir}/post/`: Outgoing messages directory
 - **Configuration files**: Supports both single file (`postman.toml`) and split files (`postman.toml` + `nodes/*.toml`)
 
-### 7.3. Node Configuration: enter_count
-
-The `enter_count` field controls how many Enter keystrokes are sent after each message notification.
-
-| Value         | Behavior                                                                        |
-| ------------- | ------------------------------------------------------------------------------- |
-| `0` (default) | Auto-detect: Codex CLI gets 2 Enter, all other runtimes get 1                   |
-| `1`           | Force single Enter (disables auto-detect)                                       |
-| `2`           | Force double Enter (with runtime probe; clamps to 1 for non-Codex)              |
-
-postman detects the runtime using `tmux display-message -p '#{pane_current_command}'`. No configuration needed for typical Codex CLI / claude-chill setups — auto-detect handles it.
-
-### 7.4. Reminder Feature
+### 7.3. Reminder Feature
 
 postman can send a reminder message to a node after it has received a configured number of messages.
 
@@ -282,11 +270,11 @@ reminder_message = "Worker: {count} messages pending"
 
 The counter increments on each message delivered to the node and resets after the reminder fires. The reminder is not based on whether the node has replied — it tracks delivery count only.
 
-When the reminder fires, postman sends the expanded message to the node's pane using the standard `SendToPane` path (same as regular message delivery), including runtime-aware `enter_count` behavior.
+When the reminder fires, postman sends the expanded message to the node's pane using the standard `SendToPane` path (same as regular message delivery).
 
 Set `reminder_interval_messages = 0` (default) to disable the reminder feature.
 
-### 7.5. Routing Management
+### 7.4. Routing Management
 
 **NOTE:** Editing edges via TUI will remove comments from postman.toml.
 Manual editing is recommended for preserving comments.
