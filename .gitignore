@@ -39,3 +39,4 @@ go.work.sum
 .envrc
 /result
 /result-*
+.pre-commit-config.yaml

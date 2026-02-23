@@ -22,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
@@ -32,14 +32,17 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
-      - name: Format check
-        run: nix develop .#ci --command make fmt
+      - name: Check (fmt + pre-commit + build + test)
+        run: nix flake check
 
       - name: Lint
-        run: nix develop .#ci --command make lint
+        run: nix develop .#ci --command golangci-lint run ./...
 
-      - name: Test
-        run: nix develop .#ci --command make test
+      - name: Test (race)
+        run: nix develop .#ci --command go test -race ./...
+
+      - name: Vet
+        run: nix develop .#ci --command go vet ./...
 
   security:
     runs-on: ubuntu-latest
@@ -54,4 +57,4 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
       - name: Security checks
-        run: nix develop .#ci --command make security
+        run: nix develop .#ci --command govulncheck ./...

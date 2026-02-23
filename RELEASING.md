@@ -4,10 +4,12 @@
 
 1. Commit all changes to main branch
 2. Create and push annotated tag (must match `v[0-9]*`):
+
    ```bash
    git tag -a vX.Y.Z -m "Release vX.Y.Z"
    git push origin vX.Y.Z
    ```
+
 3. GitHub Actions automatically creates release with goreleaser
 
 ## Version Behavior

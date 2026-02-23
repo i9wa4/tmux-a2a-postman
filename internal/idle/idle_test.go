@@ -499,7 +499,7 @@ func TestGetPaneActivityStatus_ChangeCountZeroAfterActive(t *testing.T) {
 	tracker.paneCaptureState["%10"] = PaneCaptureState{
 		LastHash:      12345,
 		LastChangeAt:  now.Add(-10 * time.Second), // Recent change
-		ChangeCount:   0,                           // Reset after marking active
+		ChangeCount:   0,                          // Reset after marking active
 		LastCaptureAt: now,
 	}
 	tracker.mu.Unlock()
