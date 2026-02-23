@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,45 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
+
+func TestResolveEnterCount(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		runtime    string
+		probeErr   bool
+		want       int
+	}{
+		{"configured=0, codex", 0, "codex", false, 2},
+		{"configured=0, bash", 0, "bash", false, 1},
+		{"configured=0, probe error", 0, "", true, 1},
+		{"configured=1, no probe", 1, "", false, 1},
+		{"configured=2, codex", 2, "codex", false, 2},
+		{"configured=2, bash", 2, "bash", false, 1},
+		{"configured=2, probe error", 2, "", true, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			probeCalled := false
+			probe := func() (string, error) {
+				probeCalled = true
+				if tt.probeErr {
+					return "", fmt.Errorf("probe error")
+				}
+				return tt.runtime, nil
+			}
+			got := ResolveEnterCount(tt.configured, probe)
+			if got != tt.want {
+				t.Errorf("ResolveEnterCount(%d, probe) = %d, want %d", tt.configured, got, tt.want)
+			}
+			// configured=1 must not call probe
+			if tt.configured == 1 && probeCalled {
+				t.Error("probe should not be called when configured=1")
+			}
+		})
+	}
+}
 
 func TestBuildNotification(t *testing.T) {
 	cfg := &config.Config{

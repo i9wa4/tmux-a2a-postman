@@ -208,6 +208,25 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	return nil
 }
 
+// ResolveEnterCount returns the effective enter count for pane delivery.
+// When configured == 0, probes runtime automatically via probeRuntime.
+// probeRuntime returns the running command name for the pane.
+func ResolveEnterCount(configured int, probeRuntime func() (string, error)) int {
+	if configured == 0 {
+		runtime, err := probeRuntime()
+		if err == nil && runtime == "codex" {
+			return 2
+		}
+		return 1
+	} else if configured > 1 {
+		runtime, err := probeRuntime()
+		if err != nil || runtime != "codex" {
+			return 1
+		}
+	}
+	return configured
+}
+
 // sanitizeForTmux sanitizes a string for safe use with tmux set-buffer.
 // Escapes special shell characters to prevent command injection.
 func sanitizeForTmux(s string) string {

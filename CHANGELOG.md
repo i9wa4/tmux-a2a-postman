@@ -12,6 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: enrich pane-activity.json with lastChangeAt; dual-format reader (#123)
 - `enter_count` field in `nodes` config to send multiple Enter keystrokes for Codex CLI nodes (#126)
 
+### Changed
+
+- `enter_count = 0` (default / unset) now auto-detects the runtime: Codex CLI panes receive
+  2 Enter keystrokes; all other runtimes receive 1. Explicit `enter_count = 1` or
+  `enter_count = 2` still work as before.
+- **Breaking**: `reminder_interval_seconds` TOML key renamed to `reminder_interval_messages`.
+  The field counts delivered messages, not elapsed time. The old key emits a deprecation
+  warning at startup and is no longer parsed.
+
 ### Fixed
 
 - fix: use C-m instead of Enter in SendToPane to reliably submit in Codex CLI readline mode (#126-followup)

@@ -61,7 +61,7 @@ tmux_timeout_seconds = 5.0         # Timeout for tmux commands
 enter_delay_seconds = 0.5          # Delay before sending Enter key
 startup_delay_seconds = 2.0        # Initial startup delay
 new_node_ping_delay_seconds = 3.0  # Delay before sending ping to newly joined nodes
-reminder_interval_seconds = 0.0    # Send reminder after N messages (0 = disabled)
+reminder_interval_messages = 0     # Send reminder after N messages (0 = disabled)
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
@@ -226,7 +226,7 @@ max_bytes = 1048576  # 1MB
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# reminder_interval_seconds = 0.0    # Node-specific reminder interval (overrides global)
+# reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
 # idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)
 # idle_reminder_message = ""         # Idle reminder message

@@ -85,14 +85,15 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				content := template.ExpandTemplate(reminderMessage, vars, timeout)
 
-				enterCount := cfg.Nodes[nodeName].EnterCount
-				if enterCount > 1 {
-					cmdOut, err := exec.Command("tmux", "display-message", "-t", nodeInfo.PaneID,
-						"-p", "#{pane_current_command}").Output()
-					if err != nil || strings.TrimSpace(string(cmdOut)) != "codex" {
-						enterCount = 1
-					}
-				}
+				paneIDForProbe := nodeInfo.PaneID
+				enterCount := notification.ResolveEnterCount(
+					cfg.Nodes[nodeName].EnterCount,
+					func() (string, error) {
+						out, err := exec.Command("tmux", "display-message", "-t",
+							paneIDForProbe, "-p", "#{pane_current_command}").Output()
+						return strings.TrimSpace(string(out)), err
+					},
+				)
 				enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 				if nodeEnterDelay := cfg.Nodes[nodeName].EnterDelay; nodeEnterDelay != 0 {
 					enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))

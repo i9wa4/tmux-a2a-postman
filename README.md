@@ -215,13 +215,12 @@ auto_enable_new_agents = true     # Auto-ping new agents in already-enabled sess
 
 # Reminder feature: send reminder message after N messages delivered to a node
 # Set to 0 to disable (default: 0)
-reminder_interval_seconds = 0
+reminder_interval_messages = 0
 reminder_message = ""
 
 # Node configurations
 [orchestrator]
 role = "coordination, delegation"
-enter_count = 2
 template = """
 # ORCHESTRATOR (READONLY)
 
@@ -231,7 +230,6 @@ template = """
 
 [worker]
 role = "implementation"
-enter_count = 2
 template = """
 # WORKER (WRITABLE)
 
@@ -252,24 +250,15 @@ template = """
 
 ### 7.3. Node Configuration: enter_count
 
-The `enter_count` field controls how many Enter keystrokes are sent after each message notification. This is important for agent runtimes that require a specific number of keystrokes to submit input.
+The `enter_count` field controls how many Enter keystrokes are sent after each message notification.
 
-```toml
-[worker]
-enter_count = 2
-```
+| Value         | Behavior                                                                        |
+| ------------- | ------------------------------------------------------------------------------- |
+| `0` (default) | Auto-detect: Codex CLI gets 2 Enter, all other runtimes get 1                   |
+| `1`           | Force single Enter (disables auto-detect)                                       |
+| `2`           | Force double Enter (with runtime probe; clamps to 1 for non-Codex)              |
 
-| Value      | Behavior               |
-| ---------- | ---------------------- |
-| `0` or `1` | Single Enter (default) |
-| `2`        | Double Enter           |
-
-**Runtime-aware behavior**: When `enter_count = 2` is set, postman detects the actual runtime running in the target pane at delivery time using `tmux display-message -p '#{pane_current_command}'`. If the runtime is not `codex` (Codex CLI), the count is clamped to 1 to prevent unintended command submission in other runtimes (e.g., claude-chill). This means:
-
-- Codex CLI panes: receives the configured `enter_count` (e.g., 2)
-- All other runtimes: always receives 1 Enter regardless of `enter_count`
-
-Setting `enter_count = 2` in all node configs is safe — the runtime detection handles the per-runtime behavior automatically.
+postman detects the runtime using `tmux display-message -p '#{pane_current_command}'`. No configuration needed for typical Codex CLI / claude-chill setups — auto-detect handles it.
 
 ### 7.4. Reminder Feature
 
@@ -277,18 +266,15 @@ postman can send a reminder message to a node after it has received a configured
 
 ```toml
 [postman]
-reminder_interval_seconds = 5  # Send reminder every 5 messages delivered
+reminder_interval_messages = 5  # Send reminder every 5 messages delivered
 reminder_message = "REMINDER: You have {count} pending messages for {node}"
 ```
-
-> NOTE: Despite the `_seconds` suffix, `reminder_interval_seconds` counts
-> delivered messages, not elapsed time.
 
 Per-node override is also supported:
 
 ```toml
 [worker]
-reminder_interval_seconds = 3
+reminder_interval_messages = 3
 reminder_message = "Worker: {count} messages pending"
 ```
 
@@ -298,7 +284,7 @@ The counter increments on each message delivered to the node and resets after th
 
 When the reminder fires, postman sends the expanded message to the node's pane using the standard `SendToPane` path (same as regular message delivery), including runtime-aware `enter_count` behavior.
 
-Set `reminder_interval_seconds = 0` (default) to disable the reminder feature.
+Set `reminder_interval_messages = 0` (default) to disable the reminder feature.
 
 ### 7.5. Routing Management
 

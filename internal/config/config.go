@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"log"
@@ -28,7 +29,7 @@ type Config struct {
 	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
 	StartupDelay     float64 `toml:"startup_delay_seconds"`
 	NewNodePingDelay float64 `toml:"new_node_ping_delay_seconds"`
-	ReminderInterval float64 `toml:"reminder_interval_seconds"`
+	ReminderInterval float64 `toml:"reminder_interval_messages"`
 
 	// TUI settings (Issue #37)
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
@@ -90,7 +91,7 @@ type NodeConfig struct {
 	Template                    string  `toml:"template"`
 	OnJoin                      string  `toml:"on_join"`
 	Role                        string  `toml:"role"`
-	ReminderInterval            float64 `toml:"reminder_interval_seconds"`
+	ReminderInterval            float64 `toml:"reminder_interval_messages"`
 	ReminderMessage             string  `toml:"reminder_message"`
 	IdleTimeoutSeconds          float64 `toml:"idle_timeout_seconds"`
 	IdleReminderMessage         string  `toml:"idle_reminder_message"`
@@ -187,6 +188,14 @@ func DefaultConfig() *Config {
 		CompactionDetection: CompactionDetectionConfig{
 			TailLines: 10, // Issue #133: Default tail lines for compaction check
 		},
+	}
+}
+
+// warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
+func warnDeprecatedKeys(rawBytes []byte, path string) {
+	if bytes.Contains(rawBytes, []byte("reminder_interval_seconds")) {
+		log.Printf("config warning: 'reminder_interval_seconds' is deprecated; "+
+			"rename to 'reminder_interval_messages' in %s", path)
 	}
 }
 
@@ -302,8 +311,13 @@ func resolveProjectLocalConfig(cwd, xdgPath string) (string, error) {
 // explicitly-set fields are non-zero. Does not load sibling nodes/ directory.
 // Issue #121: Used for project-local config overlay.
 func loadConfigFile(path string) (*Config, error) {
+	rawBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading project-local config %s: %w", path, err)
+	}
+	warnDeprecatedKeys(rawBytes, path)
 	var rootSections map[string]toml.Primitive
-	md, err := toml.DecodeFile(path, &rootSections)
+	md, err := toml.Decode(string(rawBytes), &rootSections)
 	if err != nil {
 		return nil, fmt.Errorf("parsing project-local config %s: %w", path, err)
 	}
@@ -613,8 +627,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	} else {
 		// Parse TOML file with metadata (Python format)
+		rawBytes, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading config file: %w", err)
+		}
+		warnDeprecatedKeys(rawBytes, configPath)
 		var rootSections map[string]toml.Primitive
-		md, err := toml.DecodeFile(configPath, &rootSections)
+		md, err := toml.Decode(string(rawBytes), &rootSections)
 		if err != nil {
 			return nil, fmt.Errorf("parsing config file: %w", err)
 		}
@@ -663,8 +682,14 @@ func LoadConfig(path string) (*Config, error) {
 			nodeFiles, _ := filepath.Glob(filepath.Join(nodesDir, "*.toml"))
 			sort.Strings(nodeFiles) // deterministic alphabetical order
 			for _, nodeFile := range nodeFiles {
+				nodeBytes, err := os.ReadFile(nodeFile)
+				if err != nil {
+					log.Printf("warning: skipping %s (read error): %v", nodeFile, err)
+					continue
+				}
+				warnDeprecatedKeys(nodeBytes, nodeFile)
 				var sections map[string]toml.Primitive
-				md2, err := toml.DecodeFile(nodeFile, &sections)
+				md2, err := toml.Decode(string(nodeBytes), &sections)
 				if err != nil {
 					log.Printf("warning: skipping %s: %v", nodeFile, err)
 					continue
