@@ -327,17 +327,20 @@ tmux-a2a-postman get-session-status-oneline
 ```
 
 **Requirements:**
+
 - Daemon must be running (uses daemon's idle tracking state)
 - Pane capture must be enabled in config (default: enabled)
 
 **Output format:** `[S0:window_panes:window_panes:...] [S1:window_panes:...]`
 
 Example:
-```
-[S0:🟢🟢🟢🔴:🟢🔴] [S1:🔴🔴🔴🔴:🔴🔴]
+
+```text
+[S0:🟢🟡🔴:🟢🔴] [S1:🔴🔴🔴🔴:🔴🔴]
 ```
 
 **Status indicators:**
+
 - 🟢 Active: last content change within `node_active_seconds` (default 300s / 5 min)
 - 🟡 Idle: last content change between `node_active_seconds` and `node_idle_seconds` ago (defaults: 5-15 min)
 - 🔴 Stale: last content change more than `node_idle_seconds` ago (default 900s / 15 min)
@@ -345,4 +348,7 @@ Example:
 - Windows separated by `:` within each session
 - Session IDs (S0, S1, ...) correspond to the session index order
 
-**Note:** Status thresholds are configurable via `node_active_seconds` (default: 300) and `node_idle_seconds` (default: 900) in `postman.toml`.
+**Note:** Status thresholds are configurable via `node_active_seconds` (default: 300)
+and `node_idle_seconds` (default: 900) in `postman.toml`.
+Active transitions to Idle when elapsed time exceeds `node_active_seconds`;
+Idle transitions to Stale when elapsed time exceeds `node_idle_seconds`.
