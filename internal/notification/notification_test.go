@@ -51,6 +51,37 @@ func TestResolveEnterCount(t *testing.T) {
 	}
 }
 
+func TestBuildNotification_MaterializedPath(t *testing.T) {
+	matPath := "/fake/path/to/worker.md"
+
+	cfg := &config.Config{
+		// Use {template} at the end to simulate the vulnerable case
+		NotificationTemplate: "header\n{template}",
+		TmuxTimeout:          5.0,
+		ReplyCommand:         "postman create-draft --to <recipient>",
+		MaterializedPaths: map[string]string{
+			"worker": matPath,
+		},
+	}
+
+	adjacency := map[string][]string{}
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%1", SessionName: "test"},
+	}
+	pongActiveNodes := map[string]bool{}
+
+	result := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/file.md", pongActiveNodes)
+
+	// @path\n must appear somewhere in the result
+	if !strings.Contains(result, "@"+matPath+"\n") {
+		t.Errorf("expected @path\\n in result, got: %q", result)
+	}
+	// Result must NOT end with bare @path (shell autocomplete guard)
+	if strings.HasSuffix(result, "@"+matPath) {
+		t.Errorf("result must not end with bare @path (no trailing newline): %q", result)
+	}
+}
+
 func TestBuildNotification(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message from {from_node} to {node}",

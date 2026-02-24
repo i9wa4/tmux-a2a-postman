@@ -226,6 +226,8 @@ max_bytes = 1048576  # 1MB
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
+# materialize_template = false       # Write template as state file; reference via @path in messages.
+#                                    # NOTE: Takes effect only at daemon startup. Restart daemon after enabling.
 # reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
 # idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)

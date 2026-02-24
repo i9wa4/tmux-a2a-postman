@@ -57,6 +57,54 @@ func TestBuildPingMessage(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_MaterializedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+	matPath := "/fake/path/to/worker.md"
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		MaterializedPaths: map[string]string{
+			"worker": matPath,
+		},
+	}
+
+	// Use a template with {template} at the end to simulate the vulnerable case
+	tmpl := "header line\n{template}"
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(entries))
+	}
+
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	body := string(content)
+
+	// @path\n must appear somewhere in the body
+	if !strings.Contains(body, "@"+matPath+"\n") {
+		t.Errorf("expected @path\\n in body, got: %q", body)
+	}
+	// Body must NOT end with bare @path (shell autocomplete guard)
+	if strings.HasSuffix(body, "@"+matPath) {
+		t.Errorf("body must not end with bare @path (no trailing newline): %q", body)
+	}
+}
+
 func TestSendPingToNode(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")

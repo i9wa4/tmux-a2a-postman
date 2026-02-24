@@ -40,7 +40,8 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	nodeTemplate := ""
 	if matPath, ok := cfg.MaterializedPaths[simpleName]; ok {
 		// Issue #134: Template materialized as file; reference by @path. CommonTemplate excluded per spec.
-		nodeTemplate = "@" + matPath
+		// Append \n so @path is never the terminal token in the paste buffer (prevents shell autocomplete).
+		nodeTemplate = "@" + matPath + "\n"
 	} else {
 		if hasNodeConfig {
 			nodeTemplate = cfg.Nodes[simpleName].Template

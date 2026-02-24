@@ -177,7 +177,7 @@ func DefaultConfig() *Config {
 		PaneCaptureMaxPanes:          0,
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
-		NotificationTemplate:         "Message from {sender}",
+		NotificationTemplate:         "Message from {from_node}",
 		PingTemplate:                 "<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n📬 Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
 		DraftTemplate:                "",
 		ReminderMessage:              "",

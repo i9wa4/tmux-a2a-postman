@@ -200,8 +200,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if cfg.NotificationTemplate != "Message from {sender}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {sender}")
+	if cfg.NotificationTemplate != "Message from {from_node}" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {from_node}")
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
@@ -247,8 +247,8 @@ edges = ["worker -- orchestrator"]
 	if cfg.EnterDelay != 0.5 {
 		t.Errorf("default EnterDelay: got %v, want 0.5", cfg.EnterDelay)
 	}
-	if cfg.NotificationTemplate != "Message from {sender}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {sender}")
+	if cfg.NotificationTemplate != "Message from {from_node}" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {from_node}")
 	}
 }
 
