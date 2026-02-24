@@ -105,6 +105,51 @@ func TestSendPingToNode_MaterializedPath(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_InboxPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+	}
+
+	// Template includes {inbox_path} to verify it is expanded
+	tmpl := "node: {node}\ninbox: {inbox_path}"
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(entries))
+	}
+
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	body := string(content)
+
+	// {inbox_path} must be expanded (not literal)
+	if strings.Contains(body, "{inbox_path}") {
+		t.Errorf("inbox_path was not expanded; body contains literal {inbox_path}: %q", body)
+	}
+	// Expanded value must contain the expected path components
+	expectedInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if !strings.Contains(body, expectedInbox) {
+		t.Errorf("expected inbox path %q in body, got: %q", expectedInbox, body)
+	}
+}
+
 func TestSendPingToNode(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
