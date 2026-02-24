@@ -203,7 +203,7 @@ edges = []
 enabled = false                       # Enable watchdog monitoring
 idle_threshold_seconds = 300.0        # 5 minutes
 cooldown_seconds = 600.0              # 10 minutes
-heartbeat_interval_seconds = 60.0     # 1 minute
+liveness_ping_interval_seconds = 60.0  # 1 minute
 
 [watchdog.capture]
 enabled = true

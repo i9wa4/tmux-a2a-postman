@@ -131,11 +131,13 @@ type CompactionMessageTemplate struct {
 
 // WatchdogConfig holds watchdog configuration.
 type WatchdogConfig struct {
-	Enabled                  bool                  `toml:"enabled"`
-	IdleThresholdSeconds     float64               `toml:"idle_threshold_seconds"`
-	CooldownSeconds          float64               `toml:"cooldown_seconds"`
-	HeartbeatIntervalSeconds float64               `toml:"heartbeat_interval_seconds"`
-	Capture                  WatchdogCaptureConfig `toml:"capture"`
+	Enabled                     bool    `toml:"enabled"`
+	IdleThresholdSeconds        float64 `toml:"idle_threshold_seconds"`
+	CooldownSeconds             float64 `toml:"cooldown_seconds"`
+	LivenessPingIntervalSeconds float64 `toml:"liveness_ping_interval_seconds"`
+	// Deprecated: use LivenessPingIntervalSeconds. Removed after first tagged release with this warning.
+	DeprecatedHeartbeatIntervalSeconds float64               `toml:"heartbeat_interval_seconds"`
+	Capture                            WatchdogCaptureConfig `toml:"capture"`
 }
 
 // WatchdogCaptureConfig holds watchdog capture configuration.
@@ -196,6 +198,15 @@ func warnDeprecatedKeys(rawBytes []byte, path string) {
 	if bytes.Contains(rawBytes, []byte("reminder_interval_seconds")) {
 		log.Printf("config warning: 'reminder_interval_seconds' is deprecated; "+
 			"rename to 'reminder_interval_messages' in %s", path)
+	}
+	oldKey := bytes.Contains(rawBytes, []byte("heartbeat_interval_seconds"))
+	newKey := bytes.Contains(rawBytes, []byte("liveness_ping_interval_seconds"))
+	if oldKey && newKey {
+		log.Printf("config warning: both 'heartbeat_interval_seconds' (deprecated) and "+
+			"'liveness_ping_interval_seconds' found in %s; using new key", path)
+	} else if oldKey {
+		log.Printf("config warning: 'heartbeat_interval_seconds' is deprecated; "+
+			"rename to 'liveness_ping_interval_seconds' in %s", path)
 	}
 }
 
@@ -563,8 +574,11 @@ func mergeConfig(base, override *Config) {
 	if override.Watchdog.CooldownSeconds != 0 {
 		base.Watchdog.CooldownSeconds = override.Watchdog.CooldownSeconds
 	}
-	if override.Watchdog.HeartbeatIntervalSeconds != 0 {
-		base.Watchdog.HeartbeatIntervalSeconds = override.Watchdog.HeartbeatIntervalSeconds
+	if override.Watchdog.LivenessPingIntervalSeconds != 0 {
+		base.Watchdog.LivenessPingIntervalSeconds = override.Watchdog.LivenessPingIntervalSeconds
+	}
+	if override.Watchdog.DeprecatedHeartbeatIntervalSeconds != 0 {
+		base.Watchdog.DeprecatedHeartbeatIntervalSeconds = override.Watchdog.DeprecatedHeartbeatIntervalSeconds
 	}
 	if override.Watchdog.Capture.Enabled {
 		base.Watchdog.Capture.Enabled = true
@@ -716,6 +730,12 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, err
 		}
 		mergeConfig(cfg, localCfg)
+	}
+
+	// Issue #136: Migrate deprecated heartbeat_interval_seconds to liveness_ping_interval_seconds.
+	if cfg.Watchdog.LivenessPingIntervalSeconds == 0 &&
+		cfg.Watchdog.DeprecatedHeartbeatIntervalSeconds != 0 {
+		cfg.Watchdog.LivenessPingIntervalSeconds = cfg.Watchdog.DeprecatedHeartbeatIntervalSeconds
 	}
 
 	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)

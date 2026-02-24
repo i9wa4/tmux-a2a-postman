@@ -986,13 +986,13 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Start heartbeat (Issue #46: added cfg.UINode parameter)
-	var heartbeatStop chan<- struct{}
-	if cfg.Watchdog.HeartbeatIntervalSeconds > 0 {
-		heartbeatStop = watchdog.StartHeartbeat(sessionDir, contextID, cfg.UINode, cfg.Watchdog.HeartbeatIntervalSeconds)
+	// Start liveness ping (Issue #46: added cfg.UINode parameter)
+	var livenessPingStop chan<- struct{}
+	if cfg.Watchdog.LivenessPingIntervalSeconds > 0 {
+		livenessPingStop = watchdog.StartLivenessPing(sessionDir, contextID, cfg.UINode, cfg.Watchdog.LivenessPingIntervalSeconds)
 		defer func() {
-			if heartbeatStop != nil {
-				close(heartbeatStop)
+			if livenessPingStop != nil {
+				close(livenessPingStop)
 			}
 		}()
 	}
