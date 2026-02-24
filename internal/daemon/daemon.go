@@ -18,6 +18,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
@@ -269,6 +270,11 @@ func RunDaemonLoop(
 	// Issue #96: Periodic inbox stagnation check (30 seconds)
 	inboxCheckTicker := time.NewTicker(30 * time.Second)
 	defer inboxCheckTicker.Stop()
+
+	// Issue #136: Start heartbeat-LLM trigger goroutine if configured
+	if cfg.Heartbeat.Enabled && cfg.Heartbeat.LLMNode != "" {
+		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg)
+	}
 
 	for {
 		select {
@@ -1259,6 +1265,24 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "node_inactivity")
 			if err == nil {
 				ds.MarkAlertSent(alertKey)
+			}
+		}
+	}
+}
+
+// startHeartbeatTrigger periodically sends heartbeat triggers to the configured LLM node.
+// Goroutine lifecycle: exits cleanly on ctx.Done() (consistent with daemon.go:275 pattern).
+func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo], contextID string, cfg *config.Config) {
+	interval := time.Duration(cfg.Heartbeat.IntervalSeconds * float64(time.Second))
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := heartbeat.SendHeartbeatTrigger(sharedNodes, contextID, cfg.Heartbeat.LLMNode, cfg.Heartbeat.Prompt, cfg.Heartbeat.IntervalSeconds); err != nil {
+				log.Printf("heartbeat: trigger error: %v", err)
 			}
 		}
 	}

@@ -82,6 +82,9 @@ type Config struct {
 	// Watchdog
 	Watchdog WatchdogConfig
 
+	// Heartbeat
+	Heartbeat HeartbeatConfig
+
 	// Runtime state (not serialized from TOML)
 	MaterializedPaths map[string]string // Issue #134: node name -> absolute path of materialized template file
 }
@@ -140,6 +143,14 @@ type WatchdogConfig struct {
 	Capture                            WatchdogCaptureConfig `toml:"capture"`
 }
 
+// HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
+type HeartbeatConfig struct {
+	Enabled         bool    `toml:"enabled"`
+	IntervalSeconds float64 `toml:"interval_seconds"`
+	LLMNode         string  `toml:"llm_node"`
+	Prompt          string  `toml:"prompt"`
+}
+
 // WatchdogCaptureConfig holds watchdog capture configuration.
 type WatchdogCaptureConfig struct {
 	Enabled   bool `toml:"enabled"`
@@ -167,7 +178,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {sender}",
-		PingTemplate:                 "PING from postman",
+		PingTemplate:                 "<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n📬 Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
@@ -229,10 +240,10 @@ func loadEmbeddedConfig() (*Config, error) {
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
+	// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
 			continue
 		}
 
@@ -254,6 +265,13 @@ func loadEmbeddedConfig() (*Config, error) {
 	if watchdogPrim, ok := rootSections["watchdog"]; ok {
 		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
 			return nil, fmt.Errorf("decoding embedded [watchdog] section: %w", err)
+		}
+	}
+
+	// Decode [heartbeat] section if exists
+	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
+		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
+			return nil, fmt.Errorf("decoding embedded [heartbeat] section: %w", err)
 		}
 	}
 
@@ -342,7 +360,7 @@ func loadConfigFile(path string) (*Config, error) {
 	}
 
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
 			continue
 		}
 		var node NodeConfig
@@ -361,6 +379,12 @@ func loadConfigFile(path string) (*Config, error) {
 	if watchdogPrim, ok := rootSections["watchdog"]; ok {
 		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
 			return nil, fmt.Errorf("decoding [watchdog] in %s: %w", path, err)
+		}
+	}
+
+	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
+		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
+			return nil, fmt.Errorf("decoding [heartbeat] in %s: %w", path, err)
 		}
 	}
 
@@ -592,6 +616,18 @@ func mergeConfig(base, override *Config) {
 	if override.Watchdog.Capture.TailLines != 0 {
 		base.Watchdog.Capture.TailLines = override.Watchdog.Capture.TailLines
 	}
+	if override.Heartbeat.Enabled {
+		base.Heartbeat.Enabled = true
+	}
+	if override.Heartbeat.IntervalSeconds != 0 {
+		base.Heartbeat.IntervalSeconds = override.Heartbeat.IntervalSeconds
+	}
+	if override.Heartbeat.LLMNode != "" {
+		base.Heartbeat.LLMNode = override.Heartbeat.LLMNode
+	}
+	if override.Heartbeat.Prompt != "" {
+		base.Heartbeat.Prompt = override.Heartbeat.Prompt
+	}
 }
 
 // LoadConfig loads configuration from a TOML file (Python format).
@@ -661,10 +697,10 @@ func LoadConfig(path string) (*Config, error) {
 			}
 		}
 
-		// Decode [nodename] sections (everything except postman, compaction_detection, and watchdog)
+		// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
 		cfg.Nodes = make(map[string]NodeConfig)
 		for name, prim := range rootSections {
-			if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+			if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
 				continue
 			}
 
@@ -686,6 +722,13 @@ func LoadConfig(path string) (*Config, error) {
 		if watchdogPrim, ok := rootSections["watchdog"]; ok {
 			if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
 				return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
+			}
+		}
+
+		// Decode [heartbeat] section if exists
+		if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
+			if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
+				return nil, fmt.Errorf("decoding [heartbeat] section: %w", err)
 			}
 		}
 
