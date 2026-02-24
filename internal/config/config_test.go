@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1152,5 +1154,119 @@ scan_interval_seconds = 9.0
 	// XDG nodes still present
 	if len(cfg.Nodes) != 2 {
 		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	}
+}
+
+// Issue #136: Deprecation compatibility tests for heartbeat_interval_seconds.
+
+// captureLog redirects log output to a buffer for the duration of f, then restores it.
+func captureLog(f func()) string {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	f()
+	return buf.String()
+}
+
+func TestWatchdogDeprecation_OldKeyOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	content := `
+[worker]
+role = "test"
+on_join = ""
+template = ""
+
+[watchdog]
+heartbeat_interval_seconds = 60.0
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var cfg *Config
+	logOutput := captureLog(func() {
+		var err error
+		cfg, err = LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+	})
+
+	if cfg.Watchdog.LivenessPingIntervalSeconds != 60.0 {
+		t.Errorf("LivenessPingIntervalSeconds: got %v, want 60.0 (migrated from deprecated key)",
+			cfg.Watchdog.LivenessPingIntervalSeconds)
+	}
+	if !strings.Contains(logOutput, "heartbeat_interval_seconds' is deprecated") {
+		t.Errorf("expected deprecation warning for heartbeat_interval_seconds, got log: %q", logOutput)
+	}
+}
+
+func TestWatchdogDeprecation_NewKeyOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	content := `
+[worker]
+role = "test"
+on_join = ""
+template = ""
+
+[watchdog]
+liveness_ping_interval_seconds = 30.0
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var cfg *Config
+	logOutput := captureLog(func() {
+		var err error
+		cfg, err = LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+	})
+
+	if cfg.Watchdog.LivenessPingIntervalSeconds != 30.0 {
+		t.Errorf("LivenessPingIntervalSeconds: got %v, want 30.0", cfg.Watchdog.LivenessPingIntervalSeconds)
+	}
+	if strings.Contains(logOutput, "heartbeat_interval_seconds") {
+		t.Errorf("unexpected deprecation warning for new key only, got log: %q", logOutput)
+	}
+}
+
+func TestWatchdogDeprecation_BothKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	content := `
+[worker]
+role = "test"
+on_join = ""
+template = ""
+
+[watchdog]
+heartbeat_interval_seconds = 60.0
+liveness_ping_interval_seconds = 30.0
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var cfg *Config
+	logOutput := captureLog(func() {
+		var err error
+		cfg, err = LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+	})
+
+	// New key wins: migration block skipped because LivenessPingIntervalSeconds != 0
+	if cfg.Watchdog.LivenessPingIntervalSeconds != 30.0 {
+		t.Errorf("LivenessPingIntervalSeconds: got %v, want 30.0 (new key wins)",
+			cfg.Watchdog.LivenessPingIntervalSeconds)
+	}
+	if !strings.Contains(logOutput, "both 'heartbeat_interval_seconds'") {
+		t.Errorf("expected both-keys warning, got log: %q", logOutput)
 	}
 }
