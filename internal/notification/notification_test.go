@@ -1,7 +1,9 @@
 package notification
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +81,39 @@ func TestBuildNotification_MaterializedPath(t *testing.T) {
 	// Result must NOT end with bare @path (shell autocomplete guard)
 	if strings.HasSuffix(result, "@"+matPath) {
 		t.Errorf("result must not end with bare @path (no trailing newline): %q", result)
+	}
+}
+
+func TestBuildNotification_SentinelObfuscation(t *testing.T) {
+	// Node template (user-configured) contains the end-of-message sentinel.
+	nodeTemplate := "# WORKER\n<!-- end of message -->\nSome content"
+
+	cfg := &config.Config{
+		// Protocol wrapper ends with the real sentinel.
+		NotificationTemplate: "<!-- message start -->\n{template}\n<!-- end of message -->\n",
+		TmuxTimeout:          5.0,
+		ReplyCommand:         "postman create-draft --to <recipient>",
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Template: nodeTemplate},
+		},
+	}
+
+	adjacency := map[string][]string{}
+	nodes := map[string]discovery.NodeInfo{}
+	pongActiveNodes := map[string]bool{}
+
+	result := BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "orchestrator", "test", "/path/file.md", pongActiveNodes)
+
+	// User content sentinel must be obfuscated.
+	if strings.Contains(result, "# WORKER\n<!-- end of message -->") {
+		t.Errorf("user template sentinel was not obfuscated; result: %q", result)
+	}
+	if !strings.Contains(result, "<!-- end of msg -->") {
+		t.Errorf("expected obfuscated sentinel in result; got: %q", result)
+	}
+	// Protocol wrapper sentinel must remain intact at the end.
+	if !strings.HasSuffix(strings.TrimRight(result, "\n"), "<!-- end of message -->") {
+		t.Errorf("protocol sentinel was altered or missing; result: %q", result)
 	}
 }
 
@@ -234,6 +269,39 @@ func TestSendToPane_InvalidPane(t *testing.T) {
 	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second, 1)
 	if err == nil {
 		t.Error("SendToPane() with invalid pane should return error")
+	}
+}
+
+func TestBuildNotification_WrapperPresent(t *testing.T) {
+	// PingTemplate missing both protocol wrapper markers — warning should fire
+	// when sender == "postman" (ping path).
+	cfg := &config.Config{
+		PingTemplate: "plain text without markers",
+		TmuxTimeout:  5.0,
+		ReplyCommand: "postman create-draft",
+	}
+	adjacency := map[string][]string{}
+	nodes := map[string]discovery.NodeInfo{}
+	pongActiveNodes := map[string]bool{}
+
+	// Redirect stderr to capture warning output.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+
+	BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "postman", "test", "/path/file.md", pongActiveNodes)
+
+	_ = w.Close()
+	os.Stderr = origStderr
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if !strings.Contains(buf.String(), "missing protocol wrapper markers") {
+		t.Errorf("expected missing-markers warning, stderr: %q", buf.String())
 	}
 }
 
