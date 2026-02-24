@@ -56,6 +56,10 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		}
 	}
 
+	// Obfuscate end-of-message sentinel in inline template content (user-configured)
+	// to prevent false protocol termination. @path references are unaffected.
+	nodeTemplate = strings.ReplaceAll(nodeTemplate, "<!-- end of message -->", "<!-- end of msg -->")
+
 	// Build talks_to_line from adjacency (edges) - use simple name
 	talksToLine := buildTalksToLine(simpleName, cfg, pongActiveNodes)
 
@@ -80,6 +84,10 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)
+	// Assert protocol wrapper markers are present in the rendered output.
+	if !strings.Contains(content, "<!-- message start -->") || !strings.Contains(content, "<!-- end of message -->") {
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: SendPingToNode produced output missing protocol wrapper markers\n")
+	}
 
 	// Use simple name in filename (Issue #33: keep filenames simple)
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, simpleName)

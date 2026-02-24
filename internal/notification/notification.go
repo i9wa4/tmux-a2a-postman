@@ -130,6 +130,10 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	// This handles cases where reply_command contains {context_id} literally in config
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 
+	// Obfuscate end-of-message sentinel in inline template content (user-configured)
+	// to prevent false protocol termination. @path references are unaffected.
+	recipientTemplate = strings.ReplaceAll(recipientTemplate, "<!-- end of message -->", "<!-- end of msg -->")
+
 	// Build variables map
 	vars := map[string]string{
 		"from_node":     sender,
@@ -150,7 +154,15 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	if sender == "postman" {
 		notifTemplate = cfg.PingTemplate
 	}
-	return template.ExpandTemplate(notifTemplate, vars, timeout)
+	result := template.ExpandTemplate(notifTemplate, vars, timeout)
+	// Assert protocol wrapper markers only for postman-originated pings,
+	// which always use PingTemplate (expected to carry markers).
+	if sender == "postman" {
+		if !strings.Contains(result, "<!-- message start -->") || !strings.Contains(result, "<!-- end of message -->") {
+			fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: BuildNotification produced output missing protocol wrapper markers\n")
+		}
+	}
+	return result
 }
 
 // extractTimestamp extracts timestamp from filename.

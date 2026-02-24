@@ -1,6 +1,8 @@
 package ping
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +152,60 @@ func TestSendPingToNode_InboxPath(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_SentinelObfuscation(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+
+	// Node template (user-configured) contains the end-of-message sentinel.
+	nodeTemplate := "# WORKER\n<!-- end of message -->\nSome content"
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Template: nodeTemplate},
+		},
+	}
+
+	// Ping template wraps with both protocol sentinels.
+	tmpl := "<!-- message start -->\n{template}\n<!-- end of message -->\n"
+
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(entries))
+	}
+
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	body := string(content)
+
+	// User content sentinel must be obfuscated.
+	if strings.Contains(body, "# WORKER\n<!-- end of message -->") {
+		t.Errorf("user template sentinel was not obfuscated; body: %q", body)
+	}
+	if !strings.Contains(body, "<!-- end of msg -->") {
+		t.Errorf("expected obfuscated sentinel in body; got: %q", body)
+	}
+	// Protocol wrapper sentinel must remain intact at the end.
+	if !strings.HasSuffix(strings.TrimRight(body, "\n"), "<!-- end of message -->") {
+		t.Errorf("protocol sentinel was altered or missing; body: %q", body)
+	}
+}
+
 func TestSendPingToNode(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -199,5 +255,47 @@ func TestSendPingToNode(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "PING worker in test-ctx") {
 		t.Errorf("content = %q, want to contain 'PING worker in test-ctx'", string(content))
+	}
+}
+
+func TestSendPingToNode_WrapperPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+	}
+
+	// Template missing both protocol wrapper markers — warning should fire.
+	tmpl := "plain text without markers"
+
+	// Redirect stderr to capture warning output.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+
+	if sendErr := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); sendErr != nil {
+		w.Close()
+		os.Stderr = origStderr
+		t.Fatalf("SendPingToNode() error = %v", sendErr)
+	}
+
+	w.Close()
+	os.Stderr = origStderr
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if !strings.Contains(buf.String(), "missing protocol wrapper markers") {
+		t.Errorf("expected missing-markers warning, stderr: %q", buf.String())
 	}
 }
