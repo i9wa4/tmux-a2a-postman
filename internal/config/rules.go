@@ -69,7 +69,8 @@ func MaterializeNodeTemplates(baseDir, contextID string, cfg *Config) {
 		sanitized := sanitizeNodeName(nodeName)
 		filePath := filepath.Join(templatesDir, sanitized+".md")
 		tmpPath := filePath + ".tmp"
-		if err := os.WriteFile(tmpPath, []byte(nodeConfig.Template), 0o600); err != nil {
+		fileContent := "<!-- role template: " + nodeName + " -->\n\n" + nodeConfig.Template
+		if err := os.WriteFile(tmpPath, []byte(fileContent), 0o600); err != nil {
 			log.Printf("postman: WARNING: failed to write template tmp for node %s: %v\n", nodeName, err)
 			continue
 		}

@@ -97,13 +97,13 @@ func TestSendPingToNode_MaterializedPath(t *testing.T) {
 	}
 	body := string(content)
 
-	// @path\n must appear somewhere in the body
-	if !strings.Contains(body, "@"+matPath+"\n") {
-		t.Errorf("expected @path\\n in body, got: %q", body)
+	// Labeled path reference must appear (no @ prefix)
+	if !strings.Contains(body, "Role template: "+matPath) {
+		t.Errorf("expected labeled path in body, got: %q", body)
 	}
-	// Body must NOT end with bare @path (shell autocomplete guard)
-	if strings.HasSuffix(body, "@"+matPath) {
-		t.Errorf("body must not end with bare @path (no trailing newline): %q", body)
+	// Body must NOT contain @path (triggers autocomplete)
+	if strings.Contains(body, "@"+matPath) {
+		t.Errorf("body must not contain @path (triggers autocomplete): %q", body)
 	}
 }
 

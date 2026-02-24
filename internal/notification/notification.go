@@ -51,9 +51,9 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	// Get recipient's template (use simple name for config lookup)
 	recipientTemplate := ""
 	if matPath, ok := cfg.MaterializedPaths[recipient]; ok {
-		// Issue #134: Template materialized as file; reference by @path. CommonTemplate excluded per spec.
-		// Append \n so @path is never the terminal token in the paste buffer (prevents shell autocomplete).
-		recipientTemplate = "@" + matPath + "\n"
+		// Issue #134: Template materialized as file; reference by path. CommonTemplate excluded per spec.
+		// Label added so agents can identify the file purpose without @-prefix (which triggers autocomplete).
+		recipientTemplate = "Role template: " + matPath + "\n"
 	} else {
 		if nodeConfig, ok := cfg.Nodes[recipient]; ok {
 			recipientTemplate = nodeConfig.Template

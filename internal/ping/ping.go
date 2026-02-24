@@ -39,9 +39,9 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	_, hasNodeConfig := cfg.Nodes[simpleName]
 	nodeTemplate := ""
 	if matPath, ok := cfg.MaterializedPaths[simpleName]; ok {
-		// Issue #134: Template materialized as file; reference by @path. CommonTemplate excluded per spec.
-		// Append \n so @path is never the terminal token in the paste buffer (prevents shell autocomplete).
-		nodeTemplate = "@" + matPath + "\n"
+		// Issue #134: Template materialized as file; reference by path. CommonTemplate excluded per spec.
+		// Label added so agents can identify the file purpose without @-prefix (which triggers autocomplete).
+		nodeTemplate = "Role template: " + matPath + "\n"
 	} else {
 		if hasNodeConfig {
 			nodeTemplate = cfg.Nodes[simpleName].Template
@@ -57,7 +57,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	}
 
 	// Obfuscate end-of-message sentinel in inline template content (user-configured)
-	// to prevent false protocol termination. @path references are unaffected.
+	// to prevent false protocol termination. Path references are unaffected (no sentinel in file paths).
 	nodeTemplate = strings.ReplaceAll(nodeTemplate, "<!-- end of message -->", "<!-- end of msg -->")
 
 	// Build talks_to_line from adjacency (edges) - use simple name

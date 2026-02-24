@@ -74,13 +74,13 @@ func TestBuildNotification_MaterializedPath(t *testing.T) {
 
 	result := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/file.md", pongActiveNodes)
 
-	// @path\n must appear somewhere in the result
-	if !strings.Contains(result, "@"+matPath+"\n") {
-		t.Errorf("expected @path\\n in result, got: %q", result)
+	// Labeled path reference must appear (no @ prefix)
+	if !strings.Contains(result, "Role template: "+matPath) {
+		t.Errorf("expected labeled path in result, got: %q", result)
 	}
-	// Result must NOT end with bare @path (shell autocomplete guard)
-	if strings.HasSuffix(result, "@"+matPath) {
-		t.Errorf("result must not end with bare @path (no trailing newline): %q", result)
+	// Result must NOT contain @path (triggers autocomplete)
+	if strings.Contains(result, "@"+matPath) {
+		t.Errorf("result must not contain @path (triggers autocomplete): %q", result)
 	}
 }
 
