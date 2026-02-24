@@ -294,7 +294,7 @@ func TestBuildNotification_WrapperPresent(t *testing.T) {
 
 	BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "postman", "test", "/path/file.md", pongActiveNodes)
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = origStderr
 
 	var buf bytes.Buffer

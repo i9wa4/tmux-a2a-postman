@@ -284,12 +284,12 @@ func TestSendPingToNode_WrapperPresent(t *testing.T) {
 	os.Stderr = w
 
 	if sendErr := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); sendErr != nil {
-		w.Close()
+		_ = w.Close()
 		os.Stderr = origStderr
 		t.Fatalf("SendPingToNode() error = %v", sendErr)
 	}
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = origStderr
 
 	var buf bytes.Buffer
