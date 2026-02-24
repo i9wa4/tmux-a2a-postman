@@ -116,16 +116,6 @@
               pass_filenames = false;
               always_run = true;
             };
-            rumdl = {
-              enable = true;
-              entry = let
-                rumdlConfig = pkgs.writeText "rumdl.toml" ''
-                  [global]
-                  disable = ["MD013", "MD024"]
-                '';
-              in "${pkgs.rumdl}/bin/rumdl --config ${rumdlConfig} check";
-              types = ["markdown"];
-            };
           };
         };
       };
