@@ -752,7 +752,7 @@ func LoadConfig(path string) (*Config, error) {
 					continue
 				}
 				for name, prim := range sections {
-					if name == "postman" || name == "compaction_detection" || name == "watchdog" {
+					if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
 						continue // skip reserved sections
 					}
 					var node NodeConfig

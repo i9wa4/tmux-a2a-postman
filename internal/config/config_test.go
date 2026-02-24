@@ -1270,3 +1270,45 @@ liveness_ping_interval_seconds = 30.0
 		t.Errorf("expected both-keys warning, got log: %q", logOutput)
 	}
 }
+
+func TestHeartbeatNodesExclusion(t *testing.T) {
+	// Fix 1 regression guard: [heartbeat] in nodes/*.toml must NOT be parsed as a node.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	nodesDir := filepath.Join(tmpDir, "nodes")
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll nodes: %v", err)
+	}
+
+	// Minimal config with one real node
+	configContent := `
+[worker]
+role = "test"
+on_join = ""
+template = ""
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+
+	// nodes/heartbeat.toml containing a [heartbeat] section
+	nodeContent := `
+[heartbeat]
+enabled = true
+interval_seconds = 60.0
+llm_node = "heartbeat-llm"
+prompt = "test"
+`
+	if err := os.WriteFile(filepath.Join(nodesDir, "heartbeat.toml"), []byte(nodeContent), 0o644); err != nil {
+		t.Fatalf("WriteFile node: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	if _, exists := cfg.Nodes["heartbeat"]; exists {
+		t.Errorf("cfg.Nodes[\"heartbeat\"] should not exist (heartbeat is a reserved section name)")
+	}
+}
