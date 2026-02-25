@@ -675,8 +675,12 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("parsing config file: %w", err)
 		}
 
-		// Decode [postman] section (optional, uses defaults if not present)
-		cfg = DefaultConfig()
+		// Decode [postman] section (optional, uses embedded defaults as base)
+		var embErr error
+		cfg, embErr = loadEmbeddedConfig()
+		if embErr != nil {
+			return nil, embErr
+		}
 		postmanPrim, ok := rootSections["postman"]
 		if ok {
 			if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {

@@ -246,12 +246,12 @@ edges = ["worker -- orchestrator"]
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/partial/base")
 	}
 
-	// Default fields (not set in TOML)
-	if cfg.EnterDelay != 0.5 {
-		t.Errorf("default EnterDelay: got %v, want 0.5", cfg.EnterDelay)
+	// Default fields (not set in TOML) — now use embedded defaults
+	if cfg.EnterDelay != 3.0 {
+		t.Errorf("default EnterDelay: got %v, want 3.0", cfg.EnterDelay)
 	}
-	if cfg.NotificationTemplate != "Message from {from_node}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {from_node}")
+	if cfg.NotificationTemplate != "{inbox_path}/{filename}" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}")
 	}
 }
 
