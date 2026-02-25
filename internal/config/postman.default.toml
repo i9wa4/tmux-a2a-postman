@@ -103,10 +103,32 @@ reminder_message = "{inbox_path}"
 notification_template = "{inbox_path}/{filename}"
 
 # Ping message template
-# ping_template = """
-# PING from postman
-# Reply with PONG to confirm you are active.
-# """
+ping_template = """---
+method: message/send
+params:
+  contextId: {context_id}
+  taskId: {timestamp}-ping
+  from: postman
+  to: {node}
+  timestamp: {iso_timestamp}
+---
+{template}
+
+{talks_to_line}
+
+## Message Details
+
+Message from {from_node}
+
+After reading, move from inbox/ to read/
+
+- Inbox: {inbox_path}
+- read path: {session_dir}/read/
+
+## Reply
+
+See protocol: {session_dir}/RULES.md
+"""
 
 # Draft message template
 draft_template = """---

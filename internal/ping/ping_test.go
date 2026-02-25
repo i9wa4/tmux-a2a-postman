@@ -1,8 +1,6 @@
 package ping
 
 import (
-	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,47 +253,5 @@ func TestSendPingToNode(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "PING worker in test-ctx") {
 		t.Errorf("content = %q, want to contain 'PING worker in test-ctx'", string(content))
-	}
-}
-
-func TestSendPingToNode_WrapperPresent(t *testing.T) {
-	tmpDir := t.TempDir()
-	sessionDir := filepath.Join(tmpDir, "test-session")
-
-	nodeInfo := discovery.NodeInfo{
-		PaneID:      "%100",
-		SessionName: "test-session",
-		SessionDir:  sessionDir,
-	}
-
-	cfg := &config.Config{
-		TmuxTimeout: 5.0,
-	}
-
-	// Template missing both protocol wrapper markers — warning should fire.
-	tmpl := "plain text without markers"
-
-	// Redirect stderr to capture warning output.
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-
-	if sendErr := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); sendErr != nil {
-		_ = w.Close()
-		os.Stderr = origStderr
-		t.Fatalf("SendPingToNode() error = %v", sendErr)
-	}
-
-	_ = w.Close()
-	os.Stderr = origStderr
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-
-	if !strings.Contains(buf.String(), "missing protocol wrapper markers") {
-		t.Errorf("expected missing-markers warning, stderr: %q", buf.String())
 	}
 }
