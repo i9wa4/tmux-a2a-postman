@@ -40,7 +40,7 @@ var (
 			Foreground(lipgloss.Color("10")) // green
 
 	ballHolderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("208")) // orange
+			Foreground(lipgloss.Color("226")) // yellow
 
 	// Issue #56: Dropped ball style
 	droppedNodeStyle = lipgloss.NewStyle().
