@@ -162,14 +162,46 @@ Protocol reference: {session_dir}/RULES.md
 rules_template = """
 ## Messaging Protocol
 
+### Message Format
+
+All messages use YAML frontmatter followed by content:
+
+    ---
+    method: message/send
+    params:
+      contextId: <session context ID>
+      taskId: <unique task ID>
+      from: <sender node>
+      to: <recipient node>
+      timestamp: <ISO timestamp>
+    ---
+
+    You can only talk to: <comma-separated list>
+
+    # Content
+
+    <message body>
+
+    ## Reply
+
+    Protocol reference: {session_dir}/RULES.md
+
 ### Sending Messages
-See: {session_dir}/boilerplate/how_to_reply.md
+
+1. Create draft: {reply_command}
+   Replace `<recipient>` with target node name
+2. Edit the draft content in {session_dir}/draft/
+3. Move to post/: mv {session_dir}/draft/<file> {session_dir}/post/
 
 ### Receiving Messages
-- Messages arrive in inbox/<node>/
-- After reading: mv {session_dir}/inbox/<node>/<file> {session_dir}/read/
+
+- Notification arrives in your pane as a file path
+- Notification is wrapped in `<!-- message start -->` / `<!-- end of message -->` (pane protocol only)
+- Read the file at the given path
+- After reading: mv <inbox-file> {session_dir}/read/
 
 ### Standard Replies
+
 - PONG: see {session_dir}/boilerplate/pong.md
 - HEARTBEAT_OK: see {session_dir}/boilerplate/heartbeat_ok.md
 - [status] - current task, blockers, next action
