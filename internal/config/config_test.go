@@ -194,14 +194,14 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if cfg.NotificationTemplate != "Message from {from_node}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Message from {from_node}")
+	if cfg.NotificationTemplate != "{inbox_path}/{filename}" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}")
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
 	}
-	if cfg.DraftTemplate != "" {
-		t.Errorf("default DraftTemplate: got %q, want empty", cfg.DraftTemplate)
+	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
+		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
 }
 

@@ -2,6 +2,7 @@ package reminder
 
 import (
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,9 +97,10 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 					}
 				}
 				vars := map[string]string{
-					"node":     nodeName,
-					"count":    strconv.Itoa(count),
-					"template": nodeTemplate,
+					"node":       nodeName,
+					"count":      strconv.Itoa(count),
+					"template":   nodeTemplate,
+					"inbox_path": filepath.Join(nodeInfo.SessionDir, "inbox", nodeName),
 				}
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				content := template.ExpandTemplate(reminderMessage, vars, timeout)
