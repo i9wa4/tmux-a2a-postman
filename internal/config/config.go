@@ -28,7 +28,6 @@ type Config struct {
 	EnterDelay       float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
 	StartupDelay     float64 `toml:"startup_delay_seconds"`
-	NewNodePingDelay float64 `toml:"new_node_ping_delay_seconds"`
 	ReminderInterval float64 `toml:"reminder_interval_messages"`
 
 	// TUI settings (Issue #37)
@@ -50,7 +49,6 @@ type Config struct {
 
 	// Message templates
 	NotificationTemplate         string `toml:"notification_template"`
-	PingTemplate                 string `toml:"ping_template"`
 	DraftTemplate                string `toml:"draft_template"`
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
@@ -68,7 +66,6 @@ type Config struct {
 	Edges                 []string `toml:"edges"`
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Issue #46: Generalized target node name
-	PingMode              string   `toml:"ping_mode"`                // Issue #98: PING mode ("all", "ui_node_only", "disabled")
 	InboxUnreadThreshold  int      `toml:"inbox_unread_threshold"`   // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
 	AutoEnableNewSessions bool     `toml:"auto_enable_new_sessions"` // Issue #135: default false
 	AutoEnableNewAgents   bool     `toml:"auto_enable_new_agents"`   // Issue #135: default true
@@ -134,13 +131,10 @@ type CompactionMessageTemplate struct {
 
 // WatchdogConfig holds watchdog configuration.
 type WatchdogConfig struct {
-	Enabled                     bool    `toml:"enabled"`
-	IdleThresholdSeconds        float64 `toml:"idle_threshold_seconds"`
-	CooldownSeconds             float64 `toml:"cooldown_seconds"`
-	LivenessPingIntervalSeconds float64 `toml:"liveness_ping_interval_seconds"`
-	// Deprecated: use LivenessPingIntervalSeconds. Removed after first tagged release with this warning.
-	DeprecatedHeartbeatIntervalSeconds float64               `toml:"heartbeat_interval_seconds"`
-	Capture                            WatchdogCaptureConfig `toml:"capture"`
+	Enabled              bool                  `toml:"enabled"`
+	IdleThresholdSeconds float64               `toml:"idle_threshold_seconds"`
+	CooldownSeconds      float64               `toml:"cooldown_seconds"`
+	Capture              WatchdogCaptureConfig `toml:"capture"`
 }
 
 // HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
@@ -166,7 +160,6 @@ func DefaultConfig() *Config {
 		EnterDelay:                   0.5,
 		TmuxTimeout:                  5.0,
 		StartupDelay:                 2.0,
-		NewNodePingDelay:             3.0,
 		ReminderInterval:             0.0,
 		EdgeActivitySeconds:          300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
 		NodeActiveSeconds:            300.0, // 0-5min: active (green)
@@ -178,12 +171,10 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {from_node}",
-		PingTemplate:                 "<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n📬 Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
 		UINode:                       "",    // Issue #46: Default UI target node (empty = no default)
-		PingMode:                     "all", // Issue #98: Default to ping all nodes
 		InboxUnreadThreshold:         3,     // Default threshold for inbox unread summary notification
 		AutoEnableNewSessions:        false, // Issue #135: default false; set true to opt in
 		AutoEnableNewAgents:          true,  // Issue #135: auto-enable agents in already-enabled sessions
@@ -209,15 +200,6 @@ func warnDeprecatedKeys(rawBytes []byte, path string) {
 	if bytes.Contains(rawBytes, []byte("reminder_interval_seconds")) {
 		log.Printf("config warning: 'reminder_interval_seconds' is deprecated; "+
 			"rename to 'reminder_interval_messages' in %s", path)
-	}
-	oldKey := bytes.Contains(rawBytes, []byte("heartbeat_interval_seconds"))
-	newKey := bytes.Contains(rawBytes, []byte("liveness_ping_interval_seconds"))
-	if oldKey && newKey {
-		log.Printf("config warning: both 'heartbeat_interval_seconds' (deprecated) and "+
-			"'liveness_ping_interval_seconds' found in %s; using new key", path)
-	} else if oldKey {
-		log.Printf("config warning: 'heartbeat_interval_seconds' is deprecated; "+
-			"rename to 'liveness_ping_interval_seconds' in %s", path)
 	}
 }
 
@@ -406,9 +388,6 @@ func mergeConfig(base, override *Config) {
 	if override.NotificationTemplate != "" {
 		base.NotificationTemplate = override.NotificationTemplate
 	}
-	if override.PingTemplate != "" {
-		base.PingTemplate = override.PingTemplate
-	}
 	if override.DraftTemplate != "" {
 		base.DraftTemplate = override.DraftTemplate
 	}
@@ -451,9 +430,6 @@ func mergeConfig(base, override *Config) {
 	if override.UINode != "" {
 		base.UINode = override.UINode
 	}
-	if override.PingMode != "" {
-		base.PingMode = override.PingMode
-	}
 	// NOTE: bool merge only propagates true values (Go zero-value = false is indistinguishable
 	// from "field not set in override"). Setting auto_enable_new_sessions = false or
 	// auto_enable_new_agents = false in a project-local config will NOT override an XDG
@@ -479,9 +455,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.StartupDelay != 0 {
 		base.StartupDelay = override.StartupDelay
-	}
-	if override.NewNodePingDelay != 0 {
-		base.NewNodePingDelay = override.NewNodePingDelay
 	}
 	if override.ReminderInterval != 0 {
 		base.ReminderInterval = override.ReminderInterval
@@ -597,12 +570,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.Watchdog.CooldownSeconds != 0 {
 		base.Watchdog.CooldownSeconds = override.Watchdog.CooldownSeconds
-	}
-	if override.Watchdog.LivenessPingIntervalSeconds != 0 {
-		base.Watchdog.LivenessPingIntervalSeconds = override.Watchdog.LivenessPingIntervalSeconds
-	}
-	if override.Watchdog.DeprecatedHeartbeatIntervalSeconds != 0 {
-		base.Watchdog.DeprecatedHeartbeatIntervalSeconds = override.Watchdog.DeprecatedHeartbeatIntervalSeconds
 	}
 	if override.Watchdog.Capture.Enabled {
 		base.Watchdog.Capture.Enabled = true
@@ -773,12 +740,6 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, err
 		}
 		mergeConfig(cfg, localCfg)
-	}
-
-	// Issue #136: Migrate deprecated heartbeat_interval_seconds to liveness_ping_interval_seconds.
-	if cfg.Watchdog.LivenessPingIntervalSeconds == 0 &&
-		cfg.Watchdog.DeprecatedHeartbeatIntervalSeconds != 0 {
-		cfg.Watchdog.LivenessPingIntervalSeconds = cfg.Watchdog.DeprecatedHeartbeatIntervalSeconds
 	}
 
 	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)

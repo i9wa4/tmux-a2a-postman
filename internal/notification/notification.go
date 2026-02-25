@@ -139,19 +139,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	// Issue #83: Use ping_template for PING messages from postman
-	notifTemplate := cfg.NotificationTemplate
-	if sender == "postman" {
-		notifTemplate = cfg.PingTemplate
-	}
-	result := template.ExpandTemplate(notifTemplate, vars, timeout)
-	// Assert protocol wrapper markers only for postman-originated pings,
-	// which always use PingTemplate (expected to carry markers).
-	if sender == "postman" {
-		if !strings.Contains(result, "<!-- message start -->") || !strings.Contains(result, "<!-- end of message -->") {
-			fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: BuildNotification produced output missing protocol wrapper markers\n")
-		}
-	}
+	result := template.ExpandTemplate(cfg.NotificationTemplate, vars, timeout)
 	return result
 }
 

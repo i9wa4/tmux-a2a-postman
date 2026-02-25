@@ -1,8 +1,6 @@
 package config
 
 import (
-	"bytes"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,11 +99,9 @@ scan_interval_seconds = 2.0
 enter_delay_seconds = 1.0
 tmux_timeout_seconds = 10.0
 startup_delay_seconds = 3.0
-new_node_ping_delay_seconds = 5.0
 reminder_interval_messages = 60.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
-ping_template = "Custom ping"
 draft_template = "Custom draft"
 reminder_message = "Custom reminder"
 reply_command = "custom-reply"
@@ -148,9 +144,6 @@ on_join = ""
 	if cfg.StartupDelay != 3.0 {
 		t.Errorf("StartupDelay: got %v, want 3.0", cfg.StartupDelay)
 	}
-	if cfg.NewNodePingDelay != 5.0 {
-		t.Errorf("NewNodePingDelay: got %v, want 5.0", cfg.NewNodePingDelay)
-	}
 	if cfg.ReminderInterval != 60.0 {
 		t.Errorf("ReminderInterval: got %v, want 60.0", cfg.ReminderInterval)
 	}
@@ -159,9 +152,6 @@ on_join = ""
 	}
 	if cfg.NotificationTemplate != "Custom notification: {{.From}}" {
 		t.Errorf("NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Custom notification: {{.From}}")
-	}
-	if cfg.PingTemplate != "Custom ping" {
-		t.Errorf("PingTemplate: got %q, want %q", cfg.PingTemplate, "Custom ping")
 	}
 	if cfg.DraftTemplate != "Custom draft" {
 		t.Errorf("DraftTemplate: got %q, want %q", cfg.DraftTemplate, "Custom draft")
@@ -968,13 +958,13 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base := DefaultConfig()
 	base.ScanInterval = 1.0
 	base.BaseDir = ""
-	base.PingMode = "all"
+	base.A2AVersion = "0.9"
 
 	override := &Config{
 		Nodes:        make(map[string]NodeConfig),
 		ScanInterval: 5.0,
 		BaseDir:      "/project/base",
-		PingMode:     "disabled",
+		A2AVersion:   "1.0",
 	}
 
 	mergeConfig(base, override)
@@ -985,8 +975,8 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	if base.BaseDir != "/project/base" {
 		t.Errorf("BaseDir: got %q, want %q", base.BaseDir, "/project/base")
 	}
-	if base.PingMode != "disabled" {
-		t.Errorf("PingMode: got %q, want %q", base.PingMode, "disabled")
+	if base.A2AVersion != "1.0" {
+		t.Errorf("A2AVersion: got %q, want %q", base.A2AVersion, "1.0")
 	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {
@@ -1154,120 +1144,6 @@ scan_interval_seconds = 9.0
 	// XDG nodes still present
 	if len(cfg.Nodes) != 2 {
 		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
-	}
-}
-
-// Issue #136: Deprecation compatibility tests for heartbeat_interval_seconds.
-
-// captureLog redirects log output to a buffer for the duration of f, then restores it.
-func captureLog(f func()) string {
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
-	f()
-	return buf.String()
-}
-
-func TestWatchdogDeprecation_OldKeyOnly(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	content := `
-[worker]
-role = "test"
-on_join = ""
-template = ""
-
-[watchdog]
-heartbeat_interval_seconds = 60.0
-`
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	var cfg *Config
-	logOutput := captureLog(func() {
-		var err error
-		cfg, err = LoadConfig(configPath)
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-	})
-
-	if cfg.Watchdog.LivenessPingIntervalSeconds != 60.0 {
-		t.Errorf("LivenessPingIntervalSeconds: got %v, want 60.0 (migrated from deprecated key)",
-			cfg.Watchdog.LivenessPingIntervalSeconds)
-	}
-	if !strings.Contains(logOutput, "heartbeat_interval_seconds' is deprecated") {
-		t.Errorf("expected deprecation warning for heartbeat_interval_seconds, got log: %q", logOutput)
-	}
-}
-
-func TestWatchdogDeprecation_NewKeyOnly(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	content := `
-[worker]
-role = "test"
-on_join = ""
-template = ""
-
-[watchdog]
-liveness_ping_interval_seconds = 30.0
-`
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	var cfg *Config
-	logOutput := captureLog(func() {
-		var err error
-		cfg, err = LoadConfig(configPath)
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-	})
-
-	if cfg.Watchdog.LivenessPingIntervalSeconds != 30.0 {
-		t.Errorf("LivenessPingIntervalSeconds: got %v, want 30.0", cfg.Watchdog.LivenessPingIntervalSeconds)
-	}
-	if strings.Contains(logOutput, "heartbeat_interval_seconds") {
-		t.Errorf("unexpected deprecation warning for new key only, got log: %q", logOutput)
-	}
-}
-
-func TestWatchdogDeprecation_BothKeys(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	content := `
-[worker]
-role = "test"
-on_join = ""
-template = ""
-
-[watchdog]
-heartbeat_interval_seconds = 60.0
-liveness_ping_interval_seconds = 30.0
-`
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	var cfg *Config
-	logOutput := captureLog(func() {
-		var err error
-		cfg, err = LoadConfig(configPath)
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-	})
-
-	// New key wins: migration block skipped because LivenessPingIntervalSeconds != 0
-	if cfg.Watchdog.LivenessPingIntervalSeconds != 30.0 {
-		t.Errorf("LivenessPingIntervalSeconds: got %v, want 30.0 (new key wins)",
-			cfg.Watchdog.LivenessPingIntervalSeconds)
-	}
-	if !strings.Contains(logOutput, "both 'heartbeat_interval_seconds'") {
-		t.Errorf("expected both-keys warning, got log: %q", logOutput)
 	}
 }
 

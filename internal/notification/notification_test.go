@@ -1,9 +1,7 @@
 package notification
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,39 +267,6 @@ func TestSendToPane_InvalidPane(t *testing.T) {
 	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second, 1)
 	if err == nil {
 		t.Error("SendToPane() with invalid pane should return error")
-	}
-}
-
-func TestBuildNotification_WrapperPresent(t *testing.T) {
-	// PingTemplate missing both protocol wrapper markers — warning should fire
-	// when sender == "postman" (ping path).
-	cfg := &config.Config{
-		PingTemplate: "plain text without markers",
-		TmuxTimeout:  5.0,
-		ReplyCommand: "postman create-draft",
-	}
-	adjacency := map[string][]string{}
-	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
-
-	// Redirect stderr to capture warning output.
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-
-	BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "postman", "test", "/path/file.md", pongActiveNodes)
-
-	_ = w.Close()
-	os.Stderr = origStderr
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-
-	if !strings.Contains(buf.String(), "missing protocol wrapper markers") {
-		t.Errorf("expected missing-markers warning, stderr: %q", buf.String())
 	}
 }
 

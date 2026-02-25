@@ -21,7 +21,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
-	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
@@ -303,13 +302,7 @@ func RunDaemonLoop(
 						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
-							// Build active nodes list
-							activeNodes := make([]string, 0, len(freshNodes))
-							for nodeName := range freshNodes {
-								activeNodes = append(activeNodes, nodeName)
-							}
-
-							// Detect new nodes and send PING
+							// Detect new nodes
 							for nodeName, nodeInfo := range freshNodes {
 								if !knownNodes[nodeName] {
 									knownNodes[nodeName] = true
@@ -340,51 +333,6 @@ func RunDaemonLoop(
 										if err := watcher.Add(nodeInboxDir); err == nil {
 											watchedDirs[nodeInboxDir] = true
 										}
-									}
-
-									// Send PING after delay (Issue #98: Apply PingMode filter)
-									shouldPing := false
-									switch cfg.PingMode {
-									case "all":
-										shouldPing = true
-									case "ui_node_only":
-										// Extract simple name for UI node check
-										simpleName := nodeName
-										if parts := strings.SplitN(nodeName, ":", 2); len(parts) == 2 {
-											simpleName = parts[1]
-										}
-										shouldPing = (simpleName == cfg.UINode)
-									case "disabled":
-										shouldPing = false
-									default:
-										shouldPing = true // Default to "all" behavior
-									}
-
-									// Issue #119: Check session enabled state
-									if shouldPing {
-										parts := strings.SplitN(nodeName, ":", 2)
-										if len(parts) == 2 {
-											sessionName := parts[0]
-											daemonState.applyAutoEnablePolicy(sessionName, cfg) // Issue #135
-											if !daemonState.IsSessionEnabled(sessionName) {
-												shouldPing = false
-											}
-										}
-									}
-									if shouldPing && cfg.NewNodePingDelay > 0 {
-										newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
-										capturedNode := nodeName
-										capturedNodeInfo := nodeInfo
-										capturedActiveNodes := activeNodes
-										capturedPongActiveNodes := idleTracker.GetPongActiveNodes()
-										safeAfterFunc(newNodeDelay, "new-node-ping", events, func() {
-											if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes, capturedPongActiveNodes); err != nil {
-												events <- tui.DaemonEvent{
-													Type:    "error",
-													Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
-												}
-											}
-										})
 									}
 								}
 							}
@@ -616,13 +564,7 @@ func RunDaemonLoop(
 				}
 			}
 
-			// Build active nodes list
-			activeNodes := make([]string, 0, len(freshNodes))
-			for nodeName := range freshNodes {
-				activeNodes = append(activeNodes, nodeName)
-			}
-
-			// Detect new nodes and send PING
+			// Detect new nodes
 			for nodeName, nodeInfo := range freshNodes {
 				if !knownNodes[nodeName] {
 					knownNodes[nodeName] = true
@@ -653,51 +595,6 @@ func RunDaemonLoop(
 						if err := watcher.Add(nodeInboxDir); err == nil {
 							watchedDirs[nodeInboxDir] = true
 						}
-					}
-
-					// Send PING after delay (Issue #98: Apply PingMode filter)
-					shouldPing := false
-					switch cfg.PingMode {
-					case "all":
-						shouldPing = true
-					case "ui_node_only":
-						// Extract simple name for UI node check
-						simpleName := nodeName
-						if parts := strings.SplitN(nodeName, ":", 2); len(parts) == 2 {
-							simpleName = parts[1]
-						}
-						shouldPing = (simpleName == cfg.UINode)
-					case "disabled":
-						shouldPing = false
-					default:
-						shouldPing = true // Default to "all" behavior
-					}
-
-					// Issue #119: Check session enabled state
-					if shouldPing {
-						parts := strings.SplitN(nodeName, ":", 2)
-						if len(parts) == 2 {
-							sessionName := parts[0]
-							daemonState.applyAutoEnablePolicy(sessionName, cfg) // Issue #135
-							if !daemonState.IsSessionEnabled(sessionName) {
-								shouldPing = false
-							}
-						}
-					}
-					if shouldPing && cfg.NewNodePingDelay > 0 {
-						newNodeDelay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
-						capturedNode := nodeName
-						capturedNodeInfo := nodeInfo
-						capturedActiveNodes := activeNodes
-						capturedPongActiveNodes := idleTracker.GetPongActiveNodes()
-						safeAfterFunc(newNodeDelay, "scan-discovered-ping", events, func() {
-							if err := ping.SendPingToNode(capturedNodeInfo, contextID, capturedNode, cfg.PingTemplate, cfg, capturedActiveNodes, capturedPongActiveNodes); err != nil {
-								events <- tui.DaemonEvent{
-									Type:    "error",
-									Message: fmt.Sprintf("PING to new node %s failed: %v", capturedNode, err),
-								}
-							}
-						})
 					}
 				}
 			}
@@ -882,20 +779,6 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	if _, exists := ds.enabledSessions[sessionName]; !exists {
 		ds.enabledSessions[sessionName] = true
 	}
-}
-
-// applyAutoEnablePolicy applies the auto-enable policy for a session (Issue #135).
-// Replaces AutoEnableSessionIfNew with configurable behavior.
-func (ds *DaemonState) applyAutoEnablePolicy(sessionName string, cfg *config.Config) {
-	ds.enabledSessionsMu.Lock()
-	defer ds.enabledSessionsMu.Unlock()
-	if _, exists := ds.enabledSessions[sessionName]; !exists {
-		// Session not seen before: gate by AutoEnableNewSessions
-		if cfg.AutoEnableNewSessions {
-			ds.enabledSessions[sessionName] = true
-		}
-	}
-	// Session known and enabled: AutoEnableNewAgents controls behavior (no state change needed)
 }
 
 // IsSessionEnabled checks if a session is enabled (Issue #71).
@@ -1305,27 +1188,13 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
 
-	// Check PingMode
-	if cfg.PingMode == "disabled" {
-		return
-	}
-
-	// Build active nodes list for PING
-	activeNodes := make([]string, 0, len(nodes))
-	for nodeName := range nodes {
-		activeNodes = append(activeNodes, nodeName)
-	}
-
-	// Get PONG-active nodes for PING
-	pongActiveNodes := idleTracker.GetPongActiveNodes()
-
 	for currentPaneID, currentInfo := range paneStates {
 		nodeKey, exists := paneToNode[currentPaneID]
 		if !exists {
 			continue // No node mapped to this pane
 		}
 
-		nodeInfo, nodeExists := nodes[nodeKey]
+		_, nodeExists := nodes[nodeKey]
 		if !nodeExists {
 			continue // Node not found
 		}
@@ -1364,43 +1233,6 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 					"new_pane_id": currentPaneID,
 					"pane_info":   currentInfo,
 				},
-			}
-
-			// Send PING after NewNodePingDelay
-			// Check PingMode filter
-			shouldPing := false
-			switch cfg.PingMode {
-			case "all":
-				shouldPing = true
-			case "ui_node_only":
-				// Extract simple name for UI node check
-				simpleName := nodeKey
-				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-					simpleName = parts[1]
-				}
-				shouldPing = (simpleName == cfg.UINode)
-			}
-
-			// Issue #119: Check session enabled state
-			if shouldPing {
-				parts := strings.SplitN(nodeKey, ":", 2)
-				if len(parts) == 2 {
-					sessionName := parts[0]
-					if !ds.IsSessionEnabled(sessionName) {
-						shouldPing = false
-					}
-				}
-			}
-			if shouldPing && cfg.NewNodePingDelay > 0 {
-				delay := time.Duration(cfg.NewNodePingDelay * float64(time.Second))
-				safeAfterFunc(delay, "pane-restart-ping", events, func() {
-					if err := ping.SendPingToNode(nodeInfo, contextID, nodeKey, cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
-						events <- tui.DaemonEvent{
-							Type:    "error",
-							Message: fmt.Sprintf("PING to restarted node %s failed: %v", nodeKey, err),
-						}
-					}
-				})
 			}
 		}
 	}
