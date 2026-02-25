@@ -74,6 +74,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		"context_id":    contextID,
 		"node":          simpleName, // Use simple name in template vars
 		"timestamp":     ts,
+		"iso_timestamp": now.Format(time.RFC3339),
 		"from_node":     "postman",
 		"template":      nodeTemplate,
 		"talks_to_line": talksToLine,

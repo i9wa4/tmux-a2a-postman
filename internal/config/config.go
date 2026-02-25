@@ -77,6 +77,9 @@ type Config struct {
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
 
+	// Node-level defaults applied to all nodes (loaded from [node_defaults] section)
+	NodeDefaults NodeConfig
+
 	// Compaction detection
 	CompactionDetection CompactionDetectionConfig
 
@@ -175,7 +178,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {from_node}",
-		PingTemplate:                 "<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n\U0001f4ec Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
+		PingTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {timestamp}-ping\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n\U0001f4ec Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
@@ -233,7 +236,7 @@ func loadEmbeddedConfig() (*Config, error) {
 	// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 
@@ -262,6 +265,13 @@ func loadEmbeddedConfig() (*Config, error) {
 	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
 		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
 			return nil, fmt.Errorf("decoding embedded [heartbeat] section: %w", err)
+		}
+	}
+
+	// Decode [node_defaults] section if exists
+	if nodeDefaultsPrim, ok := rootSections["node_defaults"]; ok {
+		if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
+			return nil, fmt.Errorf("decoding embedded [node_defaults] section: %w", err)
 		}
 	}
 
@@ -350,7 +360,7 @@ func loadConfigFile(path string) (*Config, error) {
 	}
 
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
+		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 		var node NodeConfig
@@ -375,6 +385,13 @@ func loadConfigFile(path string) (*Config, error) {
 	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
 		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
 			return nil, fmt.Errorf("decoding [heartbeat] in %s: %w", path, err)
+		}
+	}
+
+	// Decode [node_defaults] section if exists
+	if nodeDefaultsPrim, ok := rootSections["node_defaults"]; ok {
+		if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
+			return nil, fmt.Errorf("decoding [node_defaults] in %s: %w", path, err)
 		}
 	}
 
@@ -558,7 +575,18 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
+		if overNode.MaterializeTemplate {
+			baseNode.MaterializeTemplate = true
+		}
 		base.Nodes[name] = baseNode
+	}
+
+	// NodeDefaults: field-level merge
+	if override.NodeDefaults.EnterCount != 0 {
+		base.NodeDefaults.EnterCount = override.NodeDefaults.EnterCount
+	}
+	if override.NodeDefaults.MaterializeTemplate {
+		base.NodeDefaults.MaterializeTemplate = true
 	}
 
 	// CompactionDetection: field-level merge
@@ -691,7 +719,7 @@ func LoadConfig(path string) (*Config, error) {
 		// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
 		cfg.Nodes = make(map[string]NodeConfig)
 		for name, prim := range rootSections {
-			if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
+			if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
 				continue
 			}
 
@@ -723,6 +751,13 @@ func LoadConfig(path string) (*Config, error) {
 			}
 		}
 
+		// Decode [node_defaults] section if exists
+		if nodeDefaultsPrim, ok := rootSections["node_defaults"]; ok {
+			if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
+				return nil, fmt.Errorf("decoding [node_defaults] section: %w", err)
+			}
+		}
+
 		// Issue #50: Load node files from nodes/ directory
 		configDir := filepath.Dir(configPath)
 		nodesDir := filepath.Join(configDir, "nodes")
@@ -743,7 +778,7 @@ func LoadConfig(path string) (*Config, error) {
 					continue
 				}
 				for name, prim := range sections {
-					if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" {
+					if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
 						continue // skip reserved sections
 					}
 					var node NodeConfig
