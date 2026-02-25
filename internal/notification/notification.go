@@ -160,7 +160,7 @@ func extractTimestamp(filename string) string {
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int) error {
 	// Wrap with protocol sentinels so all pane output is clearly delimited.
-	message = "<start message>\n" + message + "\n<end message>"
+	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
 	// Security: Sanitize message for tmux set-buffer
 	sanitized := sanitizeForTmux(message)
 

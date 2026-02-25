@@ -1078,8 +1078,8 @@ role = "orchestrator"
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/project/data")
 	}
 	// Default fields should come from embedded defaults
-	if cfg.EnterDelay != 0.5 {
-		t.Errorf("EnterDelay: got %v, want 0.5 (from embedded defaults)", cfg.EnterDelay)
+	if cfg.EnterDelay != 3.0 {
+		t.Errorf("EnterDelay: got %v, want 3.0 (from embedded defaults)", cfg.EnterDelay)
 	}
 	if len(cfg.Nodes) != 2 {
 		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
