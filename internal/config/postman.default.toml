@@ -37,6 +37,7 @@
 #   {timestamp}      - ISO format timestamp
 #   {from}           - Alias for {sender} (backward compatibility)
 #   {to}             - Alias for {recipient} (backward compatibility)
+#   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -123,6 +124,8 @@ edges = []
 #   to: {recipient}
 #   timestamp: {timestamp}
 # ---
+#
+# Can talk to: {can_talk_to}
 #
 # ## Content
 #
@@ -227,7 +230,7 @@ max_bytes = 1048576  # 1MB
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# materialize_template = false       # Write template as state file; reference via @path in messages.
+# materialize_template = false       # Write template as state file; reference by labeled path (no @ prefix).
 #                                    # NOTE: Takes effect only at daemon startup. Restart daemon after enabling.
 # reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
@@ -250,12 +253,12 @@ prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tas
 
 If nothing needs attention:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
-    --context-id {context_id} --from heartbeat-llm --to postman
+    --context-id {context_id} --to postman
   Set Content to: HEARTBEAT_OK
   Move the draft from draft/ to post/
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
-    --context-id {context_id} --from heartbeat-llm --to messenger
+    --context-id {context_id} --to messenger
   Set Content to: [HEARTBEAT ALERT] <your message>
   Move the draft from draft/ to post/"""

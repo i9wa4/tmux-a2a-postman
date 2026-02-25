@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - feat: load project-local config via upward CWD traversal with field-level merge (#121)
 - feat: enrich pane-activity.json with lastChangeAt; dual-format reader (#123)
 - `enter_count` field in `nodes` config to send multiple Enter keystrokes for Codex CLI nodes (#126)
+- `{can_talk_to}` variable in `draft_template`: formatted list of nodes the sender can communicate with
+- `create-draft` now auto-detects sender from tmux pane title; no flag required
 
 ### Changed
 
@@ -27,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - fix: capture pane before sending idle reminder; send on capture failure (#125)
 - fix: filter idle alerts to edge panes; fallback to all panes on list-panes failure (#124)
 - fix: remove ChangeCount==0 stale early-return from GetPaneActivityStatus (#122)
+
+### Removed
+
+- **Breaking**: `--from` flag removed from `create-draft`. Sender is auto-detected from the tmux pane title. Any invocation using `--from` will fail with "flag provided but not defined: -from".
 
 ## [v0.3.4] - 2026-02-19
 

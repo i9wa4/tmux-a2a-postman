@@ -597,7 +597,6 @@ func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
-	from := fs.String("from", "", "sender node name (defaults to current pane title)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -620,12 +619,9 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("resolving context ID: %w", err)
 	}
 
-	sender := *from
+	sender := config.GetTmuxPaneName()
 	if sender == "" {
-		sender = config.GetTmuxPaneName()
-	}
-	if sender == "" {
-		return fmt.Errorf("--from is required (or set tmux pane title)")
+		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
 	}
 
 	sessionName := *session
@@ -679,16 +675,24 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n## Content\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nCan talk to: {can_talk_to}\n\n## Content\n\n"
 	}
+
+	// Build can_talk_to from adjacency
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		return fmt.Errorf("parsing edges: %w", err)
+	}
+	canTalkTo := strings.Join(config.GetTalksTo(adjacency, sender), ", ")
 
 	// Build variables map for template expansion
 	vars := map[string]string{
-		"context_id": resolvedContextID,
-		"task_id":    taskID,
-		"sender":     sender,
-		"recipient":  *to,
-		"timestamp":  now.Format(time.RFC3339),
+		"context_id":  resolvedContextID,
+		"task_id":     taskID,
+		"sender":      sender,
+		"recipient":   *to,
+		"timestamp":   now.Format(time.RFC3339),
+		"can_talk_to": canTalkTo,
 		// Backward compatibility
 		"from": sender,
 		"to":   *to,

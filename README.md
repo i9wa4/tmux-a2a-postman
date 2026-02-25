@@ -149,7 +149,7 @@ tmux-a2a-postman
 tmux-a2a-postman start --context-id <session-id> [--config path/to/config.toml]
 
 # Create draft message
-tmux-a2a-postman create-draft --to <recipient> --context-id <session-id> --from <sender>
+tmux-a2a-postman create-draft --to <recipient> --context-id <session-id>
 
 # Show pane status summary
 tmux-a2a-postman get-session-status-oneline
