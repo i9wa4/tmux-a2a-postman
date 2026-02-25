@@ -102,7 +102,7 @@ func MaterializeNodeTemplates(baseDir, contextID string, cfg *Config) {
 	}
 
 	for nodeName, nodeConfig := range cfg.Nodes {
-		if !nodeConfig.MaterializeTemplate || nodeConfig.Template == "" {
+		if !cfg.GetNodeConfig(nodeName).MaterializeTemplate || nodeConfig.Template == "" {
 			continue
 		}
 		sanitized := sanitizeNodeName(nodeName)

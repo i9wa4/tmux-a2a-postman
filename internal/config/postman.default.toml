@@ -259,3 +259,7 @@ If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
     --context-id {context_id} --to messenger
   Set Content to: [HEARTBEAT ALERT] <your message>
   Move the draft from draft/ to post/"""
+
+[node_defaults]
+enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
+materialize_template = true  # Write role templates to files; reference by path in notifications

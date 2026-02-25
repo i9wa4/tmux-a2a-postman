@@ -212,6 +212,12 @@ func TestLoadConfig_Default(t *testing.T) {
 	if !strings.Contains(cfg.BoilerplateHowToReply, "{reply_command}") {
 		t.Errorf("default BoilerplateHowToReply: got %q, want string containing {reply_command}", cfg.BoilerplateHowToReply)
 	}
+	if cfg.NodeDefaults.EnterCount != 2 {
+		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+	if !cfg.NodeDefaults.MaterializeTemplate {
+		t.Errorf("NodeDefaults.MaterializeTemplate: got false, want true")
+	}
 }
 
 func TestLoadConfig_Partial(t *testing.T) {

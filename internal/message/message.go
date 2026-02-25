@@ -345,7 +345,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Issue #84: Get PONG-active nodes for talks_to_line filtering
 	pongActiveNodes := idleTracker.GetPongActiveNodes()
 	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, pongActiveNodes)
-	nodeEnterDelay := cfg.Nodes[info.To].EnterDelay
+	nodeEnterDelay := cfg.GetNodeConfig(info.To).EnterDelay
 	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 	if nodeEnterDelay != 0 {
 		enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
@@ -353,7 +353,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	paneIDForProbe := paneID
 	enterCount := notification.ResolveEnterCount(
-		cfg.Nodes[info.To].EnterCount,
+		cfg.GetNodeConfig(info.To).EnterCount,
 		func() (string, error) {
 			out, err := exec.Command("tmux", "display-message", "-t",
 				paneIDForProbe, "-p", "#{pane_current_command}").Output()

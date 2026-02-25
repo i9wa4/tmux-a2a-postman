@@ -1068,3 +1068,56 @@ func GetTmuxPaneName() string {
 	}
 	return strings.TrimSpace(string(output))
 }
+
+// GetNodeConfig returns the effective NodeConfig for the given node name,
+// applying NodeDefaults as base with node-specific config merged on top.
+func (cfg *Config) GetNodeConfig(name string) NodeConfig {
+	result := cfg.NodeDefaults
+	specific, ok := cfg.Nodes[name]
+	if !ok {
+		return result
+	}
+	if specific.Template != "" {
+		result.Template = specific.Template
+	}
+	if specific.OnJoin != "" {
+		result.OnJoin = specific.OnJoin
+	}
+	if specific.Role != "" {
+		result.Role = specific.Role
+	}
+	if specific.ReminderInterval != 0 {
+		result.ReminderInterval = specific.ReminderInterval
+	}
+	if specific.ReminderMessage != "" {
+		result.ReminderMessage = specific.ReminderMessage
+	}
+	if specific.IdleTimeoutSeconds != 0 {
+		result.IdleTimeoutSeconds = specific.IdleTimeoutSeconds
+	}
+	if specific.IdleReminderMessage != "" {
+		result.IdleReminderMessage = specific.IdleReminderMessage
+	}
+	if specific.IdleReminderCooldownSeconds != 0 {
+		result.IdleReminderCooldownSeconds = specific.IdleReminderCooldownSeconds
+	}
+	if specific.DroppedBallTimeoutSeconds != 0 {
+		result.DroppedBallTimeoutSeconds = specific.DroppedBallTimeoutSeconds
+	}
+	if specific.DroppedBallCooldownSeconds != 0 {
+		result.DroppedBallCooldownSeconds = specific.DroppedBallCooldownSeconds
+	}
+	if specific.DroppedBallNotification != "" {
+		result.DroppedBallNotification = specific.DroppedBallNotification
+	}
+	if specific.EnterCount != 0 {
+		result.EnterCount = specific.EnterCount
+	}
+	if specific.EnterDelay != 0 {
+		result.EnterDelay = specific.EnterDelay
+	}
+	if specific.MaterializeTemplate {
+		result.MaterializeTemplate = true
+	}
+	return result
+}

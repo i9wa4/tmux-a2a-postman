@@ -107,7 +107,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 
 				paneIDForProbe := nodeInfo.PaneID
 				enterCount := notification.ResolveEnterCount(
-					cfg.Nodes[nodeName].EnterCount,
+					cfg.GetNodeConfig(nodeName).EnterCount,
 					func() (string, error) {
 						out, err := exec.Command("tmux", "display-message", "-t",
 							paneIDForProbe, "-p", "#{pane_current_command}").Output()
@@ -115,7 +115,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 					},
 				)
 				enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
-				if nodeEnterDelay := cfg.Nodes[nodeName].EnterDelay; nodeEnterDelay != 0 {
+				if nodeEnterDelay := cfg.GetNodeConfig(nodeName).EnterDelay; nodeEnterDelay != 0 {
 					enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
 				}
 				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount)
