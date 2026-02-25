@@ -27,6 +27,7 @@
 #   {from}           - Alias for {sender} (backward compatibility)
 #   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
+#   {session_dir}    - Session directory path
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -127,7 +128,7 @@ After reading, move from inbox/ to read/
 
 ## Reply
 
-See protocol: {session_dir}/RULES.md
+Protocol reference: {session_dir}/RULES.md
 """
 
 # Draft message template
@@ -141,10 +142,14 @@ params:
   timestamp: {timestamp}
 ---
 
-Can talk to: {can_talk_to}
+You can only talk to: {can_talk_to}
 
 # Content
 
+
+## Reply
+
+Protocol reference: {session_dir}/RULES.md
 """
 
 # Edge violation warning template (Issue #92)
