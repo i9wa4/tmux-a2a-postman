@@ -78,9 +78,27 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 				}
 			}
 			if found && reminderMessage != "" {
+				// Resolve node's role template (mirrors notification.go BuildNotification)
+				// NOTE: reuses nodeConfig and hasNodeConfig declared at line 40
+				nodeTemplate := ""
+				if matPath, ok := cfg.MaterializedPaths[nodeName]; ok {
+					nodeTemplate = "Role template: " + matPath + "\n"
+				} else {
+					if hasNodeConfig {
+						nodeTemplate = nodeConfig.Template
+					}
+					if cfg.CommonTemplate != "" {
+						if nodeTemplate != "" {
+							nodeTemplate = cfg.CommonTemplate + "\n\n" + nodeTemplate
+						} else {
+							nodeTemplate = cfg.CommonTemplate
+						}
+					}
+				}
 				vars := map[string]string{
-					"node":  nodeName,
-					"count": strconv.Itoa(count),
+					"node":     nodeName,
+					"count":    strconv.Itoa(count),
+					"template": nodeTemplate,
 				}
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				content := template.ExpandTemplate(reminderMessage, vars, timeout)
