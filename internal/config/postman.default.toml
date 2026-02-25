@@ -106,6 +106,12 @@ edges = []
 # See {session_dir}/RULES.md for protocol reference.
 # """
 
+# Ping message template
+# ping_template = """
+# PING from postman
+# Reply with PONG to confirm you are active.
+# """
+
 # Draft message template
 # draft_template = """---
 # method: message/send

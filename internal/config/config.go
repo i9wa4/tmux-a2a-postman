@@ -49,6 +49,7 @@ type Config struct {
 
 	// Message templates
 	NotificationTemplate         string `toml:"notification_template"`
+	PingTemplate                 string `toml:"ping_template"`
 	DraftTemplate                string `toml:"draft_template"`
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
@@ -171,6 +172,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {from_node}",
+		PingTemplate:                 "<!-- message start -->\n{template}\n\n{talks_to_line}\n\n## Message Details\n\n\U0001f4ec Message from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nReply with PONG to confirm you are active.\n<!-- end of message -->",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
@@ -387,6 +389,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NotificationTemplate != "" {
 		base.NotificationTemplate = override.NotificationTemplate
+	}
+	if override.PingTemplate != "" {
+		base.PingTemplate = override.PingTemplate
 	}
 	if override.DraftTemplate != "" {
 		base.DraftTemplate = override.DraftTemplate

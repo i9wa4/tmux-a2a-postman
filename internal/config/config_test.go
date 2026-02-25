@@ -102,6 +102,7 @@ startup_delay_seconds = 3.0
 reminder_interval_messages = 60.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
+ping_template = "Custom ping"
 draft_template = "Custom draft"
 reminder_message = "Custom reminder"
 reply_command = "custom-reply"
@@ -152,6 +153,9 @@ on_join = ""
 	}
 	if cfg.NotificationTemplate != "Custom notification: {{.From}}" {
 		t.Errorf("NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Custom notification: {{.From}}")
+	}
+	if cfg.PingTemplate != "Custom ping" {
+		t.Errorf("PingTemplate: got %q, want %q", cfg.PingTemplate, "Custom ping")
 	}
 	if cfg.DraftTemplate != "Custom draft" {
 		t.Errorf("DraftTemplate: got %q, want %q", cfg.DraftTemplate, "Custom draft")

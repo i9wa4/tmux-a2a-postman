@@ -26,6 +26,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
@@ -468,6 +469,82 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						daemonEvents <- tui.DaemonEvent{
 							Type:    "message_received",
 							Message: fmt.Sprintf("Session %s toggled %s", cmd.Target, stateStr),
+						}
+					case "send_ping":
+						// Fresh discovery to include nodes added after startup (Issue #new)
+						freshNodes, _, freshErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+						if freshErr != nil {
+							cachedPtr := sharedNodes.Load()
+							if cachedPtr == nil {
+								log.Printf("\u274c postman: send_ping discovery failed: %v\n", freshErr)
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING failed: node discovery error: %v", freshErr),
+								}
+								break
+							}
+							// Deep-copy: edge-filter uses delete() on freshNodes; must not mutate shared map.
+							cached := *cachedPtr
+							freshNodes = make(map[string]discovery.NodeInfo, len(cached))
+							for k, v := range cached {
+								freshNodes[k] = v
+							}
+							log.Printf("\u26a0\ufe0f  postman: send_ping using cached nodes (discovery failed): %v\n", freshErr)
+						}
+						// Edge-filter fresh nodes (replicate startup logic, main.go:268-274)
+						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
+						for nodeName := range freshNodes {
+							parts := strings.SplitN(nodeName, ":", 2)
+							rawName := parts[len(parts)-1]
+							if !edgeNodesFilter[rawName] {
+								delete(freshNodes, nodeName)
+							}
+						}
+						targetNodes := make(map[string]discovery.NodeInfo)
+						for k, v := range freshNodes {
+							if v.SessionName == cmd.Target {
+								targetNodes[k] = v
+							}
+						}
+						if len(targetNodes) == 0 {
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("PING: no nodes found for session %s", cmd.Target),
+							}
+							break
+						}
+						// Build active nodes from freshNodes (not stale startup nodes)
+						activeNodes := make([]string, 0, len(freshNodes))
+						for nodeName := range freshNodes {
+							simpleName := ping.ExtractSimpleName(nodeName)
+							activeNodes = append(activeNodes, simpleName)
+						}
+						// Send PING to each node in the target session
+						successCount := 0
+						failCount := 0
+						pongActiveNodes := idleTracker.GetPongActiveNodes()
+						for nodeName, nodeInfo := range targetNodes {
+							if err := ping.SendPingToNode(nodeInfo, contextID, nodeName,
+								cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
+								log.Printf("\u274c postman: PING to %s failed: %v\n", nodeName, err)
+								failCount++
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
+								}
+							} else {
+								log.Printf("\U0001f4ee postman: PING sent to %s\n", nodeName)
+								successCount++
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "message_received",
+									Message: fmt.Sprintf("PING sent to %s", nodeName),
+								}
+							}
+						}
+						totalCount := successCount + failCount
+						daemonEvents <- tui.DaemonEvent{
+							Type:    "message_received",
+							Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 						}
 					case "clear_edge_history":
 						// Clear edge activity history when switching sessions
