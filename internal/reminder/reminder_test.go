@@ -1,11 +1,14 @@
 package reminder
 
 import (
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 func TestNewReminderState(t *testing.T) {
@@ -218,6 +221,21 @@ func TestReminderPhaseTwoLookup(t *testing.T) {
 	state.mu.Unlock()
 	if count != 0 {
 		t.Errorf("Phase 2 lookup: after threshold, counter = %d, want 0", count)
+	}
+}
+
+func TestTemplateExpandTemplate(t *testing.T) {
+	vars := map[string]string{
+		"node":     "worker",
+		"count":    "5",
+		"template": "# WORKER ROLE",
+	}
+	msg := template.ExpandTemplate("{template} count:{count}", vars, 5*time.Second)
+	if strings.Contains(msg, "{template}") {
+		t.Errorf("expected {template} to be expanded, got: %s", msg)
+	}
+	if !strings.Contains(msg, "# WORKER ROLE") {
+		t.Errorf("expected template content in output, got: %s", msg)
 	}
 }
 

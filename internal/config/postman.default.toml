@@ -95,7 +95,16 @@ edges = []
 # reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
 # ui_node = "messenger"            # TUI target node for watchdog alerts
 
-# Reminder message (sent periodically to nodes)
+# reminder_message:
+#   {node}      - Node name
+#   {count}     - Message count since last reminder
+#   {template}  - Node's role template (inline content, or "Role template: <path>" for
+#                 materialized nodes — agent must read the file for full content)
+#
+# NOTE: if reminder_message = "{template}" and a node has no template defined,
+#       {template} expands to "" and SendToPane is called with empty content (spurious Enter).
+#       Ensure all nodes have a template when using this pattern.
+#
 # reminder_message = ""
 
 # Common template (prepended to all node templates)
