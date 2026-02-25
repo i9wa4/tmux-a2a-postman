@@ -115,6 +115,7 @@ edges = []
 # Message from {from_node}
 # File: {filename}
 # Inbox: {inbox_path}
+# See {session_dir}/RULES.md for protocol reference.
 # """
 
 # Ping message template

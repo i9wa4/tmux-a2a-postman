@@ -323,6 +323,11 @@ func RunDaemonLoop(
 										continue
 									}
 
+									// Generate RULES.md for newly discovered node session
+									if err := config.GenerateRulesFile(nodeInfo.SessionDir, contextID, cfg); err != nil {
+										log.Printf("postman: WARNING: failed to generate RULES.md for %s: %v\n", nodeName, err)
+									}
+
 									// Add new node's directories to watch
 									nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
 									nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
@@ -629,6 +634,11 @@ func RunDaemonLoop(
 							Message: fmt.Sprintf("failed to create session dirs for %s: %v", nodeName, err),
 						}
 						continue
+					}
+
+					// Generate RULES.md for newly discovered node session
+					if err := config.GenerateRulesFile(nodeInfo.SessionDir, contextID, cfg); err != nil {
+						log.Printf("postman: WARNING: failed to generate RULES.md for %s: %v\n", nodeName, err)
 					}
 
 					// Add new node's directories to watch
