@@ -136,22 +136,28 @@ rules_template = """
 ## Messaging Protocol
 
 ### Sending Messages
-1. {reply_command}
-   - Replace `<recipient>` with the target node name
-2. Edit the draft content
-3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/
+See: {session_dir}/boilerplate/how_to_reply.md
 
 ### Receiving Messages
 - Messages arrive in inbox/<node>/
 - After reading: mv {session_dir}/inbox/<node>/<file> {session_dir}/read/
 
 ### Standard Replies
-
-PONG — liveness confirmation (reply to PING from postman)
-HEARTBEAT_OK — system healthy
-[status] — current task, blockers, next action
-[error] — description, mitigation, next step
+- PONG: see {session_dir}/boilerplate/pong.md
+- HEARTBEAT_OK: see {session_dir}/boilerplate/heartbeat_ok.md
+- [status] — current task, blockers, next action
+- [error] — description, mitigation, next step
 """
+
+# Boilerplate response files (auto-generated per session in {session_dir}/boilerplate/)
+# boilerplate_pong = "PONG"
+# boilerplate_heartbeat_ok = "HEARTBEAT_OK"
+# boilerplate_how_to_reply = """
+# 1. {reply_command}
+#    Replace `<recipient>` with target node name
+# 2. Edit the draft content
+# 3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/
+# """
 
 # Idle reminder header template (Issue #82)
 # idle_reminder_header_template = "## Idle Reminder"

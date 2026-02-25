@@ -203,6 +203,15 @@ func TestLoadConfig_Default(t *testing.T) {
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
+	if cfg.BoilerplatePong != "PONG" {
+		t.Errorf("default BoilerplatePong: got %q, want %q", cfg.BoilerplatePong, "PONG")
+	}
+	if cfg.BoilerplateHeartbeatOk != "HEARTBEAT_OK" {
+		t.Errorf("default BoilerplateHeartbeatOk: got %q, want %q", cfg.BoilerplateHeartbeatOk, "HEARTBEAT_OK")
+	}
+	if !strings.Contains(cfg.BoilerplateHowToReply, "{reply_command}") {
+		t.Errorf("default BoilerplateHowToReply: got %q, want string containing {reply_command}", cfg.BoilerplateHowToReply)
+	}
 }
 
 func TestLoadConfig_Partial(t *testing.T) {

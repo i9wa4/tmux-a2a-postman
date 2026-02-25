@@ -62,6 +62,9 @@ type Config struct {
 	CompactionBodyTemplate       string `toml:"compaction_body_template"`        // Issue #82: Compaction notification body
 	DroppedBallEventTemplate     string `toml:"dropped_ball_event_template"`     // Issue #82: Dropped ball event message
 	RulesTemplate                string `toml:"rules_template"`                  // Issue #75: Shared protocol rules
+	BoilerplatePong              string `toml:"boilerplate_pong"`
+	BoilerplateHeartbeatOk       string `toml:"boilerplate_heartbeat_ok"`
+	BoilerplateHowToReply        string `toml:"boilerplate_how_to_reply"`
 
 	// Global settings
 	Edges                 []string `toml:"edges"`
@@ -191,6 +194,9 @@ func DefaultConfig() *Config {
 		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
 		RulesTemplate:                "",
+		BoilerplatePong:              "PONG",
+		BoilerplateHeartbeatOk:       "HEARTBEAT_OK",
+		BoilerplateHowToReply:        "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
 		CompactionDetection: CompactionDetectionConfig{
 			TailLines: 10, // Issue #133: Default tail lines for compaction check
 		},
@@ -428,6 +434,15 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RulesTemplate != "" {
 		base.RulesTemplate = override.RulesTemplate
+	}
+	if override.BoilerplatePong != "" {
+		base.BoilerplatePong = override.BoilerplatePong
+	}
+	if override.BoilerplateHeartbeatOk != "" {
+		base.BoilerplateHeartbeatOk = override.BoilerplateHeartbeatOk
+	}
+	if override.BoilerplateHowToReply != "" {
+		base.BoilerplateHowToReply = override.BoilerplateHowToReply
 	}
 	if override.ReplyCommand != "" {
 		base.ReplyCommand = override.ReplyCommand
