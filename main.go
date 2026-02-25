@@ -679,7 +679,10 @@ func runCreateDraft(args []string) error {
 	}
 
 	// Build can_talk_to from adjacency
-	adjacency, _ := config.ParseEdges(cfg.Edges)
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		return fmt.Errorf("parsing edges: %w", err)
+	}
 	canTalkTo := strings.Join(config.GetTalksTo(adjacency, sender), ", ")
 
 	// Build variables map for template expansion
