@@ -28,6 +28,7 @@
 #   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
+#   {templates_dir}  - Path to templates directory (context-level, not session-level)
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -101,7 +102,7 @@ reminder_message = "{inbox_path}"
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "{inbox_path}/{filename}"
+notification_template = "{inbox_path}/{filename}\n{template}"
 
 # Ping message template
 ping_template = """---
@@ -141,6 +142,8 @@ params:
   to: {recipient}
   timestamp: {timestamp}
 ---
+
+Role template: {templates_dir}/{recipient}.md
 
 You can only talk to: {can_talk_to}
 
