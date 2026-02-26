@@ -32,7 +32,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 
-- **Breaking**: `--from` flag removed from `create-draft`. Sender is auto-detected from the tmux pane title. Any invocation using `--from` will fail with "flag provided but not defined: -from".
+- **Breaking**: `--from` flag removed from `create-draft`. Sender is auto-detected from the
+  tmux pane title. Any invocation using `--from` will fail with
+  "flag provided but not defined: -from".
 
 ## [v0.3.4] - 2026-02-19
 

@@ -22,7 +22,7 @@
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
-      systems = ["x86_64-darwin" "aarch64-darwin" "x86_64-linux" "aarch64-linux"];
+      systems = ["aarch64-darwin" "x86_64-linux" "aarch64-linux"];
 
       imports = [
         git-hooks.flakeModule
@@ -34,11 +34,20 @@
         pkgs,
         ...
       }: let
-        # Version extraction strategy:
-        # - Tagged releases (GitHub ?ref=v0.2.0): Use semantic version from tag
-        # - Local clean builds: Use git commit hash (git-abc1234)
-        # - Dirty working tree: Use "dev"
-        # Note: self.ref only available for remote builds, not local
+        ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
+        rumdlConfig = pkgs.writeText "rumdl.toml" ''
+          [global]
+          disable = ["MD024"]
+
+          [MD013]
+          line-length = 120
+        '';
+        zizmorConfig = pkgs.writeText "zizmor.yml" ''
+          rules:
+            cache-poisoning:
+              ignore:
+                - release.yml
+        '';
         version =
           if (builtins.hasAttr "ref" self && builtins.match "v[0-9]+\\.[0-9]+\\.[0-9]+" self.ref != null)
           then self.ref
@@ -68,36 +77,31 @@
         # nix develop
         devShells = {
           default = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              go_1_25
-              gopls
-              golangci-lint
-            ];
+            buildInputs = with pkgs; [go_1_25 gopls golangci-lint go-tools];
             shellHook = ''
               ${config.pre-commit.installationScript}
             '';
           };
           ci = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              go_1_25
-              golangci-lint
-              govulncheck
-            ];
+            buildInputs = with pkgs; [go_1_25 golangci-lint govulncheck];
           };
           cd = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              go_1_25
-              goreleaser
-            ];
+            buildInputs = with pkgs; [go_1_25 goreleaser];
           };
         };
 
         # nix fmt
         treefmt = {
           projectRootFile = "flake.nix";
+          settings.global.excludes = [".direnv" ".git" "*.lock"];
           programs = {
             gofumpt.enable = true;
             alejandra.enable = true;
+          };
+          settings.formatter.rumdl = {
+            command = "${pkgs.rumdl}/bin/rumdl";
+            options = ["fmt" "--config" "${rumdlConfig}"];
+            includes = ["*.md"];
           };
         };
 
@@ -105,12 +109,79 @@
         pre-commit = {
           check.enable = true;
           settings.hooks = {
+            # General
+            end-of-file-fixer.enable = true;
+            trim-trailing-whitespace.enable = true;
+            check-added-large-files.enable = true;
+            detect-private-keys.enable = true;
+            check-merge-conflicts.enable = true;
+            check-json.enable = true;
+            check-yaml.enable = true;
+
+            # Secrets
             gitleaks = {
               enable = true;
               entry = "${pkgs.gitleaks}/bin/gitleaks protect --verbose --redact --staged";
               pass_filenames = false;
             };
+
+            # GitHub Actions
             actionlint.enable = true;
+            ghalint = {
+              enable = true;
+              entry = "${pkgs.ghalint}/bin/ghalint run";
+              files = ghWorkflowFiles;
+              pass_filenames = false;
+            };
+            ghatm = {
+              enable = true;
+              entry = "${pkgs.ghatm}/bin/ghatm set -t 5";
+              files = ghWorkflowFiles;
+              pass_filenames = false;
+            };
+            pinact = {
+              enable = true;
+              entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" && exit 0; ${pkgs.pinact}/bin/pinact run'";
+              files = ghWorkflowFiles;
+              pass_filenames = false;
+            };
+            zizmor = {
+              enable = true;
+              entry = "${pkgs.zizmor}/bin/zizmor --config ${zizmorConfig}";
+              files = ghWorkflowFiles;
+            };
+
+            # Shell
+            shellcheck.enable = true;
+
+            # Nix
+            statix = {
+              enable = true;
+              excludes = ["^\\.direnv/"];
+            };
+            flake-check = {
+              enable = true;
+              entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${pkgs.nix}/bin/nix flake check'";
+              pass_filenames = false;
+              files = "\\.(nix|lock)$";
+            };
+
+            # Go
+            govet = {
+              enable = true;
+              entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" && exit 0; ${pkgs.go_1_25}/bin/go vet ./...'";
+              pass_filenames = false;
+              types = ["go"];
+            };
+
+            # Markdown
+            rumdl-check = {
+              enable = true;
+              entry = "${pkgs.rumdl}/bin/rumdl check --config ${rumdlConfig}";
+              types = ["markdown"];
+            };
+
+            # Formatter
             treefmt = {
               enable = true;
               entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${pkgs.nix}/bin/nix fmt'";

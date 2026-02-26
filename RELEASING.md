@@ -32,5 +32,4 @@ completion and attached assets.
 
 ```bash
 git describe --tags   # confirm tag is correct
-nix build             # verify build succeeds
 ```

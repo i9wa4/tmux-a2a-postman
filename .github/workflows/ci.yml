@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   test:
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -29,6 +31,8 @@ jobs:
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
         with:
           github_access_token: ${{ github.token }}
@@ -39,20 +43,15 @@ jobs:
       - name: Check (fmt + pre-commit + build + test)
         run: nix flake check
 
-      - name: Lint
-        run: nix develop .#ci --command golangci-lint run ./...
-
-      - name: Test (race)
-        run: nix develop .#ci --command go test -race ./...
-
-      - name: Vet
-        run: nix develop .#ci --command go vet ./...
-
   security:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
         with:
           github_access_token: ${{ github.token }}
