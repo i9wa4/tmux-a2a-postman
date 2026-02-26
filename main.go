@@ -667,7 +667,7 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\nRole: {templates_dir}/{recipient}.md | Protocol: {session_dir}/RULES.md\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nrole: {templates_dir}/{recipient}.md\nprotocol: {session_dir}/RULES.md\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
 
 	// Build can_talk_to from adjacency

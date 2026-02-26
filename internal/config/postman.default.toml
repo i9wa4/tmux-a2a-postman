@@ -137,8 +137,9 @@ params:
   from: {sender}
   to: {recipient}
   timestamp: {timestamp}
+role: {templates_dir}/{recipient}.md
+protocol: {session_dir}/RULES.md
 ---
-Role: {templates_dir}/{recipient}.md | Protocol: {session_dir}/RULES.md
 
 You can only talk to: {can_talk_to}
 
