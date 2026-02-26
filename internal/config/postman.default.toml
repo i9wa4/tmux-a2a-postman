@@ -28,6 +28,8 @@
 #   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
+#   {reply_command}  - Command to create draft reply with context_id substituted
+#   {template}       - Recipient's role template from config
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -142,7 +144,23 @@ params:
   timestamp: {timestamp}
 ---
 
+## ROLE OF RECIPIENT ({recipient}):
+
+{template}
+
+---
+
 You can only talk to: {can_talk_to}
+
+Role directory (complete list — your contacts are listed above):
+- boss: final approver, task authority
+- critic: critical analysis, aggressive scrutiny
+- guardian: quality assurance review + routing gate; forwards approved plans to boss
+- messenger: user interface, message relay
+- orchestrator: coordination, delegation
+- worker: implementation, consultation
+
+How to reply: {reply_command}
 
 # Content
 
@@ -261,6 +279,8 @@ All messages use YAML frontmatter followed by content:
 # =============================================================================
 
 [watchdog]
+# Disabled pending watchdog/heartbeat spec finalization.
+# Re-enable once specs are complete — see GitHub Issue #145.
 enabled = false                       # Enable watchdog monitoring
 idle_threshold_seconds = 300.0        # 5 minutes
 cooldown_seconds = 600.0              # 10 minutes
