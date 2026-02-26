@@ -605,8 +605,8 @@ func runCreateDraft(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	// Resolve context ID with fallback chain (auto-detect if not specified)
-	resolvedContextID, _, err := config.ResolveContextID(*contextID, baseDir)
+	// Require explicit --context-id
+	resolvedContextID, err := config.ResolveContextID(*contextID)
 	if err != nil {
 		return fmt.Errorf("resolving context ID: %w", err)
 	}
