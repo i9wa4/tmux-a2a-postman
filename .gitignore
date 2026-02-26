@@ -40,3 +40,4 @@ go.work.sum
 /result
 /result-*
 .pre-commit-config.yaml
+.rumdl.toml
