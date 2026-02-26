@@ -55,7 +55,7 @@
           pname = "tmux-a2a-postman";
           inherit version;
           src = ./.;
-          vendorHash = null; # NOTE: placeholder — update after running nix build to get correct hash
+          vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
           go = pkgs.go_1_25;
           ldflags = [
             "-s"
