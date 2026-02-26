@@ -56,6 +56,7 @@
           inherit version;
           src = ./.;
           vendorHash = null; # NOTE: placeholder — update after running nix build to get correct hash
+          go = pkgs.go_1_26;
           ldflags = [
             "-s"
             "-w"
