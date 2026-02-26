@@ -50,9 +50,11 @@ func resolveNodeNameForNotification(nodeName, sourceSessionName string, knownNod
 func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, pongActiveNodes map[string]bool) string {
 	// Get recipient's template (use simple name for config lookup)
 	recipientTemplate := ""
+	templatePath := ""
 	if matPath, ok := cfg.MaterializedPaths[recipient]; ok {
 		// Issue #134: Template materialized as file; reference by path. CommonTemplate excluded per spec.
 		// Label added so agents can identify the file purpose without @-prefix (which triggers autocomplete).
+		templatePath = matPath
 		recipientTemplate = "Role template: " + matPath + "\n"
 	} else {
 		if nodeConfig, ok := cfg.Nodes[recipient]; ok {
@@ -136,6 +138,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 		"reply_command": replyCmd,
 		"context_id":    contextID,
 		"session_dir":   sessionDir,
+		"template_path": templatePath,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))

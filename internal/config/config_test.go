@@ -194,8 +194,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if cfg.NotificationTemplate != "{inbox_path}/{filename}\n{template}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}\n{template}")
+	if cfg.NotificationTemplate != "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md")
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
@@ -256,8 +256,8 @@ edges = ["worker -- orchestrator"]
 	if cfg.EnterDelay != 3.0 {
 		t.Errorf("default EnterDelay: got %v, want 3.0", cfg.EnterDelay)
 	}
-	if cfg.NotificationTemplate != "{inbox_path}/{filename}\n{template}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}\n{template}")
+	if cfg.NotificationTemplate != "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md" {
+		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md")
 	}
 }
 

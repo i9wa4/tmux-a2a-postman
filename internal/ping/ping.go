@@ -38,9 +38,11 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	// Get node config for template (use simple name)
 	_, hasNodeConfig := cfg.Nodes[simpleName]
 	nodeTemplate := ""
+	templatePath := ""
 	if matPath, ok := cfg.MaterializedPaths[simpleName]; ok {
 		// Issue #134: Template materialized as file; reference by path. CommonTemplate excluded per spec.
 		// Label added so agents can identify the file purpose without @-prefix (which triggers autocomplete).
+		templatePath = matPath
 		nodeTemplate = "Role template: " + matPath + "\n"
 	} else {
 		if hasNodeConfig {
@@ -82,6 +84,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		"reply_command": replyCmd,
 		"session_dir":   nodeInfo.SessionDir,
 		"inbox_path":    filepath.Join(nodeInfo.SessionDir, "inbox", simpleName),
+		"template_path": templatePath,
 	}
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content := BuildPingMessage(tmpl, vars, timeout)

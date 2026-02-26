@@ -102,7 +102,7 @@ reminder_message = "{inbox_path}"
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "{inbox_path}/{filename}\n{template}"
+notification_template = "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md"
 
 # Ping message template
 ping_template = """---
@@ -114,7 +114,7 @@ params:
   to: {node}
   timestamp: {iso_timestamp}
 ---
-{template}
+Role: {template_path} | Protocol: {session_dir}/RULES.md
 
 {talks_to_line}
 
@@ -126,10 +126,6 @@ After reading, move from inbox/ to read/
 
 - Inbox: {inbox_path}
 - read path: {session_dir}/read/
-
-## Reply
-
-Protocol reference: {session_dir}/RULES.md
 """
 
 # Draft message template
@@ -142,17 +138,12 @@ params:
   to: {recipient}
   timestamp: {timestamp}
 ---
-
-Role template: {templates_dir}/{recipient}.md
+Role: {templates_dir}/{recipient}.md | Protocol: {session_dir}/RULES.md
 
 You can only talk to: {can_talk_to}
 
 # Content
 
-
-## Reply
-
-Protocol reference: {session_dir}/RULES.md
 """
 
 # Edge violation warning template (Issue #92)
