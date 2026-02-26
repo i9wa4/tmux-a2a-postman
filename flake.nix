@@ -55,7 +55,7 @@
           pname = "tmux-a2a-postman";
           inherit version;
           src = ./.;
-          vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
+          vendorHash = null; # NOTE: placeholder — update after running nix build to get correct hash
           ldflags = [
             "-s"
             "-w"
@@ -68,7 +68,7 @@
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_26
               gopls
               golangci-lint
             ];
@@ -78,14 +78,14 @@
           };
           ci = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_26
               golangci-lint
               govulncheck
             ];
           };
           cd = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_26
               goreleaser
             ];
           };
