@@ -1,8 +1,6 @@
 module github.com/i9wa4/tmux-a2a-postman
 
-go 1.26.0
-
-toolchain go1.26.0
+go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0

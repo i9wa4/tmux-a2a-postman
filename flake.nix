@@ -56,7 +56,7 @@
           inherit version;
           src = ./.;
           vendorHash = null; # NOTE: placeholder — update after running nix build to get correct hash
-          go = pkgs.go_1_26;
+          go = pkgs.go_1_25;
           ldflags = [
             "-s"
             "-w"
@@ -69,7 +69,7 @@
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_26
+              go_1_25
               gopls
               golangci-lint
             ];
@@ -79,14 +79,14 @@
           };
           ci = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_26
+              go_1_25
               golangci-lint
               govulncheck
             ];
           };
           cd = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_26
+              go_1_25
               goreleaser
             ];
           };
