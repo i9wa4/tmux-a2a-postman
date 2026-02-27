@@ -163,6 +163,43 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_LayoutToggle(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	m := InitialModel(ch, nil, config.DefaultConfig())
+	if m.layoutMode {
+		t.Error("initial layoutMode should be false")
+	}
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newModel.(Model)
+	if !m.layoutMode {
+		t.Error("layoutMode should be true after 'l' key")
+	}
+	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = newModel.(Model)
+	if m.layoutMode {
+		t.Error("layoutMode should be false after second 'l' key")
+	}
+}
+
+func TestTUI_View_VerticalLayout(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	m := InitialModel(ch, nil, config.DefaultConfig())
+	m.layoutMode = true
+	m.sessions = []SessionInfo{
+		{Name: "session-a", Enabled: true},
+		{Name: "session-b", Enabled: true},
+	}
+	view := m.View()
+	if !strings.Contains(view, "session-a") {
+		t.Error("vertical layout missing session-a")
+	}
+	if !strings.Contains(view, "session-b") {
+		t.Error("vertical layout missing session-b")
+	}
+}
+
 func TestTUI_MessageTruncation(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

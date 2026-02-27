@@ -169,6 +169,7 @@ type Model struct {
 	lastEvent    string
 	lastKey      string
 	quitting     bool
+	layoutMode   bool // Issue #127: false = horizontal (default), true = vertical stacking
 
 	// Config reference (for node state thresholds)
 	config *config.Config
@@ -320,6 +321,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		nodeCount:       0,
 		lastEvent:       "",
 		quitting:        false,
+		layoutMode:      false, // Issue #127: default horizontal layout
 	}
 }
 
@@ -437,6 +439,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			return m, nil
+		case "l":
+			// Issue #127: Toggle layout mode
+			m.layoutMode = !m.layoutMode
 			return m, nil
 		}
 
@@ -703,37 +709,44 @@ func (m Model) View() string {
 	rightPaneWidth := totalWidth - leftPaneWidth - 1
 	contentHeight := m.height - 5 // Account for border + padding + header line
 
-	// Render left and right panes
-	leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
-	rightPane := m.renderRightPane(rightPaneWidth, contentHeight)
-
-	// Create vertical separator with exact height
-	// NOTE: lipgloss.JoinHorizontal requires all inputs to have the same line count.
-	// Use lipgloss.Place to ensure separator matches contentHeight exactly.
-	separator := lipgloss.Place(
-		1,             // width: 1 character
-		contentHeight, // height: match content
-		lipgloss.Left, // horizontal alignment
-		lipgloss.Top,  // vertical alignment
-		strings.Repeat("│\n", contentHeight-1)+"│", // contentHeight lines without trailing newline
-	)
-
-	// Ensure leftPane and rightPane are exact height using lipgloss.PlaceVertical
-	leftPaneStyled := lipgloss.NewStyle().
-		Width(leftPaneWidth).
-		Height(contentHeight).
-		Render(leftPane)
-	rightPaneStyled := lipgloss.NewStyle().
-		Width(rightPaneWidth).
-		Height(contentHeight).
-		Render(rightPane)
-
-	// Horizontal split using lipgloss with separator
-	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
-
-	// Header line: application title + version
+	// Header line: application title + version (Issue #149)
 	headerLine := lipgloss.NewStyle().Width(m.width - 4).Render("tmux-a2a-postman " + version.Version)
-	content := lipgloss.JoinVertical(lipgloss.Top, headerLine, splitView)
+
+	// Issue #127: Branch on layout mode
+	var mainContent string
+	if m.layoutMode {
+		mainContent = m.renderVerticalLayout(m.width-4, contentHeight)
+	} else {
+		// Render left and right panes
+		leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
+		rightPane := m.renderRightPane(rightPaneWidth, contentHeight)
+
+		// Create vertical separator with exact height
+		// NOTE: lipgloss.JoinHorizontal requires all inputs to have the same line count.
+		// Use lipgloss.Place to ensure separator matches contentHeight exactly.
+		separator := lipgloss.Place(
+			1,             // width: 1 character
+			contentHeight, // height: match content
+			lipgloss.Left, // horizontal alignment
+			lipgloss.Top,  // vertical alignment
+			strings.Repeat("│\n", contentHeight-1)+"│", // contentHeight lines without trailing newline
+		)
+
+		// Ensure leftPane and rightPane are exact height using lipgloss.PlaceVertical
+		leftPaneStyled := lipgloss.NewStyle().
+			Width(leftPaneWidth).
+			Height(contentHeight).
+			Render(leftPane)
+		rightPaneStyled := lipgloss.NewStyle().
+			Width(rightPaneWidth).
+			Height(contentHeight).
+			Render(rightPane)
+
+		// Horizontal split using lipgloss with separator
+		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Top, headerLine, mainContent)
 
 	// Apply border (Issue #35)
 	// Issue #59: Dynamic border color based on selection
@@ -818,7 +831,7 @@ func (m Model) renderLeftPane(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: session on/off] [p: ping]\n")
+	b.WriteString("[space: session on/off] [p: ping] [l: layout]\n")
 
 	return b.String()
 }
@@ -853,6 +866,90 @@ func (m Model) renderRightPane(width, height int) string {
 		b.WriteString(m.renderRoutingView(width, height-7))
 	}
 
+	return b.String()
+}
+
+// renderVerticalLayout renders all sessions stacked vertically.
+// Issue #127: Vertical layout mode — one panel per session.
+func (m Model) renderVerticalLayout(width, height int) string {
+	nSessions := len(m.sessions)
+	if nSessions < 1 {
+		nSessions = 1
+	}
+	panelHeight := (height - 1) / nSessions // reserves 1 line for footer
+
+	if panelHeight < 3 {
+		return warningStyle.Render("⚠️  Terminal too small for vertical layout (need ≥3 lines per session)")
+	}
+
+	contentLines := panelHeight - 2
+	var b strings.Builder
+
+	for i, sess := range m.sessions {
+		// Header: emoji + name + worst state
+		statusEmoji := "⚫"
+		if sess.Enabled {
+			statusEmoji = "🟢"
+		}
+		worstState := m.getSessionWorstState(sess.Name)
+		b.WriteString(fmt.Sprintf("%s %s [%s]\n", statusEmoji, sess.Name, worstState))
+
+		// Content: per-session events or routing (inline, not via shared helpers)
+		switch m.currentView {
+		case ViewEvents:
+			var filtered []EventEntry
+			for _, ev := range m.events {
+				if ev.SessionName == sess.Name {
+					filtered = append(filtered, ev)
+				}
+			}
+			if len(filtered) == 0 {
+				b.WriteString("  (no events)\n")
+			} else {
+				start := len(filtered) - contentLines
+				if start < 0 {
+					start = 0
+				}
+				for _, ev := range filtered[start:] {
+					b.WriteString(fmt.Sprintf("  - %s\n", truncateString(ev.Message, width-4)))
+				}
+			}
+		case ViewRouting:
+			nodesInSession := m.sessionNodes[sess.Name]
+			nodeSet := make(map[string]bool)
+			for _, n := range nodesInSession {
+				nodeSet[n] = true
+			}
+			var filtered []Edge
+			for _, edge := range m.edges {
+				nodes := ParseEdgeNodes(edge.Raw)
+				for _, n := range nodes {
+					if nodeSet[n] {
+						filtered = append(filtered, edge)
+						break
+					}
+				}
+			}
+			if len(filtered) == 0 {
+				b.WriteString("  (no edges)\n")
+			} else {
+				count := contentLines
+				if count > len(filtered) {
+					count = len(filtered)
+				}
+				for _, edge := range filtered[:count] {
+					b.WriteString(fmt.Sprintf("  %s\n", truncateString(edge.Raw, width-4)))
+				}
+			}
+		}
+
+		// Separator between panels (omit after last)
+		if i < len(m.sessions)-1 {
+			b.WriteString(strings.Repeat("─", width) + "\n")
+		}
+	}
+
+	b.WriteString("[q: quit] [1/2: view] [l: layout]")
 	return b.String()
 }
 
