@@ -224,23 +224,6 @@ func TestBuildNotification_PongActiveFiltering(t *testing.T) {
 	}
 }
 
-func TestExtractTimestamp(t *testing.T) {
-	tests := []struct {
-		filename string
-		want     string
-	}{
-		{"20260204-120000-from-orchestrator-to-worker.md", "20260204-120000"},
-		{"/path/to/20260204-120000-from-orchestrator-to-worker.md", "20260204-120000"},
-		{"invalid.md", ""},
-	}
-
-	for _, tt := range tests {
-		got := extractTimestamp(tt.filename)
-		if got != tt.want {
-			t.Errorf("extractTimestamp(%q) = %q, want %q", tt.filename, got, tt.want)
-		}
-	}
-}
 
 func TestSanitizeForTmux(t *testing.T) {
 	tests := []struct {

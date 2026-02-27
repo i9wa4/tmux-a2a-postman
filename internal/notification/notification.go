@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,17 +19,6 @@ import (
 // sourceSessionName is the session name where the message originated.
 func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, pongActiveNodes map[string]bool) string {
 	return envelope.BuildEnvelope(cfg, cfg.NotificationTemplate, recipient, sender, contextID, "", filename, nil, adjacency, nodes, sourceSessionName, pongActiveNodes)
-}
-
-// extractTimestamp extracts timestamp from filename.
-// Format: YYYYMMDD-HHMMSS-from-...
-func extractTimestamp(filename string) string {
-	base := filepath.Base(filename)
-	parts := strings.SplitN(base, "-", 3)
-	if len(parts) >= 2 {
-		return parts[0] + "-" + parts[1]
-	}
-	return ""
 }
 
 // SendToPane sends a message to a tmux pane using set-buffer + paste-buffer.

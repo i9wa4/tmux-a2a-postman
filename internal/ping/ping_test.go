@@ -30,7 +30,7 @@ func TestSendPingToNode_MaterializedPath(t *testing.T) {
 
 	// Use a template with {template} at the end to simulate the vulnerable case
 	tmpl := "header line\n{template}"
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestSendPingToNode_InboxPath(t *testing.T) {
 
 	// Template includes {inbox_path} to verify it is expanded
 	tmpl := "node: {node}\ninbox: {inbox_path}"
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -126,7 +126,7 @@ func TestSendPingToNode_SentinelObfuscation(t *testing.T) {
 	// Ping template wraps with both protocol sentinels.
 	tmpl := "<!-- message start -->\n{template}\n<!-- end of message -->\n"
 
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestSendPingToNode(t *testing.T) {
 
 	activeNodes := []string{"worker", "orchestrator"}
 	pongActiveNodes := map[string]bool{} // Empty for this test (PING time)
-	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, pongActiveNodes, map[string][]string{}, map[string]discovery.NodeInfo{}, "")
+	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, pongActiveNodes, map[string][]string{}, map[string]discovery.NodeInfo{})
 	if err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}

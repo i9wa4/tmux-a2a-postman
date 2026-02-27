@@ -26,9 +26,13 @@ func ExtractSimpleName(fullName string) string {
 
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
-func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, sourceSessionName string) error {
+func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
 	// Extract simple name for filename and config lookups (Issue #33)
 	simpleName := ExtractSimpleName(nodeName)
+
+	// Derive sourceSessionName from nodeInfo.SessionName so each target node
+	// resolves its own session correctly (fixes multi-session regression).
+	sourceSessionName := nodeInfo.SessionName
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
@@ -78,19 +82,9 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config, idleTracker *i
 		adjacency = map[string][]string{}
 	}
 
-	// Extract source session name from any discovered node
-	sourceSessionName := ""
-	for k := range nodes {
-		parts := strings.SplitN(k, ":", 2)
-		if len(parts) == 2 {
-			sourceSessionName = parts[0]
-			break
-		}
-	}
-
 	// Send PING to each node using their actual SessionDir
 	for nodeName, nodeInfo := range nodes {
-		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.MessageTemplate, cfg, activeNodes, pongActiveNodes, adjacency, nodes, sourceSessionName); err != nil {
+		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.MessageTemplate, cfg, activeNodes, pongActiveNodes, adjacency, nodes); err != nil {
 			log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
 			// Issue #36: Use log package (outputs to file in TUI mode, stderr in --no-tui mode)
