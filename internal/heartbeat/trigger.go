@@ -58,7 +58,6 @@ func SendHeartbeatTrigger(
 				log.Printf("heartbeat: failed to recycle stale trigger %s: %v", filePath, err)
 				return fmt.Errorf("heartbeat: recycling stale trigger: %w", err)
 			}
-			log.Printf("heartbeat: recycled stale trigger %s (age %v > TTL %v)", entry.Name(), age.Round(time.Second), ttl)
 		} else {
 			unread++
 		}
@@ -84,6 +83,5 @@ func SendHeartbeatTrigger(
 		log.Printf("heartbeat: failed to write trigger %s: %v", filePath, err)
 		return fmt.Errorf("heartbeat: writing trigger: %w", err)
 	}
-	log.Printf("heartbeat: trigger written: %s", filename)
 	return nil
 }

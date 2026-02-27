@@ -357,6 +357,9 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 	}
 }
 
+// NOTE: sendIdleReminder bypasses BuildEnvelope/message_template. Writes hardcoded YAML
+// format directly to inbox. Intentional: idle reminders are a separate notification layer
+// exempt from sentinel protocol. Phase 2 migration tracked separately.
 // sendIdleReminder sends an idle reminder message to the specified node.
 // Issue #82: Use configurable template for header.
 func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, sessionDir string) error {

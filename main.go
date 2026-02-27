@@ -178,7 +178,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	defer func() {
 		// Issue #57: Ensure logs are flushed before exit
-		log.Println("postman: flushing logs and shutting down")
 		_ = logFile.Sync()
 		_ = logFile.Close()
 	}()
@@ -435,7 +434,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			for {
 				select {
 				case <-ctx.Done():
-					log.Println("postman: TUI command handler stopped")
 					return
 				case cmd := <-tuiCommands:
 					// Issue #47: Handle TUI commands
@@ -567,7 +565,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		})
 
 		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands, cfg))
-		log.Println("postman: TUI starting")
 		finalModel, err := p.Run()
 		if err != nil {
 			log.Printf("postman: TUI exited with error: %v\n", err)
@@ -575,9 +572,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 		// Issue #57: Log TUI exit reason
 		if model, ok := finalModel.(tui.Model); ok {
-			if model.Quitting() {
-				log.Println("postman: TUI exited normally (user quit)")
-			} else {
+			if !model.Quitting() {
 				log.Println("postman: TUI exited (unexpected termination)")
 			}
 		} else {
@@ -1047,13 +1042,11 @@ func runWatchdog(contextID, configPath, logFilePath string) error {
 				// On failure: log and continue — never suppress the idle alert.
 				if cfg.Watchdog.Capture.Enabled {
 					captureDir := filepath.Join(sessionDir, "capture")
-					capturePath, err := watchdog.CapturePane(activity.PaneID, captureDir, cfg.Watchdog.Capture.TailLines)
+					_, err := watchdog.CapturePane(activity.PaneID, captureDir, cfg.Watchdog.Capture.TailLines)
 					if err != nil {
 						log.Printf("watchdog: capture failed for %s: %v\n", activity.PaneID, err)
 						// Capture failure does not suppress the reminder — fall through.
 					} else {
-						log.Printf("watchdog: captured %s -> %s\n", activity.PaneID, capturePath)
-
 						// Rotate captures
 						if err := watchdog.RotateCaptures(captureDir, cfg.Watchdog.Capture.MaxFiles, int64(cfg.Watchdog.Capture.MaxBytes)); err != nil {
 							log.Printf("watchdog: rotation failed: %v\n", err)

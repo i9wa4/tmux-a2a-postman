@@ -146,7 +146,6 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if err := os.Rename(postPath, dst); err != nil {
 			return fmt.Errorf("moving PONG to read: %w", err)
 		}
-		log.Printf("postman: PONG received from %s\n", info.From)
 		return nil
 	}
 

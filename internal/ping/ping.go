@@ -2,7 +2,6 @@ package ping
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
-	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 )
 
 // ExtractSimpleName extracts the simple node name from a session-prefixed name.
@@ -53,42 +51,4 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	}
 
 	return nil
-}
-
-// SendPingToAll sends PING messages to all discovered nodes.
-func SendPingToAll(baseDir, contextID string, cfg *config.Config, idleTracker *idle.IdleTracker) {
-	log.Println("📮 postman: SendPingToAll starting...")
-
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ postman: discovery failed: %v\n", err)
-		return
-	}
-	log.Printf("📮 postman: discovered %d nodes for PING\n", len(nodes))
-
-	// Build active nodes list (use simple names for display - Issue #33)
-	activeNodes := make([]string, 0, len(nodes))
-	for nodeName := range nodes {
-		simpleName := ExtractSimpleName(nodeName)
-		activeNodes = append(activeNodes, simpleName)
-	}
-
-	// Issue #84: Get PONG-active nodes for talks_to_line filtering
-	pongActiveNodes := idleTracker.GetPongActiveNodes()
-
-	// Compute adjacency from config edges
-	adjacency, err := config.ParseEdges(cfg.Edges)
-	if err != nil {
-		adjacency = map[string][]string{}
-	}
-
-	// Send PING to each node using their actual SessionDir
-	for nodeName, nodeInfo := range nodes {
-		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.MessageTemplate, cfg, activeNodes, pongActiveNodes, adjacency, nodes); err != nil {
-			log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
-		} else {
-			// Issue #36: Use log package (outputs to file in TUI mode, stderr in --no-tui mode)
-			log.Printf("📮 postman: PING sent to %s\n", nodeName)
-		}
-	}
 }

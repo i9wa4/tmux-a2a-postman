@@ -278,13 +278,11 @@ func RunDaemonLoop(
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("postman: daemon loop received shutdown signal")
 			// Issue #57: Send channel_closed to trigger TUI exit
 			events <- tui.DaemonEvent{
 				Type:    "channel_closed",
 				Message: "Shutting down",
 			}
-			log.Println("postman: daemon loop stopped")
 			return
 		case event, ok := <-watcher.Events:
 			if !ok {
