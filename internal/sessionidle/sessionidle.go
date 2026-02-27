@@ -1,6 +1,7 @@
 package sessionidle
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -50,6 +51,7 @@ func hashContent(content string) string {
 // GetPaneActivities retrieves activity information for all tmux panes.
 // Issue #31: Uses capture-pane content diff instead of #{pane_activity}.
 // This prevents false positives when users cycle through windows (which resets #{pane_activity}).
+// NOTE: caller must hold s.mu — accesses paneContentHash without acquiring lock.
 func (s *SessionIdleState) GetPaneActivities() ([]PaneActivity, error) {
 	// Get list of all pane IDs
 	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
@@ -270,22 +272,26 @@ func SendWatchdogAlert(
 }
 
 // StartSessionIdleCheck starts a goroutine that periodically checks for idle sessions.
-// Returns a channel that can be closed to stop the check.
+// Returns a done channel that is closed when the goroutine exits.
 func StartSessionIdleCheck(
+	ctx context.Context,
 	baseDir string,
 	contextID string,
 	sessionDir string,
 	cfg *config.Config,
 	adjacency map[string][]string,
 	checkIntervalSeconds float64,
-) chan<- struct{} {
-	stopChan := make(chan struct{})
+) <-chan struct{} {
+	done := make(chan struct{})
 	state := NewSessionIdleState()
 
+	if checkIntervalSeconds <= 0 || cfg.Watchdog.IdleThresholdSeconds <= 0 {
+		close(done)
+		return done // Session idle detection disabled
+	}
+
 	go func() {
-		if checkIntervalSeconds <= 0 || cfg.Watchdog.IdleThresholdSeconds <= 0 {
-			return // Session idle detection disabled
-		}
+		defer close(done)
 
 		interval := time.Duration(checkIntervalSeconds * float64(time.Second))
 		ticker := time.NewTicker(interval)
@@ -293,7 +299,7 @@ func StartSessionIdleCheck(
 
 		for {
 			select {
-			case <-stopChan:
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				// Discover nodes
@@ -324,5 +330,5 @@ func StartSessionIdleCheck(
 		}
 	}()
 
-	return stopChan
+	return done
 }

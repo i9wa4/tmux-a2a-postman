@@ -1,6 +1,7 @@
 package sessionidle
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,6 +172,21 @@ func TestCheckSessionIdle_CooldownActive(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected no idle sessions (cooldown active), got %v", got)
+	}
+}
+
+func TestStartSessionIdleCheck_ContextCancellation(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Watchdog.IdleThresholdSeconds = 30.0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := StartSessionIdleCheck(ctx, t.TempDir(), "ctx-test", t.TempDir(), cfg, map[string][]string{}, 30.0)
+	cancel()
+	select {
+	case <-done:
+		// goroutine exited — pass
+	case <-time.After(500 * time.Millisecond):
+		t.Error("goroutine did not exit after context cancellation")
 	}
 }
 

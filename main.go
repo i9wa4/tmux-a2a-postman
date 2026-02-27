@@ -367,7 +367,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID)
 
 	// Start session-level idle check goroutine
-	sessionidle.StartSessionIdleCheck(baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
+	_ = sessionidle.StartSessionIdleCheck(ctx, baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
 
 	// Start compaction detection goroutine
 	compactionTracker.StartCompactionCheck(ctx, cfg, nodes, sessionDir)
