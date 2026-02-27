@@ -105,12 +105,13 @@ reminder_message = "{inbox_path}"
 # Notification template (when new message arrives)
 notification_template = "{inbox_path}/{filename}"
 
-# Ping message template
-ping_template = """---
+# Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
+# Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
+message_template = """---
 method: message/send
 params:
   contextId: {context_id}
-  taskId: {timestamp}-ping
+  taskId: {task_id}
   from: postman
   to: {node}
   timestamp: {iso_timestamp}

@@ -126,6 +126,8 @@ Key config options:
 | Key                          | Default | Description                                    |
 | ---------------------------- | ------- | ---------------------------------------------- |
 | `edges`                      | `[]`    | Bidirectional routing edges (`"A -- B"`)       |
+| `message_template`           | (yaml)  | Envelope written to inbox for daemon-sent messages (PING) |
+| `notification_template`      | (path)  | Pane hint sent when new message arrives (default: file path only) |
 | `ping_mode`                  | `"all"` | `"all"`, `"ui_node_only"`, `"disabled"`         |
 | `auto_enable_new_sessions`   | `false` | See Session Management                         |
 | `auto_enable_new_agents`     | `true`  | See Session Management                         |

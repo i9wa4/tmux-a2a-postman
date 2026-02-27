@@ -523,9 +523,13 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						successCount := 0
 						failCount := 0
 						pongActiveNodes := idleTracker.GetPongActiveNodes()
+						pingAdjacency, _ := config.ParseEdges(cfg.Edges)
+						if pingAdjacency == nil {
+							pingAdjacency = map[string][]string{}
+						}
 						for nodeName, nodeInfo := range targetNodes {
 							if err := ping.SendPingToNode(nodeInfo, contextID, nodeName,
-								cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
+								cfg.MessageTemplate, cfg, activeNodes, pongActiveNodes, pingAdjacency, freshNodes, cmd.Target); err != nil {
 								log.Printf("\u274c postman: PING to %s failed: %v\n", nodeName, err)
 								failCount++
 								daemonEvents <- tui.DaemonEvent{

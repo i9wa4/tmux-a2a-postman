@@ -49,7 +49,7 @@ type Config struct {
 
 	// Message templates
 	NotificationTemplate         string `toml:"notification_template"`
-	PingTemplate                 string `toml:"ping_template"`
+	MessageTemplate              string `toml:"message_template"`
 	DraftTemplate                string `toml:"draft_template"`
 	ReminderMessage              string `toml:"reminder_message"`
 	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
@@ -178,7 +178,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:        300.0,
 		BaseDir:                      "",
 		NotificationTemplate:         "Message from {from_node}",
-		PingTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {timestamp}-ping\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n{template}\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nProtocol reference: {session_dir}/RULES.md\n",
+		MessageTemplate:              "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n{template}\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n\n## Reply\n\nProtocol reference: {session_dir}/RULES.md\n",
 		DraftTemplate:                "",
 		ReminderMessage:              "",
 		ReplyCommand:                 "",
@@ -413,8 +413,8 @@ func mergeConfig(base, override *Config) {
 	if override.NotificationTemplate != "" {
 		base.NotificationTemplate = override.NotificationTemplate
 	}
-	if override.PingTemplate != "" {
-		base.PingTemplate = override.PingTemplate
+	if override.MessageTemplate != "" {
+		base.MessageTemplate = override.MessageTemplate
 	}
 	if override.DraftTemplate != "" {
 		base.DraftTemplate = override.DraftTemplate

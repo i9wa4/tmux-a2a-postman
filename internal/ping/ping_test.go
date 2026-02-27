@@ -5,57 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
-
-func TestBuildPingMessage(t *testing.T) {
-	tests := []struct {
-		name     string
-		template string
-		vars     map[string]string
-		timeout  time.Duration
-		want     string
-	}{
-		{
-			name:     "basic variable expansion",
-			template: "PING {node} in {context_id}",
-			vars: map[string]string{
-				"node":       "worker",
-				"context_id": "test-ctx",
-			},
-			timeout: 5 * time.Second,
-			want:    "PING worker in test-ctx",
-		},
-		{
-			name:     "no variables",
-			template: "PING message",
-			vars:     map[string]string{},
-			timeout:  5 * time.Second,
-			want:     "PING message",
-		},
-		{
-			name:     "missing variable",
-			template: "PING {node} in {missing}",
-			vars: map[string]string{
-				"node": "worker",
-			},
-			timeout: 5 * time.Second,
-			want:    "PING worker in {missing}",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := BuildPingMessage(tt.template, tt.vars, tt.timeout)
-			if got != tt.want {
-				t.Errorf("BuildPingMessage() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestSendPingToNode_MaterializedPath(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -77,7 +30,7 @@ func TestSendPingToNode_MaterializedPath(t *testing.T) {
 
 	// Use a template with {template} at the end to simulate the vulnerable case
 	tmpl := "header line\n{template}"
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -121,7 +74,7 @@ func TestSendPingToNode_InboxPath(t *testing.T) {
 
 	// Template includes {inbox_path} to verify it is expanded
 	tmpl := "node: {node}\ninbox: {inbox_path}"
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -173,7 +126,7 @@ func TestSendPingToNode_SentinelObfuscation(t *testing.T) {
 	// Ping template wraps with both protocol sentinels.
 	tmpl := "<!-- message start -->\n{template}\n<!-- end of message -->\n"
 
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, ""); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -220,7 +173,7 @@ func TestSendPingToNode(t *testing.T) {
 
 	activeNodes := []string{"worker", "orchestrator"}
 	pongActiveNodes := map[string]bool{} // Empty for this test (PING time)
-	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, pongActiveNodes)
+	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, pongActiveNodes, map[string][]string{}, map[string]discovery.NodeInfo{}, "")
 	if err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}

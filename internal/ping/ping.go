@@ -10,8 +10,8 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
-	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // ExtractSimpleName extracts the simple node name from a session-prefixed name.
@@ -24,71 +24,19 @@ func ExtractSimpleName(fullName string) string {
 	return fullName
 }
 
-// BuildPingMessage constructs a PING message using the template.
-func BuildPingMessage(tmpl string, vars map[string]string, timeout time.Duration) string {
-	return template.ExpandTemplate(tmpl, vars, timeout)
-}
-
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
-func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool) error {
+func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, sourceSessionName string) error {
 	// Extract simple name for filename and config lookups (Issue #33)
 	simpleName := ExtractSimpleName(nodeName)
 
-	// Get node config for template (use simple name)
-	_, hasNodeConfig := cfg.Nodes[simpleName]
-	nodeTemplate := ""
-	if matPath, ok := cfg.MaterializedPaths[simpleName]; ok {
-		// Issue #134: Template materialized as file; reference by path. CommonTemplate excluded per spec.
-		// Label added so agents can identify the file purpose without @-prefix (which triggers autocomplete).
-		nodeTemplate = "Role template: " + matPath + "\n"
-	} else {
-		if hasNodeConfig {
-			nodeTemplate = cfg.Nodes[simpleName].Template
-		}
-		// Issue #49: Prepend common_template if present
-		if cfg.CommonTemplate != "" {
-			if nodeTemplate != "" {
-				nodeTemplate = cfg.CommonTemplate + "\n\n" + nodeTemplate
-			} else {
-				nodeTemplate = cfg.CommonTemplate
-			}
-		}
-	}
-
-	// Obfuscate end-of-message sentinel in inline template content (user-configured)
-	// to prevent false protocol termination. Path references are unaffected (no sentinel in file paths).
-	nodeTemplate = strings.ReplaceAll(nodeTemplate, "<!-- end of message -->", "<!-- end of msg -->")
-
-	// Build talks_to_line from adjacency (edges) - use simple name
-	talksToLine := buildTalksToLine(simpleName, cfg, pongActiveNodes)
-
-	// Build reply command (use simple name for backward compatibility)
-	replyCmd := strings.ReplaceAll(cfg.ReplyCommand, "{node}", simpleName)
-	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
-
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-
-	vars := map[string]string{
-		"context_id":    contextID,
-		"node":          simpleName, // Use simple name in template vars
-		"timestamp":     ts,
-		"iso_timestamp": now.Format(time.RFC3339),
-		"from_node":     "postman",
-		"template":      nodeTemplate,
-		"talks_to_line": talksToLine,
-		"active_nodes":  strings.Join(activeNodes, ", "),
-		"reply_command": replyCmd,
-		"session_dir":   nodeInfo.SessionDir,
-		"inbox_path":    filepath.Join(nodeInfo.SessionDir, "inbox", simpleName),
-	}
-	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	content := BuildPingMessage(tmpl, vars, timeout)
-
-	// Use simple name in filename (Issue #33: keep filenames simple)
+	taskID := ts + "-ping"
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, simpleName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
+
+	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, pongActiveNodes)
 
 	// Ensure post directory exists for this node's session
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
@@ -124,43 +72,29 @@ func SendPingToAll(baseDir, contextID string, cfg *config.Config, idleTracker *i
 	// Issue #84: Get PONG-active nodes for talks_to_line filtering
 	pongActiveNodes := idleTracker.GetPongActiveNodes()
 
+	// Compute adjacency from config edges
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		adjacency = map[string][]string{}
+	}
+
+	// Extract source session name from any discovered node
+	sourceSessionName := ""
+	for k := range nodes {
+		parts := strings.SplitN(k, ":", 2)
+		if len(parts) == 2 {
+			sourceSessionName = parts[0]
+			break
+		}
+	}
+
 	// Send PING to each node using their actual SessionDir
 	for nodeName, nodeInfo := range nodes {
-		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.PingTemplate, cfg, activeNodes, pongActiveNodes); err != nil {
+		if err := SendPingToNode(nodeInfo, contextID, nodeName, cfg.MessageTemplate, cfg, activeNodes, pongActiveNodes, adjacency, nodes, sourceSessionName); err != nil {
 			log.Printf("❌ postman: PING to %s failed: %v\n", nodeName, err)
 		} else {
 			// Issue #36: Use log package (outputs to file in TUI mode, stderr in --no-tui mode)
 			log.Printf("📮 postman: PING sent to %s\n", nodeName)
 		}
 	}
-}
-
-// buildTalksToLine builds the "Can talk to:" line from edges config.
-func buildTalksToLine(nodeName string, cfg *config.Config, pongActiveNodes map[string]bool) string {
-	adjacency, err := config.ParseEdges(cfg.Edges)
-	if err != nil {
-		return ""
-	}
-	if neighbors, ok := adjacency[nodeName]; ok && len(neighbors) > 0 {
-		// Issue #84: Filter by PONG-active status
-		var active []string
-		for _, n := range neighbors {
-			// NOTE: Neighbors are simple names. For PONG lookup, check all session prefixes.
-			found := false
-			for key := range pongActiveNodes {
-				parts := strings.SplitN(key, ":", 2)
-				if len(parts) == 2 && parts[1] == n {
-					found = true
-					break
-				}
-			}
-			if found {
-				active = append(active, n)
-			}
-		}
-		if len(active) > 0 {
-			return fmt.Sprintf("Can talk to: %s", strings.Join(active, ", "))
-		}
-	}
-	return ""
 }
