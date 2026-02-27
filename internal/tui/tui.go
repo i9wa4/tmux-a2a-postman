@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
 // Issue #101: Event severity constants (observer review feedback - MINOR)
@@ -700,7 +701,7 @@ func (m Model) View() string {
 	totalWidth := m.width - 4 // Account for border + padding
 	leftPaneWidth := 25       // Fixed width for sessions list
 	rightPaneWidth := totalWidth - leftPaneWidth - 1
-	contentHeight := m.height - 4 // Account for border + padding
+	contentHeight := m.height - 5 // Account for border + padding + header line
 
 	// Render left and right panes
 	leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
@@ -730,12 +731,16 @@ func (m Model) View() string {
 	// Horizontal split using lipgloss with separator
 	splitView := lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
 
+	// Header line: application title + version
+	headerLine := lipgloss.NewStyle().Width(m.width - 4).Render("tmux-a2a-postman " + version.Version)
+	content := lipgloss.JoinVertical(lipgloss.Top, headerLine, splitView)
+
 	// Apply border (Issue #35)
 	// Issue #59: Dynamic border color based on selection
 	localBorderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(m.getSelectedBorderColor()))
-	return localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(splitView)
+	return localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(content)
 }
 
 // renderLeftPane renders the left pane (Sessions list).

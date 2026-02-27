@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
 func TestTUI_InitialModel(t *testing.T) {
@@ -149,6 +150,16 @@ func TestTUI_View_Quitting(t *testing.T) {
 
 	if !strings.Contains(view, "Shutting down") {
 		t.Error("quitting view missing shutdown message")
+	}
+}
+
+func TestTUI_View_ShowsVersion(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	m := InitialModel(ch, nil, config.DefaultConfig())
+	view := m.View()
+	if !strings.Contains(view, "tmux-a2a-postman "+version.Version) {
+		t.Errorf("view missing title+version: want %q in view", "tmux-a2a-postman "+version.Version)
 	}
 }
 
