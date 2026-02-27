@@ -352,6 +352,63 @@ func TestPONG_Handling(t *testing.T) {
 	}
 }
 
+func TestScanInboxMessages(t *testing.T) {
+	t.Run("valid messages returned", func(t *testing.T) {
+		dir := t.TempDir()
+		filename := "20260201-030000-from-orchestrator-to-worker.md"
+		if err := os.WriteFile(filepath.Join(dir, filename), []byte("content"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		msgs := ScanInboxMessages(dir)
+		if len(msgs) != 1 {
+			t.Fatalf("expected 1 message, got %d", len(msgs))
+		}
+		if msgs[0].From != "orchestrator" || msgs[0].To != "worker" {
+			t.Errorf("unexpected message fields: %+v", msgs[0])
+		}
+	})
+
+	t.Run("non-md file skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "20260201-030000-from-a-to-b.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		msgs := ScanInboxMessages(dir)
+		if len(msgs) != 0 {
+			t.Errorf("expected 0 messages for non-.md file, got %d", len(msgs))
+		}
+	})
+
+	t.Run("invalid filename skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "not-a-valid-message.md"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		msgs := ScanInboxMessages(dir)
+		if len(msgs) != 0 {
+			t.Errorf("expected 0 messages for invalid filename, got %d", len(msgs))
+		}
+	})
+
+	t.Run("empty directory", func(t *testing.T) {
+		dir := t.TempDir()
+		msgs := ScanInboxMessages(dir)
+		if len(msgs) != 0 {
+			t.Errorf("expected 0 messages for empty dir, got %d", len(msgs))
+		}
+	})
+
+	t.Run("missing directory", func(t *testing.T) {
+		msgs := ScanInboxMessages("/nonexistent/path/that/does/not/exist")
+		if len(msgs) != 0 {
+			t.Errorf("expected 0 messages for missing dir, got %d", len(msgs))
+		}
+	})
+}
+
 // TestPostmanMessage_NoHoldingState verifies that postman → node messages
 // do not cause false "holding" state (Issue #87).
 func TestPostmanMessage_NoHoldingState(t *testing.T) {

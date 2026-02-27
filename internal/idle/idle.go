@@ -185,6 +185,15 @@ func (t *IdleTracker) IsHoldingBall(nodeKey string) bool {
 	return !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent)
 }
 
+// extractSimpleName extracts the simple node name from a session-prefixed key.
+// Returns the part after ":" if present, otherwise returns the key as-is.
+func extractSimpleName(nodeKey string) string {
+	if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+		return parts[1]
+	}
+	return nodeKey
+}
+
 // CheckDroppedBalls detects nodes holding the ball for too long (Issue #56).
 // Returns map of nodeKey -> holding duration for nodes exceeding threshold.
 // NOTE: Uses simple timestamp comparison (same limitation as IsHoldingBall).
@@ -198,11 +207,7 @@ func (t *IdleTracker) CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig
 	now := time.Now()
 
 	for nodeKey, activity := range t.nodeActivity {
-		// Extract simple name for nodeConfigs lookup
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
+		simpleName := extractSimpleName(nodeKey)
 		cfg, exists := nodeConfigs[simpleName]
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
@@ -256,11 +261,7 @@ func (t *IdleTracker) GetCurrentlyDroppedNodes(nodeConfigs map[string]config.Nod
 	now := time.Now()
 
 	for nodeKey, activity := range t.nodeActivity {
-		// Extract simple name for nodeConfigs lookup
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
+		simpleName := extractSimpleName(nodeKey)
 		cfg, exists := nodeConfigs[simpleName]
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
@@ -308,11 +309,7 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 	now := time.Now()
 
 	for nodeKey, activity := range t.nodeActivity {
-		// Extract simple name for nodeConfigs lookup
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
+		simpleName := extractSimpleName(nodeKey)
 		nodeConfig, exists := cfg.Nodes[simpleName]
 		if !exists || nodeConfig.IdleTimeoutSeconds <= 0 {
 			continue

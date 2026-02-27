@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 		}
 
 		contentStr := string(content)
-		if !containsString(contentStr, "Test reminder message") {
+		if !strings.Contains(contentStr, "Test reminder message") {
 			t.Errorf("reminder content missing message, got: %s", contentStr)
 		}
 	}
@@ -258,31 +259,195 @@ func TestSendIdleReminder(t *testing.T) {
 	}
 
 	contentStr := string(content)
-	if !containsString(contentStr, message) {
+	if !strings.Contains(contentStr, message) {
 		t.Errorf("reminder content missing message, got: %s", contentStr)
 	}
 
-	if !containsString(contentStr, "from: postman") {
+	if !strings.Contains(contentStr, "from: postman") {
 		t.Errorf("reminder missing 'from: postman', got: %s", contentStr)
 	}
 
-	if !containsString(contentStr, "## Idle Reminder") {
+	if !strings.Contains(contentStr, "## Idle Reminder") {
 		t.Errorf("reminder missing '## Idle Reminder' header, got: %s", contentStr)
 	}
 }
 
-// Helper function to check if string contains substring
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsSubstring(s, substr))
+func TestIsHoldingBall(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupActivity func(*IdleTracker)
+		nodeKey      string
+		want         bool
+	}{
+		{
+			name:         "node not found",
+			setupActivity: func(_ *IdleTracker) {},
+			nodeKey:      "test-session:worker",
+			want:         false,
+		},
+		{
+			name: "zero LastReceived",
+			setupActivity: func(tr *IdleTracker) {
+				tr.mu.Lock()
+				tr.nodeActivity["test-session:worker"] = NodeActivity{
+					LastSent:     time.Now().Add(-5 * time.Second),
+					LastReceived: time.Time{}, // zero
+				}
+				tr.mu.Unlock()
+			},
+			nodeKey: "test-session:worker",
+			want:    false,
+		},
+		{
+			name: "LastSent after LastReceived",
+			setupActivity: func(tr *IdleTracker) {
+				now := time.Now()
+				tr.mu.Lock()
+				tr.nodeActivity["test-session:worker"] = NodeActivity{
+					LastReceived: now.Add(-10 * time.Second),
+					LastSent:     now.Add(-5 * time.Second), // sent more recently
+				}
+				tr.mu.Unlock()
+			},
+			nodeKey: "test-session:worker",
+			want:    false,
+		},
+		{
+			name: "LastReceived after LastSent",
+			setupActivity: func(tr *IdleTracker) {
+				now := time.Now()
+				tr.mu.Lock()
+				tr.nodeActivity["test-session:worker"] = NodeActivity{
+					LastSent:     now.Add(-10 * time.Second),
+					LastReceived: now.Add(-5 * time.Second), // received more recently
+				}
+				tr.mu.Unlock()
+			},
+			nodeKey: "test-session:worker",
+			want:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracker := NewIdleTracker()
+			tt.setupActivity(tracker)
+			if got := tracker.IsHoldingBall(tt.nodeKey); got != tt.want {
+				t.Errorf("IsHoldingBall(%q) = %v, want %v", tt.nodeKey, got, tt.want)
+			}
+		})
+	}
 }
 
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestGetCurrentlyDroppedNodes(t *testing.T) {
+	nodeConfigs := map[string]config.NodeConfig{
+		"worker": {
+			DroppedBallTimeoutSeconds: 10,
+		},
 	}
-	return false
+
+	t.Run("basic detection", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		tracker.mu.Lock()
+		tracker.nodeActivity["test-session:worker"] = NodeActivity{
+			LastReceived: time.Now().Add(-11 * time.Second),
+			LastSent:     time.Now().Add(-15 * time.Second),
+			PongReceived: true,
+		}
+		tracker.mu.Unlock()
+
+		dropped := tracker.GetCurrentlyDroppedNodes(nodeConfigs)
+		if !dropped["test-session:worker"] {
+			t.Errorf("expected worker in dropped nodes")
+		}
+	})
+
+	t.Run("threshold not exceeded", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		tracker.mu.Lock()
+		tracker.nodeActivity["test-session:worker"] = NodeActivity{
+			LastReceived: time.Now().Add(-5 * time.Second),
+			LastSent:     time.Now().Add(-8 * time.Second),
+			PongReceived: true,
+		}
+		tracker.mu.Unlock()
+
+		dropped := tracker.GetCurrentlyDroppedNodes(nodeConfigs)
+		if len(dropped) != 0 {
+			t.Errorf("expected no dropped nodes (threshold not exceeded), got %v", dropped)
+		}
+	})
+
+	t.Run("no pong received", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		tracker.mu.Lock()
+		tracker.nodeActivity["test-session:worker"] = NodeActivity{
+			LastReceived: time.Now().Add(-11 * time.Second),
+			LastSent:     time.Now().Add(-15 * time.Second),
+			PongReceived: false,
+		}
+		tracker.mu.Unlock()
+
+		dropped := tracker.GetCurrentlyDroppedNodes(nodeConfigs)
+		if len(dropped) != 0 {
+			t.Errorf("expected no dropped nodes (PONG not received), got %v", dropped)
+		}
+	})
+
+	t.Run("disabled node", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		tracker.mu.Lock()
+		tracker.nodeActivity["test-session:worker"] = NodeActivity{
+			LastReceived: time.Now().Add(-11 * time.Second),
+			LastSent:     time.Now().Add(-15 * time.Second),
+			PongReceived: true,
+		}
+		tracker.mu.Unlock()
+
+		disabledConfigs := map[string]config.NodeConfig{
+			"worker": {DroppedBallTimeoutSeconds: 0}, // disabled
+		}
+		dropped := tracker.GetCurrentlyDroppedNodes(disabledConfigs)
+		if len(dropped) != 0 {
+			t.Errorf("expected no dropped nodes (detection disabled), got %v", dropped)
+		}
+	})
+}
+
+func TestMarkDroppedBallNotified(t *testing.T) {
+	t.Run("existing node updated", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		tracker.mu.Lock()
+		tracker.nodeActivity["test-session:worker"] = NodeActivity{}
+		tracker.mu.Unlock()
+
+		before := time.Now()
+		tracker.MarkDroppedBallNotified("test-session:worker")
+
+		tracker.mu.Lock()
+		activity := tracker.nodeActivity["test-session:worker"]
+		tracker.mu.Unlock()
+
+		if activity.LastNotifiedDropped.IsZero() {
+			t.Error("LastNotifiedDropped should be set after MarkDroppedBallNotified")
+		}
+		if activity.LastNotifiedDropped.Before(before) {
+			t.Errorf("LastNotifiedDropped %v is before test start %v", activity.LastNotifiedDropped, before)
+		}
+	})
+
+	t.Run("nonexistent node no-op", func(t *testing.T) {
+		tracker := NewIdleTracker()
+		// Should not panic
+		tracker.MarkDroppedBallNotified("test-session:nonexistent")
+
+		tracker.mu.Lock()
+		_, exists := tracker.nodeActivity["test-session:nonexistent"]
+		tracker.mu.Unlock()
+
+		if exists {
+			t.Error("MarkDroppedBallNotified should not create new entries for nonexistent nodes")
+		}
+	})
 }
 
 // Issue #56: Tests for dropped-ball detection
