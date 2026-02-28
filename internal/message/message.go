@@ -30,39 +30,6 @@ type MessageInfo struct {
 	To        string
 }
 
-// ResolveNodeName resolves a simple node name to a session-prefixed node name.
-// Resolution priority:
-// 1. If nodeName already contains ":", use as-is (already prefixed)
-// 2. Look for nodeName in the same session as sourceSessionName
-// 3. Look for nodeName in any other session
-// Returns the resolved node name or empty string if not found.
-func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) string {
-	// If already prefixed (contains ":"), use as-is
-	if strings.Contains(nodeName, ":") {
-		if _, found := knownNodes[nodeName]; found {
-			return nodeName
-		}
-		return "" // Prefixed but not found
-	}
-
-	// Try same-session first (priority)
-	sameSessionKey := sourceSessionName + ":" + nodeName
-	if _, found := knownNodes[sameSessionKey]; found {
-		return sameSessionKey
-	}
-
-	// Try any other session
-	for fullName := range knownNodes {
-		// Extract node name from "session:node" format
-		parts := strings.SplitN(fullName, ":", 2)
-		if len(parts) == 2 && parts[1] == nodeName {
-			return fullName
-		}
-	}
-
-	return "" // Not found
-}
-
 // ParseMessageFilename parses a message filename in the format:
 // {timestamp}-from-{sender}-to-{recipient}.md
 // Example: 20260201-022121-from-orchestrator-to-worker.md
@@ -150,7 +117,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Resolve recipient name (Issue #33: session-aware adjacency)
-	recipientFullName := ResolveNodeName(info.To, sourceSessionName, knownNodes)
+	recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, knownNodes)
 	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
@@ -167,7 +134,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	paneID := nodeInfo.PaneID
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
-	senderFullName := ResolveNodeName(info.From, sourceSessionName, knownNodes)
+	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)
 	if senderFullName == "" && info.From != "postman" {
 		// Unknown sender: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
@@ -191,7 +158,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			if neighbors, ok := adjacency[senderKey]; ok {
 				for _, neighbor := range neighbors {
 					// Resolve neighbor name to full name
-					neighborFullName := ResolveNodeName(neighbor, sourceSessionName, knownNodes)
+					neighborFullName := discovery.ResolveNodeName(neighbor, sourceSessionName, knownNodes)
 					if neighborFullName == recipientFullName {
 						allowed = true
 						break

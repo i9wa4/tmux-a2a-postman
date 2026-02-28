@@ -35,6 +35,8 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	taskID := ts + "-ping"
+
+	// Use simple name in filename (Issue #33: keep filenames simple)
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, simpleName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 

@@ -666,7 +666,7 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n\n## Reply\n\nProtocol reference: {session_dir}/RULES.md\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nrole: {templates_dir}/{recipient}.md\nprotocol: {session_dir}/RULES.md\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
 
 	// Build can_talk_to from adjacency
@@ -685,6 +685,7 @@ func runCreateDraft(args []string) error {
 		"timestamp":     now.Format(time.RFC3339),
 		"can_talk_to":   canTalkTo,
 		"session_dir":   filepath.Join(baseDir, resolvedContextID, sessionName),
+		"templates_dir": filepath.Join(baseDir, resolvedContextID, "templates"),
 		"reply_command": expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
 		"template":      getNodeTemplate(cfg, *to),
 		// Backward compatibility

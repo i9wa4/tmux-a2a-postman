@@ -36,10 +36,12 @@ func BuildEnvelope(
 	pongActiveNodes map[string]bool,
 ) string {
 	// Role template resolution: MaterializedPaths → Nodes → CommonTemplate prepend.
+	templatePath := ""
 	recipientTemplate := ""
 	if matPath, ok := cfg.MaterializedPaths[recipient]; ok {
 		// Issue #134: Template materialized as file; reference by path. Label added so agents
 		// can identify the file purpose without @-prefix (which triggers autocomplete).
+		templatePath = matPath
 		recipientTemplate = "Role template: " + matPath + "\n"
 	} else {
 		if nodeConfig, ok := cfg.Nodes[recipient]; ok {
@@ -119,6 +121,7 @@ func BuildEnvelope(
 		"reply_command": replyCmd,
 		"session_dir":   sessionDir,
 		"active_nodes":  strings.Join(activeNodes, ", "),
+		"template_path": templatePath,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))

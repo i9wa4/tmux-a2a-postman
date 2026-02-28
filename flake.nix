@@ -2,7 +2,7 @@
   description = "tmux-a2a-postman - File-based communication daemon for tmux panes";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     flake-parts.url = "github:hercules-ci/flake-parts";
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
@@ -64,7 +64,7 @@
           pname = "tmux-a2a-postman";
           inherit version;
           src = ./.;
-          vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
+          vendorHash = "sha256-hobqsnqYUOVTb2cHWvr2wPtx4N2cpK2ciy30jCUyT6E=";
           go = pkgs.go_1_25;
           ldflags = [
             "-s"
@@ -133,12 +133,7 @@
               files = ghWorkflowFiles;
               pass_filenames = false;
             };
-            ghatm = {
-              enable = true;
-              entry = "${pkgs.ghatm}/bin/ghatm set -t 5";
-              files = ghWorkflowFiles;
-              pass_filenames = false;
-            };
+
             pinact = {
               enable = true;
               entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" && exit 0; ${pkgs.pinact}/bin/pinact run'";

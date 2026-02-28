@@ -16,6 +16,54 @@ func TestDiscoverNodes_WithPaneTitle(t *testing.T) {
 	t.Skip("Requires tmux environment with named panes - deferred to integration testing")
 }
 
+// TestResolveNodeName_AlreadyPrefixed verifies that an already-prefixed name is returned as-is
+// when found in knownNodes.
+func TestResolveNodeName_AlreadyPrefixed(t *testing.T) {
+	knownNodes := map[string]NodeInfo{
+		"sess:node": {PaneID: "%1", SessionName: "sess", SessionDir: "/dir"},
+	}
+	got := ResolveNodeName("sess:node", "sess", knownNodes)
+	if got != "sess:node" {
+		t.Errorf("got %q, want %q", got, "sess:node")
+	}
+}
+
+// TestResolveNodeName_SameSessionPriority verifies that same-session match is preferred
+// over cross-session match.
+func TestResolveNodeName_SameSessionPriority(t *testing.T) {
+	knownNodes := map[string]NodeInfo{
+		"sess-a:node": {PaneID: "%1", SessionName: "sess-a", SessionDir: "/dir-a"},
+		"sess-b:node": {PaneID: "%2", SessionName: "sess-b", SessionDir: "/dir-b"},
+	}
+	got := ResolveNodeName("node", "sess-a", knownNodes)
+	if got != "sess-a:node" {
+		t.Errorf("got %q, want %q (same-session priority)", got, "sess-a:node")
+	}
+}
+
+// TestResolveNodeName_CrossSessionFallback verifies cross-session match is returned
+// when same-session is absent.
+func TestResolveNodeName_CrossSessionFallback(t *testing.T) {
+	knownNodes := map[string]NodeInfo{
+		"sess-b:node": {PaneID: "%2", SessionName: "sess-b", SessionDir: "/dir-b"},
+	}
+	got := ResolveNodeName("node", "sess-a", knownNodes)
+	if got != "sess-b:node" {
+		t.Errorf("got %q, want %q (cross-session fallback)", got, "sess-b:node")
+	}
+}
+
+// TestResolveNodeName_Unknown verifies that an unknown node returns an empty string.
+func TestResolveNodeName_Unknown(t *testing.T) {
+	knownNodes := map[string]NodeInfo{
+		"sess:other": {PaneID: "%1", SessionName: "sess", SessionDir: "/dir"},
+	}
+	got := ResolveNodeName("notfound", "sess", knownNodes)
+	if got != "" {
+		t.Errorf("got %q, want empty string for unknown node", got)
+	}
+}
+
 // TestReduceCollisions_TwoPanes verifies that the higher numeric pane ID wins
 // in a two-pane collision (e.g., %26 vs %31 → %31 wins).
 func TestReduceCollisions_TwoPanes(t *testing.T) {

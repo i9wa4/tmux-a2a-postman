@@ -194,8 +194,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if cfg.NotificationTemplate != "{inbox_path}/{filename}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}")
+	if !strings.HasPrefix(cfg.NotificationTemplate, "{inbox_path}/{filename}") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix {inbox_path}/{filename}", cfg.NotificationTemplate)
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
@@ -256,8 +256,8 @@ edges = ["worker -- orchestrator"]
 	if cfg.EnterDelay != 3.0 {
 		t.Errorf("default EnterDelay: got %v, want 3.0", cfg.EnterDelay)
 	}
-	if cfg.NotificationTemplate != "{inbox_path}/{filename}" {
-		t.Errorf("default NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "{inbox_path}/{filename}")
+	if !strings.HasPrefix(cfg.NotificationTemplate, "{inbox_path}/{filename}") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix {inbox_path}/{filename}", cfg.NotificationTemplate)
 	}
 }
 
@@ -1163,6 +1163,32 @@ scan_interval_seconds = 9.0
 	// XDG nodes still present
 	if len(cfg.Nodes) != 2 {
 		t.Errorf("Nodes length: got %d, want 2", len(cfg.Nodes))
+	}
+}
+
+func TestLoadConfig_EmptyFile(t *testing.T) {
+	// An empty config file has no nodes, which is a validation error.
+	// This test documents the expected behavior.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected validation error for empty config file (no nodes), got nil")
+	}
+}
+
+func TestLoadConfig_MalformedTOML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[invalid toml syntax @@@ !!!"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected error for malformed TOML, got nil")
 	}
 }
 

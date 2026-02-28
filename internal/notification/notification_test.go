@@ -224,7 +224,6 @@ func TestBuildNotification_PongActiveFiltering(t *testing.T) {
 	}
 }
 
-
 func TestSanitizeForTmux(t *testing.T) {
 	tests := []struct {
 		input string

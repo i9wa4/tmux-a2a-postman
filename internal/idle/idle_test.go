@@ -274,16 +274,16 @@ func TestSendIdleReminder(t *testing.T) {
 
 func TestIsHoldingBall(t *testing.T) {
 	tests := []struct {
-		name         string
+		name          string
 		setupActivity func(*IdleTracker)
-		nodeKey      string
-		want         bool
+		nodeKey       string
+		want          bool
 	}{
 		{
-			name:         "node not found",
+			name:          "node not found",
 			setupActivity: func(_ *IdleTracker) {},
-			nodeKey:      "test-session:worker",
-			want:         false,
+			nodeKey:       "test-session:worker",
+			want:          false,
 		},
 		{
 			name: "zero LastReceived",
