@@ -1166,6 +1166,32 @@ scan_interval_seconds = 9.0
 	}
 }
 
+func TestLoadConfig_EmptyFile(t *testing.T) {
+	// An empty config file has no nodes, which is a validation error.
+	// This test documents the expected behavior.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected validation error for empty config file (no nodes), got nil")
+	}
+}
+
+func TestLoadConfig_MalformedTOML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[invalid toml syntax @@@ !!!"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected error for malformed TOML, got nil")
+	}
+}
+
 func TestHeartbeatNodesExclusion(t *testing.T) {
 	// Fix 1 regression guard: [heartbeat] in nodes/*.toml must NOT be parsed as a node.
 	tmpDir := t.TempDir()
