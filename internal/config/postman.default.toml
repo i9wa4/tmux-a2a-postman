@@ -103,7 +103,8 @@ reminder_message = "{inbox_path}"
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "{inbox_path}/{filename}"
+notification_template = """{inbox_path}/{filename}
+After reading: mv {inbox_path}/{filename} {session_dir}/read/"""
 
 # Ping message template
 ping_template = """---
@@ -164,6 +165,11 @@ How to reply: {reply_command}
 
 # Content
 
+
+## After Reading
+
+Move this message to read/:
+  mv {session_dir}/inbox/{recipient}/<this-filename> {session_dir}/read/
 
 ## Reply
 
