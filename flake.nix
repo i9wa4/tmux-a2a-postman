@@ -2,7 +2,7 @@
   description = "tmux-a2a-postman - File-based communication daemon for tmux panes";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     flake-parts.url = "github:hercules-ci/flake-parts";
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
@@ -55,7 +55,8 @@
           pname = "tmux-a2a-postman";
           inherit version;
           src = ./.;
-          vendorHash = "sha256-Bd3OE7lsEwUrDtpHWCqbMfhaDiaXRDxwvsJd/XGi+Pc=";
+          vendorHash = "sha256-hobqsnqYUOVTb2cHWvr2wPtx4N2cpK2ciy30jCUyT6E=";
+          go = pkgs.go_1_25;
           ldflags = [
             "-s"
             "-w"
@@ -68,7 +69,7 @@
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_25
               gopls
               golangci-lint
             ];
@@ -78,14 +79,14 @@
           };
           ci = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_25
               golangci-lint
               govulncheck
             ];
           };
           cd = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_24
+              go_1_25
               goreleaser
             ];
           };

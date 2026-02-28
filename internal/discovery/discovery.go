@@ -166,6 +166,39 @@ func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
 	return nodes, err
 }
 
+// ResolveNodeName resolves a simple node name to a session-prefixed node name.
+// Resolution priority:
+// 1. If nodeName already contains ":", use as-is (already prefixed)
+// 2. Look for nodeName in the same session as sourceSessionName
+// 3. Look for nodeName in any other session
+// Returns the resolved node name or empty string if not found.
+func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]NodeInfo) string {
+	// If already prefixed (contains ":"), use as-is
+	if strings.Contains(nodeName, ":") {
+		if _, found := knownNodes[nodeName]; found {
+			return nodeName
+		}
+		return "" // Prefixed but not found
+	}
+
+	// Try same-session first (priority)
+	sameSessionKey := sourceSessionName + ":" + nodeName
+	if _, found := knownNodes[sameSessionKey]; found {
+		return sameSessionKey
+	}
+
+	// Try any other session
+	for fullName := range knownNodes {
+		// Extract node name from "session:node" format
+		parts := strings.SplitN(fullName, ":", 2)
+		if len(parts) == 2 && parts[1] == nodeName {
+			return fullName
+		}
+	}
+
+	return "" // Not found
+}
+
 // DiscoverAllSessions returns all tmux session names.
 // Issue #117: Returns ALL sessions (not just those with A2A nodes).
 func DiscoverAllSessions() ([]string, error) {

@@ -88,41 +88,19 @@ func TestTUI_CreateDraft_Submit(t *testing.T) {
 }
 
 func TestContextID_Fallback(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Test 1: Explicit ID (highest priority)
-	contextID, source, err := config.ResolveContextID("explicit-id", tmpDir)
+	// Test 1: Explicit ID
+	contextID, err := config.ResolveContextID("explicit-id")
 	if err != nil {
 		t.Fatalf("config.ResolveContextID with explicit: %v", err)
 	}
 	if contextID != "explicit-id" {
 		t.Errorf("explicit ID: got %q, want %q", contextID, "explicit-id")
 	}
-	if source != "flag" {
-		t.Errorf("source: got %q, want %q", source, "flag")
-	}
 
-	// Test 2: A2A_CONTEXT_ID env
-	_ = os.Setenv("A2A_CONTEXT_ID", "env-id")
-	defer func() { _ = os.Unsetenv("A2A_CONTEXT_ID") }()
-
-	contextID, source, err = config.ResolveContextID("", tmpDir)
-	if err != nil {
-		t.Fatalf("config.ResolveContextID with env: %v", err)
-	}
-	if contextID != "env-id" {
-		t.Errorf("env ID: got %q, want %q", contextID, "env-id")
-	}
-	if source != "env:A2A_CONTEXT_ID" {
-		t.Errorf("source: got %q, want %q", source, "env:A2A_CONTEXT_ID")
-	}
-
-	_ = os.Unsetenv("A2A_CONTEXT_ID")
-
-	// Test 3: No fallback available
-	_, _, err = config.ResolveContextID("", tmpDir)
+	// Test 2: Empty string returns error
+	_, err = config.ResolveContextID("")
 	if err == nil {
-		t.Error("expected error when no context ID available")
+		t.Error("expected error when no context ID provided")
 	}
 }
 

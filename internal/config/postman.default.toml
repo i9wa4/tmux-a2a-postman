@@ -29,6 +29,8 @@
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
 #   {templates_dir}  - Path to templates directory (context-level, not session-level)
+#   {reply_command}  - Command to create draft reply with context_id substituted
+#   {template}       - Recipient's role template from config
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -54,6 +56,7 @@ tmux_timeout_seconds = 30.0        # Timeout for tmux commands
 enter_delay_seconds = 3.0          # Delay before sending Enter key
 startup_delay_seconds = 10.0       # Initial startup delay
 reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
+inbox_unread_threshold = 2         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
@@ -102,7 +105,9 @@ reminder_message = "{inbox_path}"
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "{inbox_path}/{filename}\nRole: {template_path} | Protocol: {session_dir}/RULES.md"
+notification_template = """{inbox_path}/{filename}
+Role: {template_path} | Protocol: {session_dir}/RULES.md
+After reading: mv {inbox_path}/{filename} {session_dir}/read/"""
 
 # Ping message template
 ping_template = """---
@@ -141,10 +146,30 @@ role: {templates_dir}/{recipient}.md
 protocol: {session_dir}/RULES.md
 ---
 
+## ROLE OF RECIPIENT ({recipient}):
+
+{template}
+
+---
+
 You can only talk to: {can_talk_to}
+
+Role directory (complete list — your contacts are listed above):
+- boss: final approver, task authority
+- critic: critical analysis, aggressive scrutiny
+- guardian: quality assurance review + routing gate; forwards approved plans to boss
+- messenger: user interface, message relay
+- orchestrator: coordination, delegation
+- worker: implementation, consultation
+
+How to reply: {reply_command}
 
 # Content
 
+## After Reading
+
+Move this message to read/:
+  mv {session_dir}/inbox/{recipient}/<this-filename> {session_dir}/read/
 """
 
 # Edge violation warning template (Issue #92)
@@ -256,6 +281,8 @@ All messages use YAML frontmatter followed by content:
 # =============================================================================
 
 [watchdog]
+# Disabled pending watchdog/heartbeat spec finalization.
+# Re-enable once specs are complete — see GitHub Issue #145.
 enabled = false                       # Enable watchdog monitoring
 idle_threshold_seconds = 300.0        # 5 minutes
 cooldown_seconds = 600.0              # 10 minutes

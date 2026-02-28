@@ -605,8 +605,8 @@ func runCreateDraft(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	// Resolve context ID with fallback chain (auto-detect if not specified)
-	resolvedContextID, _, err := config.ResolveContextID(*contextID, baseDir)
+	// Require explicit --context-id
+	resolvedContextID, err := config.ResolveContextID(*contextID)
 	if err != nil {
 		return fmt.Errorf("resolving context ID: %w", err)
 	}
@@ -687,6 +687,8 @@ func runCreateDraft(args []string) error {
 		"can_talk_to":   canTalkTo,
 		"session_dir":   filepath.Join(baseDir, resolvedContextID, sessionName),
 		"templates_dir": filepath.Join(baseDir, resolvedContextID, "templates"),
+		"reply_command": expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
+		"template":      getNodeTemplate(cfg, *to),
 		// Backward compatibility
 		"from": sender,
 		"to":   *to,
@@ -702,6 +704,24 @@ func runCreateDraft(args []string) error {
 
 	fmt.Println(draftPath)
 	return nil
+}
+
+// expandReplyCommand substitutes {context_id} in the reply command template
+func expandReplyCommand(replyCmd string, contextID string) string {
+	return strings.ReplaceAll(replyCmd, "{context_id}", contextID)
+}
+
+// getNodeTemplate retrieves the template for a given node from config
+// Returns empty string if node or template is not found (nil-safe)
+func getNodeTemplate(cfg *config.Config, nodeName string) string {
+	if cfg == nil || cfg.Nodes == nil {
+		return ""
+	}
+	nodeConfig, exists := cfg.Nodes[nodeName]
+	if !exists {
+		return ""
+	}
+	return nodeConfig.Template
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.

@@ -13,35 +13,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
-// resolveNodeNameForNotification resolves a simple node name to a session-prefixed node name.
-// Similar to message.ResolveNodeName but localized for notification package.
-func resolveNodeNameForNotification(nodeName, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) string {
-	// If already prefixed (contains ":"), use as-is
-	if strings.Contains(nodeName, ":") {
-		if _, found := knownNodes[nodeName]; found {
-			return nodeName
-		}
-		return "" // Prefixed but not found
-	}
-
-	// Try same-session first (priority)
-	sameSessionKey := sourceSessionName + ":" + nodeName
-	if _, found := knownNodes[sameSessionKey]; found {
-		return sameSessionKey
-	}
-
-	// Try any other session
-	for fullName := range knownNodes {
-		// Extract node name from "session:node" format
-		parts := strings.SplitN(fullName, ":", 2)
-		if len(parts) == 2 && parts[1] == nodeName {
-			return fullName
-		}
-	}
-
-	return "" // Not found
-}
-
 // BuildNotification builds a notification message using notification_template.
 // Variables available: from_node, node, timestamp, filename, inbox_path,
 // talks_to_line, template, reply_command, context_id.
@@ -75,7 +46,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	// Issue #84: Filter to only PONG-active nodes
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
-		nodeFullName := resolveNodeNameForNotification(node, sourceSessionName, nodes)
+		nodeFullName := discovery.ResolveNodeName(node, sourceSessionName, nodes)
 		// Issue #84: Filter by PONG-active status (resolveNodeNameForNotification success + PONG received)
 		if nodeFullName != "" && pongActiveNodes[nodeFullName] {
 			activeTalksTo = append(activeTalksTo, node)
@@ -89,7 +60,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 	}
 
 	// Resolve recipient name to full name for SessionDir lookup (Issue #33)
-	recipientFullName := resolveNodeNameForNotification(recipient, sourceSessionName, nodes)
+	recipientFullName := discovery.ResolveNodeName(recipient, sourceSessionName, nodes)
 
 	// Build inbox path using recipient's actual session directory
 	var sessionDir string

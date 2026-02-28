@@ -992,37 +992,13 @@ func ResolveNodesDir(configPath string) string {
 	return ""
 }
 
-// resolveContextID resolves the context ID with fallback chain.
-// Priority:
-// ResolveContextID resolves the context ID using the fallback chain:
-// 1. explicitID (from --context-id flag)
-// 2. A2A_CONTEXT_ID env var
-// 3. .postman/current-context-{tmux_session} file
-// Returns (contextID, source, error).
-func ResolveContextID(explicitID string, baseDir string) (string, string, error) {
-	// 1. Explicit --context-id flag
+// ResolveContextID returns the context ID from the explicit --context-id flag.
+// Returns error if explicitID is empty.
+func ResolveContextID(explicitID string) (string, error) {
 	if explicitID != "" {
-		return explicitID, "flag", nil
+		return explicitID, nil
 	}
-
-	// 2. A2A_CONTEXT_ID env var
-	if envID := os.Getenv("A2A_CONTEXT_ID"); envID != "" {
-		return envID, "env:A2A_CONTEXT_ID", nil
-	}
-
-	// 3. current-context file based on tmux session
-	tmuxSession := GetTmuxSessionName()
-	if tmuxSession != "" {
-		contextFile := filepath.Join(baseDir, fmt.Sprintf("current-context-%s", tmuxSession))
-		if data, err := os.ReadFile(contextFile); err == nil {
-			contextID := strings.TrimSpace(string(data))
-			if contextID != "" {
-				return contextID, fmt.Sprintf("file:%s", contextFile), nil
-			}
-		}
-	}
-
-	return "", "", fmt.Errorf("no context ID found (tried: flag, A2A_CONTEXT_ID env, current-context file)")
+	return "", fmt.Errorf("--context-id is required")
 }
 
 // GetTmuxSessionName extracts the tmux session name using tmux command.

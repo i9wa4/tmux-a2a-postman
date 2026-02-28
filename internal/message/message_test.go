@@ -352,6 +352,88 @@ func TestPONG_Handling(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_ParseError(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	// Filename with no "-from-" marker triggers parse error
+	filename := "badname.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not in dead-letter: %v", err)
+	}
+}
+
+func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
+	senderDir := t.TempDir()
+	if err := config.CreateSessionDirs(senderDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+	recipientDir := t.TempDir()
+
+	filename := "20260201-030000-from-alice-to-bob.md"
+	postPath := filepath.Join(senderDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sess-a:alice": {PaneID: "%1", SessionName: "sess-a", SessionDir: senderDir},
+		"sess-b:bob":   {PaneID: "%2", SessionName: "sess-b", SessionDir: recipientDir},
+	}
+	adjacency := map[string][]string{
+		"alice": {"bob"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	isSessionEnabled := func(s string) bool {
+		return s != "sess-b"
+	}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker()); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(senderDir, "dead-letter", filename)
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not in dead-letter (recipient session disabled): %v", err)
+	}
+}
+
+func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	// Valid filename format but file is never created
+	postPath := filepath.Join(sessionDir, "post", "20260201-030000-from-alice-to-bob.md")
+
+	nodes := map[string]discovery.NodeInfo{}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker())
+	if err != nil {
+		t.Fatalf("expected nil for already-gone file, got: %v", err)
+	}
+}
+
 // TestPostmanMessage_NoHoldingState verifies that postman → node messages
 // do not cause false "holding" state (Issue #87).
 func TestPostmanMessage_NoHoldingState(t *testing.T) {

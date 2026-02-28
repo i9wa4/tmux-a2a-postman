@@ -87,8 +87,7 @@ A pane titled `watchdog` runs the watchdog daemon (required for session idle ale
 
 ### 6.2. Other Variables
 
-See `internal/config/postman.default.toml` for advanced variables (`POSTMAN_HOME`,
-`A2A_CONTEXT_ID`, etc.).
+See `internal/config/postman.default.toml` for advanced variables (`POSTMAN_HOME`, etc.).
 
 ## 7. Configuration
 
