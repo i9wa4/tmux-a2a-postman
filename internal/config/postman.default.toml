@@ -54,7 +54,8 @@ scan_interval_seconds = 1.0        # Pane rescan interval
 tmux_timeout_seconds = 30.0        # Timeout for tmux commands
 enter_delay_seconds = 3.0          # Delay before sending Enter key
 startup_delay_seconds = 10.0       # Initial startup delay
-reminder_interval_messages = 0     # Send reminder after N messages (0 = disabled)
+reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
+inbox_unread_threshold = 2         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
