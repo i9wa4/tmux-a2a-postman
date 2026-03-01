@@ -952,12 +952,14 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 
 			// Build notification message
 			eventType := "inbox_stagnation_" + severity
-			message := fmt.Sprintf("Inbox stagnation [%s]: %s has unread message in inbox for %s (threshold: %s)",
-				strings.ToUpper(severity),
-				simpleName,
-				age.Round(time.Second).String(),
-				threshold.String(),
-			)
+			// NOTE: no empty-guard; postman.default.toml always provides non-empty default
+			alertVars := map[string]string{
+				"severity":  strings.ToUpper(severity),
+				"node":      simpleName,
+				"age":       age.Round(time.Second).String(),
+				"threshold": threshold.String(),
+			}
+			message := template.ExpandVariables(cfg.InboxStagnationAlertTemplate, alertVars)
 
 			// Send TUI event
 			events <- tui.DaemonEvent{
@@ -1064,11 +1066,13 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			ds.notifiedInboxFilesMu.Unlock()
 
 			// Build notification message
-			message := fmt.Sprintf("Inbox unread summary: %s has %d unread messages (threshold: %d)",
-				simpleName,
-				inboxCount,
-				cfg.InboxUnreadThreshold,
-			)
+			// NOTE: no empty-guard; postman.default.toml always provides non-empty default
+			alertVars := map[string]string{
+				"node":      simpleName,
+				"count":     fmt.Sprintf("%d", inboxCount),
+				"threshold": fmt.Sprintf("%d", cfg.InboxUnreadThreshold),
+			}
+			message := template.ExpandVariables(cfg.InboxUnreadSummaryAlertTemplate, alertVars)
 
 			// Send TUI event
 			events <- tui.DaemonEvent{
@@ -1194,17 +1198,28 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 			pongStatus = "No"
 		}
 
+		// Normalize nodeKey to simple name (strip session prefix)
+		parts := strings.SplitN(nodeKey, ":", 2)
+		var simpleName string
+		if len(parts) == 2 {
+			simpleName = parts[1]
+		} else {
+			simpleName = nodeKey
+		}
+
 		// Build notification message
 		eventType := "node_inactivity_" + severity
-		message := fmt.Sprintf("Node inactivity [%s]: %s inactive for %s (threshold: %s). Last sent: %s, Last received: %s, PONG received: %s",
-			strings.ToUpper(severity),
-			nodeKey,
-			inactiveDuration.Round(time.Second).String(),
-			threshold.String(),
-			lastSentStr,
-			lastReceivedStr,
-			pongStatus,
-		)
+		// NOTE: no empty-guard; postman.default.toml always provides non-empty default
+		alertVars := map[string]string{
+			"severity":          strings.ToUpper(severity),
+			"node":              simpleName,
+			"inactive_duration": inactiveDuration.Round(time.Second).String(),
+			"threshold":         threshold.String(),
+			"last_sent":         lastSentStr,
+			"last_received":     lastReceivedStr,
+			"pong_received":     pongStatus,
+		}
+		message := template.ExpandVariables(cfg.NodeInactivityAlertTemplate, alertVars)
 
 		// Send TUI event
 		events <- tui.DaemonEvent{
@@ -1224,15 +1239,6 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 		// Issue #118: Send alert to ui_node with rate-limiting
 		alertKey := fmt.Sprintf("node_inactivity:%s:%s", nodeKey, severity)
 		cooldown := 300.0 // 5 minutes
-
-		// Normalize nodeKey to simple name for action text (strip session prefix)
-		parts := strings.SplitN(nodeKey, ":", 2)
-		var simpleName string
-		if len(parts) == 2 {
-			simpleName = parts[1]
-		} else {
-			simpleName = nodeKey
-		}
 
 		if ds.ShouldSendAlert(alertKey, cooldown) {
 			var replyCmd string
@@ -1455,12 +1461,14 @@ func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInf
 			ds.notifiedInboxFilesMu.Unlock()
 
 			// Build notification message
-			message := fmt.Sprintf("Unreplied message [WARNING]: %s has message in read/ for %s without reply (from: %s, threshold: %s)",
-				simpleName,
-				timeSinceRead.Round(time.Second).String(),
-				msgInfo.From,
-				threshold.String(),
-			)
+			// NOTE: no empty-guard; postman.default.toml always provides non-empty default
+			alertVars := map[string]string{
+				"node":            simpleName,
+				"time_since_read": timeSinceRead.Round(time.Second).String(),
+				"from":            msgInfo.From,
+				"threshold":       threshold.String(),
+			}
+			message := template.ExpandVariables(cfg.UnrepliedMessageAlertTemplate, alertVars)
 
 			// Send TUI event
 			events <- tui.DaemonEvent{
