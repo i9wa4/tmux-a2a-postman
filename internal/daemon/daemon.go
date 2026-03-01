@@ -443,8 +443,12 @@ func RunDaemonLoop(
 											},
 										}
 
-										// Increment reminder counter for recipient
-										reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
+										// Only count human-authored messages toward reminder threshold.
+										// Daemon-generated alerts (from="postman" or from="daemon") must not
+										// accelerate the reminder counter.
+										if reminderShouldIncrement(info.From) {
+											reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
+										}
 
 										// Issue #55: Emit ball state update after message delivery
 										nodeStates := idleTracker.GetNodeStates()
@@ -759,13 +763,13 @@ func RunDaemonLoop(
 		case <-inboxCheckTicker.C:
 			// Issue #96: Check inbox stagnation
 			currentNode := config.GetTmuxPaneName()
-			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode, sessionDir, contextID)
+			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode, sessionDir, contextID, adjacency)
 
 			// Issue #99: Check node inactivity
-			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events, sessionDir, contextID)
+			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events, sessionDir, contextID, adjacency)
 
 			// Issue #100: Check unreplied messages
-			daemonState.checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID)
+			daemonState.checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency)
 		}
 	}
 }
@@ -869,10 +873,16 @@ func parseMessageTimestamp(filename string) (time.Time, error) {
 	return t, nil
 }
 
+// reminderShouldIncrement returns true if the message sender should trigger the reminder counter.
+// Daemon-generated messages (from="postman" or from="daemon") are excluded.
+func reminderShouldIncrement(from string) bool {
+	return from != "postman" && from != "daemon"
+}
+
 // checkInboxStagnation checks for stagnant inbox messages and sends notifications (Issue #96).
 // Warning: 10+ minutes, Critical: 30+ minutes.
 // Issue #118: Added sessionDir and contextID for alert messaging.
-func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName, sessionDir, contextID string) {
+func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, currentNodeName, sessionDir, contextID string, adjacency map[string][]string) {
 	now := time.Now()
 
 	for nodeKey, nodeInfo := range nodes {
@@ -967,7 +977,34 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			cooldown := 300.0 // 5 minutes
 
 			if ds.ShouldSendAlert(alertKey, cooldown) {
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_stagnation")
+				var replyCmd string
+				if cfg.ReplyCommand != "" {
+					replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+					replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+				} else {
+					replyCmd = fmt.Sprintf(
+						"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+						contextID, simpleName,
+					)
+				}
+				canReach := false
+				for _, neighbor := range adjacency[cfg.UINode] {
+					if neighbor == simpleName {
+						canReach = true
+						break
+					}
+				}
+				actionVars := map[string]string{
+					"node":          simpleName,
+					"reply_command": replyCmd,
+				}
+				var actionText string
+				if canReach && cfg.AlertActionReachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+				}
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_stagnation")
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}
@@ -1049,7 +1086,34 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			cooldown := 300.0 // 5 minutes
 
 			if ds.ShouldSendAlert(alertKey, cooldown) {
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "inbox_unread_summary")
+				var replyCmd string
+				if cfg.ReplyCommand != "" {
+					replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+					replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+				} else {
+					replyCmd = fmt.Sprintf(
+						"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+						contextID, simpleName,
+					)
+				}
+				canReach := false
+				for _, neighbor := range adjacency[cfg.UINode] {
+					if neighbor == simpleName {
+						canReach = true
+						break
+					}
+				}
+				actionVars := map[string]string{
+					"node":          simpleName,
+					"reply_command": replyCmd,
+				}
+				var actionText string
+				if canReach && cfg.AlertActionReachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+				}
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_unread_summary")
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}
@@ -1061,7 +1125,7 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 // checkNodeInactivity checks for inactive nodes and sends notifications (Issue #99).
 // Warning: 5-10 minutes, Critical: 15-20 minutes, Dropped: 30-60 minutes.
 // Issue #118: Added sessionDir and contextID for alert messaging.
-func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, idleTracker *idle.IdleTracker, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string) {
+func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, idleTracker *idle.IdleTracker, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string) {
 	now := time.Now()
 	nodeStates := idleTracker.GetNodeStates()
 
@@ -1161,8 +1225,44 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 		alertKey := fmt.Sprintf("node_inactivity:%s:%s", nodeKey, severity)
 		cooldown := 300.0 // 5 minutes
 
+		// Normalize nodeKey to simple name for action text (strip session prefix)
+		parts := strings.SplitN(nodeKey, ":", 2)
+		var simpleName string
+		if len(parts) == 2 {
+			simpleName = parts[1]
+		} else {
+			simpleName = nodeKey
+		}
+
 		if ds.ShouldSendAlert(alertKey, cooldown) {
-			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "node_inactivity")
+			var replyCmd string
+			if cfg.ReplyCommand != "" {
+				replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+				replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+			} else {
+				replyCmd = fmt.Sprintf(
+					"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+					contextID, simpleName,
+				)
+			}
+			canReach := false
+			for _, neighbor := range adjacency[cfg.UINode] {
+				if neighbor == simpleName {
+					canReach = true
+					break
+				}
+			}
+			actionVars := map[string]string{
+				"node":          simpleName,
+				"reply_command": replyCmd,
+			}
+			var actionText string
+			if canReach && cfg.AlertActionReachableTemplate != "" {
+				actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+			} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+				actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+			}
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "node_inactivity")
 			if err == nil {
 				ds.MarkAlertSent(alertKey)
 			}
@@ -1287,7 +1387,7 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 // checkUnrepliedMessages checks for messages in read/ without replies (Issue #100).
 // Warning: 10+ minutes since moved to read/ without reply.
 // Issue #118: Added sessionDir and contextID for alert messaging.
-func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string) {
+func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string) {
 	now := time.Now()
 
 	for nodeKey, nodeInfo := range nodes {
@@ -1381,7 +1481,34 @@ func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInf
 			cooldown := 300.0 // 5 minutes
 
 			if ds.ShouldSendAlert(alertKey, cooldown) {
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message, "unreplied_message")
+				var replyCmd string
+				if cfg.ReplyCommand != "" {
+					replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+					replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+				} else {
+					replyCmd = fmt.Sprintf(
+						"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+						contextID, simpleName,
+					)
+				}
+				canReach := false
+				for _, neighbor := range adjacency[cfg.UINode] {
+					if neighbor == simpleName {
+						canReach = true
+						break
+					}
+				}
+				actionVars := map[string]string{
+					"node":          simpleName,
+					"reply_command": replyCmd,
+				}
+				var actionText string
+				if canReach && cfg.AlertActionReachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+				}
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "unreplied_message")
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}

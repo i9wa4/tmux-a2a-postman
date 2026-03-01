@@ -48,23 +48,25 @@ type Config struct {
 	BaseDir string `toml:"base_dir"`
 
 	// Message templates
-	NotificationTemplate         string `toml:"notification_template"`
-	MessageTemplate              string `toml:"message_template"`
-	DraftTemplate                string `toml:"draft_template"`
-	ReminderMessage              string `toml:"reminder_message"`
-	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
-	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
-	EdgeViolationWarningMode     string `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
-	IdleReminderHeaderTemplate   string `toml:"idle_reminder_header_template"`   // Issue #82: Idle reminder header
-	SessionIdleAlertTemplate     string `toml:"session_idle_alert_template"`     // Issue #82: Session idle alert message
-	CompactionHeaderTemplate     string `toml:"compaction_header_template"`      // Issue #82: Compaction detection header
-	WatchdogAlertTemplate        string `toml:"watchdog_alert_template"`         // Issue #82: Watchdog idle alert message
-	CompactionBodyTemplate       string `toml:"compaction_body_template"`        // Issue #82: Compaction notification body
-	DroppedBallEventTemplate     string `toml:"dropped_ball_event_template"`     // Issue #82: Dropped ball event message
-	RulesTemplate                string `toml:"rules_template"`                  // Issue #75: Shared protocol rules
-	BoilerplatePong              string `toml:"boilerplate_pong"`
-	BoilerplateHeartbeatOk       string `toml:"boilerplate_heartbeat_ok"`
-	BoilerplateHowToReply        string `toml:"boilerplate_how_to_reply"`
+	NotificationTemplate           string `toml:"notification_template"`
+	MessageTemplate                string `toml:"message_template"`
+	DraftTemplate                  string `toml:"draft_template"`
+	ReminderMessage                string `toml:"reminder_message"`
+	CommonTemplate                 string `toml:"common_template"`                   // Issue #49: Shared template for all nodes
+	EdgeViolationWarningTemplate   string `toml:"edge_violation_warning_template"`   // Issue #80: Warning message for routing denied
+	EdgeViolationWarningMode       string `toml:"edge_violation_warning_mode"`       // Issue #92: "compact" or "verbose" (default: compact)
+	IdleReminderHeaderTemplate     string `toml:"idle_reminder_header_template"`     // Issue #82: Idle reminder header
+	SessionIdleAlertTemplate       string `toml:"session_idle_alert_template"`       // Issue #82: Session idle alert message
+	CompactionHeaderTemplate       string `toml:"compaction_header_template"`        // Issue #82: Compaction detection header
+	WatchdogAlertTemplate          string `toml:"watchdog_alert_template"`           // Issue #82: Watchdog idle alert message
+	CompactionBodyTemplate         string `toml:"compaction_body_template"`          // Issue #82: Compaction notification body
+	DroppedBallEventTemplate       string `toml:"dropped_ball_event_template"`       // Issue #82: Dropped ball event message
+	AlertActionReachableTemplate   string `toml:"alert_action_reachable_template"`   // Action text when ui_node can reach the target node
+	AlertActionUnreachableTemplate string `toml:"alert_action_unreachable_template"` // Action text when ui_node cannot reach the target node
+	RulesTemplate                  string `toml:"rules_template"`                    // Issue #75: Shared protocol rules
+	BoilerplatePong                string `toml:"boilerplate_pong"`
+	BoilerplateHeartbeatOk         string `toml:"boilerplate_heartbeat_ok"`
+	BoilerplateHowToReply          string `toml:"boilerplate_how_to_reply"`
 
 	// Global settings
 	Edges                 []string `toml:"edges"`
@@ -163,43 +165,45 @@ type WatchdogCaptureConfig struct {
 // DefaultConfig returns a Config with sane default values.
 func DefaultConfig() *Config {
 	return &Config{
-		ScanInterval:                 1.0,
-		EnterDelay:                   0.5,
-		TmuxTimeout:                  5.0,
-		StartupDelay:                 2.0,
-		ReminderInterval:             0.0,
-		EdgeActivitySeconds:          300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
-		NodeActiveSeconds:            300.0, // 0-5min: active (green)
-		NodeIdleSeconds:              900.0, // 5-15min: idle (orange)
-		NodeStaleSeconds:             900.0, // 15min+: stale (red)
-		PaneCaptureEnabled:           true,
-		PaneCaptureIntervalSeconds:   60.0,
-		PaneCaptureMaxPanes:          0,
-		ActivityWindowSeconds:        300.0,
-		BaseDir:                      "",
-		NotificationTemplate:         "Message from {from_node}",
-		MessageTemplate:              "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\nRole: {template_path} | Protocol: {session_dir}/RULES.md\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
-		DraftTemplate:                "",
-		ReminderMessage:              "",
-		ReplyCommand:                 "",
-		UINode:                       "",    // Issue #46: Default UI target node (empty = no default)
-		InboxUnreadThreshold:         3,     // Default threshold for inbox unread summary notification
-		AutoEnableNewSessions:        false, // Issue #135: default false; set true to opt in
-		AutoEnableNewAgents:          true,  // Issue #135: auto-enable agents in already-enabled sessions
-		Edges:                        []string{},
-		Nodes:                        make(map[string]NodeConfig),
-		EdgeViolationWarningTemplate: "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
-		EdgeViolationWarningMode:     "compact", // Issue #92: Default to compact mode
-		IdleReminderHeaderTemplate:   "## Idle Reminder",
-		SessionIdleAlertTemplate:     "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
-		CompactionHeaderTemplate:     "## Compaction Detected",
-		WatchdogAlertTemplate:        "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
-		CompactionBodyTemplate:       "Compaction detected for node {node}. Please send status update.",
-		DroppedBallEventTemplate:     "Dropped ball: {node} (holding for {duration})",
-		RulesTemplate:                "",
-		BoilerplatePong:              "PONG",
-		BoilerplateHeartbeatOk:       "HEARTBEAT_OK",
-		BoilerplateHowToReply:        "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
+		ScanInterval:                   1.0,
+		EnterDelay:                     0.5,
+		TmuxTimeout:                    5.0,
+		StartupDelay:                   2.0,
+		ReminderInterval:               0.0,
+		EdgeActivitySeconds:            300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
+		NodeActiveSeconds:              300.0, // 0-5min: active (green)
+		NodeIdleSeconds:                900.0, // 5-15min: idle (orange)
+		NodeStaleSeconds:               900.0, // 15min+: stale (red)
+		PaneCaptureEnabled:             true,
+		PaneCaptureIntervalSeconds:     60.0,
+		PaneCaptureMaxPanes:            0,
+		ActivityWindowSeconds:          300.0,
+		BaseDir:                        "",
+		NotificationTemplate:           "Message from {from_node}",
+		MessageTemplate:                "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\nRole: {template_path} | Protocol: {session_dir}/RULES.md\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
+		DraftTemplate:                  "",
+		ReminderMessage:                "",
+		ReplyCommand:                   "",
+		UINode:                         "",    // Issue #46: Default UI target node (empty = no default)
+		InboxUnreadThreshold:           3,     // Default threshold for inbox unread summary notification
+		AutoEnableNewSessions:          false, // Issue #135: default false; set true to opt in
+		AutoEnableNewAgents:            true,  // Issue #135: auto-enable agents in already-enabled sessions
+		Edges:                          []string{},
+		Nodes:                          make(map[string]NodeConfig),
+		EdgeViolationWarningTemplate:   "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
+		EdgeViolationWarningMode:       "compact", // Issue #92: Default to compact mode
+		IdleReminderHeaderTemplate:     "## Idle Reminder",
+		SessionIdleAlertTemplate:       "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
+		CompactionHeaderTemplate:       "## Compaction Detected",
+		WatchdogAlertTemplate:          "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
+		CompactionBodyTemplate:         "Compaction detected for node {node}. Please send status update.",
+		DroppedBallEventTemplate:       "Dropped ball: {node} (holding for {duration})",
+		AlertActionReachableTemplate:   "",
+		AlertActionUnreachableTemplate: "",
+		RulesTemplate:                  "",
+		BoilerplatePong:                "PONG",
+		BoilerplateHeartbeatOk:         "HEARTBEAT_OK",
+		BoilerplateHowToReply:          "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
 		CompactionDetection: CompactionDetectionConfig{
 			TailLines: 10, // Issue #133: Default tail lines for compaction check
 		},
@@ -448,6 +452,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.DroppedBallEventTemplate != "" {
 		base.DroppedBallEventTemplate = override.DroppedBallEventTemplate
+	}
+	if override.AlertActionReachableTemplate != "" {
+		base.AlertActionReachableTemplate = override.AlertActionReachableTemplate
+	}
+	if override.AlertActionUnreachableTemplate != "" {
+		base.AlertActionUnreachableTemplate = override.AlertActionUnreachableTemplate
 	}
 	if override.RulesTemplate != "" {
 		base.RulesTemplate = override.RulesTemplate

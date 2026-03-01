@@ -99,7 +99,12 @@ edges = []
 #       {template} expands to "" and SendToPane is called with empty content (spurious Enter).
 #       Ensure all nodes have a template when using this pattern.
 #
-reminder_message = ""
+reminder_message = "{inbox_path}"
+
+# Alert action templates (appended to daemon alert messages sent to ui_node)
+# Variables: {node} - target node name, {reply_command} - command to create draft
+alert_action_reachable_template = "\n\n### Action Required\nTo send a message to {node}, run:\n\n  {reply_command}\n"
+alert_action_unreachable_template = "\n\n### Action Required\nNote: {node} is not in your allowed contacts list.\nAsk your orchestrator to follow up.\n"
 
 # Common template (prepended to all node templates)
 # common_template = ""

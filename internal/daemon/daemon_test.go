@@ -45,6 +45,28 @@ func TestShouldSendAlert_CooldownBoundary(t *testing.T) {
 	}
 }
 
+// TestReminderIncrementSenderFilter verifies that reminderShouldIncrement excludes
+// daemon-generated senders (postman, daemon) and includes all other senders.
+func TestReminderIncrementSenderFilter(t *testing.T) {
+	tests := []struct {
+		from            string
+		shouldIncrement bool
+	}{
+		{"postman", false},
+		{"daemon", false},
+		{"orchestrator", true},
+		{"worker", true},
+		{"messenger", true},
+		{"", true}, // empty from is treated as human message (no special exclusion)
+	}
+	for _, tc := range tests {
+		result := reminderShouldIncrement(tc.from)
+		if result != tc.shouldIncrement {
+			t.Errorf("reminderShouldIncrement(%q): expected %v, got %v", tc.from, tc.shouldIncrement, result)
+		}
+	}
+}
+
 // TestShouldSendAlert_ZeroCooldown verifies that zero cooldown always returns true.
 func TestShouldSendAlert_ZeroCooldown(t *testing.T) {
 	ds := NewDaemonState()
