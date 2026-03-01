@@ -308,6 +308,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 				watchedDirs[nodeInboxDir] = true
 			}
 		}
+		nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
+		if !watchedDirs[nodeReadDir] {
+			if err := watcher.Add(nodeReadDir); err != nil {
+				log.Printf("⚠️  postman: warning: could not watch %s read directory: %v\n", nodeName, err)
+			} else {
+				watchedDirs[nodeReadDir] = true
+			}
+		}
 	}
 
 	// Also watch default session directories (for postman's own messages)
@@ -322,6 +330,13 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			return fmt.Errorf("watching inbox directory: %w", err)
 		}
 		watchedDirs[inboxDir] = true
+	}
+	if !watchedDirs[readDir] {
+		if err := watcher.Add(readDir); err != nil {
+			log.Printf("⚠️  postman: warning: could not watch read directory: %v\n", err)
+		} else {
+			watchedDirs[readDir] = true
+		}
 	}
 
 	// Watch config file if exists

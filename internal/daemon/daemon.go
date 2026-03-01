@@ -336,6 +336,12 @@ func RunDaemonLoop(
 											watchedDirs[nodeInboxDir] = true
 										}
 									}
+									nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
+									if !watchedDirs[nodeReadDir] {
+										if err := watcher.Add(nodeReadDir); err == nil {
+											watchedDirs[nodeReadDir] = true
+										}
+									}
 								}
 							}
 							nodes = freshNodes
@@ -418,6 +424,9 @@ func RunDaemonLoop(
 								sourceSessionName := filepath.Base(sourceSessionDir)
 								if info, err := message.ParseMessageFilename(filename); err == nil {
 									// Issue #55: Handle PONG separately from normal messages
+									// DEPRECATED: Explicit PONG via from-{node}-to-postman.md
+									// Kept as backward-compatible fallback. Synthesized PONG via read/ move is now primary.
+									// TODO(#150): Remove after confirming all nodes use implicit PONG (read/ move).
 									if info.To == "postman" {
 										// PONG received - track state, skip edge/observer/reminder
 										// Issue #79: Use session-prefixed key for tracking
@@ -460,6 +469,31 @@ func RunDaemonLoop(
 											},
 										}
 									}
+								}
+							}
+						}
+					}
+				}
+			} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {
+				// Handle read/ directory events — synthesize PONG from inbox->read/ move (Issue #150).
+				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+					filename := filepath.Base(eventPath)
+					if strings.HasSuffix(filename, ".md") {
+						if info, err := message.ParseMessageFilename(filename); err == nil {
+							// Skip PONG files moved to read/ by daemon (To == "postman").
+							// Skip daemon-originated files.
+							if info.To != "postman" && info.To != "daemon" {
+								// Synthesize PONG: node archived a message, proving it is alive.
+								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+								sourceSessionName := filepath.Base(sourceSessionDir)
+								prefixedKey := sourceSessionName + ":" + info.To
+								idleTracker.MarkPongReceived(prefixedKey)
+								events <- tui.DaemonEvent{
+									Type: "pong_received",
+									Details: map[string]interface{}{
+										"node":   prefixedKey,
+										"source": "read_move",
+									},
 								}
 							}
 						}
@@ -606,6 +640,12 @@ func RunDaemonLoop(
 					if !watchedDirs[nodeInboxDir] {
 						if err := watcher.Add(nodeInboxDir); err == nil {
 							watchedDirs[nodeInboxDir] = true
+						}
+					}
+					nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
+					if !watchedDirs[nodeReadDir] {
+						if err := watcher.Add(nodeReadDir); err == nil {
+							watchedDirs[nodeReadDir] = true
 						}
 					}
 				}
