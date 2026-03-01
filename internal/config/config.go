@@ -67,6 +67,9 @@ type Config struct {
 	InboxUnreadSummaryAlertTemplate string `toml:"inbox_unread_summary_alert_template"` // Alert message body for inbox unread summary
 	NodeInactivityAlertTemplate     string `toml:"node_inactivity_alert_template"`      // Alert message body for node inactivity
 	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
+	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
+	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
+	IdleReminderMessageTemplate     string `toml:"idle_reminder_message_template"`      // Unified idle reminder message format
 	RulesTemplate                   string `toml:"rules_template"`                      // Issue #75: Shared protocol rules
 	BoilerplatePong                 string `toml:"boilerplate_pong"`
 	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
@@ -208,6 +211,9 @@ func DefaultConfig() *Config {
 		InboxUnreadSummaryAlertTemplate: "",
 		NodeInactivityAlertTemplate:     "",
 		UnrepliedMessageAlertTemplate:   "",
+		AlertMessageTemplate:            "",
+		HeartbeatMessageTemplate:        "",
+		IdleReminderMessageTemplate:     "",
 		RulesTemplate:                   "",
 		BoilerplatePong:                 "PONG",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
@@ -478,6 +484,15 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.UnrepliedMessageAlertTemplate != "" {
 		base.UnrepliedMessageAlertTemplate = override.UnrepliedMessageAlertTemplate
+	}
+	if override.AlertMessageTemplate != "" {
+		base.AlertMessageTemplate = override.AlertMessageTemplate
+	}
+	if override.HeartbeatMessageTemplate != "" {
+		base.HeartbeatMessageTemplate = override.HeartbeatMessageTemplate
+	}
+	if override.IdleReminderMessageTemplate != "" {
+		base.IdleReminderMessageTemplate = override.IdleReminderMessageTemplate
 	}
 	if override.RulesTemplate != "" {
 		base.RulesTemplate = override.RulesTemplate

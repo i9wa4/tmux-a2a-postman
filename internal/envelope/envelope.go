@@ -2,6 +2,7 @@ package envelope
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,13 +68,28 @@ func BuildEnvelope(
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
 		nodeFullName := resolveNodeName(node, sourceSessionName, nodes)
-		if nodeFullName != "" && pongActiveNodes[nodeFullName] {
+		if nodeFullName != "" && (pongActiveNodes == nil || pongActiveNodes[nodeFullName]) {
 			activeTalksTo = append(activeTalksTo, node)
 		}
 	}
 	talksToLine := ""
 	if len(activeTalksTo) > 0 {
 		talksToLine = fmt.Sprintf("Can talk to: %s", strings.Join(activeTalksTo, ", "))
+	}
+
+	// contacts_section: adjacent nodes with role descriptions (PONG-filtered, or all-adjacent when nil).
+	contactLines := []string{}
+	for _, node := range activeTalksTo {
+		nodeConfig := cfg.GetNodeConfig(node)
+		if nodeConfig.Role != "" {
+			contactLines = append(contactLines, fmt.Sprintf("- %s: %s", node, nodeConfig.Role))
+		} else {
+			contactLines = append(contactLines, fmt.Sprintf("- %s", node))
+		}
+	}
+	contactsSection := strings.Join(contactLines, "\n")
+	if contactsSection == "" {
+		contactsSection = "- none"
 	}
 
 	// reply_command: inject --context-id if missing from create-draft commands,
@@ -108,24 +124,56 @@ func BuildEnvelope(
 	ts := now.Format("20060102-150405")
 
 	vars := map[string]string{
-		"context_id":    contextID,
-		"node":          recipient,
-		"from_node":     sender,
-		"task_id":       taskID,
-		"timestamp":     ts,
-		"iso_timestamp": now.Format(time.RFC3339),
-		"filename":      filepath.Base(filename),
-		"inbox_path":    inboxPath,
-		"talks_to_line": talksToLine,
-		"template":      recipientTemplate,
-		"reply_command": replyCmd,
-		"session_dir":   sessionDir,
-		"active_nodes":  strings.Join(activeNodes, ", "),
-		"template_path": templatePath,
+		"context_id":       contextID,
+		"node":             recipient,
+		"from_node":        sender,
+		"task_id":          taskID,
+		"timestamp":        ts,
+		"iso_timestamp":    now.Format(time.RFC3339),
+		"filename":         filepath.Base(filename),
+		"inbox_path":       inboxPath,
+		"talks_to_line":    talksToLine,
+		"contacts_section": contactsSection,
+		"template":         recipientTemplate,
+		"reply_command":    replyCmd,
+		"session_dir":      sessionDir,
+		"active_nodes":     strings.Join(activeNodes, ", "),
+		"template_path":    templatePath,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	return template.ExpandTemplate(tmpl, vars, timeout)
+}
+
+// BuildRoleContent returns canonical role content for a node with sentinel obfuscation.
+// 3-step resolution: (1) materialized file with header strip, (2) config template fallback,
+// (3) CommonTemplate prepend. Used by sendAlertToUINode, SendPingToNode, heartbeat, idle.
+func BuildRoleContent(cfg *config.Config, nodeName string) string {
+	nodeTemplate := ""
+	if matPath, ok := cfg.MaterializedPaths[nodeName]; ok {
+		if data, err := os.ReadFile(matPath); err == nil {
+			content := string(data)
+			// Strip "<!-- role template: {node} -->\n\n" header from MaterializeNodeTemplates.
+			if parts := strings.SplitN(content, "\n\n", 2); len(parts) == 2 {
+				nodeTemplate = parts[1]
+			} else {
+				nodeTemplate = content
+			}
+		}
+	}
+	if nodeTemplate == "" {
+		nc := cfg.GetNodeConfig(nodeName)
+		nodeTemplate = nc.Template
+	}
+	roleContent := ""
+	if cfg.CommonTemplate != "" && nodeTemplate != "" {
+		roleContent = cfg.CommonTemplate + "\n\n" + nodeTemplate
+	} else if cfg.CommonTemplate != "" {
+		roleContent = cfg.CommonTemplate
+	} else {
+		roleContent = nodeTemplate
+	}
+	return strings.ReplaceAll(roleContent, "<!-- end of message -->", "<!-- end of msg -->")
 }
 
 // resolveNodeName resolves a simple node name to a session-prefixed node name.

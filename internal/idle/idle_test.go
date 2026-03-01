@@ -71,7 +71,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	tracker.UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder
-	tracker.checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
 	// Verify no reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -112,7 +112,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	tracker.mu.Unlock()
 
 	// Check idle nodes - should send reminder
-	tracker.checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
 	// Verify reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -167,7 +167,7 @@ func TestCheckIdleNodes_WithCooldown(t *testing.T) {
 	tracker.mu.Unlock()
 
 	// Check idle nodes - should NOT send reminder (cooldown active)
-	tracker.checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
 	// Verify no new reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -211,7 +211,7 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 	tracker.UpdateSendActivity("test-session:worker")
 
 	// Check idle nodes - should NOT send reminder (activity reset)
-	tracker.checkIdleNodes(cfg, nil, sessionDir)
+	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
 	// Verify no reminder sent
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -237,7 +237,7 @@ func TestSendIdleReminder(t *testing.T) {
 	nodeName := "test-worker"
 	message := "Test idle reminder message"
 
-	if err := tracker.sendIdleReminder(cfg, nodeName, message, sessionDir); err != nil {
+	if err := tracker.sendIdleReminder(cfg, nodeName, message, sessionDir, "ctx-test", nil, nil); err != nil {
 		t.Fatalf("sendIdleReminder failed: %v", err)
 	}
 

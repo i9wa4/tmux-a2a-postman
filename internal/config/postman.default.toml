@@ -122,27 +122,40 @@ After reading: mv {inbox_path}/{filename} {session_dir}/read/"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
+# Pass 2 injects {role_content} after BuildEnvelope.
 message_template = """---
 method: message/send
 params:
   contextId: {context_id}
   taskId: {task_id}
-  from: postman
+  from: {from_node}
   to: {node}
   timestamp: {iso_timestamp}
+  messageType: ping
 ---
-Role: {template_path} | Protocol: {session_dir}/RULES.md
+
+# tmux-a2a-postman
+
+## Role of {node}
+
+```
+{role_content}
+```
+
+## Contacts
+
+{contacts_section}
+
+How to reply: {reply_command}
+
+## Ping
 
 {talks_to_line}
 
-## Message Details
+## After Reading
 
-Message from {from_node}
-
-After reading, move from inbox/ to read/
-
-- Inbox: {inbox_path}
-- read path: {session_dir}/read/
+Move this message to read/:
+  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
 """
 
 # Draft message template
@@ -182,6 +195,123 @@ How to reply: {reply_command}
 
 Move this message to read/:
   mv {session_dir}/inbox/{recipient}/<this-filename> {session_dir}/read/
+"""
+
+# Alert message template (unified format for daemon alerts)
+# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp}, {alert_type},
+#            {contacts_section}, {reply_command}, {session_dir}, {filename},
+#            {role_content} (Pass 2), {message} (Pass 2)
+alert_message_template = """---
+method: message/send
+params:
+  contextId: {context_id}
+  taskId: {task_id}
+  from: {from_node}
+  to: {node}
+  timestamp: {iso_timestamp}
+  alertType: {alert_type}
+---
+
+# tmux-a2a-postman
+
+## Role of {node}
+
+```
+{role_content}
+```
+
+## Contacts
+
+{contacts_section}
+
+How to reply: {reply_command}
+
+## Alert: {alert_type}
+
+{message}
+
+## After Reading
+
+Move this message to read/:
+  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+"""
+
+# Heartbeat message template (unified format for heartbeat-LLM triggers)
+# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp},
+#            {contacts_section}, {reply_command}, {session_dir}, {filename},
+#            {role_content} (Pass 2), {message} (Pass 2; = expanded heartbeat prompt)
+heartbeat_message_template = """---
+method: message/send
+params:
+  contextId: {context_id}
+  taskId: {task_id}
+  from: {from_node}
+  to: {node}
+  timestamp: {iso_timestamp}
+  messageType: heartbeat
+---
+
+# tmux-a2a-postman
+
+## Role of {node}
+
+```
+{role_content}
+```
+
+## Contacts
+
+{contacts_section}
+
+How to reply: {reply_command}
+
+## Heartbeat
+
+{message}
+
+## After Reading
+
+Move this message to read/:
+  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+"""
+
+# Idle reminder message template (unified format; written to post/ for daemon-routed delivery)
+# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp}, {alert_type},
+#            {contacts_section}, {reply_command}, {session_dir}, {filename},
+#            {role_content} (Pass 2), {message} (Pass 2; = node's IdleReminderMessage)
+idle_reminder_message_template = """---
+method: message/send
+params:
+  contextId: {context_id}
+  taskId: {task_id}
+  from: {from_node}
+  to: {node}
+  timestamp: {iso_timestamp}
+  alertType: idle_reminder
+---
+
+# tmux-a2a-postman
+
+## Role of {node}
+
+```
+{role_content}
+```
+
+## Contacts
+
+{contacts_section}
+
+How to reply: {reply_command}
+
+## Alert: idle_reminder
+
+{message}
+
+## After Reading
+
+Move this message to read/:
+  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
 """
 
 # Edge violation warning template (Issue #92)

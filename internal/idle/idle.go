@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
@@ -285,7 +287,7 @@ func (t *IdleTracker) GetCurrentlyDroppedNodes(nodeConfigs map[string]config.Nod
 }
 
 // StartIdleCheck starts a goroutine that periodically checks for idle nodes (Issue #71).
-func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, adjacency map[string][]string, sessionDir string) {
+func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, adjacency map[string][]string, sessionDir string, contextID string, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		defer ticker.Stop()
@@ -294,7 +296,7 @@ func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, ad
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				t.checkIdleNodes(cfg, adjacency, sessionDir)
+				t.checkIdleNodes(cfg, adjacency, sessionDir, contextID, sharedNodes)
 			}
 		}
 	}()
@@ -302,7 +304,15 @@ func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, ad
 
 // checkIdleNodes checks all nodes for idle timeout and sends reminders.
 // Issue #79: Iterate nodeActivity (session-prefixed keys), extract simple name for config lookup.
-func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string) {
+func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string, contextID string, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) {
+	// Load nodes snapshot for sendIdleReminder (used only when IdleReminderMessageTemplate is set).
+	nodesSnapshot := map[string]discovery.NodeInfo{}
+	if sharedNodes != nil {
+		if ptr := sharedNodes.Load(); ptr != nil {
+			nodesSnapshot = *ptr
+		}
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -344,7 +354,7 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 			message = "Idle reminder: Are you still working?"
 		}
 
-		if err := t.sendIdleReminder(cfg, simpleName, message, sessionDir); err != nil {
+		if err := t.sendIdleReminder(cfg, simpleName, message, sessionDir, contextID, adjacency, nodesSnapshot); err != nil {
 			_ = err // Suppress unused variable warning
 			continue
 		}
@@ -354,39 +364,69 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 	}
 }
 
-// NOTE: sendIdleReminder bypasses BuildEnvelope/message_template. Writes hardcoded YAML
-// format directly to inbox. Intentional: idle reminders are a separate notification layer
-// exempt from sentinel protocol. Phase 2 migration tracked separately.
 // sendIdleReminder sends an idle reminder message to the specified node.
 // Issue #82: Use configurable template for header.
-func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, sessionDir string) error {
-	inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
-	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
-		return fmt.Errorf("creating inbox directory: %w", err)
+// When IdleReminderMessageTemplate is configured, writes to post/ for daemon-routed delivery.
+// Legacy fallback: writes hardcoded format directly to inbox/ when template is empty.
+func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, sessionDir, contextID string, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	tmpl := cfg.IdleReminderMessageTemplate
+	if tmpl == "" {
+		// Legacy path: write hardcoded format directly to inbox/
+		inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
+		if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+			return fmt.Errorf("creating inbox directory: %w", err)
+		}
+
+		timestamp := time.Now().Format("20060102-150405")
+		filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", timestamp, nodeName)
+		filePath := filepath.Join(inboxDir, filename)
+
+		// Issue #82: Expand header template
+		headerTemplate := cfg.IdleReminderHeaderTemplate
+		if headerTemplate == "" {
+			headerTemplate = "## Idle Reminder"
+		}
+		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+		vars := map[string]string{
+			"node": nodeName,
+		}
+		header := template.ExpandTemplate(headerTemplate, vars, timeout)
+
+		content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n%s\n\n%s\n",
+			nodeName, time.Now().Format(time.RFC3339), header, message)
+
+		if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing reminder file: %w", err)
+		}
+		return nil
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", timestamp, nodeName)
-	filePath := filepath.Join(inboxDir, filename)
+	// New path: write to post/ for daemon-routed delivery (fixes sentinel protocol bypass).
+	now := time.Now()
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
+	filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", ts, nodeName)
+	postPath := filepath.Join(sessionDir, "post", filename)
+	taskID := ts + "-idle"
+	sourceSessionName := filepath.Base(filepath.Dir(sessionDir))
 
-	// Issue #82: Expand header template
-	headerTemplate := cfg.IdleReminderHeaderTemplate
-	if headerTemplate == "" {
-		headerTemplate = "## Idle Reminder"
-	}
-	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	vars := map[string]string{
-		"node": nodeName,
-	}
-	header := template.ExpandTemplate(headerTemplate, vars, timeout)
+	// Pass 1: BuildEnvelope
+	scaffolded := envelope.BuildEnvelope(
+		cfg, tmpl, nodeName, "postman",
+		contextID, taskID, postPath,
+		nil, adjacency, nodes, sourceSessionName,
+		nil, // pongActiveNodes = nil → static adjacency
+	)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n%s\n\n%s\n",
-		nodeName, time.Now().Format(time.RFC3339), header, message)
+	// Pass 2: role_content + message
+	content := template.ExpandVariables(scaffolded, map[string]string{
+		"role_content": envelope.BuildRoleContent(cfg, nodeName),
+		"message":      message,
+		"alert_type":   "idle_reminder",
+	})
 
-	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing reminder file: %w", err)
 	}
-
 	return nil
 }
 

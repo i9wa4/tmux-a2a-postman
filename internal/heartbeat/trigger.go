@@ -9,16 +9,23 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // SendHeartbeatTrigger writes a heartbeat trigger to post/ for the configured LLM node.
 // Single-slot semantics: checks inbox before writing; recycles stale triggers to dead-letter/.
 // Returns error on failure; caller sleeps until next interval.
+// When HeartbeatMessageTemplate is configured, uses two-pass expansion (BuildEnvelope + Pass 2).
+// Falls back to legacy hardcoded format when HeartbeatMessageTemplate is empty.
 func SendHeartbeatTrigger(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	contextID, llmNode, prompt string,
 	intervalSeconds float64,
+	cfg *config.Config,
+	adjacency map[string][]string,
 ) error {
 	nodes := sharedNodes.Load()
 	if nodes == nil {
@@ -70,14 +77,34 @@ func SendHeartbeatTrigger(
 
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
+	taskID := ts + "-hb01"
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, llmNode)
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
 	filePath := filepath.Join(postDir, filename)
 
 	expandedPrompt := strings.ReplaceAll(prompt, "{context_id}", contextID)
 
-	content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  taskId: %s-hb01\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\n%s\n",
-		contextID, ts, llmNode, now.Format(time.RFC3339), expandedPrompt)
+	tmpl := cfg.HeartbeatMessageTemplate
+	var content string
+	if tmpl == "" {
+		// Legacy path: hardcoded format
+		content = fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  taskId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\n%s\n",
+			contextID, taskID, llmNode, now.Format(time.RFC3339), expandedPrompt)
+	} else {
+		// New path: BuildEnvelope + Pass 2
+		nodes := *sharedNodes.Load()
+		sourceSessionName := nodeInfo.SessionName
+		scaffolded := envelope.BuildEnvelope(
+			cfg, tmpl, llmNode, "postman",
+			contextID, taskID, filePath,
+			nil, adjacency, nodes, sourceSessionName,
+			nil, // pongActiveNodes = nil → static adjacency
+		)
+		content = template.ExpandVariables(scaffolded, map[string]string{
+			"role_content": envelope.BuildRoleContent(cfg, llmNode),
+			"message":      expandedPrompt,
+		})
+	}
 
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		log.Printf("heartbeat: failed to write trigger %s: %v", filePath, err)

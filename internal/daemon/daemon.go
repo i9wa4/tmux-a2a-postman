@@ -18,6 +18,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -272,7 +273,7 @@ func RunDaemonLoop(
 
 	// Issue #136: Start heartbeat-LLM trigger goroutine if configured
 	if cfg.Heartbeat.Enabled && cfg.Heartbeat.LLMNode != "" && cfg.Heartbeat.IntervalSeconds > 0 {
-		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg)
+		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg, adjacency)
 	}
 
 	for {
@@ -829,9 +830,9 @@ func (ds *DaemonState) MarkAlertSent(alertKey string) {
 	ds.lastAlertTimestamp[alertKey] = time.Now()
 }
 
-// sendAlertToUINode sends an alert message to the ui_node inbox (Issue #118).
-// Replaces tmux display-message calls with postman messaging.
-func sendAlertToUINode(sessionDir, contextID, uiNode, message, alertType string) error {
+// sendAlertToUINodeLegacy is the legacy implementation of sendAlertToUINode,
+// used as fallback when AlertMessageTemplate is empty.
+func sendAlertToUINodeLegacy(sessionDir, contextID, uiNode, message, alertType string) error {
 	now := time.Now()
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
@@ -851,6 +852,41 @@ params:
 
 %s
 `, contextID, uiNode, now.Format(time.RFC3339), alertType, alertType, message)
+
+	return os.WriteFile(postPath, []byte(content), 0o644)
+}
+
+// sendAlertToUINode sends an alert message to the ui_node inbox (Issue #118).
+// Replaces tmux display-message calls with postman messaging.
+// When AlertMessageTemplate is configured, uses two-pass expansion (BuildEnvelope + Pass 2).
+// Falls back to sendAlertToUINodeLegacy when AlertMessageTemplate is empty.
+func sendAlertToUINode(sessionDir, contextID, uiNode, message, alertType string, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	tmpl := cfg.AlertMessageTemplate
+	if tmpl == "" {
+		return sendAlertToUINodeLegacy(sessionDir, contextID, uiNode, message, alertType)
+	}
+
+	sourceSessionName := filepath.Base(filepath.Dir(sessionDir))
+	now := time.Now()
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
+	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
+	postPath := filepath.Join(sessionDir, "post", filename)
+	taskID := ts + "-alert"
+
+	// Pass 1: BuildEnvelope for standard vars (contacts_section, reply_command, etc.)
+	scaffolded := envelope.BuildEnvelope(
+		cfg, tmpl, uiNode, "daemon",
+		contextID, taskID, postPath,
+		nil, adjacency, nodes, sourceSessionName,
+		nil, // pongActiveNodes = nil → static adjacency
+	)
+
+	// Pass 2: alert-specific + daemon-specific vars
+	content := template.ExpandVariables(scaffolded, map[string]string{
+		"alert_type":   alertType,
+		"message":      message,
+		"role_content": envelope.BuildRoleContent(cfg, uiNode),
+	})
 
 	return os.WriteFile(postPath, []byte(content), 0o644)
 }
@@ -1006,7 +1042,7 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
 					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
 				}
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_stagnation")
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_stagnation", cfg, adjacency, nodes)
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}
@@ -1117,7 +1153,7 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
 					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
 				}
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_unread_summary")
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "inbox_unread_summary", cfg, adjacency, nodes)
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}
@@ -1268,7 +1304,7 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 			} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
 				actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
 			}
-			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "node_inactivity")
+			err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "node_inactivity", cfg, adjacency, nodes)
 			if err == nil {
 				ds.MarkAlertSent(alertKey)
 			}
@@ -1278,7 +1314,7 @@ func (ds *DaemonState) checkNodeInactivity(nodes map[string]discovery.NodeInfo, 
 
 // startHeartbeatTrigger periodically sends heartbeat triggers to the configured LLM node.
 // Goroutine lifecycle: exits cleanly on ctx.Done() (consistent with daemon.go:275 pattern).
-func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo], contextID string, cfg *config.Config) {
+func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo], contextID string, cfg *config.Config, adjacency map[string][]string) {
 	interval := time.Duration(cfg.Heartbeat.IntervalSeconds * float64(time.Second))
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1287,7 +1323,7 @@ func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := heartbeat.SendHeartbeatTrigger(sharedNodes, contextID, cfg.Heartbeat.LLMNode, cfg.Heartbeat.Prompt, cfg.Heartbeat.IntervalSeconds); err != nil {
+			if err := heartbeat.SendHeartbeatTrigger(sharedNodes, contextID, cfg.Heartbeat.LLMNode, cfg.Heartbeat.Prompt, cfg.Heartbeat.IntervalSeconds, cfg, adjacency); err != nil {
 				log.Printf("heartbeat: trigger error: %v", err)
 			}
 		}
@@ -1516,7 +1552,7 @@ func (ds *DaemonState) checkUnrepliedMessages(nodes map[string]discovery.NodeInf
 				} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
 					actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
 				}
-				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "unreplied_message")
+				err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, message+actionText, "unreplied_message", cfg, adjacency, nodes)
 				if err == nil {
 					ds.MarkAlertSent(alertKey)
 				}

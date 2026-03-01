@@ -10,6 +10,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // ExtractSimpleName extracts the simple node name from a session-prefixed name.
@@ -41,6 +42,10 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, pongActiveNodes)
+
+	// Pass 2: inject role_content (guaranteed actual role template content).
+	roleContent := envelope.BuildRoleContent(cfg, simpleName)
+	content = template.ExpandVariables(content, map[string]string{"role_content": roleContent})
 
 	// Ensure post directory exists for this node's session
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
