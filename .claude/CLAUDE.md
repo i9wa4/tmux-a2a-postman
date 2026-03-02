@@ -2,9 +2,9 @@
 
 Project-specific instructions for tmux-a2a-postman.
 
-## 3. Workflow
+## 1. Workflow
 
-### 3.5. tmux-a2a-postman Workflow
+### 1.1. tmux-a2a-postman Workflow
 
 After any implementation work:
 
