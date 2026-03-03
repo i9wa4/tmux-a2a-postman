@@ -515,8 +515,14 @@ func RunDaemonLoop(
 									waitingDir := filepath.Join(sourceSessionDir, "waiting")
 									waitingFile := filepath.Join(waitingDir, filename)
 									waitingSince := time.Now().UTC().Format(time.RFC3339)
-									waitingContent := fmt.Sprintf("---\nfrom: %s\nto: %s\nwaiting_since: %s\n---\n",
-										info.From, info.To, waitingSince)
+									// Determine state: user_input for ui_node, composing for all others
+									state := "composing"
+									if cfg.UINode != "" && info.To == cfg.UINode {
+										state = "user_input"
+									}
+									waitingContent := fmt.Sprintf(
+										"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: %s\n---\n",
+										info.From, info.To, waitingSince, state)
 									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o644); writeErr != nil {
 										log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
 									}
@@ -837,6 +843,63 @@ func RunDaemonLoop(
 
 			// Issue #100: Check unreplied messages
 			daemonState.checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency)
+
+			// Update waiting file states based on current pane activity
+			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
+			idleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
+			for _, nodeInfo := range nodes {
+				waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
+				entries, err := os.ReadDir(waitingDir)
+				if err != nil {
+					continue
+				}
+				for _, entry := range entries {
+					if !strings.HasSuffix(entry.Name(), ".md") {
+						continue
+					}
+					filePath := filepath.Join(waitingDir, entry.Name())
+					fileContent, readErr := os.ReadFile(filePath)
+					if readErr != nil || !strings.Contains(string(fileContent), "state: composing") {
+						continue // skip user_input, stuck, or unreadable
+					}
+					// Parse waiting_since from file content (anchor for composing window)
+					var waitingSince time.Time
+					for _, line := range strings.Split(string(fileContent), "\n") {
+						if strings.HasPrefix(line, "waiting_since: ") {
+							ts := strings.TrimPrefix(line, "waiting_since: ")
+							if t, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(ts)); parseErr == nil {
+								waitingSince = t
+							}
+							break
+						}
+					}
+					if waitingSince.IsZero() {
+						continue // malformed file; skip
+					}
+					// Guard: composing window — never mark stuck before idleThreshold elapses
+					// since composing began. Prevents false stuck for agents idle before reading.
+					if time.Since(waitingSince) <= idleThreshold {
+						continue
+					}
+					// Parse recipient from filename
+					fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
+					if parseErr != nil {
+						continue
+					}
+					// Look up recipient's pane ID via sessionName:nodeName key
+					recipientKey := nodeInfo.SessionName + ":" + fileInfo.To
+					recipientInfo, ok := nodes[recipientKey]
+					if !ok {
+						continue // recipient not in current node snapshot
+					}
+					// Check if recipient pane is currently stale → mark stuck
+					if paneStatus[recipientInfo.PaneID] == "stale" {
+						updated := strings.ReplaceAll(string(fileContent),
+							"state: composing", "state: stuck")
+						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+					}
+				}
+			}
 		}
 	}
 }

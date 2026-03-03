@@ -367,11 +367,22 @@ All messages use YAML frontmatter followed by content:
 After moving a message to read/, a waiting file is automatically created:
   {session_dir}/waiting/<same-filename-as-read-message>
 
+File content includes a `state` field:
+- composing   agent received a message and is preparing a reply
+- user_input  agent is waiting for user input (ui_node, never stuck)
+- stuck       daemon detected pane went stale while composing
+
 The file is automatically removed when you send a reply (move draft to post/).
 
 Monitoring:
-  watch -n 1 ls -la {session_dir}/waiting/
-  find {session_dir}/waiting/ -mmin +5   # detect agents stuck >5 min
+  # Agents stuck (pane went stale while composing):
+  grep -rl "state: stuck" {session_dir}/waiting/
+
+  # Agents actively composing:
+  grep -rl "state: composing" {session_dir}/waiting/
+
+  # User input waits (expected, not stuck — always ignore):
+  grep -rl "state: user_input" {session_dir}/waiting/
 
 ### Standard Replies
 
