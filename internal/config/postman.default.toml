@@ -362,6 +362,17 @@ All messages use YAML frontmatter followed by content:
 - Read the file at the given path
 - After reading: mv <inbox-file> {session_dir}/read/
 
+### Waiting State
+
+After moving a message to read/, a waiting file is automatically created:
+  {session_dir}/waiting/<same-filename-as-read-message>
+
+The file is automatically removed when you send a reply (move draft to post/).
+
+Monitoring:
+  watch -n 1 ls -la {session_dir}/waiting/
+  find {session_dir}/waiting/ -mmin +5   # detect agents stuck >5 min
+
 ### Standard Replies
 
 - PONG: see {session_dir}/boilerplate/pong.md

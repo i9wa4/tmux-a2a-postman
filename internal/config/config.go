@@ -998,7 +998,7 @@ func ResolveBaseDir(configBaseDir string) string {
 
 // CreateSessionDirs creates the session directory structure.
 // Legacy signature for backward compatibility with tests.
-// Creates: sessionDir/{inbox,post,draft,read,dead-letter,capture}
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter,capture,waiting}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -1007,6 +1007,7 @@ func CreateSessionDirs(sessionDir string) error {
 		filepath.Join(sessionDir, "read"),
 		filepath.Join(sessionDir, "dead-letter"),
 		filepath.Join(sessionDir, "capture"),
+		filepath.Join(sessionDir, "waiting"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {

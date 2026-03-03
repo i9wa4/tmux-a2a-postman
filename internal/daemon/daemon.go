@@ -405,6 +405,21 @@ func RunDaemonLoop(
 
 							// Send normal delivery event only if not dead-lettered
 							if !deadLetterEventSent {
+								// Remove waiting files for sender: successfully sent, no longer composing reply
+								{
+									senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
+									if senderInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+										waitingDir := filepath.Join(senderSessionDir, "waiting")
+										pattern := filepath.Join(waitingDir, "*-to-"+senderInfo.From+".md")
+										if matches, globErr := filepath.Glob(pattern); globErr == nil {
+											for _, match := range matches {
+												if removeErr := os.Remove(match); removeErr != nil {
+													log.Printf("postman: WARNING: failed to remove waiting file %s: %v\n", match, removeErr)
+												}
+											}
+										}
+									}
+								}
 								// Issue #59: Extract session name from eventPath
 								// eventPath format: /path/to/context-id/session-name/post/message.md
 								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
@@ -494,6 +509,17 @@ func RunDaemonLoop(
 										"node":   prefixedKey,
 										"source": "read_move",
 									},
+								}
+								// Create waiting file: only for agent-to-agent messages (not daemon alerts)
+								if info.From != "postman" && info.From != "daemon" {
+									waitingDir := filepath.Join(sourceSessionDir, "waiting")
+									waitingFile := filepath.Join(waitingDir, filename)
+									waitingSince := time.Now().UTC().Format(time.RFC3339)
+									waitingContent := fmt.Sprintf("---\nfrom: %s\nto: %s\nwaiting_since: %s\n---\n",
+										info.From, info.To, waitingSince)
+									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o644); writeErr != nil {
+										log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
+									}
 								}
 							}
 						}
