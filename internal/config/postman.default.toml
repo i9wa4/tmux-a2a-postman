@@ -65,6 +65,7 @@ edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 node_active_seconds = 300          # 0-5min: active (green)
 node_idle_seconds = 900            # 5-15min: idle (orange), 15min+: stale (red)
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
+node_spinning_seconds = 0          # disabled by default; set to positive seconds to enable spinning detection
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
@@ -111,6 +112,7 @@ inbox_stagnation_alert_template = "Inbox stagnation [{severity}]: {node} has unr
 inbox_unread_summary_alert_template = "Inbox unread summary: {node} has {count} unread messages (threshold: {threshold})"
 node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive for {inactive_duration} (threshold: {threshold}). Last sent: {last_sent}, Last received: {last_received}, PONG received: {pong_received}"
 unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has message in read/ for {time_since_read} without reply (from: {from}, threshold: {threshold})"
+spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_duration} (threshold: {threshold}). Pane is active — possible infinite loop or runaway computation."
 
 # Common template (prepended to all node templates)
 # common_template = ""
@@ -371,6 +373,7 @@ File content includes a `state` field:
 - composing   agent received a message and is preparing a reply
 - user_input  agent is waiting for user input (ui_node, never stuck)
 - stuck       daemon detected pane went stale while composing
+- spinning    daemon detected pane active but no reply after node_spinning_seconds
 
 The file is automatically removed when you send a reply (move draft to post/).
 
@@ -380,6 +383,9 @@ Monitoring:
 
   # Agents actively composing:
   grep -rl "state: composing" {session_dir}/waiting/
+
+  # Agents spinning (active pane, no reply — possible infinite loop):
+  grep -rl "state: spinning" {session_dir}/waiting/
 
   # User input waits (expected, not stuck — always ignore):
   grep -rl "state: user_input" {session_dir}/waiting/

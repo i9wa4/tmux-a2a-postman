@@ -980,10 +980,12 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base.A2AVersion = "0.9"
 
 	override := &Config{
-		Nodes:        make(map[string]NodeConfig),
-		ScanInterval: 5.0,
-		BaseDir:      "/project/base",
-		A2AVersion:   "1.0",
+		Nodes:                 make(map[string]NodeConfig),
+		ScanInterval:          5.0,
+		BaseDir:               "/project/base",
+		A2AVersion:            "1.0",
+		NodeSpinningSeconds:   1800.0,
+		SpinningAlertTemplate: "custom spinning alert",
 	}
 
 	mergeConfig(base, override)
@@ -996,6 +998,12 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	}
 	if base.A2AVersion != "1.0" {
 		t.Errorf("A2AVersion: got %q, want %q", base.A2AVersion, "1.0")
+	}
+	if base.NodeSpinningSeconds != 1800.0 {
+		t.Errorf("NodeSpinningSeconds: got %v, want 1800.0", base.NodeSpinningSeconds)
+	}
+	if base.SpinningAlertTemplate != "custom spinning alert" {
+		t.Errorf("SpinningAlertTemplate: got %q, want %q", base.SpinningAlertTemplate, "custom spinning alert")
 	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {

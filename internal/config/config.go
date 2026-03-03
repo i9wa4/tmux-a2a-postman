@@ -34,9 +34,10 @@ type Config struct {
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
 
 	// Node state thresholds (Issue #xxx)
-	NodeActiveSeconds float64 `toml:"node_active_seconds"` // 0-N seconds: active (green)
-	NodeIdleSeconds   float64 `toml:"node_idle_seconds"`   // N+ seconds: idle (orange) or stale (red)
-	NodeStaleSeconds  float64 `toml:"node_stale_seconds"`  // Memory cleanup threshold for pane capture
+	NodeActiveSeconds   float64 `toml:"node_active_seconds"`   // 0-N seconds: active (green)
+	NodeIdleSeconds     float64 `toml:"node_idle_seconds"`     // N+ seconds: idle (orange) or stale (red)
+	NodeStaleSeconds    float64 `toml:"node_stale_seconds"`    // Memory cleanup threshold for pane capture
+	NodeSpinningSeconds float64 `toml:"node_spinning_seconds"` // Hard ceiling for active-but-no-reply detection; 0 = disabled
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
@@ -67,6 +68,7 @@ type Config struct {
 	InboxUnreadSummaryAlertTemplate string `toml:"inbox_unread_summary_alert_template"` // Alert message body for inbox unread summary
 	NodeInactivityAlertTemplate     string `toml:"node_inactivity_alert_template"`      // Alert message body for node inactivity
 	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
+	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
 	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
 	IdleReminderMessageTemplate     string `toml:"idle_reminder_message_template"`      // Unified idle reminder message format
@@ -181,6 +183,7 @@ func DefaultConfig() *Config {
 		NodeActiveSeconds:               300.0, // 0-5min: active (green)
 		NodeIdleSeconds:                 900.0, // 5-15min: idle (orange)
 		NodeStaleSeconds:                900.0, // 15min+: stale (red)
+		NodeSpinningSeconds:             0.0,   // disabled by default; set positive to enable spinning detection
 		PaneCaptureEnabled:              true,
 		PaneCaptureIntervalSeconds:      60.0,
 		PaneCaptureMaxPanes:             0,
@@ -485,6 +488,9 @@ func mergeConfig(base, override *Config) {
 	if override.UnrepliedMessageAlertTemplate != "" {
 		base.UnrepliedMessageAlertTemplate = override.UnrepliedMessageAlertTemplate
 	}
+	if override.SpinningAlertTemplate != "" {
+		base.SpinningAlertTemplate = override.SpinningAlertTemplate
+	}
 	if override.AlertMessageTemplate != "" {
 		base.AlertMessageTemplate = override.AlertMessageTemplate
 	}
@@ -552,6 +558,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeStaleSeconds != 0 {
 		base.NodeStaleSeconds = override.NodeStaleSeconds
+	}
+	if override.NodeSpinningSeconds != 0 {
+		base.NodeSpinningSeconds = override.NodeSpinningSeconds
 	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds

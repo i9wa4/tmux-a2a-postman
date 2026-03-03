@@ -847,6 +847,8 @@ func RunDaemonLoop(
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
 			idleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
+			spinningEnabled := cfg.NodeSpinningSeconds > 0
+			spinningThreshold := time.Duration(cfg.NodeSpinningSeconds * float64(time.Second))
 			for _, nodeInfo := range nodes {
 				waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
 				entries, err := os.ReadDir(waitingDir)
@@ -859,12 +861,18 @@ func RunDaemonLoop(
 					}
 					filePath := filepath.Join(waitingDir, entry.Name())
 					fileContent, readErr := os.ReadFile(filePath)
-					if readErr != nil || !strings.Contains(string(fileContent), "state: composing") {
+					if readErr != nil {
+						continue
+					}
+					contentStr := string(fileContent)
+					isComposing := strings.Contains(contentStr, "state: composing")
+					isSpinning := strings.Contains(contentStr, "state: spinning")
+					if !isComposing && !isSpinning {
 						continue // skip user_input, stuck, or unreadable
 					}
 					// Parse waiting_since from file content (anchor for composing window)
 					var waitingSince time.Time
-					for _, line := range strings.Split(string(fileContent), "\n") {
+					for _, line := range strings.Split(contentStr, "\n") {
 						if strings.HasPrefix(line, "waiting_since: ") {
 							ts := strings.TrimPrefix(line, "waiting_since: ")
 							if t, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(ts)); parseErr == nil {
@@ -875,11 +883,6 @@ func RunDaemonLoop(
 					}
 					if waitingSince.IsZero() {
 						continue // malformed file; skip
-					}
-					// Guard: composing window — never mark stuck before idleThreshold elapses
-					// since composing began. Prevents false stuck for agents idle before reading.
-					if time.Since(waitingSince) <= idleThreshold {
-						continue
 					}
 					// Parse recipient from filename
 					fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
@@ -892,11 +895,58 @@ func RunDaemonLoop(
 					if !ok {
 						continue // recipient not in current node snapshot
 					}
-					// Check if recipient pane is currently stale → mark stuck
-					if paneStatus[recipientInfo.PaneID] == "stale" {
-						updated := strings.ReplaceAll(string(fileContent),
-							"state: composing", "state: stuck")
+					paneState := paneStatus[recipientInfo.PaneID]
+
+					if isSpinning {
+						// spinning → stuck: pane went stale after spinning was detected
+						if paneState == "stale" {
+							updated := strings.ReplaceAll(contentStr, "state: spinning", "state: stuck")
+							_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						}
+						continue
+					}
+
+					// isComposing: composing window guard (same as before)
+					if time.Since(waitingSince) <= idleThreshold {
+						continue
+					}
+					// composing → stuck: pane stale after composing window
+					if paneState == "stale" {
+						updated := strings.ReplaceAll(contentStr, "state: composing", "state: stuck")
 						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						continue
+					}
+					// composing → spinning: pane active after spinning threshold
+					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
+						updated := strings.ReplaceAll(contentStr, "state: composing", "state: spinning")
+						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						// Send spinning alert with rate-limiting
+						alertKey := fmt.Sprintf("spinning:%s:%s", nodeInfo.SessionName, fileInfo.To)
+						if daemonState.ShouldSendAlert(alertKey, 300.0) {
+							spinningDuration := time.Since(waitingSince).Round(time.Second)
+							alertVars := map[string]string{
+								"node":              fileInfo.To,
+								"spinning_duration": spinningDuration.String(),
+								"threshold":         spinningThreshold.String(),
+							}
+							alertMsg := template.ExpandVariables(cfg.SpinningAlertTemplate, alertVars)
+							// Always mark sent regardless of delivery result: once in spinning state,
+							// subsequent ticks take the isSpinning branch (no alert path), so
+							// not marking would permanently lose the cooldown and prevent retries
+							// that can never happen anyway.
+							_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
+								alertMsg, "spinning", cfg, adjacency, nodes)
+							daemonState.MarkAlertSent(alertKey)
+							events <- tui.DaemonEvent{
+								Type:    "spinning_detected",
+								Message: alertMsg,
+								Details: map[string]interface{}{
+									"node":              fileInfo.To,
+									"spinning_duration": time.Since(waitingSince).Seconds(),
+									"threshold":         cfg.NodeSpinningSeconds,
+								},
+							}
+						}
 					}
 				}
 			}
