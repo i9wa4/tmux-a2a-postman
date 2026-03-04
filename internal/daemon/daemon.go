@@ -950,6 +950,59 @@ func RunDaemonLoop(
 					}
 				}
 			}
+			// Collect waiting states for TUI color display (second pass, post-transition)
+			waitingStates := make(map[string]string)
+			worstStatePriority := map[string]int{
+				"user_input": 0,
+				"composing":  1,
+				"spinning":   2,
+				"stuck":      3,
+			}
+			for _, nodeInfo := range nodes {
+				wDir := filepath.Join(nodeInfo.SessionDir, "waiting")
+				wEntries, wErr := os.ReadDir(wDir)
+				if wErr != nil {
+					continue
+				}
+				for _, wEntry := range wEntries {
+					if !strings.HasSuffix(wEntry.Name(), ".md") {
+						continue
+					}
+					wContent, wReadErr := os.ReadFile(filepath.Join(wDir, wEntry.Name()))
+					if wReadErr != nil {
+						continue
+					}
+					cs := string(wContent)
+					var fileState string
+					switch {
+					case strings.Contains(cs, "state: stuck"):
+						fileState = "stuck"
+					case strings.Contains(cs, "state: spinning"):
+						fileState = "spinning"
+					case strings.Contains(cs, "state: composing"):
+						fileState = "composing"
+					case strings.Contains(cs, "state: user_input"):
+						fileState = "user_input"
+					default:
+						continue
+					}
+					wFileInfo, wParseErr := message.ParseMessageFilename(wEntry.Name())
+					if wParseErr != nil {
+						continue
+					}
+					recipientKey := nodeInfo.SessionName + ":" + wFileInfo.To
+					if worstStatePriority[fileState] >= worstStatePriority[waitingStates[recipientKey]] {
+						waitingStates[recipientKey] = fileState
+					}
+				}
+			}
+			events <- tui.DaemonEvent{
+				Type:    "waiting_state_update",
+				Message: "Waiting states updated",
+				Details: map[string]interface{}{
+					"waiting_states": waitingStates,
+				},
+			}
 		}
 	}
 }

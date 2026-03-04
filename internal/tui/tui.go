@@ -47,6 +47,9 @@ var (
 	droppedNodeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("196")) // red
 
+	composingNodeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("33")) // Blue: node actively composing a reply
+
 	// Issue #89: Selected session row highlight
 	selectedSessionStyle = lipgloss.NewStyle().
 				Reverse(true)
@@ -61,6 +64,18 @@ var (
 	eventDroppedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")) // gray
 )
+
+// waitingStateRank defines priority for waiting/ state color override.
+// Higher rank = worse state = takes visual priority.
+var waitingStateRank = map[string]int{
+	"active":     0,
+	"user_input": 0,
+	"composing":  1,
+	"idle":       2,
+	"spinning":   2,
+	"stale":      3,
+	"stuck":      3,
+}
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
 // Supports both directed ("-->") and undirected ("--") edges.
@@ -158,7 +173,8 @@ type Model struct {
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 
 	// Node state tracking (Issue #55)
-	nodeStates map[string]string // "active" / "idle" / "stale"
+	nodeStates    map[string]string // "active" / "idle" / "stale"
+	waitingStates map[string]string // "composing" / "spinning" / "stuck" / "user_input"
 
 	// Shared state
 	daemonEvents <-chan DaemonEvent
@@ -197,31 +213,47 @@ func (m Model) getSelectedBorderColor() string {
 }
 
 // getSessionWorstState returns the worst node state for a session (Issue #97).
-// Priority: stale > idle > active
+// Priority: stuck/stale > spinning/idle > composing > active
 func (m Model) getSessionWorstState(sessionName string) string {
 	nodes, ok := m.sessionNodes[sessionName]
 	if !ok {
-		return "active" // Default: active (no nodes)
+		return "active"
 	}
-
 	worstState := "active"
-	stateRank := map[string]int{
-		"active": 0,
-		"idle":   1,
-		"stale":  2,
-	}
-
+	worstRank := 0
 	for _, nodeName := range nodes {
-		// Construct session-prefixed key
-		prefixedKey := sessionName + ":" + nodeName
-		if state, exists := m.nodeStates[prefixedKey]; exists {
-			if stateRank[state] > stateRank[worstState] {
-				worstState = state
-			}
+		es := m.effectiveNodeState(sessionName + ":" + nodeName)
+		if r := waitingStateRank[es]; r > worstRank {
+			worstRank = r
+			worstState = es
 		}
 	}
+	// Normalize waiting-only states to renderable session states
+	switch worstState {
+	case "stuck":
+		return "stale"
+	case "spinning":
+		return "idle"
+	case "user_input":
+		return "active"
+	default:
+		return worstState // "active", "composing", "idle", "stale" pass through
+	}
+}
 
-	return worstState
+// effectiveNodeState returns the display state for a session-prefixed node key.
+// waiting/ state overrides nodeStates when it represents an equal or worse condition.
+func (m Model) effectiveNodeState(key string) string {
+	state := ""
+	if ns, ok := m.nodeStates[key]; ok {
+		state = ns
+	}
+	if ws, ok := m.waitingStates[key]; ok {
+		if waitingStateRank[ws] >= waitingStateRank[state] {
+			state = ws
+		}
+	}
+	return state
 }
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
@@ -313,6 +345,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		selectedSession: 0,                         // Issue #35: Requirement 3
 		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
 		nodeStates:      make(map[string]string),   // Issue #55: Node state tracking
+		waitingStates:   make(map[string]string),
 		config:          cfg,
 		daemonEvents:    daemonEvents,
 		tuiCommands:     tuiCommands,    // Issue #47: Command channel
@@ -574,6 +607,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// We need to extract state from each NodeActivity
 				m.updateNodeStatesFromActivity(nodeStatesRaw, droppedNodes)
 			}
+		case "waiting_state_update":
+			if wsRaw, ok := msg.Details["waiting_states"].(map[string]string); ok {
+				m.waitingStates = wsRaw
+			}
 		case "error":
 			m.events = append(m.events, EventEntry{
 				Message:     fmt.Sprintf("ERROR: %s", msg.Message),
@@ -814,6 +851,8 @@ func (m Model) renderLeftPane(width, height int) string {
 					sessionStyle = droppedNodeStyle
 				case "idle":
 					sessionStyle = ballHolderStyle
+				case "composing":
+					sessionStyle = composingNodeStyle
 				case "active":
 					sessionStyle = activeNodeStyle
 				default:
@@ -860,6 +899,7 @@ func (m Model) renderRightPane(width, height int) string {
 	case ViewRouting:
 		legend := "Legend: " +
 			activeNodeStyle.Render("Active") + " | " +
+			composingNodeStyle.Render("Composing") + " | " +
 			ballHolderStyle.Render("Idle") + " | " +
 			droppedNodeStyle.Render("Stale")
 		b.WriteString(legend + "\n\n")
@@ -1125,15 +1165,16 @@ func (m Model) renderRoutingView(width, height int) string {
 							}
 						}
 
-						if state, exists := m.nodeStates[stateKey]; exists {
-							switch state {
-							case "active":
+						if es := m.effectiveNodeState(stateKey); es != "" {
+							switch es {
+							case "active", "user_input":
 								nodeStyle = activeNodeStyle
-							case "idle":
+							case "composing":
+								nodeStyle = composingNodeStyle
+							case "idle", "spinning":
 								nodeStyle = ballHolderStyle
-							case "stale":
+							case "stale", "stuck":
 								nodeStyle = droppedNodeStyle
-								// default: use default style
 							}
 						}
 						builder.WriteString(nodeStyle.Render(node))
