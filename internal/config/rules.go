@@ -38,7 +38,7 @@ func GenerateRulesFile(sessionDir, contextID string, cfg *Config) error {
 // GenerateBoilerplateFiles generates boilerplate response files in {session_dir}/boilerplate/.
 // Variables: {context_id}, {reply_command}, {session_dir}
 func GenerateBoilerplateFiles(sessionDir, contextID string, cfg *Config) error {
-	if cfg.BoilerplatePong == "" && cfg.BoilerplateHeartbeatOk == "" && cfg.BoilerplateHowToReply == "" {
+	if cfg.BoilerplateHeartbeatOk == "" && cfg.BoilerplateHowToReply == "" {
 		return nil
 	}
 
@@ -56,7 +56,6 @@ func GenerateBoilerplateFiles(sessionDir, contextID string, cfg *Config) error {
 	}
 
 	files := map[string]string{
-		"pong.md":         cfg.BoilerplatePong,
 		"heartbeat_ok.md": cfg.BoilerplateHeartbeatOk,
 		"how_to_reply.md": cfg.BoilerplateHowToReply,
 	}

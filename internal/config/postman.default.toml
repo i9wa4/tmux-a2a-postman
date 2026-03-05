@@ -392,14 +392,12 @@ Monitoring:
 
 ### Standard Replies
 
-- PONG: see {session_dir}/boilerplate/pong.md
 - HEARTBEAT_OK: see {session_dir}/boilerplate/heartbeat_ok.md
 - [status] - current task, blockers, next action
 - [error] - description, mitigation, next step
 """
 
 # Boilerplate response files (auto-generated per session in {session_dir}/boilerplate/)
-# boilerplate_pong = "PONG"
 # boilerplate_heartbeat_ok = "HEARTBEAT_OK"
 # boilerplate_how_to_reply = """
 # 1. {reply_command}

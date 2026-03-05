@@ -438,51 +438,33 @@ func RunDaemonLoop(
 								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 								sourceSessionName := filepath.Base(sourceSessionDir)
 								if info, err := message.ParseMessageFilename(filename); err == nil {
-									// Issue #55: Handle PONG separately from normal messages
-									// DEPRECATED: Explicit PONG via from-{node}-to-postman.md
-									// Kept as backward-compatible fallback. Synthesized PONG via read/ move is now primary.
-									// TODO(#150): Remove after confirming all nodes use implicit PONG (read/ move).
-									if info.To == "postman" {
-										// PONG received - track state, skip edge/observer/reminder
-										// Issue #79: Use session-prefixed key for tracking
-										prefixedKey := sourceSessionName + ":" + info.From
-										idleTracker.MarkPongReceived(prefixedKey)
-										idleTracker.UpdateSendActivity(prefixedKey) // Track PONG as send activity
-										events <- tui.DaemonEvent{
-											Type: "pong_received",
-											Details: map[string]interface{}{
-												"node": prefixedKey,
-											},
-										}
-									} else {
-										// Normal message delivery - record edge activity, send digest, etc.
-										// Issue #37: Record edge activity
-										daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
+									// Normal message delivery - record edge activity, send digest, etc.
+									// Issue #37: Record edge activity
+									daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
 
-										// Issue #40: Send edge_update event to TUI
-										edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
-										events <- tui.DaemonEvent{
-											Type: "edge_update",
-											Details: map[string]interface{}{
-												"edges": edgeList,
-											},
-										}
+									// Issue #40: Send edge_update event to TUI
+									edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
+									events <- tui.DaemonEvent{
+										Type: "edge_update",
+										Details: map[string]interface{}{
+											"edges": edgeList,
+										},
+									}
 
-										// Only count human-authored messages toward reminder threshold.
-										// Daemon-generated alerts (from="postman" or from="daemon") must not
-										// accelerate the reminder counter.
-										if reminderShouldIncrement(info.From) {
-											reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
-										}
+									// Only count human-authored messages toward reminder threshold.
+									// Daemon-generated alerts (from="postman" or from="daemon") must not
+									// accelerate the reminder counter.
+									if reminderShouldIncrement(info.From) {
+										reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
+									}
 
-										// Issue #55: Emit ball state update after message delivery
-										nodeStates := idleTracker.GetNodeStates()
-										events <- tui.DaemonEvent{
-											Type: "ball_state_update",
-											Details: map[string]interface{}{
-												"node_states": nodeStates,
-											},
-										}
+									// Issue #55: Emit ball state update after message delivery
+									nodeStates := idleTracker.GetNodeStates()
+									events <- tui.DaemonEvent{
+										Type: "ball_state_update",
+										Details: map[string]interface{}{
+											"node_states": nodeStates,
+										},
 									}
 								}
 							}

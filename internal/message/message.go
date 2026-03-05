@@ -104,18 +104,6 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 
-	// PONG handling: messages to "postman" are PONG responses
-	// Move directly to read/ in source session (skip inbox delivery)
-	// NOTE: PONG state tracking (MarkPongReceived) is handled in daemon.go
-	// post-delivery block, not here. This function only moves PONG to read/.
-	if info.To == "postman" {
-		dst := filepath.Join(sourceSessionDir, "read", filename)
-		if err := os.Rename(postPath, dst); err != nil {
-			return fmt.Errorf("moving PONG to read: %w", err)
-		}
-		return nil
-	}
-
 	// Resolve recipient name (Issue #33: session-aware adjacency)
 	recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, knownNodes)
 	if recipientFullName == "" {
@@ -339,7 +327,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if info.From != "postman" {
 		idleTracker.UpdateSendActivity(sourceSessionName + ":" + info.From)
 	}
-	if info.From != "postman" && info.To != "postman" {
+	if info.From != "postman" {
 		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 

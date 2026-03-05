@@ -331,24 +331,14 @@ func TestPONG_Handling(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	// Verify moved to read/ (not inbox or dead-letter)
-	readPath := filepath.Join(sessionDir, "read", filename)
-	if _, err := os.Stat(readPath); err != nil {
-		t.Errorf("PONG not in read/: %v", err)
-	}
 	// Verify removed from post/
 	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
 		t.Error("message still in post/ after delivery")
 	}
-	// Verify NOT in inbox/
-	inboxPath := filepath.Join(sessionDir, "inbox", "postman", filename)
-	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
-		t.Error("PONG should not be in inbox/")
-	}
-	// Verify NOT in dead-letter/
+	// Verify dead-lettered (postman is unknown recipient after explicit PONG removal)
 	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
-	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
-		t.Error("PONG should not be in dead-letter/")
+	if _, err := os.Stat(deadPath); os.IsNotExist(err) {
+		t.Error("PONG should be in dead-letter/")
 	}
 }
 

@@ -73,7 +73,6 @@ type Config struct {
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
 	IdleReminderMessageTemplate     string `toml:"idle_reminder_message_template"`      // Unified idle reminder message format
 	RulesTemplate                   string `toml:"rules_template"`                      // Issue #75: Shared protocol rules
-	BoilerplatePong                 string `toml:"boilerplate_pong"`
 	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
 	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
 
@@ -218,7 +217,6 @@ func DefaultConfig() *Config {
 		HeartbeatMessageTemplate:        "",
 		IdleReminderMessageTemplate:     "",
 		RulesTemplate:                   "",
-		BoilerplatePong:                 "PONG",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
 		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
 		CompactionDetection: CompactionDetectionConfig{
@@ -502,9 +500,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RulesTemplate != "" {
 		base.RulesTemplate = override.RulesTemplate
-	}
-	if override.BoilerplatePong != "" {
-		base.BoilerplatePong = override.BoilerplatePong
 	}
 	if override.BoilerplateHeartbeatOk != "" {
 		base.BoilerplateHeartbeatOk = override.BoilerplateHeartbeatOk
