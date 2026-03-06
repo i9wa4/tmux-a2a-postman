@@ -87,7 +87,7 @@ edges = []
 
 # Global settings
 # reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
-# ui_node = "messenger"            # TUI target node for watchdog alerts
+# ui_node = "messenger"            # TUI target node for daemon alerts
 
 # reminder_message:
 #   {node}      - Node name
@@ -409,32 +409,8 @@ Monitoring:
 # Idle reminder header template (Issue #82)
 # idle_reminder_header_template = "## Idle Reminder"
 
-# Session idle alert template (Issue #82)
-# Variables: {session_name}, {idle_nodes}, {talks_to_line}
-# session_idle_alert_template = """
-# ## Idle Alert
-#
-# tmux session `{session_name}` の全ノードが停止しています。
-#
-# Idle nodes: {idle_nodes}
-#
-# {talks_to_line}
-#
-# Reply: `tmux-a2a-postman create-draft --to <node>`
-# """
-
 # Compaction detection header template (Issue #82)
 # compaction_header_template = "## Compaction Detected"
-
-# Watchdog idle alert template (Issue #82)
-# Variables: {pane_id}, {idle_duration}, {last_activity}
-# watchdog_alert_template = """
-# ## Idle Alert
-#
-# Pane {pane_id} has been idle for {idle_duration}.
-#
-# Last activity: {last_activity}
-# """
 
 # Compaction notification body template (Issue #82)
 # Variables: {node}
@@ -443,23 +419,6 @@ Monitoring:
 # Dropped ball event message template (Issue #82)
 # Variables: {node}, {duration}
 # dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
-
-# =============================================================================
-# Watchdog Configuration
-# =============================================================================
-
-[watchdog]
-# Disabled pending watchdog/heartbeat spec finalization.
-# Re-enable once specs are complete — see GitHub Issue #145.
-enabled = false                       # Enable watchdog monitoring
-idle_threshold_seconds = 300.0        # 5 minutes
-cooldown_seconds = 600.0              # 10 minutes
-
-[watchdog.capture]
-enabled = true
-tail_lines = 100
-max_files = 10
-max_bytes = 1048576  # 1MB
 
 # =============================================================================
 # Node-Specific Configuration

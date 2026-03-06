@@ -29,11 +29,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
-	"github.com/i9wa4/tmux-a2a-postman/internal/sessionidle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
-	"github.com/i9wa4/tmux-a2a-postman/internal/watchdog"
 )
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
@@ -110,17 +108,9 @@ func main() {
 
 	switch command {
 	case "start":
-		// Check if this should run as watchdog
-		if config.GetTmuxPaneName() == "watchdog" {
-			if err := runWatchdog(*contextID, *configPath, *logFilePath); err != nil {
-				fmt.Fprintf(os.Stderr, "❌ postman watchdog: %v\n", err)
-				os.Exit(1)
-			}
-		} else {
-			if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
-				fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
-				os.Exit(1)
-			}
+		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
+			os.Exit(1)
 		}
 	case "create-draft":
 		if err := runCreateDraft(args); err != nil {
@@ -380,9 +370,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start pane capture check goroutine (hybrid idle detection)
 	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID)
-
-	// Start session-level idle check goroutine
-	_ = sessionidle.StartSessionIdleCheck(ctx, baseDir, contextID, sessionDir, cfg, adjacency, 30.0)
 
 	// Start compaction detection goroutine
 	compactionTracker.StartCompactionCheck(ctx, cfg, nodes, sessionDir)
@@ -950,136 +937,4 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	}
 
 	return nil
-}
-
-// runWatchdog runs the watchdog daemon when the pane title is "watchdog".
-func runWatchdog(contextID, configPath, logFilePath string) error {
-	// Auto-generate context ID if not specified
-	if contextID == "" {
-		contextID = fmt.Sprintf("session-%s-%04x",
-			time.Now().Format("20060102-150405"),
-			time.Now().UnixNano()&0xffff)
-	}
-
-	// LoadConfig
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	// Check if watchdog is enabled
-	if !cfg.Watchdog.Enabled {
-		return fmt.Errorf("watchdog is disabled in config")
-	}
-
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	contextDir := filepath.Join(baseDir, contextID)
-
-	// NOTE: Use contextDir directly (not multi-session subdirectory)
-	// to match Python postman's directory structure (.postman/session-ID/post/)
-	sessionDir := contextDir
-
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		return fmt.Errorf("creating session directories: %w", err)
-	}
-
-	// Acquire watchdog lock
-	lockPath := filepath.Join(sessionDir, "postman-watchdog.lock")
-	watchdogLock, err := watchdog.AcquireLock(lockPath)
-	if err != nil {
-		return fmt.Errorf("acquiring watchdog lock: %w", err)
-	}
-	defer func() { _ = watchdogLock.ReleaseLock() }()
-
-	// Setup log file
-	logPath := logFilePath
-	if logPath == "" {
-		logPath = filepath.Join(contextDir, "watchdog.log")
-	}
-	if logPath != "" {
-		logDir := filepath.Dir(logPath)
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
-			return fmt.Errorf("creating log directory: %w", err)
-		}
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return fmt.Errorf("opening log file: %w", err)
-		}
-		defer func() {
-			_ = logFile.Close()
-		}()
-
-		log.SetOutput(logFile)
-		log.SetFlags(log.LstdFlags)
-
-		log.Printf("watchdog: starting (context=%s, log=%s)\n", contextID, logPath)
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	// Initialize reminder state
-	reminderState := watchdog.NewReminderState()
-
-	// Issue #124: Compute edge node names once (config is static).
-	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-
-	log.Printf("watchdog: started (pid=%d)\n", os.Getpid())
-
-	// Main watchdog loop
-	ticker := time.NewTicker(time.Duration(cfg.Watchdog.IdleThresholdSeconds * float64(time.Second)))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("watchdog: shutting down")
-			return nil
-		case <-ticker.C:
-			// Check for idle panes
-			idlePanes, err := watchdog.GetIdlePanes(cfg.Watchdog.IdleThresholdSeconds)
-			if err != nil {
-				log.Printf("watchdog: idle check failed: %v\n", err)
-				continue
-			}
-
-			// Issue #124: Filter idle panes to edge panes only.
-			// On tmux failure, fall back to all panes (over-inclusive, never suppress alerts).
-			paneTitles, err := watchdog.GetPaneTitles()
-			if err != nil {
-				log.Printf("watchdog: failed to get pane titles for edge filtering, falling back to all panes: %v\n", err)
-				paneTitles = nil // nil triggers fallback in FilterToEdgePanes
-			}
-			idlePanes = watchdog.FilterToEdgePanes(idlePanes, paneTitles, edgeNodes)
-
-			// Issue #125: Process idle panes — capture FIRST, then send reminder.
-			for _, activity := range idlePanes {
-				// 1. Capture pane FIRST (record state before disturbing it with a notification).
-				// On failure: log and continue — never suppress the idle alert.
-				if cfg.Watchdog.Capture.Enabled {
-					captureDir := filepath.Join(sessionDir, "capture")
-					_, err := watchdog.CapturePane(activity.PaneID, captureDir, cfg.Watchdog.Capture.TailLines)
-					if err != nil {
-						log.Printf("watchdog: capture failed for %s: %v\n", activity.PaneID, err)
-						// Capture failure does not suppress the reminder — fall through.
-					} else {
-						// Rotate captures
-						if err := watchdog.RotateCaptures(captureDir, cfg.Watchdog.Capture.MaxFiles, int64(cfg.Watchdog.Capture.MaxBytes)); err != nil {
-							log.Printf("watchdog: rotation failed: %v\n", err)
-						}
-					}
-				}
-
-				// 2. Send idle reminder (Issue #46: added cfg.UINode parameter).
-				if reminderState.ShouldSendReminder(activity.PaneID, cfg.Watchdog.CooldownSeconds) {
-					if err := watchdog.SendIdleReminder(cfg, activity.PaneID, sessionDir, contextID, cfg.UINode, activity); err != nil {
-						log.Printf("watchdog: reminder failed for %s: %v\n", activity.PaneID, err)
-					} else {
-						reminderState.MarkReminderSent(activity.PaneID)
-						log.Printf("watchdog: reminder sent for %s\n", activity.PaneID)
-					}
-				}
-			}
-		}
-	}
 }

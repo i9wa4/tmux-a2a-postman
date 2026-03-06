@@ -71,8 +71,8 @@ func ValidateConfig(cfg *Config) []ValidationError {
 	}
 
 	// Rule 2: Reserved section name check (severity: error)
-	// Reserved names: "postman", "compaction_detection", "watchdog", "heartbeat"
-	reservedNames := []string{"postman", "compaction_detection", "watchdog", "heartbeat"}
+	// Reserved names: "postman", "compaction_detection", "heartbeat"
+	reservedNames := []string{"postman", "compaction_detection", "heartbeat"}
 	for nodeName := range cfg.Nodes {
 		for _, reserved := range reservedNames {
 			if nodeName == reserved {

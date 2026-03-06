@@ -57,9 +57,7 @@ type Config struct {
 	EdgeViolationWarningTemplate    string `toml:"edge_violation_warning_template"`     // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode        string `toml:"edge_violation_warning_mode"`         // Issue #92: "compact" or "verbose" (default: compact)
 	IdleReminderHeaderTemplate      string `toml:"idle_reminder_header_template"`       // Issue #82: Idle reminder header
-	SessionIdleAlertTemplate        string `toml:"session_idle_alert_template"`         // Issue #82: Session idle alert message
 	CompactionHeaderTemplate        string `toml:"compaction_header_template"`          // Issue #82: Compaction detection header
-	WatchdogAlertTemplate           string `toml:"watchdog_alert_template"`             // Issue #82: Watchdog idle alert message
 	CompactionBodyTemplate          string `toml:"compaction_body_template"`            // Issue #82: Compaction notification body
 	DroppedBallEventTemplate        string `toml:"dropped_ball_event_template"`         // Issue #82: Dropped ball event message
 	AlertActionReachableTemplate    string `toml:"alert_action_reachable_template"`     // Action text when ui_node can reach the target node
@@ -92,9 +90,6 @@ type Config struct {
 
 	// Compaction detection
 	CompactionDetection CompactionDetectionConfig
-
-	// Watchdog
-	Watchdog WatchdogConfig
 
 	// Heartbeat
 	Heartbeat HeartbeatConfig
@@ -146,28 +141,12 @@ type CompactionMessageTemplate struct {
 	Body string `toml:"body"`
 }
 
-// WatchdogConfig holds watchdog configuration.
-type WatchdogConfig struct {
-	Enabled              bool                  `toml:"enabled"`
-	IdleThresholdSeconds float64               `toml:"idle_threshold_seconds"`
-	CooldownSeconds      float64               `toml:"cooldown_seconds"`
-	Capture              WatchdogCaptureConfig `toml:"capture"`
-}
-
 // HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
 type HeartbeatConfig struct {
 	Enabled         bool    `toml:"enabled"`
 	IntervalSeconds float64 `toml:"interval_seconds"`
 	LLMNode         string  `toml:"llm_node"`
 	Prompt          string  `toml:"prompt"`
-}
-
-// WatchdogCaptureConfig holds watchdog capture configuration.
-type WatchdogCaptureConfig struct {
-	Enabled   bool `toml:"enabled"`
-	MaxFiles  int  `toml:"max_files"`
-	MaxBytes  int  `toml:"max_bytes"`
-	TailLines int  `toml:"tail_lines"`
 }
 
 // DefaultConfig returns a Config with sane default values.
@@ -202,9 +181,7 @@ func DefaultConfig() *Config {
 		EdgeViolationWarningTemplate:    "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
 		EdgeViolationWarningMode:        "compact", // Issue #92: Default to compact mode
 		IdleReminderHeaderTemplate:      "## Idle Reminder",
-		SessionIdleAlertTemplate:        "## Idle Alert\n\ntmux session `{session_name}` の全ノードが停止しています。\n\nIdle nodes: {idle_nodes}\n\n{talks_to_line}\n\nReply: `tmux-a2a-postman create-draft --to <node>`",
 		CompactionHeaderTemplate:        "## Compaction Detected",
-		WatchdogAlertTemplate:           "## Idle Alert\n\nPane {pane_id} has been idle for {idle_duration}.\n\nLast activity: {last_activity}",
 		CompactionBodyTemplate:          "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:        "Dropped ball: {node} (holding for {duration})",
 		AlertActionReachableTemplate:    "",
@@ -252,10 +229,10 @@ func loadEmbeddedConfig() (*Config, error) {
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
+	// Decode [nodename] sections (everything except postman, compaction_detection, and heartbeat)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
+		if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 
@@ -270,13 +247,6 @@ func loadEmbeddedConfig() (*Config, error) {
 	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
 		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
 			return nil, fmt.Errorf("decoding embedded [compaction_detection] section: %w", err)
-		}
-	}
-
-	// Decode [watchdog] section if exists
-	if watchdogPrim, ok := rootSections["watchdog"]; ok {
-		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
-			return nil, fmt.Errorf("decoding embedded [watchdog] section: %w", err)
 		}
 	}
 
@@ -379,7 +349,7 @@ func loadConfigFile(path string) (*Config, error) {
 	}
 
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
+		if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 		var node NodeConfig
@@ -392,12 +362,6 @@ func loadConfigFile(path string) (*Config, error) {
 	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
 		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
 			return nil, fmt.Errorf("decoding [compaction_detection] in %s: %w", path, err)
-		}
-	}
-
-	if watchdogPrim, ok := rootSections["watchdog"]; ok {
-		if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
-			return nil, fmt.Errorf("decoding [watchdog] in %s: %w", path, err)
 		}
 	}
 
@@ -453,14 +417,8 @@ func mergeConfig(base, override *Config) {
 	if override.IdleReminderHeaderTemplate != "" {
 		base.IdleReminderHeaderTemplate = override.IdleReminderHeaderTemplate
 	}
-	if override.SessionIdleAlertTemplate != "" {
-		base.SessionIdleAlertTemplate = override.SessionIdleAlertTemplate
-	}
 	if override.CompactionHeaderTemplate != "" {
 		base.CompactionHeaderTemplate = override.CompactionHeaderTemplate
-	}
-	if override.WatchdogAlertTemplate != "" {
-		base.WatchdogAlertTemplate = override.WatchdogAlertTemplate
 	}
 	if override.CompactionBodyTemplate != "" {
 		base.CompactionBodyTemplate = override.CompactionBodyTemplate
@@ -658,28 +616,6 @@ func mergeConfig(base, override *Config) {
 		base.CompactionDetection.MessageTemplate.Body = override.CompactionDetection.MessageTemplate.Body
 	}
 
-	// Watchdog: field-level merge
-	if override.Watchdog.Enabled {
-		base.Watchdog.Enabled = true
-	}
-	if override.Watchdog.IdleThresholdSeconds != 0 {
-		base.Watchdog.IdleThresholdSeconds = override.Watchdog.IdleThresholdSeconds
-	}
-	if override.Watchdog.CooldownSeconds != 0 {
-		base.Watchdog.CooldownSeconds = override.Watchdog.CooldownSeconds
-	}
-	if override.Watchdog.Capture.Enabled {
-		base.Watchdog.Capture.Enabled = true
-	}
-	if override.Watchdog.Capture.MaxFiles != 0 {
-		base.Watchdog.Capture.MaxFiles = override.Watchdog.Capture.MaxFiles
-	}
-	if override.Watchdog.Capture.MaxBytes != 0 {
-		base.Watchdog.Capture.MaxBytes = override.Watchdog.Capture.MaxBytes
-	}
-	if override.Watchdog.Capture.TailLines != 0 {
-		base.Watchdog.Capture.TailLines = override.Watchdog.Capture.TailLines
-	}
 	if override.Heartbeat.Enabled {
 		base.Heartbeat.Enabled = true
 	}
@@ -765,10 +701,10 @@ func LoadConfig(path string) (*Config, error) {
 			}
 		}
 
-		// Decode [nodename] sections (everything except postman, compaction_detection, watchdog, and heartbeat)
+		// Decode [nodename] sections (everything except postman, compaction_detection, and heartbeat)
 		cfg.Nodes = make(map[string]NodeConfig)
 		for name, prim := range rootSections {
-			if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
+			if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
 				continue
 			}
 
@@ -783,13 +719,6 @@ func LoadConfig(path string) (*Config, error) {
 		if compactionPrim, ok := rootSections["compaction_detection"]; ok {
 			if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
 				return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
-			}
-		}
-
-		// Decode [watchdog] section if exists
-		if watchdogPrim, ok := rootSections["watchdog"]; ok {
-			if err := md.PrimitiveDecode(watchdogPrim, &cfg.Watchdog); err != nil {
-				return nil, fmt.Errorf("decoding [watchdog] section: %w", err)
 			}
 		}
 
@@ -827,7 +756,7 @@ func LoadConfig(path string) (*Config, error) {
 					continue
 				}
 				for name, prim := range sections {
-					if name == "postman" || name == "compaction_detection" || name == "watchdog" || name == "heartbeat" || name == "node_defaults" {
+					if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
 						continue // skip reserved sections
 					}
 					var node NodeConfig

@@ -96,25 +96,25 @@ func TestValidateConfig_ReservedNodeName(t *testing.T) {
 func TestValidateConfig_ReservedNodeNameMultiple(t *testing.T) {
 	cfg := &Config{
 		Nodes: map[string]NodeConfig{
-			"watchdog": {},
-			"worker":   {},
+			"compaction_detection": {},
+			"worker":               {},
 		},
 	}
 
 	errors := ValidateConfig(cfg)
 	if len(errors) == 0 {
-		t.Fatal("expected validation error for reserved node name 'watchdog'")
+		t.Fatal("expected validation error for reserved node name 'compaction_detection'")
 	}
 
 	foundError := false
 	for _, err := range errors {
-		if err.Severity == "error" && err.Field == "nodes.watchdog" {
+		if err.Severity == "error" && err.Field == "nodes.compaction_detection" {
 			foundError = true
 			break
 		}
 	}
 	if !foundError {
-		t.Errorf("expected error for nodes.watchdog, got: %v", errors)
+		t.Errorf("expected error for nodes.compaction_detection, got: %v", errors)
 	}
 }
 
