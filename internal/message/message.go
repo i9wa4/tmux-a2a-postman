@@ -16,6 +16,14 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
+// Dead-letter reason strings used in sender notifications and TUI events (Issue #161).
+const (
+	deadLetterReasonEnvelopeMismatch         = "envelope mismatch"
+	deadLetterReasonUnknownRecipient         = "unknown recipient"
+	deadLetterReasonSenderSessionDisabled    = "sender session disabled"
+	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
+)
+
 // DaemonEvent represents an event to be sent to the TUI (Issue #53).
 type DaemonEvent struct {
 	Type    string
@@ -104,11 +112,36 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 
+	// Issue #161: Validate frontmatter envelope (skip for postman-origin messages)
+	if info.From != "postman" {
+		rawBytes, readErr := os.ReadFile(postPath)
+		if os.IsNotExist(readErr) {
+			return nil // Already processed (duplicate event)
+		}
+		if readErr != nil {
+			log.Printf("postman: WARNING: failed to read message for envelope validation %s: %v\n", filename, readErr)
+		} else {
+			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
+			if parseErr != nil || envFrom != info.From || envTo != info.To {
+				dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+				sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonEnvelopeMismatch, filename)
+				if events != nil {
+					events <- DaemonEvent{
+						Type:    "message_received",
+						Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, deadLetterReasonEnvelopeMismatch),
+					}
+				}
+				return os.Rename(postPath, dst)
+			}
+		}
+	}
+
 	// Resolve recipient name (Issue #33: session-aware adjacency)
 	recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, knownNodes)
 	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonUnknownRecipient, filename)
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
@@ -258,6 +291,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !isSessionEnabled(senderSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
+			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonSenderSessionDisabled, filename)
 			// Issue #53: Notify dead-letter event
 			if events != nil {
 				events <- DaemonEvent{
@@ -272,6 +306,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !isSessionEnabled(recipientSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
+			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonRecipientSessionDisabled, filename)
 			// Issue #53: Notify dead-letter event
 			if events != nil {
 				events <- DaemonEvent{
@@ -333,6 +368,78 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	return nil
+}
+
+// sendDeadLetterNotification writes a dead-letter notification directly to the
+// sender's inbox. Bypasses post/ to avoid re-triggering the daemon delivery loop.
+// Pattern follows the routing-denied notification at DeliverMessage:162-175.
+func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename string) {
+	senderInbox := filepath.Join(sessionDir, "inbox", senderNode)
+	if mkErr := os.MkdirAll(senderInbox, 0o755); mkErr != nil {
+		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, mkErr)
+		return
+	}
+	now := time.Now()
+	ts := now.Format("20060102-150405")
+	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderNode)
+	content := fmt.Sprintf(
+		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n",
+		contextID,
+		senderNode,
+		now.Format(time.RFC3339),
+		originalFilename,
+		reason,
+	)
+	notifPath := filepath.Join(senderInbox, filename)
+	if writeErr := os.WriteFile(notifPath, []byte(content), 0o644); writeErr != nil {
+		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, writeErr)
+	}
+}
+
+// parseEnvelopeFromTo extracts the from and to fields from the YAML frontmatter
+// of a message file. Frontmatter is the block between the first two "---" delimiters.
+// from and to must appear as indented fields under the params: top-level key.
+// Returns an error if the frontmatter block is absent or if either field is missing.
+func parseEnvelopeFromTo(content string) (from, to string, err error) {
+	// Find opening "---\n"
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return "", "", fmt.Errorf("no frontmatter block found")
+	}
+	rest := content[first+4:]
+	// Find closing "\n---"
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return "", "", fmt.Errorf("frontmatter not closed")
+	}
+	frontmatter := rest[:second]
+
+	// Scan lines for params: block, then collect from/to
+	inParams := false
+	for _, line := range strings.Split(frontmatter, "\n") {
+		line = strings.TrimRight(line, "\r") // handle \r\n line endings
+		if line == "params:" {
+			inParams = true
+			continue
+		}
+		if inParams {
+			// Stop at next top-level key (non-empty, no leading space)
+			if len(line) > 0 && line[0] != ' ' {
+				inParams = false
+				continue
+			}
+			if strings.HasPrefix(line, "  from: ") {
+				from = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
+			} else if strings.HasPrefix(line, "  to: ") {
+				to = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
+			}
+		}
+	}
+
+	if from == "" || to == "" {
+		return "", "", fmt.Errorf("missing from or to in params block")
+	}
+	return from, to, nil
 }
 
 // ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.

@@ -94,10 +94,11 @@ func TestDeliverMessage(t *testing.T) {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
 
-	// Place a message in post/
+	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-030000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -176,10 +177,11 @@ func TestRouting_Allowed(t *testing.T) {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
 
-	// Place a message in post/
+	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-040000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
