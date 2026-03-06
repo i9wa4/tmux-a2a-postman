@@ -74,11 +74,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
+		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
 	}
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -122,6 +124,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-status-oneline: %v\n", err)
 			os.Exit(1)
 		}
+	case "help":
+		runHelp(args)
 	default:
 		fmt.Fprintf(os.Stderr, "❌ postman: unknown command %q\n", command)
 		fs.Usage()
@@ -937,4 +941,141 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	}
 
 	return nil
+}
+
+func runHelp(args []string) {
+	topics := []string{"messaging", "directories", "config", "commands"}
+	printTopicList := func() {
+		fmt.Println("Topics:")
+		for _, t := range topics {
+			fmt.Printf("  %-14s  tmux-a2a-postman help %s\n", t, t)
+		}
+	}
+
+	if len(args) == 0 {
+		fmt.Println("tmux-a2a-postman — A2A message routing daemon for tmux panes")
+		fmt.Println("")
+		fmt.Println("AI agents use this tool to exchange structured messages via the filesystem.")
+		fmt.Println("Each agent reads its inbox, replies via draft/, and the daemon routes messages.")
+		fmt.Println("")
+		printTopicList()
+		fmt.Println("")
+		fmt.Println("Run `tmux-a2a-postman help <topic>` for detailed information.")
+		return
+	}
+
+	topic := args[0]
+	switch topic {
+	case "messaging":
+		fmt.Println("Messaging — message lifecycle and envelope format")
+		fmt.Println("")
+		fmt.Println("Lifecycle:")
+		fmt.Println("  1. Agent writes message to draft/{timestamp}-from-{sender}-to-{recipient}.md")
+		fmt.Println("  2. Agent moves file: draft/ -> post/")
+		fmt.Println("  3. Daemon picks up file from post/, routes to inbox/{node}/ of recipient")
+		fmt.Println("  4. Recipient reads from inbox/{node}/, then moves to read/ (signals delivery)")
+		fmt.Println("  5. Unknown recipients: file moved to dead-letter/")
+		fmt.Println("")
+		fmt.Println("Envelope format (YAML frontmatter):")
+		fmt.Println("  ---")
+		fmt.Println("  method: message/send")
+		fmt.Println("  params:")
+		fmt.Println("    contextId: <session context ID>")
+		fmt.Println("    taskId: <optional task ID>")
+		fmt.Println("    from: <sender node name>")
+		fmt.Println("    to: <recipient node name>")
+		fmt.Println("    timestamp: <ISO 8601 timestamp>")
+		fmt.Println("  ---")
+		fmt.Println("")
+		fmt.Println("Reply workflow:")
+		fmt.Println("  1. Run: tmux-a2a-postman create-draft --context-id <id> --to <recipient>")
+		fmt.Println("  2. Edit the generated file in draft/")
+		fmt.Println("  3. Move to post/: mv draft/<file> post/")
+		fmt.Println("")
+		fmt.Println("Sender is auto-detected from the tmux pane title (no --from flag).")
+	case "directories":
+		fmt.Println("Directories — session directory layout")
+		fmt.Println("")
+		fmt.Println("Base directory resolution (in priority order):")
+		fmt.Println("  1. $POSTMAN_HOME environment variable")
+		fmt.Println("  2. base_dir field in config file")
+		fmt.Println("  3. $XDG_STATE_HOME/tmux-a2a-postman (default)")
+		fmt.Println("     (falls back to ~/.local/state/tmux-a2a-postman)")
+		fmt.Println("")
+		fmt.Println("Layout:")
+		fmt.Println("  {baseDir}/")
+		fmt.Println("  └── {contextId}/")
+		fmt.Println("      └── {sessionName}/")
+		fmt.Println("          ├── draft/          # agent writes drafts here")
+		fmt.Println("          ├── post/           # agent moves drafts here to send")
+		fmt.Println("          ├── inbox/")
+		fmt.Println("          │   └── {node}/     # daemon delivers messages here")
+		fmt.Println("          ├── read/           # agent moves messages here after reading")
+		fmt.Println("          ├── dead-letter/    # unroutable messages land here")
+		fmt.Println("          ├── capture/        # pane capture snapshots")
+		fmt.Println("          ├── waiting/        # per-node waiting state files")
+		fmt.Println("          └── boilerplate/    # auto-generated response templates")
+	case "config":
+		fmt.Println("Config — key configuration fields")
+		fmt.Println("")
+		fmt.Println("Config file: $XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml")
+		fmt.Println("            (falls back to ~/.config/tmux-a2a-postman/postman.toml)")
+		fmt.Println("")
+		fmt.Println("Key fields and defaults:")
+		fmt.Println("  scan_interval      float64  1.0      Seconds between post/ scans")
+		fmt.Println("  enter_delay        float64  0.5      Delay before sending tmux keys")
+		fmt.Println("  tmux_timeout       float64  5.0      Timeout for tmux commands")
+		fmt.Println("  startup_delay      float64  2.0      Delay before first scan")
+		fmt.Println("  reminder_interval  float64  0.0      Idle reminder interval (0=disabled)")
+		fmt.Println("  inbox_unread_threshold  int  3       Alert threshold for unread messages")
+		fmt.Println("  edges              []string []       Allowed node-to-node routing pairs")
+		fmt.Println("  edge_violation_warning_mode  string  \"compact\"  Warning verbosity")
+		fmt.Println("")
+		fmt.Println("Edge syntax (both separators create bidirectional routes):")
+		fmt.Println("  edges = [")
+		fmt.Println("    \"node-a -- node-b\",   # bidirectional: a<->b")
+		fmt.Println("    \"node-b --> node-c\",  # also bidirectional: b<->c")
+		fmt.Println("  ]")
+		fmt.Println("")
+		fmt.Println("Per-node configuration (TOML section):")
+		fmt.Println("  [node-name]")
+		fmt.Println("  role = \"description of node role\"")
+		fmt.Println("  template = \"role template content\"")
+		fmt.Println("  on_join = \"message sent when node joins\"")
+	case "commands":
+		fmt.Println("Commands — detailed command reference")
+		fmt.Println("")
+		fmt.Println("start")
+		fmt.Println("  Start the tmux-a2a-postman daemon.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Session context ID (auto-generated if omitted)")
+		fmt.Println("    --config <path>      Config file path (auto-detected from XDG_CONFIG_HOME)")
+		fmt.Println("    --log-file <path>    Log file path (default: {baseDir}/{contextId}/postman.log)")
+		fmt.Println("    --no-tui             Run without the TUI dashboard")
+		fmt.Println("")
+		fmt.Println("create-draft")
+		fmt.Println("  Create a new message draft file in the session draft/ directory.")
+		fmt.Println("  Sender is auto-detected from the tmux pane title.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --to <node>          Recipient node name (required)")
+		fmt.Println("    --context-id <id>    Session context ID (optional, auto-detected)")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
+		fmt.Println("")
+		fmt.Println("get-session-status-oneline")
+		fmt.Println("  Print all sessions' pane status on a single line.")
+		fmt.Println("")
+		fmt.Println("help [topic]")
+		fmt.Println("  Show help overview or detailed topic page.")
+		fmt.Println("  Topics: messaging, directories, config, commands")
+	default:
+		fmt.Fprintf(os.Stderr, "unknown help topic: %q\n", topic)
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Available topics:")
+		for _, t := range topics {
+			fmt.Fprintf(os.Stderr, "  %s\n", t)
+		}
+		os.Exit(1)
+	}
 }
