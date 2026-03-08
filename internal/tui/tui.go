@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
@@ -384,7 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Issue #45: Redesigned key bindings
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -729,15 +729,15 @@ func extractSessionFromDetails(details map[string]interface{}) string {
 }
 
 // View renders the TUI with left-right split layout (Issue #45).
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.quitting {
-		return "Shutting down...\n"
+		return tea.View{Content: "Shutting down...\n"}
 	}
 
 	// Minimum size check (Issue #35)
 	if m.width < minWidth || m.height < minHeight {
 		warning := warningStyle.Render(fmt.Sprintf("⚠️  Terminal too small (min: %dx%d, current: %dx%d)", minWidth, minHeight, m.width, m.height))
-		return borderStyle.Width(m.width - 2).Render(warning)
+		return tea.View{Content: borderStyle.Width(m.width - 2).Render(warning)}
 	}
 
 	// Issue #45: Calculate pane widths for split layout
@@ -790,7 +790,7 @@ func (m Model) View() string {
 	localBorderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(m.getSelectedBorderColor()))
-	return localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(content)
+	return tea.View{Content: localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(content)}
 }
 
 // renderLeftPane renders the left pane (Sessions list).

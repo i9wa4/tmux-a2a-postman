@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
@@ -36,7 +36,7 @@ func TestTUI_Update_Quit(t *testing.T) {
 	m := InitialModel(ch, nil, config.DefaultConfig())
 
 	// Test 'q' key
-	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	m = newModel.(Model)
 
 	if !m.quitting {
@@ -111,7 +111,7 @@ func TestTUI_View(t *testing.T) {
 		{Message: "Message 2"},
 	}
 
-	view := m.View()
+	view := m.View().Content
 
 	// Issue #45: Verify new split layout components
 	// Left pane
@@ -146,7 +146,7 @@ func TestTUI_View_Quitting(t *testing.T) {
 	m := InitialModel(ch, nil, config.DefaultConfig())
 	m.quitting = true
 
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "Shutting down") {
 		t.Error("quitting view missing shutdown message")
@@ -157,7 +157,7 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 	m := InitialModel(ch, nil, config.DefaultConfig())
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "tmux-a2a-postman "+version.Version) {
 		t.Errorf("view missing title+version: want %q in view", "tmux-a2a-postman "+version.Version)
 	}
@@ -170,12 +170,12 @@ func TestTUI_Update_LayoutToggle(t *testing.T) {
 	if m.layoutMode {
 		t.Error("initial layoutMode should be false")
 	}
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	newModel, _ := m.Update(tea.KeyPressMsg{Text: "l", Code: 'l'})
 	m = newModel.(Model)
 	if !m.layoutMode {
 		t.Error("layoutMode should be true after 'l' key")
 	}
-	newModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	newModel, _ = m.Update(tea.KeyPressMsg{Text: "l", Code: 'l'})
 	m = newModel.(Model)
 	if m.layoutMode {
 		t.Error("layoutMode should be false after second 'l' key")
@@ -191,7 +191,7 @@ func TestTUI_View_VerticalLayout(t *testing.T) {
 		{Name: "session-a", Enabled: true},
 		{Name: "session-b", Enabled: true},
 	}
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "session-a") {
 		t.Error("vertical layout missing session-a")
 	}
