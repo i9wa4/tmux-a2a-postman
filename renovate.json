@@ -10,5 +10,13 @@
     "enabled": true
   },
   "minimumReleaseAge": "7 days",
-  "internalChecksFilter": "strict"
+  "internalChecksFilter": "strict",
+  "packageRules": [
+    {
+      "matchManagers": ["nix", "github-actions"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "minimumReleaseAge": "7 days"
+    }
+  ]
 }

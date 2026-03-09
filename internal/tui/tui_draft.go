@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
@@ -88,7 +88,7 @@ func (m DraftModel) Init() tea.Cmd {
 
 // Update handles messages and updates the model.
 func (m DraftModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyMsg); ok {
+	if msg, ok := msg.(tea.KeyPressMsg); ok {
 		switch m.mode {
 		case DraftModeSelectRecipient:
 			switch msg.String() {
@@ -154,16 +154,16 @@ func (m DraftModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the TUI.
-func (m DraftModel) View() string {
+func (m DraftModel) View() tea.View {
 	if m.quitting {
 		if m.submitted {
-			return "Draft created successfully!\n"
+			return tea.View{Content: "Draft created successfully!\n"}
 		}
-		return "Cancelled.\n"
+		return tea.View{Content: "Cancelled.\n"}
 	}
 
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress any key to exit.\n", m.err)
+		return tea.View{Content: fmt.Sprintf("Error: %v\n\nPress any key to exit.\n", m.err)}
 	}
 
 	var b strings.Builder
@@ -190,7 +190,7 @@ func (m DraftModel) View() string {
 		b.WriteString("Submit this draft? [y/n] (Esc: back | Ctrl+C: quit)\n")
 	}
 
-	return b.String()
+	return tea.View{Content: b.String()}
 }
 
 // submitDraft writes the draft file.

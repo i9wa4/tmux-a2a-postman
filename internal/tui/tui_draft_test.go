@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
@@ -128,7 +128,7 @@ func TestTUI_Draft_Navigation(t *testing.T) {
 
 	// Test ESC in message input mode (back to recipient)
 	m.mode = DraftModeInputMessage
-	msg := tea.KeyMsg{Type: tea.KeyEsc}
+	msg := tea.KeyPressMsg{Code: tea.KeyEscape}
 	newModel, _ := m.Update(msg)
 	m = newModel.(DraftModel)
 	if m.mode != DraftModeSelectRecipient {
@@ -136,7 +136,7 @@ func TestTUI_Draft_Navigation(t *testing.T) {
 	}
 
 	// Test quit
-	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}
+	msg = tea.KeyPressMsg{Text: "q", Code: 'q'}
 	newModel, _ = m.Update(msg)
 	m = newModel.(DraftModel)
 	if !m.quitting {
