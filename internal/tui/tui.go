@@ -448,7 +448,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.lastKey = ""
 			return m, nil
-		case " ":
+		case "space":
 			// Session toggle via TUICommand
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
@@ -458,6 +458,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Target: sess.Name,
 					}
 				}
+				// Optimistic immediate update to avoid race with file watcher status_update
+				m.sessions[m.selectedSession].Enabled = !sess.Enabled
 			}
 			m.lastKey = ""
 			return m, nil
