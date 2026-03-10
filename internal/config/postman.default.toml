@@ -36,13 +36,16 @@
 #   Shared template string prepended to all node templates.
 #   Applied in notification context. Not applied to draft.
 #
-# edge_violation_warning_template:
+# edge_violation_warning_template (DM-1 normalized full envelope):
 #   {context_id}          - Current context ID
 #   {node}                - Recipient node name (sender of the denied message)
-#   {timestamp}           - ISO format timestamp
+#   {iso_timestamp}       - ISO format timestamp
+#   {timestamp}           - ISO format timestamp (alias)
 #   {attempted_recipient} - Node name that the sender attempted to send to
 #   {allowed_edges}       - Comma-separated list of allowed neighbors
 #   {reply_command}       - Command to create draft message
+#   {session_dir}         - Session directory path
+#   {filename}            - Warning message filename
 #
 # =============================================================================
 
@@ -323,10 +326,24 @@ Move this message to read/:
   mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
 """
 
-# Edge violation warning template (Issue #92)
+# Edge violation warning template (Issue #92, DM-1 normalized #222)
+# Full envelope template with messageType discriminator in frontmatter.
+# Variables: {context_id}, {node}, {iso_timestamp}, {attempted_recipient},
+#            {allowed_edges}, {reply_command}, {session_dir}, {filename}
 # edge_violation_warning_mode = "compact"  # "compact" or "verbose" (default: compact)
-# edge_violation_warning_template = """
-# you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}.
+# edge_violation_warning_template = """---
+# method: message/send
+# params:
+#   contextId: {context_id}
+#   from: postman
+#   to: {node}
+#   timestamp: {iso_timestamp}
+#   messageType: edge_violation_warning
+# ---
+#
+# ## Edge Violation Warning
+#
+# you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
 # """
 
 # Rules template (generated as RULES.md in session directory)

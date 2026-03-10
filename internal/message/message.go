@@ -290,36 +290,32 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					neighborsStr = "none"
 				}
 
-				// Issue #92: Use configurable template with mode support
+				// Issue #92, #222: DM-1 normalized full envelope template
 				warnTemplate := cfg.EdgeViolationWarningTemplate
-				isDefaultTemplate := (warnTemplate == "")
-				if isDefaultTemplate {
-					warnTemplate = "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/."
-				}
 
 				// Build variables map for template expansion
 				vars := map[string]string{
 					"context_id":          contextID,
 					"node":                info.From,
+					"iso_timestamp":       now.Format(time.RFC3339),
 					"timestamp":           now.Format(time.RFC3339),
 					"attempted_recipient": info.To,
 					"allowed_edges":       neighborsStr,
 					"reply_command":       cfg.ReplyCommand,
+					"session_dir":         sourceSessionDir,
+					"filename":            warnFilename,
 				}
 
 				// Expand template
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				warnBody := template.ExpandTemplate(warnTemplate, vars, timeout)
+				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout)
 
-				// Issue #92: Add reply instructions for verbose mode
+				// Issue #92: Append reply instructions for verbose mode
 				mode := cfg.EdgeViolationWarningMode
 				if mode == "" {
 					mode = "compact"
 				}
-				if mode == "verbose" && isDefaultTemplate {
-					// IMPORTANT FIX: Only add reply instructions when using default template
-					// Custom templates should not be modified by verbose mode
-					// BLOCKING FIX: Avoid duplicate --context-id if already present
+				if mode == "verbose" {
 					replyCmd := cfg.ReplyCommand
 					if !strings.Contains(replyCmd, "--context-id") {
 						replyCmd = fmt.Sprintf("%s --context-id %s", replyCmd, contextID)
@@ -328,17 +324,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 						replyCmd,
 						neighborsStr,
 					)
-					warnBody += replyInstructions
+					warnContent += replyInstructions
 				}
-
-				// Build full message with header
-				warnContent := fmt.Sprintf(
-					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: edge_violation_warning\n---\n\n## Content\n\n%s\n",
-					contextID,
-					info.From,
-					now.Format(time.RFC3339),
-					warnBody,
-				)
 				warnPath := filepath.Join(senderInbox, warnFilename)
 				_ = os.WriteFile(warnPath, []byte(warnContent), 0o600)
 			}

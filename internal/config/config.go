@@ -193,7 +193,7 @@ func DefaultConfig() *Config {
 		AutoEnableNewAgents:             boolPtr(true),  // Issue #135: auto-enable agents in already-enabled sessions (#219)
 		Edges:                           []string{},
 		Nodes:                           make(map[string]NodeConfig),
-		EdgeViolationWarningTemplate:    "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
+		EdgeViolationWarningTemplate:    "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n  messageType: edge_violation_warning\n---\n\n## Edge Violation Warning\n\nyou can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.\n",
 		EdgeViolationWarningMode:        "compact", // Issue #92: Default to compact mode
 		IdleReminderHeaderTemplate:      "## Idle Reminder",
 		CompactionHeaderTemplate:        "## Compaction Detected",
