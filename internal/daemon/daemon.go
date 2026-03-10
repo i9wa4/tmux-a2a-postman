@@ -899,16 +899,6 @@ func RunDaemonLoop(
 				},
 			}
 		case <-inboxCheckTicker.C:
-			// Issue #96: Check inbox stagnation
-			currentNode := config.GetTmuxPaneName()
-			daemonState.checkInboxStagnation(nodes, cfg, events, currentNode, sessionDir, contextID, adjacency)
-
-			// Issue #99: Check node inactivity
-			daemonState.checkNodeInactivity(nodes, idleTracker, cfg, events, sessionDir, contextID, adjacency)
-
-			// Issue #100: Check unreplied messages
-			daemonState.checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency)
-
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
 			idleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
@@ -967,24 +957,6 @@ func RunDaemonLoop(
 						if paneState == "stale" {
 							updated := replaceWaitingState(contentStr, "spinning", "stuck")
 							_ = os.WriteFile(filePath, []byte(updated), 0o600)
-							// Send stuck alert mirroring spinning alert pattern (#180)
-							alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
-							if daemonState.ShouldSendAlert(alertKey, 300.0) {
-								stuckDuration := time.Since(waitingSince).Round(time.Second)
-								alertMsg := fmt.Sprintf("Node %s is stuck (duration: %s, transitioned from spinning)", fileInfo.To, stuckDuration)
-								_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
-									alertMsg, "stuck", cfg, adjacency, nodes)
-								daemonState.MarkAlertSent(alertKey)
-								events <- tui.DaemonEvent{
-									Type:    "stuck_detected",
-									Message: alertMsg,
-									Details: map[string]interface{}{
-										"node":           fileInfo.To,
-										"stuck_duration": time.Since(waitingSince).Seconds(),
-										"from_state":     "spinning",
-									},
-								}
-							}
 						}
 						continue
 					}
@@ -997,24 +969,6 @@ func RunDaemonLoop(
 					if paneState == "stale" {
 						updated := replaceWaitingState(contentStr, "composing", "stuck")
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
-						// Send stuck alert mirroring spinning alert pattern (#180)
-						alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
-						if daemonState.ShouldSendAlert(alertKey, 300.0) {
-							stuckDuration := time.Since(waitingSince).Round(time.Second)
-							alertMsg := fmt.Sprintf("Node %s is stuck (duration: %s, transitioned from composing)", fileInfo.To, stuckDuration)
-							_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
-								alertMsg, "stuck", cfg, adjacency, nodes)
-							daemonState.MarkAlertSent(alertKey)
-							events <- tui.DaemonEvent{
-								Type:    "stuck_detected",
-								Message: alertMsg,
-								Details: map[string]interface{}{
-									"node":           fileInfo.To,
-									"stuck_duration": time.Since(waitingSince).Seconds(),
-									"from_state":     "composing",
-								},
-							}
-						}
 						continue
 					}
 					// composing → spinning: pane active after spinning threshold; sendAlertToUINode for spinning (#221)
