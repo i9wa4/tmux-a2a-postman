@@ -382,7 +382,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	reminderState := reminder.NewReminderState()
 
 	// Issue #71: Create state management instances
-	daemonState := daemon.NewDaemonState()
+	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds)
+	if cfg.StartupDrainWindowSeconds > 0 {
+		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
+	}
 	idleTracker := idle.NewIdleTracker()
 	compactionTracker := compaction.NewCompactionTracker()
 

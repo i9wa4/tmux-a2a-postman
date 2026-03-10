@@ -34,13 +34,14 @@ type Config struct {
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
 
 	// Node state thresholds (Issue #xxx)
-	NodeActiveSeconds        float64 `toml:"node_active_seconds"`         // 0-N seconds: active (green)
-	NodeIdleSeconds          float64 `toml:"node_idle_seconds"`           // N+ seconds: idle (orange) or stale (red)
-	NodeStaleSeconds         float64 `toml:"node_stale_seconds"`          // Memory cleanup threshold for pane capture
-	NodeSpinningSeconds      float64 `toml:"node_spinning_seconds"`       // Hard ceiling for active-but-no-reply detection; 0 = disabled
-	MessageAgeWarningSeconds float64 `toml:"message_age_warning_seconds"` // Delivery latency warning threshold; 0 = disabled
-	MessageTTLSeconds        float64 `toml:"message_ttl_seconds"`         // Stale post/ drain TTL; 0 = disabled
-	MinDeliveryGapSeconds    float64 `toml:"min_delivery_gap_seconds"`    // Duplicate delivery rate limit; 0 = disabled
+	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds: active (green)
+	NodeIdleSeconds           float64 `toml:"node_idle_seconds"`            // N+ seconds: idle (orange) or stale (red)
+	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
+	NodeSpinningSeconds       float64 `toml:"node_spinning_seconds"`        // Hard ceiling for active-but-no-reply detection; 0 = disabled
+	MessageAgeWarningSeconds  float64 `toml:"message_age_warning_seconds"`  // Delivery latency warning threshold; 0 = disabled
+	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
+	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
+	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
@@ -199,8 +200,9 @@ func DefaultConfig() *Config {
 		RulesTemplate:                   "",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
 		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
-		MessageTTLSeconds:               600, // Stale post/ drain TTL (10 minutes); 0 = disabled
-		MinDeliveryGapSeconds:           1.0, // Duplicate delivery rate limit (1 second)
+		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
+		MinDeliveryGapSeconds:           1.0,  // Duplicate delivery rate limit (1 second)
+		StartupDrainWindowSeconds:       10.0, // Session-enabled bypass window (10 seconds) (#217)
 		CompactionDetection: CompactionDetectionConfig{
 			TailLines: 10, // Issue #133: Default tail lines for compaction check
 		},
@@ -528,6 +530,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.MinDeliveryGapSeconds != 0 {
 		base.MinDeliveryGapSeconds = override.MinDeliveryGapSeconds
+	}
+	if override.StartupDrainWindowSeconds != 0 {
+		base.StartupDrainWindowSeconds = override.StartupDrainWindowSeconds
 	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds

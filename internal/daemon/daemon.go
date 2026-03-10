@@ -94,6 +94,8 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
+	startedAt                     time.Time     // Daemon start timestamp (#217)
+	drainWindow                   time.Duration // Startup drain window duration (#217)
 	edgeHistory                   map[string]EdgeActivity
 	edgeHistoryMu                 sync.RWMutex
 	enabledSessions               map[string]bool
@@ -112,8 +114,12 @@ type DaemonState struct {
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
-func NewDaemonState() *DaemonState {
+// drainWindowSeconds configures the startup drain window during which
+// IsSessionEnabled returns true for all sessions (#217).
+func NewDaemonState(drainWindowSeconds float64) *DaemonState {
 	return &DaemonState{
+		startedAt:                     time.Now(),
+		drainWindow:                   time.Duration(drainWindowSeconds * float64(time.Second)),
 		edgeHistory:                   make(map[string]EdgeActivity),
 		enabledSessions:               make(map[string]bool),
 		notifiedInboxFiles:            make(map[string]time.Time),       // Issue #96
@@ -1110,8 +1116,12 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 }
 
 // IsSessionEnabled checks if a session is enabled (Issue #71).
-// Returns true if session is enabled, false otherwise.
+// During the startup drain window, returns true for all sessions to prevent
+// the race where messages are rejected before sessions are registered (#217).
 func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
+	if ds.drainWindow > 0 && time.Since(ds.startedAt) < ds.drainWindow {
+		return true
+	}
 	ds.enabledSessionsMu.RLock()
 	defer ds.enabledSessionsMu.RUnlock()
 	enabled, exists := ds.enabledSessions[sessionName]

@@ -9,7 +9,7 @@ import (
 // on first call, false immediately after MarkAlertSent, and true again after the
 // cooldown window has elapsed.
 func TestShouldSendAlert_CooldownBoundary(t *testing.T) {
-	ds := NewDaemonState()
+	ds := NewDaemonState(0)
 	alertKey := "test_alert"
 	cooldown := 300.0 // 5 minutes in seconds
 
@@ -69,7 +69,7 @@ func TestReminderIncrementSenderFilter(t *testing.T) {
 
 // TestShouldSendAlert_ZeroCooldown verifies that zero cooldown always returns true.
 func TestShouldSendAlert_ZeroCooldown(t *testing.T) {
-	ds := NewDaemonState()
+	ds := NewDaemonState(0)
 	alertKey := "zero_cooldown"
 
 	ds.MarkAlertSent(alertKey)
