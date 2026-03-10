@@ -90,6 +90,9 @@ func ResolveEnterCount(configured int, probeRuntime func() (string, error)) int 
 // sanitizeForTmux sanitizes a string for safe use with tmux set-buffer.
 // Escapes special shell characters to prevent command injection.
 func sanitizeForTmux(s string) string {
+	// Normalize CRLF/CR line endings to LF (#225)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
 	// NOTE: tmux set-buffer does not interpret shell metacharacters,
 	// but we sanitize as a defense-in-depth measure.
 	// Escape backslashes and quotes
