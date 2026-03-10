@@ -2,9 +2,11 @@ package diplomat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -68,11 +70,14 @@ func LoadActiveContexts(baseDir string) ([]ContextRegistration, error) {
 }
 
 // IsContextAlive checks if a registered context's process is still running.
-// Uses /proc/{pid} on Linux for reliable liveness check.
 func IsContextAlive(reg ContextRegistration) bool {
 	if reg.PID <= 0 {
 		return false
 	}
-	_, err := os.Stat(fmt.Sprintf("/proc/%d", reg.PID))
-	return err == nil
+	proc, err := os.FindProcess(reg.PID)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
