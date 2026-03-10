@@ -181,6 +181,16 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 
+	// Pre-delivery staleness warning: log WARN for messages sitting in post/ too long (#218)
+	if cfg.MessageAgeWarningSeconds > 0 {
+		if msgTime, parseErr := time.Parse("20060102-150405", info.Timestamp); parseErr == nil {
+			preDeliveryAge := time.Since(msgTime)
+			if preDeliveryAge.Seconds() > cfg.MessageAgeWarningSeconds {
+				log.Printf("postman: WARNING: stale post/ message %s (age: %s, threshold: %.0fs)\n", filename, preDeliveryAge.Truncate(time.Second), cfg.MessageAgeWarningSeconds)
+			}
+		}
+	}
+
 	// Issue #161: Validate frontmatter envelope (skip for postman/daemon-origin messages)
 	if info.From != "postman" && info.From != "daemon" {
 		rawBytes, readErr := os.ReadFile(postPath)
