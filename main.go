@@ -74,6 +74,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
+		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
+		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
@@ -122,6 +124,16 @@ func main() {
 	case "get-session-status-oneline":
 		if err := runGetSessionStatusOneline(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-status-oneline: %v\n", err)
+			os.Exit(1)
+		}
+	case "count":
+		if err := runCount(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman count: %v\n", err)
+			os.Exit(1)
+		}
+	case "read":
+		if err := runRead(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman read: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
@@ -949,6 +961,69 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	return nil
 }
 
+// resolveInboxPath resolves the inbox path for the current node (#196).
+func resolveInboxPath(args []string) (string, error) {
+	fs := flag.NewFlagSet("inbox-resolve", flag.ContinueOnError)
+	contextID := fs.String("context-id", "", "session context ID")
+	configPath := fs.String("config", "", "path to config file")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return "", fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	resolvedContextID, err := config.ResolveContextID(*contextID)
+	if err != nil {
+		return "", fmt.Errorf("resolving context ID: %w", err)
+	}
+
+	nodeName := config.GetTmuxPaneName()
+	if nodeName == "" {
+		return "", fmt.Errorf("node name auto-detection failed: set tmux pane title")
+	}
+
+	sessionName := config.GetTmuxSessionName()
+	if sessionName == "" {
+		return "", fmt.Errorf("tmux session name required (run inside tmux)")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	inboxPath := filepath.Join(baseDir, resolvedContextID, sessionName, "inbox", nodeName)
+	return inboxPath, nil
+}
+
+// runCount prints the number of unread inbox messages for the current node (#196).
+func runCount(args []string) error {
+	inboxPath, err := resolveInboxPath(args)
+	if err != nil {
+		return err
+	}
+	msgs := message.ScanInboxMessages(inboxPath)
+	fmt.Println(len(msgs))
+	return nil
+}
+
+// runRead lists inbox message file paths for the current node (#196).
+func runRead(args []string) error {
+	inboxPath, err := resolveInboxPath(args)
+	if err != nil {
+		return err
+	}
+	msgs := message.ScanInboxMessages(inboxPath)
+	if len(msgs) == 0 {
+		return nil
+	}
+	for _, msg := range msgs {
+		fmt.Println(filepath.Join(inboxPath, msg.Filename))
+	}
+	return nil
+}
+
 func runHelp(args []string) {
 	topics := []string{"messaging", "directories", "config", "commands"}
 	printTopicList := func() {
@@ -1071,6 +1146,20 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
+		fmt.Println("")
+		fmt.Println("count")
+		fmt.Println("  Print number of unread inbox messages for the current node.")
+		fmt.Println("  Node name is auto-detected from tmux pane title.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Session context ID (required)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("")
+		fmt.Println("read")
+		fmt.Println("  List inbox message file paths for the current node.")
+		fmt.Println("  Node name is auto-detected from tmux pane title.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Session context ID (required)")
+		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
