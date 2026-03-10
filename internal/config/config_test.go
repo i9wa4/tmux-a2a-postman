@@ -1238,3 +1238,64 @@ prompt = "test"
 		t.Errorf("cfg.Nodes[\"heartbeat\"] should not exist (heartbeat is a reserved section name)")
 	}
 }
+
+func TestResolveContextIDFromSession(t *testing.T) {
+	t.Run("exactly one match", func(t *testing.T) {
+		baseDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "my-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		got, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "session-abc" {
+			t.Errorf("got %q, want %q", got, "session-abc")
+		}
+	})
+
+	t.Run("zero matches", func(t *testing.T) {
+		baseDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		_, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err == nil {
+			t.Fatal("expected error for zero matches, got nil")
+		}
+		if !strings.Contains(err.Error(), "no context found") {
+			t.Errorf("error %q should contain 'no context found'", err.Error())
+		}
+	})
+
+	t.Run("multiple matches", func(t *testing.T) {
+		baseDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "my-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(baseDir, "session-def", "my-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		_, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err == nil {
+			t.Fatal("expected error for multiple matches, got nil")
+		}
+		if !strings.Contains(err.Error(), "2 contexts found") {
+			t.Errorf("error %q should contain '2 contexts found'", err.Error())
+		}
+	})
+
+	t.Run("empty baseDir", func(t *testing.T) {
+		_, err := ResolveContextIDFromSession("", "my-session")
+		if err == nil {
+			t.Fatal("expected error for empty baseDir, got nil")
+		}
+	})
+
+	t.Run("empty sessionName", func(t *testing.T) {
+		_, err := ResolveContextIDFromSession("/tmp", "")
+		if err == nil {
+			t.Fatal("expected error for empty sessionName, got nil")
+		}
+	})
+}

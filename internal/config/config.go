@@ -1005,6 +1005,38 @@ func ResolveContextID(explicitID string) (string, error) {
 	return "", fmt.Errorf("--context-id is required")
 }
 
+// ResolveContextIDFromSession scans baseDir for context directories that
+// contain a subdirectory matching sessionName. Returns the context ID if
+// exactly one match is found. Returns error if zero or multiple matches exist.
+// Issue #229: safe auto-resolution without env vars or stale files.
+func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
+	if baseDir == "" || sessionName == "" {
+		return "", fmt.Errorf("cannot auto-resolve context-id: base_dir or session name is empty")
+	}
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("cannot auto-resolve context-id: %w", err)
+	}
+	var matches []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
+		if fi, err := os.Stat(sessionDir); err == nil && fi.IsDir() {
+			matches = append(matches, e.Name())
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("cannot auto-resolve context-id: no context found for session %q in %s (use --context-id)", sessionName, baseDir)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("cannot auto-resolve context-id: %d contexts found for session %q: %s (use --context-id to disambiguate)", len(matches), sessionName, strings.Join(matches, ", "))
+	}
+}
+
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.

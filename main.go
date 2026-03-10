@@ -647,12 +647,6 @@ func runCreateDraft(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	// Require explicit --context-id
-	resolvedContextID, err := config.ResolveContextID(*contextID)
-	if err != nil {
-		return fmt.Errorf("resolving context ID: %w", err)
-	}
-
 	sender := config.GetTmuxPaneName()
 	if sender == "" {
 		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
@@ -688,6 +682,16 @@ func runCreateDraft(args []string) error {
 			if !found {
 				return fmt.Errorf("tmux session %q does not exist", sessionName)
 			}
+		}
+	}
+
+	// Issue #229: Resolve context-id — explicit flag takes priority, then auto-detect from session
+	resolvedContextID, err := config.ResolveContextID(*contextID)
+	if err != nil {
+		// Auto-resolve: scan baseDir for exactly one context matching this session
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return err
 		}
 	}
 
