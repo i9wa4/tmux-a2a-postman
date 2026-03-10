@@ -11,3 +11,5 @@ After any implementation work:
 - Run: `nix flake check`
 - Run: `nix build`
 - Both must pass before switching sessions or creating new tasks
+- Check that `README.md` and `skills/*/SKILL.md` do not contain deprecated references
+  (e.g., removed commands, renamed flags, deleted packages)

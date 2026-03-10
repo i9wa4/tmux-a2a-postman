@@ -83,8 +83,6 @@ tmux rename-pane orchestrator
 tmux rename-pane worker
 ```
 
-A pane titled `watchdog` runs the watchdog daemon (required for session idle alerts).
-
 ### 6.2. Other Variables
 
 See `internal/config/postman.default.toml` for advanced variables (`POSTMAN_HOME`, etc.).
@@ -196,7 +194,7 @@ Audits `nodes/*.toml` role templates to diagnose and fix node-to-node interactio
 Use when:
 
 - A node behaves unexpectedly (routes wrongly, ignores messages, approves nothing)
-- Nodes cannot see each other in `talks_to_line` (after ruling out PONG/session issues)
+- Nodes cannot see each other in `talks_to_line` (after ruling out session/PING issues)
 - Adding a new node and need to verify its template is complete and consistent
 - Reviewing or improving role definitions for any node
 

@@ -5,7 +5,7 @@ description: |
   Audits nodes/*.toml role definitions to fix node-to-node interaction breakdowns.
   Use when:
   - A node behaves unexpectedly (routes wrongly, ignores messages, approves nothing)
-  - Nodes can't see each other in talks_to_line (after confirming PONG/session issue is ruled out)
+  - Nodes can't see each other in talks_to_line (after confirming session/PING issue is ruled out)
   - Adding a new node and need to verify its template is complete and consistent
   - User wants to review or improve role definitions for any node
   Do NOT use for daemon-level failures (dead-letter from routing/edge misconfiguration);
