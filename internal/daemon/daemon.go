@@ -29,6 +29,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
+const inboxCheckInterval = 30 * time.Second // Issue #239: ticker interval for inbox stagnation checks
+
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
 func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, fn func()) *time.Timer {
 	return time.AfterFunc(d, func() {
@@ -111,6 +113,8 @@ type DaemonState struct {
 	lastAlertTimestampMu          sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
+	lastDeliveryByNode            map[string]time.Time       // Issue #239: nodeKey -> time of last delivery
+	lastDeliveryByNodeMu          sync.RWMutex               // Issue #239
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -128,6 +132,7 @@ func NewDaemonState(drainWindowSeconds float64) *DaemonState {
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
 		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
+		lastDeliveryByNode:            make(map[string]time.Time),       // Issue #239
 	}
 }
 
@@ -314,8 +319,8 @@ func RunDaemonLoop(
 	scanTicker := time.NewTicker(scanInterval)
 	defer scanTicker.Stop()
 
-	// Issue #96: Periodic inbox stagnation check (30 seconds)
-	inboxCheckTicker := time.NewTicker(30 * time.Second)
+	// Issue #96: Periodic inbox stagnation check
+	inboxCheckTicker := time.NewTicker(inboxCheckInterval)
 	defer inboxCheckTicker.Stop()
 
 	// Issue #136: Start heartbeat-LLM trigger goroutine if configured
@@ -472,6 +477,12 @@ func RunDaemonLoop(
 									daemonState.lastDeliveryMu.Lock()
 									daemonState.lastDeliveryBySenderRecipient[deliveryKey] = time.Now()
 									daemonState.lastDeliveryMu.Unlock()
+
+									// Issue #239: Record per-node delivery time for unread-summary suppression
+									nodeKey := contextID + ":" + msgInfo.To
+									daemonState.lastDeliveryByNodeMu.Lock()
+									daemonState.lastDeliveryByNode[nodeKey] = time.Now()
+									daemonState.lastDeliveryByNodeMu.Unlock()
 								}
 							}
 
@@ -1388,7 +1399,7 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 		}
 	}
 
-	// Node-level inbox unread summary (Issue #xxx)
+	// Node-level inbox unread summary (Issue #239)
 	if cfg.InboxUnreadThreshold > 0 {
 		for nodeKey, nodeInfo := range nodes {
 			// Extract simple name from session-prefixed key
@@ -1421,6 +1432,14 @@ func (ds *DaemonState) checkInboxStagnation(nodes map[string]discovery.NodeInfo,
 			// Check if count exceeds threshold
 			if inboxCount < cfg.InboxUnreadThreshold {
 				continue
+			}
+
+			// Issue #239: Skip if delivery happened recently (suppress redundant unread alert)
+			ds.lastDeliveryByNodeMu.RLock()
+			lastDelivery, hasDelivery := ds.lastDeliveryByNode[nodeKey]
+			ds.lastDeliveryByNodeMu.RUnlock()
+			if hasDelivery && time.Since(lastDelivery) < inboxCheckInterval {
+				continue // skip: delivery happened recently, inbox_unread_summary is redundant
 			}
 
 			// Check cooldown (use separate key for summary notifications)
