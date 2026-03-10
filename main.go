@@ -60,7 +60,7 @@ func main() {
 	showVersion := fs.Bool("version", false, "show version")
 	showHelp := fs.Bool("help", false, "show help")
 	noTUI := fs.Bool("no-tui", false, "run without TUI")
-	contextID := fs.String("context-id", "", "session context ID (auto-generated if not specified)")
+	contextID := fs.String("context-id", "", "context ID (auto-generated if not specified)")
 	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
 	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/tmux-a2a-postman/{contextID}/postman.log)")
 
@@ -611,7 +611,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
 	to := fs.String("to", "", "recipient node name (required)")
-	contextID := fs.String("context-id", "", "session context ID (optional, auto-detect if not specified)")
+	contextID := fs.String("context-id", "", "context ID (optional, auto-detect if not specified)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -964,7 +964,7 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 // resolveInboxPath resolves the inbox path for the current node (#196).
 func resolveInboxPath(args []string) (string, error) {
 	fs := flag.NewFlagSet("inbox-resolve", flag.ContinueOnError)
-	contextID := fs.String("context-id", "", "session context ID")
+	contextID := fs.String("context-id", "", "context ID")
 	configPath := fs.String("config", "", "path to config file")
 	if err := fs.Parse(args); err != nil {
 		return "", err
@@ -1061,7 +1061,7 @@ func runHelp(args []string) {
 		fmt.Println("  ---")
 		fmt.Println("  method: message/send")
 		fmt.Println("  params:")
-		fmt.Println("    contextId: <session context ID>")
+		fmt.Println("    contextId: <context ID>")
 		fmt.Println("    taskId: <optional task ID>")
 		fmt.Println("    from: <sender node name>")
 		fmt.Println("    to: <recipient node name>")
@@ -1129,7 +1129,7 @@ func runHelp(args []string) {
 		fmt.Println("start")
 		fmt.Println("  Start the tmux-a2a-postman daemon.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Session context ID (auto-generated if omitted)")
+		fmt.Println("    --context-id <id>    Context ID (auto-generated if omitted)")
 		fmt.Println("    --config <path>      Config file path (auto-detected from XDG_CONFIG_HOME)")
 		fmt.Println("    --log-file <path>    Log file path (default: {baseDir}/{contextId}/postman.log)")
 		fmt.Println("    --no-tui             Run without the TUI dashboard")
@@ -1139,7 +1139,7 @@ func runHelp(args []string) {
 		fmt.Println("  Sender is auto-detected from the tmux pane title.")
 		fmt.Println("  Flags:")
 		fmt.Println("    --to <node>          Recipient node name (required)")
-		fmt.Println("    --context-id <id>    Session context ID (optional, auto-detected)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
@@ -1151,14 +1151,14 @@ func runHelp(args []string) {
 		fmt.Println("  Print number of unread inbox messages for the current node.")
 		fmt.Println("  Node name is auto-detected from tmux pane title.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Session context ID (required)")
+		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("read")
 		fmt.Println("  List inbox message file paths for the current node.")
 		fmt.Println("  Node name is auto-detected from tmux pane title.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Session context ID (required)")
+		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("help [topic]")

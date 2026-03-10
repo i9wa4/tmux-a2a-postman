@@ -147,10 +147,10 @@ recommended for preserving comments.
 tmux-a2a-postman
 
 # Start daemon with context ID
-tmux-a2a-postman start --context-id <session-id> [--config path/to/config.toml]
+tmux-a2a-postman start --context-id <context-id> [--config path/to/config.toml]
 
 # Create draft message
-tmux-a2a-postman create-draft --to <recipient> --context-id <session-id>
+tmux-a2a-postman create-draft --to <recipient> --context-id <context-id>
 
 # Show pane status summary
 tmux-a2a-postman get-session-status-oneline

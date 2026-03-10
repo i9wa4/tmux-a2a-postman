@@ -14,12 +14,12 @@
 #   {talks_to_line}  - Formatted list of nodes this node can communicate with
 #   {template}       - Node's role template (from [node].template)
 #   {reply_command}  - Command to create draft message
-#   {context_id}     - Current session context ID
+#   {context_id}     - Current context ID
 #   {session_dir}    - Session directory path
 #
 #
 # draft_template:
-#   {context_id}     - Current session context ID
+#   {context_id}     - Current context ID
 #   {task_id}        - Unique task identifier
 #   {sender}         - Sender node name
 #   {recipient}      - Recipient node name
@@ -37,7 +37,7 @@
 #   Applied in notification context. Not applied to draft.
 #
 # edge_violation_warning_template:
-#   {context_id}          - Current session context ID
+#   {context_id}          - Current context ID
 #   {node}                - Recipient node name (sender of the denied message)
 #   {timestamp}           - ISO format timestamp
 #   {attempted_recipient} - Node name that the sender attempted to send to
@@ -336,7 +336,7 @@ All messages use YAML frontmatter followed by content:
     ---
     method: message/send
     params:
-      contextId: <session context ID>
+      contextId: <context ID>
       taskId: <unique task ID>
       from: <sender node>
       to: <recipient node>
