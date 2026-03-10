@@ -797,8 +797,8 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
-// Output format: [S0:window0_panes:window1_panes:...] [S1:window0_panes:...]
-// Example: [S0:🟢🟢🔴:🟢🟢] [S1:🟢🟢🟢]
+// Output format: (0)window0_panes:window1_panes:... (1)window0_panes:...
+// Example: (0)🟢🟢🔴:🟢🟢 (1)🟢🟢🟢
 // Pane status: 🟢 = active (idle.go: 2+ changes in activity_window_seconds), 🔴 = inactive
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 func runGetSessionStatusOneline(args []string) error {
@@ -939,9 +939,9 @@ func runGetSessionStatusOneline(args []string) error {
 			}
 		}
 
-		// Build session status: [S<n>:window0:window1:...]
+		// Build session status: (n)window0:window1:...
 		if len(windowStatuses) > 0 {
-			sessionStatus := fmt.Sprintf("[S%d:%s]", sessionIdx, strings.Join(windowStatuses, ":"))
+			sessionStatus := fmt.Sprintf("(%d)%s", sessionIdx, strings.Join(windowStatuses, ":"))
 			output = append(output, sessionStatus)
 		}
 	}
