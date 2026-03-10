@@ -173,7 +173,7 @@ role: {templates_dir}/{recipient}.md
 protocol: {session_dir}/RULES.md
 ---
 
-## ROLE OF RECIPIENT ({recipient}):
+## Recipient Role (context only):
 
 {template}
 
@@ -181,7 +181,7 @@ protocol: {session_dir}/RULES.md
 
 You can only talk to: {can_talk_to}
 
-Role directory (complete list — your contacts are listed above):
+Role directory (for context only — only nodes in 'You can only talk to:' are reachable):
 - boss: final approver, task authority
 - critic: critical analysis, aggressive scrutiny
 - guardian: quality assurance review + routing gate; forwards approved plans to boss
