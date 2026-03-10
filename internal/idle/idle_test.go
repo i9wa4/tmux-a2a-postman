@@ -111,31 +111,18 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	}
 	tracker.mu.Unlock()
 
-	// Check idle nodes - should send reminder
+	// Check idle nodes - send path removed; should not write to inbox
 	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
-	// Verify reminder sent
+	// Verify no reminder sent (idle_reminder send path removed in #242)
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading inbox failed: %v", err)
 	}
 
-	if len(entries) != 1 {
-		t.Errorf("expected 1 reminder file, got %d", len(entries))
-	}
-
-	// Verify file content
 	if len(entries) > 0 {
-		content, err := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
-		if err != nil {
-			t.Fatalf("reading reminder file failed: %v", err)
-		}
-
-		contentStr := string(content)
-		if !strings.Contains(contentStr, "Test reminder message") {
-			t.Errorf("reminder content missing message, got: %s", contentStr)
-		}
+		t.Errorf("expected no reminder (send path removed), but found %d files", len(entries))
 	}
 }
 

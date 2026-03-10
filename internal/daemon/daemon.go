@@ -971,37 +971,10 @@ func RunDaemonLoop(
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
 						continue
 					}
-					// composing → spinning: pane active after spinning threshold; sendAlertToUINode for spinning (#221)
+					// composing → spinning: pane active after spinning threshold
 					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
 						updated := replaceWaitingState(contentStr, "composing", "spinning")
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
-						// Send spinning alert with rate-limiting
-						alertKey := fmt.Sprintf("spinning:%s:%s", nodeInfo.SessionName, fileInfo.To)
-						if daemonState.ShouldSendAlert(alertKey, 300.0) {
-							spinningDuration := time.Since(waitingSince).Round(time.Second)
-							alertVars := map[string]string{
-								"node":              fileInfo.To,
-								"spinning_duration": spinningDuration.String(),
-								"threshold":         spinningThreshold.String(),
-							}
-							alertMsg := template.ExpandVariables(cfg.SpinningAlertTemplate, alertVars)
-							// Always mark sent regardless of delivery result: once in spinning state,
-							// subsequent ticks take the isSpinning branch (no alert path), so
-							// not marking would permanently lose the cooldown and prevent retries
-							// that can never happen anyway.
-							_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
-								alertMsg, "spinning", cfg, adjacency, nodes)
-							daemonState.MarkAlertSent(alertKey)
-							events <- tui.DaemonEvent{
-								Type:    "spinning_detected",
-								Message: alertMsg,
-								Details: map[string]interface{}{
-									"node":              fileInfo.To,
-									"spinning_duration": time.Since(waitingSince).Seconds(),
-									"threshold":         cfg.NodeSpinningSeconds,
-								},
-							}
-						}
 					}
 				}
 			}

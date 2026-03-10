@@ -305,14 +305,6 @@ func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, ad
 // checkIdleNodes checks all nodes for idle timeout and sends reminders.
 // Issue #79: Iterate nodeActivity (session-prefixed keys), extract simple name for config lookup.
 func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string, contextID string, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) {
-	// Load nodes snapshot for sendIdleReminder (used only when IdleReminderMessageTemplate is set).
-	nodesSnapshot := map[string]discovery.NodeInfo{}
-	if sharedNodes != nil {
-		if ptr := sharedNodes.Load(); ptr != nil {
-			nodesSnapshot = *ptr
-		}
-	}
-
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -348,19 +340,6 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 			}
 		}
 
-		// Send reminder (use simple name for inbox path)
-		message := nodeConfig.IdleReminderMessage
-		if message == "" {
-			message = "Idle reminder: Are you still working?"
-		}
-
-		if err := t.sendIdleReminder(cfg, simpleName, message, sessionDir, contextID, adjacency, nodesSnapshot); err != nil {
-			_ = err // Suppress unused variable warning
-			continue
-		}
-
-		// Update last reminder sent timestamp (use session-prefixed key)
-		t.lastReminderSent[nodeKey] = now
 	}
 }
 
