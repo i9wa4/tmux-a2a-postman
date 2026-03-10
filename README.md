@@ -180,3 +180,25 @@ In headless mode:
 alias a2a='tmux-a2a-postman create-draft --context-id'
 # Usage: a2a <context-id> --to <recipient>
 ```
+
+## 9. Skills
+
+The `skills/` directory contains reusable agent skill files for use with AI coding assistants
+(Claude Code, Codex CLI, etc.). Each skill lives at `skills/{skill-name}/SKILL.md` and is
+invoked via the assistant's skill mechanism (e.g., `/a2a-role-auditor` in Claude Code).
+
+### 9.1. a2a-role-auditor
+
+Path: `skills/a2a-role-auditor/SKILL.md`
+
+Audits `nodes/*.toml` role templates to diagnose and fix node-to-node interaction breakdowns.
+
+Use when:
+
+- A node behaves unexpectedly (routes wrongly, ignores messages, approves nothing)
+- Nodes cannot see each other in `talks_to_line` (after ruling out PONG/session issues)
+- Adding a new node and need to verify its template is complete and consistent
+- Reviewing or improving role definitions for any node
+
+Do NOT use for daemon-level failures (dead-letter from routing/edge misconfiguration); run
+triage first to determine whether the issue is template-level.
