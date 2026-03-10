@@ -126,7 +126,7 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 # Notification template (when new message arrives)
 notification_template = """{inbox_path}/{filename}
 Role: {template_path} | Protocol: {session_dir}/RULES.md
-After reading: tmux-a2a-postman archive {inbox_path}/{filename}"""
+After reading: tmux-a2a-postman archive {filename}"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
@@ -163,7 +163,7 @@ Resume your work or reply to your orchestrator if you need to communicate.
 
 {talks_to_line}
 
-After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
+After reading: tmux-a2a-postman archive {filename}
 """
 
 # Draft message template
@@ -187,19 +187,11 @@ protocol: {session_dir}/RULES.md
 
 You can only talk to: {can_talk_to}
 
-Role directory (for context only — only nodes in 'You can only talk to:' are reachable):
-- boss: final approver, task authority
-- critic: critical analysis, aggressive scrutiny
-- guardian: quality assurance review + routing gate; forwards approved plans to boss
-- messenger: user interface, message relay
-- orchestrator: coordination, delegation
-- worker: implementation, consultation
-
 How to reply: {reply_command}
 
 # Content
 
-After reading: tmux-a2a-postman archive {session_dir}/inbox/{recipient}/<this-filename>
+After reading: tmux-a2a-postman archive <this-filename>  (replace with actual filename)
 """
 
 # Alert message template (unified format for daemon alerts)
@@ -236,7 +228,7 @@ How to reply: {reply_command}
 
 {message}
 
-After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
+After reading: tmux-a2a-postman archive {filename}
 """
 
 # Heartbeat message template (unified format for heartbeat-LLM triggers)
@@ -272,7 +264,7 @@ How to reply: {reply_command}
 
 {message}
 
-After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
+After reading: tmux-a2a-postman archive {filename}
 """
 
 # Idle reminder message template (unified format; written to post/ for daemon-routed delivery)
@@ -308,7 +300,7 @@ How to reply: {reply_command}
 
 {message}
 
-After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
+After reading: tmux-a2a-postman archive {filename}
 """
 
 # Edge violation warning template (Issue #92, DM-1 normalized #222)
@@ -371,7 +363,7 @@ All messages use YAML frontmatter followed by content:
 - Notification arrives in your pane as a file path
 - Notification is wrapped in `<!-- message start -->` / `<!-- end of message -->` (pane protocol only)
 - Read the file at the given path
-- After reading: tmux-a2a-postman archive <inbox-file>
+- After reading: tmux-a2a-postman archive <filename>
 
 ### Waiting State
 

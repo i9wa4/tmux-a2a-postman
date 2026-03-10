@@ -88,12 +88,19 @@ Two sub-checks:
 - PASS: `on_join` does not contain "Send PONG to postman" (PONG protocol was removed)
 - FAIL: `on_join` contains "Send PONG to postman" — anachronistic instruction that confuses agents
 
-### 2.9. Check 8 — create-draft Protocol Instruction
+### 2.9. Check 8 — Messaging Protocol Instructions
 
 - PASS: template contains instruction to use `create-draft` CLI command for drafting messages
   (e.g., "tmux-a2a-postman -- create-draft")
+- PASS (also verify): template does NOT instruct the agent to use `mv draft/ post/`;
+  agents must use `tmux-a2a-postman send <filename>` to submit drafts
+- PASS (also verify): template does NOT instruct the agent to use `mv` to move files to
+  `read/`; agents must use `tmux-a2a-postman archive <filename>` to mark messages as read
 - FAIL: template lacks create-draft protocol instruction — agents may manually create files
   in draft/, causing malformed envelope metadata
+- FAIL: template instructs `mv draft/ post/` — deprecated; use `tmux-a2a-postman send <filename>`
+- FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
+  `tmux-a2a-postman archive <filename>`
 
 ### 2.10. Check 9 — Pre-Approval Verification
 

@@ -78,14 +78,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
-		fmt.Fprintln(os.Stderr, "  archive <file> [file...]   Move inbox messages to read/")
+		fmt.Fprintln(os.Stderr, "  archive <filename> [filename...]   Move inbox messages to read/")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive /path/to/msg.md     # Archive a message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive msg.md              # Archive a message by filename")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
 	}
 
@@ -1081,14 +1081,60 @@ func runRead(args []string) error {
 }
 
 // runArchive moves inbox message files to read/ to mark them as read.
+// If a plain filename is given (no path separators), the file is located by
+// globbing inbox/ directories under baseDir. Full paths are accepted for
+// backward compatibility.
 func runArchive(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: archive <file> [file...]")
+		return fmt.Errorf("usage: archive <filename> [filename...]")
 	}
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return fmt.Errorf("resolving baseDir: %w", err)
+	}
+
 	for _, file := range args {
-		abs, err := filepath.Abs(file)
+		// Wildcard check applies to base filename in all cases (mirrors runSend behavior).
+		if strings.ContainsAny(filepath.Base(file), "*?[]") {
+			return fmt.Errorf("archive: %q must not contain wildcards", file)
+		}
+
+		resolvedPath := file
+		if !strings.ContainsAny(file, "/\\") {
+			// Plain filename: locate by globbing all inbox/ directories.
+			// path: {baseDir}/{contextID}/{sessionName}/inbox/{nodeName}/{filename}
+			pattern := filepath.Join(baseDir, "*", "*", "inbox", "*", file)
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				return fmt.Errorf("globbing for %s: %w", file, err)
+			}
+			switch len(matches) {
+			case 0:
+				return fmt.Errorf("archive: %q not found in any inbox/ directory", file)
+			case 1:
+				resolvedPath = matches[0]
+			default:
+				return fmt.Errorf("archive: %q found in multiple inbox/ directories: %v", file, matches)
+			}
+		}
+		abs, err := filepath.Abs(resolvedPath)
 		if err != nil {
-			return fmt.Errorf("resolving path %s: %w", file, err)
+			return fmt.Errorf("resolving path %s: %w", resolvedPath, err)
+		}
+		// Security: reject paths outside postman base directory (prevent path traversal).
+		if !strings.HasPrefix(abs+string(filepath.Separator), absBase+string(filepath.Separator)) {
+			return fmt.Errorf("archive: %q is outside postman base directory", resolvedPath)
+		}
+		// Validate inbox structure: path must end with .../inbox/{nodeName}/{filename}.
+		parts := strings.Split(filepath.ToSlash(abs), "/")
+		if len(parts) < 5 || parts[len(parts)-3] != "inbox" {
+			return fmt.Errorf("archive: %q is not an inbox/ path", resolvedPath)
 		}
 		// inbox path: {base}/{contextID}/{sessionName}/inbox/{nodeName}/{msg}.md
 		// read/  dir: {base}/{contextID}/{sessionName}/read/
@@ -1098,7 +1144,7 @@ func runArchive(args []string) error {
 		}
 		dst := filepath.Join(readDir, filepath.Base(abs))
 		if err := os.Rename(abs, dst); err != nil {
-			return fmt.Errorf("archiving %s: %w", file, err)
+			return fmt.Errorf("archiving %s: %w", resolvedPath, err)
 		}
 	}
 	return nil
@@ -1508,12 +1554,13 @@ func runHelp(args []string) {
 		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
-		fmt.Println("archive <file> [file...]")
+		fmt.Println("archive <filename> [filename...]")
 		fmt.Println("  Move inbox message files to read/ to mark them as read.")
+		fmt.Println("  Accepts plain filenames (located by glob) or full paths (backward compat).")
 		fmt.Println("  Typical workflow:")
 		fmt.Println("    1. tmux-a2a-postman read          # list inbox file paths")
 		fmt.Println("    2. cat /path/to/msg.md            # read the message")
-		fmt.Println("    3. tmux-a2a-postman archive /path/to/msg.md  # mark as read")
+		fmt.Println("    3. tmux-a2a-postman archive msg.md  # mark as read (filename only)")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
