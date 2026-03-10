@@ -435,10 +435,17 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Delivery latency logging (#179): parse message timestamp and log age.
+	// Issue #212: Also emit latency_warning event when threshold exceeded.
 	if msgTime, err := time.Parse("20060102-150405", info.Timestamp); err == nil {
 		age := time.Since(msgTime)
 		if cfg.MessageAgeWarningSeconds > 0 && age.Seconds() > cfg.MessageAgeWarningSeconds {
 			log.Printf("📬 postman: delivered %s -> %s (age: %s — WARNING: exceeds %.0fs threshold)\n", filename, info.To, age.Truncate(time.Second), cfg.MessageAgeWarningSeconds)
+			if events != nil {
+				events <- DaemonEvent{
+					Type:    "latency_warning",
+					Message: fmt.Sprintf("Delivery latency alert: %s -> %s (age: %s, threshold: %.0fs)", info.From, info.To, age.Truncate(time.Second), cfg.MessageAgeWarningSeconds),
+				}
+			}
 		} else {
 			log.Printf("📬 postman: delivered %s -> %s (age: %s)\n", filename, info.To, age.Truncate(time.Second))
 		}
