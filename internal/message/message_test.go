@@ -136,10 +136,11 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	// Place a message for unknown recipient
+	// Place a message for unknown recipient (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-030000-from-orchestrator-to-unknown-node.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: unknown-node\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -158,8 +159,8 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	// Verify moved to dead-letter/
-	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	// Verify moved to dead-letter/ with unknown-recipient suffix
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-030000-from-orchestrator-to-unknown-node-dl-unknown-recipient.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
 	}
@@ -226,10 +227,11 @@ func TestRouting_Denied(t *testing.T) {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	// Place a message in post/
+	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-040000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("test message"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -249,8 +251,8 @@ func TestRouting_Denied(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	// Verify moved to dead-letter/
-	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	// Verify moved to dead-letter/ with routing-denied suffix
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-040000-from-orchestrator-to-worker-dl-routing-denied.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
 	}
@@ -312,10 +314,11 @@ func TestPONG_Handling(t *testing.T) {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
-	// Place a PONG message (to postman)
+	// Place a PONG message (to postman) — with valid frontmatter for envelope validation (Issue #161)
 	filename := "20260201-050000-from-worker-to-postman.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("PONG"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: worker\n  to: postman\n  timestamp: 2026-02-01T05:00:00Z\n---\n\nPONG\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -338,7 +341,7 @@ func TestPONG_Handling(t *testing.T) {
 		t.Error("message still in post/ after delivery")
 	}
 	// Verify dead-lettered (postman is unknown recipient after explicit PONG removal)
-	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-050000-from-worker-to-postman-dl-unknown-recipient.md")
 	if _, err := os.Stat(deadPath); os.IsNotExist(err) {
 		t.Error("PONG should be in dead-letter/")
 	}
@@ -422,7 +425,7 @@ func TestDeliverMessage_ParseError(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
+	deadPath := filepath.Join(sessionDir, "dead-letter", "badname-dl-parse-error.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
 	}
@@ -437,7 +440,8 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 
 	filename := "20260201-030000-from-alice-to-bob.md"
 	postPath := filepath.Join(senderDir, "post", filename)
-	if err := os.WriteFile(postPath, []byte("content"), 0o644); err != nil {
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: alice\n  to: bob\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ncontent\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
@@ -458,7 +462,7 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	deadPath := filepath.Join(senderDir, "dead-letter", filename)
+	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-030000-from-alice-to-bob-dl-session-disabled.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter (recipient session disabled): %v", err)
 	}
