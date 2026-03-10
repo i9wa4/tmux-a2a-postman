@@ -244,7 +244,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if !allowed {
 			// Issue #80: Send warning message back to sender
 			senderInbox := filepath.Join(sourceSessionDir, "inbox", info.From)
-			if mkErr := os.MkdirAll(senderInbox, 0o755); mkErr == nil {
+			if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr == nil {
 				// Build list of allowed neighbors for sender
 				var neighbors []string
 				for _, senderKey := range []string{info.From, senderFullName} {
@@ -312,7 +312,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					warnBody,
 				)
 				warnPath := filepath.Join(senderInbox, warnFilename)
-				_ = os.WriteFile(warnPath, []byte(warnContent), 0o644)
+				_ = os.WriteFile(warnPath, []byte(warnContent), 0o600)
 			}
 
 			// Routing denied: move to dead-letter/ in source session
@@ -371,7 +371,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Ensure recipient inbox subdirectory exists (in recipient's session directory)
 	recipientSessionDir := nodeInfo.SessionDir
 	recipientInbox := filepath.Join(recipientSessionDir, "inbox", info.To)
-	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
 		return fmt.Errorf("creating recipient inbox: %w", err)
 	}
 
@@ -435,7 +435,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 // Pattern follows the routing-denied notification at DeliverMessage:162-175.
 func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename string) {
 	senderInbox := filepath.Join(sessionDir, "inbox", senderNode)
-	if mkErr := os.MkdirAll(senderInbox, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
 		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, mkErr)
 		return
 	}
@@ -451,7 +451,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 		reason,
 	)
 	notifPath := filepath.Join(senderInbox, filename)
-	if writeErr := os.WriteFile(notifPath, []byte(content), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {
 		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, writeErr)
 	}
 }
