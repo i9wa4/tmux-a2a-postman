@@ -48,6 +48,44 @@ func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, 
 	})
 }
 
+// replaceWaitingState replaces the state field value within YAML frontmatter only,
+// and updates state_updated_at to the current time (#175).
+// Scoped to frontmatter to prevent accidental replacement of state mentions in message body.
+func replaceWaitingState(content, oldState, newState string) string {
+	// Find frontmatter boundaries
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return content
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return content
+	}
+	fm := rest[:second]
+	after := rest[second:]
+
+	// Replace state in frontmatter only
+	fm = strings.Replace(fm, "state: "+oldState, "state: "+newState, 1)
+
+	// Update state_updated_at
+	now := time.Now().UTC().Format(time.RFC3339)
+	if strings.Contains(fm, "state_updated_at: ") {
+		lines := strings.Split(fm, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "state_updated_at: ") {
+				lines[i] = "state_updated_at: " + now
+				break
+			}
+		}
+		fm = strings.Join(lines, "\n")
+	} else {
+		fm += "\nstate_updated_at: " + now
+	}
+
+	return content[:first+4] + fm + after
+}
+
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
 type EdgeActivity struct {
 	LastForwardAt  time.Time // A -> B last communication time
@@ -503,8 +541,8 @@ func RunDaemonLoop(
 										state = "user_input"
 									}
 									waitingContent := fmt.Sprintf(
-										"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: %s\n---\n",
-										info.From, info.To, waitingSince, state)
+										"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: %s\nstate_updated_at: %s\n---\n",
+										info.From, info.To, waitingSince, state, waitingSince)
 									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o644); writeErr != nil {
 										log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
 									}
@@ -882,7 +920,7 @@ func RunDaemonLoop(
 					if isSpinning {
 						// spinning → stuck: pane went stale after spinning was detected
 						if paneState == "stale" {
-							updated := strings.ReplaceAll(contentStr, "state: spinning", "state: stuck")
+							updated := replaceWaitingState(contentStr, "spinning", "stuck")
 							_ = os.WriteFile(filePath, []byte(updated), 0o644)
 						}
 						continue
@@ -894,13 +932,13 @@ func RunDaemonLoop(
 					}
 					// composing → stuck: pane stale after composing window
 					if paneState == "stale" {
-						updated := strings.ReplaceAll(contentStr, "state: composing", "state: stuck")
+						updated := replaceWaitingState(contentStr, "composing", "stuck")
 						_ = os.WriteFile(filePath, []byte(updated), 0o644)
 						continue
 					}
 					// composing → spinning: pane active after spinning threshold
 					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
-						updated := strings.ReplaceAll(contentStr, "state: composing", "state: spinning")
+						updated := replaceWaitingState(contentStr, "composing", "spinning")
 						_ = os.WriteFile(filePath, []byte(updated), 0o644)
 						// Send spinning alert with rate-limiting
 						alertKey := fmt.Sprintf("spinning:%s:%s", nodeInfo.SessionName, fileInfo.To)
@@ -937,8 +975,8 @@ func RunDaemonLoop(
 			worstStatePriority := map[string]int{
 				"user_input": 0,
 				"composing":  1,
-				"spinning":   2,
-				"stuck":      3,
+				"spinning":   3,
+				"stuck":      4,
 			}
 			for _, nodeInfo := range nodes {
 				wDir := filepath.Join(nodeInfo.SessionDir, "waiting")
