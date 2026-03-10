@@ -422,7 +422,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	// Build session info from nodes (all disabled by default)
-	sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+	sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{
@@ -478,14 +478,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					switch cmd.Type {
 					case "session_toggle":
 						// Toggle session enable/disable
-						currentState := daemonState.IsSessionEnabled(cmd.Target)
+						currentState := daemonState.GetConfiguredSessionEnabled(cmd.Target)
 						newState := !currentState
 						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
 						// Rebuild session list and send status update (all sessions, not just nodes)
 						allSessions, _ := discovery.DiscoverAllSessions()
-						updatedSessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+						updatedSessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 						// Send status update
 						daemonEvents <- tui.DaemonEvent{
