@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -134,6 +135,11 @@ func main() {
 	case "read":
 		if err := runRead(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman read: %v\n", err)
+			os.Exit(1)
+		}
+	case "get-session-health":
+		if err := runGetSessionHealth(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
@@ -1032,6 +1038,88 @@ func runRead(args []string) error {
 	return nil
 }
 
+// runGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
+func runGetSessionHealth(args []string) error {
+	fs := flag.NewFlagSet("get-session-health", flag.ExitOnError)
+	contextID := fs.String("context-id", "", "Context ID (required)")
+	configPath := fs.String("config", "", "Config file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *contextID == "" {
+		return fmt.Errorf("--context-id is required")
+	}
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	sessionDir := filepath.Join(baseDir, *contextID)
+
+	// Discover nodes
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, *contextID)
+	if err != nil {
+		return fmt.Errorf("discovering nodes: %w", err)
+	}
+	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+
+	type nodeHealth struct {
+		Name         string `json:"name"`
+		InboxCount   int    `json:"inbox_count"`
+		WaitingCount int    `json:"waiting_count"`
+	}
+
+	var healthEntries []nodeHealth
+	for nodeName := range nodes {
+		parts := strings.SplitN(nodeName, ":", 2)
+		rawName := parts[len(parts)-1]
+		if !edgeNodes[rawName] {
+			continue
+		}
+		inboxDir := filepath.Join(sessionDir, "inbox", rawName)
+		inboxEntries, _ := os.ReadDir(inboxDir)
+		inboxCount := 0
+		for _, e := range inboxEntries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				inboxCount++
+			}
+		}
+		waitingDir := filepath.Join(sessionDir, "waiting")
+		waitingEntries, _ := os.ReadDir(waitingDir)
+		waitingCount := 0
+		for _, e := range waitingEntries {
+			if !e.IsDir() && strings.Contains(e.Name(), "-to-"+rawName) {
+				waitingCount++
+			}
+		}
+		healthEntries = append(healthEntries, nodeHealth{
+			Name:         rawName,
+			InboxCount:   inboxCount,
+			WaitingCount: waitingCount,
+		})
+	}
+
+	sort.Slice(healthEntries, func(i, j int) bool {
+		return healthEntries[i].Name < healthEntries[j].Name
+	})
+
+	result := struct {
+		ContextID string       `json:"context_id"`
+		NodeCount int          `json:"node_count"`
+		Nodes     []nodeHealth `json:"nodes"`
+	}{
+		ContextID: *contextID,
+		NodeCount: len(healthEntries),
+		Nodes:     healthEntries,
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
+}
+
 func runHelp(args []string) {
 	topics := []string{"messaging", "directories", "config", "commands"}
 	printTopicList := func() {
@@ -1154,6 +1242,12 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
+		fmt.Println("")
+		fmt.Println("get-session-health")
+		fmt.Println("  Print session health: node count, inbox/waiting counts per node.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Context ID (required)")
+		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("count")
 		fmt.Println("  Print number of unread inbox messages for the current node.")
