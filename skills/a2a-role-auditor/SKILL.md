@@ -98,7 +98,7 @@ Two sub-checks:
 ### 2.10. Check 9 — Pre-Approval Verification
 
 Applies only to nodes whose template contains APPROVED or REJECTED signal words
-(typically critic, guardian, boss).
+(typically reviewer or approver nodes).
 
 - PASS: template contains an explicit verification step before issuing verdict
   (e.g., "verify artifact exists with git status")
@@ -156,39 +156,52 @@ Severity: `BLOCKING` | `IMPORTANT` | `MINOR`
 `Type: JUDGMENT-BASED` is a separate flag, not a severity level.
 Present findings in order: BLOCKING first, then IMPORTANT, then MINOR.
 
-## 4. Workflow
+## 4. Configuration File Paths
 
-1. Read `postman.toml` — extract edges, build adjacency map
-2. Read each `nodes/{node}.toml` (source of truth; runtime session templates are NOT compared)
+All files are read from the user's XDG config directory:
+
+| File                             | Path                                                        |
+| -------------------------------- | ----------------------------------------------------------- |
+| Main config (edges + node sections) | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`        |
+| Node template files              | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`      |
+
+- `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
+- `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections (per-node config).
+- `nodes/{node}.toml` holds the role template (`template`, `on_join`, `draft_template`, etc.) for each node.
+
+## 5. Workflow
+
+1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build adjacency map
+2. Read each `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` (source of truth; runtime session templates are NOT compared)
 3. For each node: run Pre-check, then Checks 1–11, B-I8, and B-I9 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
 6. Present to user for feedback; iterate until approved
 
-NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or delegates to worker.
+NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or delegates to a worker node.
 
-## 5. Baseline Examples
+## 6. Baseline Examples
 
-The following issues were identified in a real audit session and serve as illustrative examples.
+The following examples illustrate the finding format.
 
-### 5.1. Example 1 — Routing clarity (IMPORTANT)
+### 6.1. Example 1 — Routing clarity (IMPORTANT)
 
 ```text
-[IMPORTANT] Node: critic
-Field: nodes/critic.toml:[critic].template
+[IMPORTANT] Node: sender
+Field: nodes/sender.toml:[sender].template
 Check: Routing clarity
 Result: FAIL
 Issue: Template says "send a message via postman" without specifying a recipient.
 Fix:
-  "Send findings to orchestrator. If orchestrator is absent from
-  talks_to_line, send to guardian who will relay."
+  "Send findings to coordinator. If coordinator is absent from
+  talks_to_line, send to relay-node who will forward."
 ```
 
-### 5.2. Example 2 — Completion protocol (IMPORTANT)
+### 6.2. Example 2 — Completion protocol (IMPORTANT)
 
 ```text
-[IMPORTANT] Node: boss
-Field: nodes/boss.toml:[boss].template
+[IMPORTANT] Node: approver
+Field: nodes/approver.toml:[approver].template
 Check: Completion protocol
 Result: FAIL
 Issue: No machine-readable approval signal defined. Recipients cannot parse
@@ -198,22 +211,22 @@ Fix:
   or 'REJECTED: <reason>' when rejecting."
 ```
 
-### 5.3. Example 3 — Cross-edge consistency (IMPORTANT, JUDGMENT-BASED)
+### 6.3. Example 3 — Cross-edge consistency (IMPORTANT, JUDGMENT-BASED)
 
 ```text
-[IMPORTANT] Node: guardian
-Field: nodes/guardian.toml:[guardian].template
+[IMPORTANT] Node: relay-node
+Field: nodes/relay-node.toml:[relay-node].template
 Check: Cross-edge consistency
 Type: JUDGMENT-BASED
 Result: FAIL
-Issue: Guardian acts as a routing relay between critic and orchestrator,
-  but this is not documented. Forwarding-to-boss path is also absent.
+Issue: relay-node acts as a routing relay between reviewer and coordinator,
+  but this is not documented. Forwarding-to-approver path is also absent.
 Fix:
-  "After receiving critic findings: if approved, forward to boss.
-  If rejected, return to critic with specific revision request."
+  "After receiving reviewer findings: if approved, forward to approver.
+  If rejected, return to reviewer with specific revision request."
 ```
 
-### 5.4. Example 4 — on_join completeness (MINOR)
+### 6.4. Example 4 — on_join completeness (MINOR)
 
 ```text
 [MINOR] Node: worker
@@ -222,29 +235,15 @@ Check: on_join completeness
 Result: FAIL
 Issue: on_join is empty; node receives no startup context.
 Fix:
-  on_join = "You are worker. Send PONG to postman on startup, then await task assignment from orchestrator."
+  on_join = "You are worker. Run 'tmux-a2a-postman -- help' on startup,
+  then await task assignment."
 ```
 
-### 5.5. Example 5 — PONG awareness (BLOCKING)
-
-```text
-[BLOCKING] Node: orchestrator
-Field: nodes/orchestrator.toml:[orchestrator].template
-Check: PONG awareness
-Result: FAIL
-Issue: Template references postman only as a routing mechanism, never as explicit
-  recipient. Node will not be marked PONG-active and will be invisible in
-  other nodes' talks_to_line.
-Fix:
-  Add to startup section: "On session start, send a PONG message addressed TO postman
-  (recipient = postman, not via postman). This registers you as active."
-```
-
-## 6. Constraints
+## 7. Constraints
 
 - Propose patches only; do NOT auto-apply
 - When an issue is daemon-level (wrong edges, missing file, disabled session), note it as
   a config finding — template patches cannot fix it
-- Manual integration test for `talks_to_line` visibility: if both nodes have not yet
-  sent PONG in the current session, mark the result `INCONCLUSIVE` (environment), not
+- Manual integration test for `talks_to_line` visibility: if a node has not yet been
+  discovered by PING in the current session, mark the result `INCONCLUSIVE` (environment), not
   a skill failure
