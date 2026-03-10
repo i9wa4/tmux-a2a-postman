@@ -67,14 +67,15 @@ var (
 
 // waitingStateRank defines priority for waiting/ state color override.
 // Higher rank = worse state = takes visual priority.
+// spinning is rank 3 (active-failure, more urgent than idle/user_input).
 var waitingStateRank = map[string]int{
 	"active":     0,
 	"user_input": 0,
 	"composing":  1,
 	"idle":       2,
-	"spinning":   2,
+	"spinning":   3,
 	"stale":      3,
-	"stuck":      3,
+	"stuck":      4,
 }
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
