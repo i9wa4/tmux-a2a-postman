@@ -34,10 +34,11 @@ type Config struct {
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
 
 	// Node state thresholds (Issue #xxx)
-	NodeActiveSeconds   float64 `toml:"node_active_seconds"`   // 0-N seconds: active (green)
-	NodeIdleSeconds     float64 `toml:"node_idle_seconds"`     // N+ seconds: idle (orange) or stale (red)
-	NodeStaleSeconds    float64 `toml:"node_stale_seconds"`    // Memory cleanup threshold for pane capture
-	NodeSpinningSeconds float64 `toml:"node_spinning_seconds"` // Hard ceiling for active-but-no-reply detection; 0 = disabled
+	NodeActiveSeconds        float64 `toml:"node_active_seconds"`         // 0-N seconds: active (green)
+	NodeIdleSeconds          float64 `toml:"node_idle_seconds"`           // N+ seconds: idle (orange) or stale (red)
+	NodeStaleSeconds         float64 `toml:"node_stale_seconds"`          // Memory cleanup threshold for pane capture
+	NodeSpinningSeconds      float64 `toml:"node_spinning_seconds"`       // Hard ceiling for active-but-no-reply detection; 0 = disabled
+	MessageAgeWarningSeconds float64 `toml:"message_age_warning_seconds"` // Delivery latency warning threshold; 0 = disabled
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
@@ -514,6 +515,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeSpinningSeconds != 0 {
 		base.NodeSpinningSeconds = override.NodeSpinningSeconds
+	}
+	if override.MessageAgeWarningSeconds != 0 {
+		base.MessageAgeWarningSeconds = override.MessageAgeWarningSeconds
 	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds

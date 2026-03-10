@@ -378,7 +378,17 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 
-	log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
+	// Delivery latency logging (#179): parse message timestamp and log age.
+	if msgTime, err := time.Parse("20060102-150405", info.Timestamp); err == nil {
+		age := time.Since(msgTime)
+		if cfg.MessageAgeWarningSeconds > 0 && age.Seconds() > cfg.MessageAgeWarningSeconds {
+			log.Printf("📬 postman: delivered %s -> %s (age: %s — WARNING: exceeds %.0fs threshold)\n", filename, info.To, age.Truncate(time.Second), cfg.MessageAgeWarningSeconds)
+		} else {
+			log.Printf("📬 postman: delivered %s -> %s (age: %s)\n", filename, info.To, age.Truncate(time.Second))
+		}
+	} else {
+		log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
+	}
 	return nil
 }
 
