@@ -830,7 +830,7 @@ func RunDaemonLoop(
 
 					// Check for pane disappearance (killed panes) - MUST run before checkPaneRestarts
 					// because checkPaneRestarts updates prevPaneStates
-					daemonState.checkPaneDisappearance(paneStates, daemonState.prevPaneToNode, events)
+					daemonState.checkPaneDisappearance(paneStates, daemonState.prevPaneToNode, nodes, events)
 
 					// Issue #98: Check for pane restarts (updates prevPaneStates at end)
 					daemonState.checkPaneRestarts(paneStates, paneToNode, nodes, cfg, events, contextID, sessionDir, adjacency, idleTracker)
@@ -1690,7 +1690,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 // checkPaneDisappearance detects disappeared panes and marks corresponding nodes as inactive.
 // When a pane is killed, it no longer appears in GetAllPanesInfo() output.
 // This function compares previous pane states with current pane states to detect disappearances.
-func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinode.PaneInfo, prevPaneToNode map[string]string, events chan<- tui.DaemonEvent) {
+func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinode.PaneInfo, prevPaneToNode map[string]string, knownNodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) {
 	ds.prevPaneStatesMu.RLock()
 	defer ds.prevPaneStatesMu.RUnlock()
 
@@ -1702,16 +1702,27 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 		if _, stillExists := currentPaneStates[prevPaneID]; !stillExists {
 			// Pane disappeared - find the node it belonged to
 			if nodeKey, found := prevPaneToNode[prevPaneID]; found {
+				// Issue #210: Count pending inbox/waiting files for recovery hint
+				inboxCount, waitingCount := countPendingFiles(nodeKey, knownNodes)
+
+				details := map[string]interface{}{
+					"pane_id": prevPaneID,
+					"node":    nodeKey,
+				}
+				if inboxCount > 0 {
+					details["pending_inbox_count"] = inboxCount
+				}
+				if waitingCount > 0 {
+					details["pending_waiting_count"] = waitingCount
+				}
+
 				// Send pane_disappeared event to TUI
 				events <- tui.DaemonEvent{
 					Type:    "pane_disappeared",
 					Message: fmt.Sprintf("Pane disappeared: %s (node: %s)", prevPaneID, nodeKey),
-					Details: map[string]interface{}{
-						"pane_id": prevPaneID,
-						"node":    nodeKey,
-					},
+					Details: details,
 				}
-				log.Printf("postman: pane disappeared for node %s (paneID: %s)\n", nodeKey, prevPaneID)
+				log.Printf("postman: pane disappeared for node %s (paneID: %s, inbox: %d, waiting: %d)\n", nodeKey, prevPaneID, inboxCount, waitingCount)
 
 				// Group by session name
 				sessionName := nodeKey
@@ -1724,20 +1735,54 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 	}
 
 	// Emit session_collapsed event when 2+ panes from same session disappeared (Issue #209)
-	for sessionName, nodes := range disappearedBySession {
-		if len(nodes) >= 2 {
+	for sessionName, collapsedNodes := range disappearedBySession {
+		if len(collapsedNodes) >= 2 {
 			events <- tui.DaemonEvent{
 				Type:    "session_collapsed",
-				Message: fmt.Sprintf("Session collapsed: %s (%d panes disappeared)", sessionName, len(nodes)),
+				Message: fmt.Sprintf("Session collapsed: %s (%d panes disappeared)", sessionName, len(collapsedNodes)),
 				Details: map[string]interface{}{
 					"session": sessionName,
-					"nodes":   nodes,
-					"count":   len(nodes),
+					"nodes":   collapsedNodes,
+					"count":   len(collapsedNodes),
 				},
 			}
-			log.Printf("postman: session collapsed: %s (%d panes disappeared: %v)\n", sessionName, len(nodes), nodes)
+			log.Printf("postman: session collapsed: %s (%d panes disappeared: %v)\n", sessionName, len(collapsedNodes), collapsedNodes)
 		}
 	}
+}
+
+// countPendingFiles counts .md files in inbox/{node}/ and waiting/ for a given nodeKey.
+// Used for post-collapse recovery hints (Issue #210).
+func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo) (inboxCount, waitingCount int) {
+	nodeInfo, ok := knownNodes[nodeKey]
+	if !ok {
+		return 0, 0
+	}
+	simpleName := nodeKey
+	if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+		simpleName = parts[1]
+	}
+
+	// Count inbox files
+	inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+	if entries, err := os.ReadDir(inboxDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				inboxCount++
+			}
+		}
+	}
+
+	// Count waiting files addressed to this node
+	waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
+	if entries, err := os.ReadDir(waitingDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") && strings.Contains(e.Name(), "-to-"+simpleName) {
+				waitingCount++
+			}
+		}
+	}
+	return inboxCount, waitingCount
 }
 
 // checkUnrepliedMessages checks for messages in read/ without replies (Issue #100).
