@@ -305,7 +305,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 				// Build full message with header
 				warnContent := fmt.Sprintf(
-					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\n%s\n",
+					"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: edge_violation_warning\n---\n\n## Content\n\n%s\n",
 					contextID,
 					info.From,
 					now.Format(time.RFC3339),
@@ -443,7 +443,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	ts := now.Format("20060102-150405")
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderNode)
 	content := fmt.Sprintf(
-		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n",
+		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n",
 		contextID,
 		senderNode,
 		now.Format(time.RFC3339),

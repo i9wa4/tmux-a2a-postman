@@ -215,6 +215,7 @@ params:
   to: {node}
   timestamp: {iso_timestamp}
   alertType: {alert_type}
+  messageType: alert
 ---
 
 # tmux-a2a-postman
