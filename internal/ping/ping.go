@@ -10,6 +10,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -38,7 +39,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	taskID := ts + "-ping"
 
 	// Use simple name in filename (Issue #33: keep filenames simple)
-	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, simpleName)
+	filename := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, pongActiveNodes)

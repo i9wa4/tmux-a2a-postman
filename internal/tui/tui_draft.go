@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -202,7 +203,8 @@ func (m *DraftModel) submitDraft() error {
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, m.senderNode, m.selectedNode)
+	sessionName := filepath.Base(m.sessionDir)
+	filename := message.GenerateFilename(ts, m.senderNode, m.selectedNode, sessionName)
 	draftPath := filepath.Join(draftDir, filename)
 
 	// Generate unique task ID

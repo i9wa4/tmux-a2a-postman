@@ -12,6 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -78,7 +79,7 @@ func SendHeartbeatTrigger(
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
 	taskID := ts + "-hb01"
-	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, llmNode)
+	filename := message.GenerateFilename(ts, "postman", llmNode, nodeInfo.SessionName)
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
 	filePath := filepath.Join(postDir, filename)
 

@@ -1,6 +1,7 @@
 package message
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
@@ -38,14 +39,42 @@ type DaemonEvent struct {
 
 // MessageInfo holds parsed information from a message filename.
 type MessageInfo struct {
-	Timestamp string
-	From      string
-	To        string
+	Timestamp   string
+	From        string
+	To          string
+	SessionHash string // Optional 4-char hex hash extracted from filename (#198)
+	Filename    string // Original filename (set by ScanInboxMessages)
 }
+
+// SessionHash returns a 4-character hex hash of the tmux session name (#198).
+// Returns empty string if sessionName is empty.
+func SessionHash(sessionName string) string {
+	if sessionName == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(sessionName))
+	return fmt.Sprintf("%x", h[:2])
+}
+
+// GenerateFilename builds a message filename with optional session hash (#198).
+// Format: {timestamp}-s{hash}-from-{sender}-to-{recipient}.md (with hash)
+// Format: {timestamp}-from-{sender}-to-{recipient}.md (without hash)
+func GenerateFilename(ts, sender, recipient, sessionName string) string {
+	hash := SessionHash(sessionName)
+	if hash != "" {
+		return fmt.Sprintf("%s-s%s-from-%s-to-%s.md", ts, hash, sender, recipient)
+	}
+	return fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, recipient)
+}
+
+// sessionHashRe matches the optional -s{4hex} session hash suffix in the timestamp portion (#198).
+var sessionHashRe = regexp.MustCompile(`-s([0-9a-f]{4})$`)
 
 // ParseMessageFilename parses a message filename in the format:
 // {timestamp}-from-{sender}-to-{recipient}.md
+// {timestamp}-s{hash}-from-{sender}-to-{recipient}.md (with session hash, #198)
 // Example: 20260201-022121-from-orchestrator-to-worker.md
+// Example: 20260201-022121-s1a2b-from-orchestrator-to-worker.md
 func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	// Remove .md extension
 	if !strings.HasSuffix(filename, ".md") {
@@ -65,11 +94,11 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 		return nil, fmt.Errorf("invalid filename: missing '-to-' marker: %q", filename)
 	}
 
-	timestamp := base[:fromIdx]
+	timestampRaw := base[:fromIdx]
 	from := rest[:toIdx]
 	to := rest[toIdx+len("-to-"):]
 
-	if timestamp == "" || from == "" || to == "" {
+	if timestampRaw == "" || from == "" || to == "" {
 		return nil, fmt.Errorf("invalid filename: empty field in %q", filename)
 	}
 
@@ -81,10 +110,19 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q", to, filename)
 	}
 
+	// Extract optional session hash from timestamp portion (#198)
+	var sessionHash string
+	timestamp := timestampRaw
+	if m := sessionHashRe.FindStringSubmatch(timestampRaw); m != nil {
+		sessionHash = m[1]
+		timestamp = timestampRaw[:len(timestampRaw)-len(m[0])]
+	}
+
 	return &MessageInfo{
-		Timestamp: timestamp,
-		From:      from,
-		To:        to,
+		Timestamp:   timestamp,
+		From:        from,
+		To:          to,
+		SessionHash: sessionHash,
 	}, nil
 }
 

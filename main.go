@@ -680,7 +680,7 @@ func runCreateDraft(args []string) error {
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	filename := fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, *to)
+	filename := message.GenerateFilename(ts, sender, *to, sessionName)
 	draftPath := filepath.Join(draftDir, filename)
 
 	// Generate unique task ID
