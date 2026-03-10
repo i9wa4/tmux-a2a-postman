@@ -69,7 +69,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman [options] [command]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Options:")
-		fs.PrintDefaults()
+		printDoubleDashDefaults(fs)
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
@@ -77,12 +77,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
+		fmt.Fprintln(os.Stderr, "  archive <file> [file...]   Move inbox messages to read/")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive /path/to/msg.md     # Archive a message")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
 	}
 
@@ -135,6 +137,11 @@ func main() {
 	case "read":
 		if err := runRead(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman read: %v\n", err)
+			os.Exit(1)
+		}
+	case "archive":
+		if err := runArchive(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman archive: %v\n", err)
 			os.Exit(1)
 		}
 	case "get-session-health":
@@ -1066,6 +1073,44 @@ func runRead(args []string) error {
 	return nil
 }
 
+// runArchive moves inbox message files to read/ to mark them as read.
+func runArchive(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: archive <file> [file...]")
+	}
+	for _, file := range args {
+		abs, err := filepath.Abs(file)
+		if err != nil {
+			return fmt.Errorf("resolving path %s: %w", file, err)
+		}
+		// inbox path: {base}/{contextID}/{sessionName}/inbox/{nodeName}/{msg}.md
+		// read/  dir: {base}/{contextID}/{sessionName}/read/
+		readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
+		if err := os.MkdirAll(readDir, 0o755); err != nil {
+			return fmt.Errorf("creating read directory: %w", err)
+		}
+		dst := filepath.Join(readDir, filepath.Base(abs))
+		if err := os.Rename(abs, dst); err != nil {
+			return fmt.Errorf("archiving %s: %w", file, err)
+		}
+	}
+	return nil
+}
+
+// printDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).
+func printDoubleDashDefaults(fs *flag.FlagSet) {
+	fs.VisitAll(func(f *flag.Flag) {
+		typeName, usage := flag.UnquoteUsage(f)
+		var line string
+		if typeName == "" {
+			line = fmt.Sprintf("  --%s", f.Name)
+		} else {
+			line = fmt.Sprintf("  --%s %s", f.Name, typeName)
+		}
+		fmt.Fprintf(os.Stderr, "%s\n\t\t%s\n", line, usage)
+	})
+}
+
 // runGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
 func runGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-session-health", flag.ExitOnError)
@@ -1396,6 +1441,13 @@ func runHelp(args []string) {
 		fmt.Println("  Flags:")
 		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("")
+		fmt.Println("archive <file> [file...]")
+		fmt.Println("  Move inbox message files to read/ to mark them as read.")
+		fmt.Println("  Typical workflow:")
+		fmt.Println("    1. tmux-a2a-postman read          # list inbox file paths")
+		fmt.Println("    2. cat /path/to/msg.md            # read the message")
+		fmt.Println("    3. tmux-a2a-postman archive /path/to/msg.md  # mark as read")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
