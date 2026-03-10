@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
+
+// validNodeNameRe validates from/to fields in message filenames (#174).
+// Allows alphanumeric characters and hyphens, must start with alphanumeric.
+var validNodeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
 // Dead-letter reason strings used in sender notifications and TUI events (Issue #161).
 const (
@@ -66,6 +71,14 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 
 	if timestamp == "" || from == "" || to == "" {
 		return nil, fmt.Errorf("invalid filename: empty field in %q", filename)
+	}
+
+	// Validate from/to charset (#174): reject path traversal and injection
+	if !validNodeNameRe.MatchString(from) {
+		return nil, fmt.Errorf("invalid filename: invalid from field %q in %q", from, filename)
+	}
+	if !validNodeNameRe.MatchString(to) {
+		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q", to, filename)
 	}
 
 	return &MessageInfo{
