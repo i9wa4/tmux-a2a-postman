@@ -1699,6 +1699,38 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 					"pane_info":   currentInfo,
 				},
 			}
+
+			// Issue #213: Requeue waiting/ files for restarted node back to inbox/
+			if nodeInfo, found := nodes[nodeKey]; found {
+				simpleName := nodeKey
+				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+					simpleName = parts[1]
+				}
+				waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
+				nodeInbox := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+				if entries, readErr := os.ReadDir(waitingDir); readErr == nil {
+					requeueCount := 0
+					for _, e := range entries {
+						if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+							continue
+						}
+						if !strings.Contains(e.Name(), "-to-"+simpleName) {
+							continue
+						}
+						src := filepath.Join(waitingDir, e.Name())
+						dst := filepath.Join(nodeInbox, e.Name())
+						if mkErr := os.MkdirAll(nodeInbox, 0o700); mkErr != nil {
+							continue
+						}
+						if mvErr := os.Rename(src, dst); mvErr == nil {
+							requeueCount++
+						}
+					}
+					if requeueCount > 0 {
+						log.Printf("postman: pane restart requeued %d waiting/ files for %s\n", requeueCount, nodeKey)
+					}
+				}
+			}
 		}
 	}
 
