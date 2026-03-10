@@ -126,7 +126,7 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 # Notification template (when new message arrives)
 notification_template = """{inbox_path}/{filename}
 Role: {template_path} | Protocol: {session_dir}/RULES.md
-After reading: mv {inbox_path}/{filename} {session_dir}/read/"""
+After reading: tmux-a2a-postman archive {inbox_path}/{filename}"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
@@ -163,10 +163,7 @@ Resume your work or reply to your orchestrator if you need to communicate.
 
 {talks_to_line}
 
-## After Reading
-
-Move this message to read/:
-  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
 """
 
 # Draft message template
@@ -202,10 +199,7 @@ How to reply: {reply_command}
 
 # Content
 
-## After Reading
-
-Move this message to read/:
-  mv {session_dir}/inbox/{recipient}/<this-filename> {session_dir}/read/
+After reading: tmux-a2a-postman archive {session_dir}/inbox/{recipient}/<this-filename>
 """
 
 # Alert message template (unified format for daemon alerts)
@@ -242,10 +236,7 @@ How to reply: {reply_command}
 
 {message}
 
-## After Reading
-
-Move this message to read/:
-  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
 """
 
 # Heartbeat message template (unified format for heartbeat-LLM triggers)
@@ -281,10 +272,7 @@ How to reply: {reply_command}
 
 {message}
 
-## After Reading
-
-Move this message to read/:
-  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
 """
 
 # Idle reminder message template (unified format; written to post/ for daemon-routed delivery)
@@ -320,10 +308,7 @@ How to reply: {reply_command}
 
 {message}
 
-## After Reading
-
-Move this message to read/:
-  mv {session_dir}/inbox/{node}/{filename} {session_dir}/read/
+After reading: tmux-a2a-postman archive {session_dir}/inbox/{node}/{filename}
 """
 
 # Edge violation warning template (Issue #92, DM-1 normalized #222)
@@ -386,7 +371,7 @@ All messages use YAML frontmatter followed by content:
 - Notification arrives in your pane as a file path
 - Notification is wrapped in `<!-- message start -->` / `<!-- end of message -->` (pane protocol only)
 - Read the file at the given path
-- After reading: mv <inbox-file> {session_dir}/read/
+- After reading: tmux-a2a-postman archive <inbox-file>
 
 ### Waiting State
 
