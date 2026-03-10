@@ -112,8 +112,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 
-	// Issue #161: Validate frontmatter envelope (skip for postman-origin messages)
-	if info.From != "postman" {
+	// Issue #161: Validate frontmatter envelope (skip for postman/daemon-origin messages)
+	if info.From != "postman" && info.From != "daemon" {
 		rawBytes, readErr := os.ReadFile(postPath)
 		if os.IsNotExist(readErr) {
 			return nil // Already processed (duplicate event)
@@ -156,7 +156,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
 	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)
-	if senderFullName == "" && info.From != "postman" {
+	if senderFullName == "" && info.From != "postman" && info.From != "daemon" {
 		// Unknown sender: move to dead-letter/ in source session
 		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 		// Issue #53: Notify dead-letter event
@@ -170,8 +170,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Check routing permissions (DEFAULT DENY)
-	// IMPORTANT: sender="postman" is always allowed
-	if info.From != "postman" {
+	// IMPORTANT: sender="postman" or sender="daemon" is always allowed (#172)
+	if info.From != "postman" && info.From != "daemon" {
 		allowed := false
 		// Try adjacency lookup with both simple name and full name
 		// This supports both old-style (simple names) and new-style (session:node) adjacency configs
@@ -283,11 +283,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	senderSessionName := sourceSessionName
 	recipientSessionName := nodeInfo.SessionName
 
-	// Both sessions must be enabled (unless sender is postman)
-	// NOTE: Postman exemption applies to all messages from postman, not just PING.
-	// Currently only PING uses this exemption. If other postman message types are added
-	// in the future, consider whether they should also bypass session checks.
-	if info.From != "postman" {
+	// Both sessions must be enabled (unless sender is postman or daemon)
+	// NOTE: Postman/daemon exemption applies to all system-generated messages.
+	// Postman sends PING; daemon sends alerts to ui_node (#172).
+	if info.From != "postman" && info.From != "daemon" {
 		if !isSessionEnabled(senderSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
@@ -302,7 +301,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			return os.Rename(postPath, dst)
 		}
 	}
-	if info.From != "postman" {
+	if info.From != "postman" && info.From != "daemon" {
 		if !isSessionEnabled(recipientSessionName) {
 			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
@@ -355,14 +354,14 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection (Issue #55)
-	// NOTE: Exclude system messages (from/to "postman") from ball tracking.
-	// Both UpdateSendActivity and UpdateReceiveActivity skip when info.From == "postman"
+	// NOTE: Exclude system messages (from "postman" or "daemon") from ball tracking.
+	// Both UpdateSendActivity and UpdateReceiveActivity skip system senders
 	// to prevent system-delivered messages from causing false "holding" state.
 	// Issue #79: Use session-prefixed keys for tracking
-	if info.From != "postman" {
+	if info.From != "postman" && info.From != "daemon" {
 		idleTracker.UpdateSendActivity(sourceSessionName + ":" + info.From)
 	}
-	if info.From != "postman" {
+	if info.From != "postman" && info.From != "daemon" {
 		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
 	}
 
