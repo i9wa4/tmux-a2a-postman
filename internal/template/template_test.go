@@ -48,49 +48,64 @@ func TestExpandVariables_Empty(t *testing.T) {
 	}
 }
 
-func TestExpandShellCommands(t *testing.T) {
+func TestexpandShellCommands(t *testing.T) {
 	template := "Current user: $(whoami)"
 	timeout := 5 * time.Second
 
-	got := ExpandShellCommands(template, timeout)
+	got := expandShellCommands(template, timeout)
 
 	// Verify the pattern was replaced (result should not contain $(...))
 	if strings.Contains(got, "$(") {
-		t.Errorf("ExpandShellCommands() still contains $(: %q", got)
+		t.Errorf("expandShellCommands() still contains $(: %q", got)
 	}
 
 	// Verify it starts with expected prefix
 	if !strings.HasPrefix(got, "Current user: ") {
-		t.Errorf("ExpandShellCommands() = %q, want prefix %q", got, "Current user: ")
+		t.Errorf("expandShellCommands() = %q, want prefix %q", got, "Current user: ")
 	}
 
 	// Verify no trailing newline
 	if strings.HasSuffix(got, "\n") {
-		t.Errorf("ExpandShellCommands() has trailing newline: %q", got)
+		t.Errorf("expandShellCommands() has trailing newline: %q", got)
 	}
 }
 
-func TestExpandShellCommands_Timeout(t *testing.T) {
+func TestexpandShellCommands_Timeout(t *testing.T) {
 	template := "Result: $(sleep 10 && echo done)"
 	timeout := 100 * time.Millisecond
 
-	got := ExpandShellCommands(template, timeout)
+	got := expandShellCommands(template, timeout)
 	want := "Result: "
 
 	if got != want {
-		t.Errorf("ExpandShellCommands() timeout = %q, want %q", got, want)
+		t.Errorf("expandShellCommands() timeout = %q, want %q", got, want)
 	}
 }
 
-func TestExpandShellCommands_Failure(t *testing.T) {
+func TestexpandShellCommands_Failure(t *testing.T) {
 	template := "Result: $(exit 1)"
 	timeout := 5 * time.Second
 
-	got := ExpandShellCommands(template, timeout)
+	got := expandShellCommands(template, timeout)
 	want := "Result: "
 
 	if got != want {
-		t.Errorf("ExpandShellCommands() failure = %q, want %q", got, want)
+		t.Errorf("expandShellCommands() failure = %q, want %q", got, want)
+	}
+}
+
+func TestExpandTemplate_SanitizesInjection(t *testing.T) {
+	tmpl := "Node: {node}"
+	vars := map[string]string{
+		"node": "evil$(rm -rf /)",
+	}
+	timeout := 5 * time.Second
+
+	got := ExpandTemplate(tmpl, vars, timeout)
+	want := "Node: evil"
+
+	if got != want {
+		t.Errorf("ExpandTemplate() injection = %q, want %q", got, want)
 	}
 }
 

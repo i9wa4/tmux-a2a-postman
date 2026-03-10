@@ -35,11 +35,11 @@ func ExpandVariables(template string, vars map[string]string) string {
 	})
 }
 
-// ExpandShellCommands executes $(command) patterns via sh -c.
+// expandShellCommands executes $(command) patterns via sh -c.
 // Each command runs with the given timeout. On error or timeout,
 // the expansion is replaced with an empty string.
 // Trailing newlines are stripped from command output.
-func ExpandShellCommands(template string, timeout time.Duration) string {
+func expandShellCommands(template string, timeout time.Duration) string {
 	return shellCommandPattern.ReplaceAllStringFunc(template, func(match string) string {
 		// Extract command (without $(...))
 		cmd := match[2 : len(match)-1]
@@ -62,8 +62,12 @@ func ExpandShellCommands(template string, timeout time.Duration) string {
 // 1. Execute shell commands $(...)
 // 2. Expand variables {variable}
 func ExpandTemplate(template string, vars map[string]string, timeout time.Duration) string {
-	// First expand shell commands
-	expanded := ExpandShellCommands(template, timeout)
-	// Then expand variables
-	return ExpandVariables(expanded, vars)
+	// First expand shell commands (from config-defined templates only)
+	expanded := expandShellCommands(template, timeout)
+	// Then expand variables with sanitized values to prevent injection
+	sanitizedVars := make(map[string]string, len(vars))
+	for k, v := range vars {
+		sanitizedVars[k] = shellCommandPattern.ReplaceAllString(v, "")
+	}
+	return ExpandVariables(expanded, sanitizedVars)
 }
