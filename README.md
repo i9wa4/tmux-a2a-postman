@@ -159,7 +159,22 @@ tmux-a2a-postman get-session-status-oneline
 tmux-a2a-postman --version
 ```
 
-### 8.1. Recommended Shell Alias
+### 8.1. Headless / CI Usage
+
+Run the daemon without the interactive TUI (non-interactive mode):
+
+```sh
+tmux-a2a-postman --no-tui --context-id <context-id>
+```
+
+In headless mode:
+
+- Message routing and delivery work normally
+- No interactive dashboard is displayed
+- Logs are written to stderr (redirect with `--log-file`)
+- Useful for CI pipelines and automated testing environments
+
+### 8.2. Recommended Shell Alias
 
 ```sh
 alias a2a='tmux-a2a-postman create-draft --context-id'
