@@ -158,3 +158,10 @@ tmux-a2a-postman get-session-status-oneline
 # Show version
 tmux-a2a-postman --version
 ```
+
+### 8.1. Recommended Shell Alias
+
+```sh
+alias a2a='tmux-a2a-postman create-draft --context-id'
+# Usage: a2a <context-id> --to <recipient>
+```
