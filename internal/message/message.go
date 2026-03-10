@@ -451,6 +451,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 // sendDeadLetterNotification writes a dead-letter notification directly to the
 // sender's inbox. Bypasses post/ to avoid re-triggering the daemon delivery loop.
 // Pattern follows the routing-denied notification at DeliverMessage:162-175.
+// Issue #208: Extended with dead-letter path, allowed neighbors, and re-send hint.
 func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename string) {
 	senderInbox := filepath.Join(sessionDir, "inbox", senderNode)
 	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
@@ -460,13 +461,18 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderNode)
+
+	// Build dead-letter file path for reference
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", originalFilename)
+
 	content := fmt.Sprintf(
-		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n",
+		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send, create a new draft with corrected recipient and move to post/.\n",
 		contextID,
 		senderNode,
 		now.Format(time.RFC3339),
 		originalFilename,
 		reason,
+		deadLetterPath,
 	)
 	notifPath := filepath.Join(senderInbox, filename)
 	if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {
