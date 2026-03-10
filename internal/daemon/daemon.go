@@ -922,6 +922,24 @@ func RunDaemonLoop(
 						if paneState == "stale" {
 							updated := replaceWaitingState(contentStr, "spinning", "stuck")
 							_ = os.WriteFile(filePath, []byte(updated), 0o644)
+							// Send stuck alert mirroring spinning alert pattern (#180)
+							alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
+							if daemonState.ShouldSendAlert(alertKey, 300.0) {
+								stuckDuration := time.Since(waitingSince).Round(time.Second)
+								alertMsg := fmt.Sprintf("Node %s is stuck (duration: %s, transitioned from spinning)", fileInfo.To, stuckDuration)
+								_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
+									alertMsg, "stuck", cfg, adjacency, nodes)
+								daemonState.MarkAlertSent(alertKey)
+								events <- tui.DaemonEvent{
+									Type:    "stuck_detected",
+									Message: alertMsg,
+									Details: map[string]interface{}{
+										"node":           fileInfo.To,
+										"stuck_duration": time.Since(waitingSince).Seconds(),
+										"from_state":     "spinning",
+									},
+								}
+							}
 						}
 						continue
 					}
@@ -934,6 +952,24 @@ func RunDaemonLoop(
 					if paneState == "stale" {
 						updated := replaceWaitingState(contentStr, "composing", "stuck")
 						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						// Send stuck alert mirroring spinning alert pattern (#180)
+						alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
+						if daemonState.ShouldSendAlert(alertKey, 300.0) {
+							stuckDuration := time.Since(waitingSince).Round(time.Second)
+							alertMsg := fmt.Sprintf("Node %s is stuck (duration: %s, transitioned from composing)", fileInfo.To, stuckDuration)
+							_ = sendAlertToUINode(nodeInfo.SessionDir, contextID, cfg.UINode,
+								alertMsg, "stuck", cfg, adjacency, nodes)
+							daemonState.MarkAlertSent(alertKey)
+							events <- tui.DaemonEvent{
+								Type:    "stuck_detected",
+								Message: alertMsg,
+								Details: map[string]interface{}{
+									"node":           fileInfo.To,
+									"stuck_duration": time.Since(waitingSince).Seconds(),
+									"from_state":     "composing",
+								},
+							}
+						}
 						continue
 					}
 					// composing → spinning: pane active after spinning threshold
