@@ -238,6 +238,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Printf("⚠️  postman: stale inbox cleanup failed: %v\n", err)
 	}
 
+	// Drain stale post/ messages (Issue #207)
+	if drained := message.DrainStalePost(sessionDir, cfg.MessageTTLSeconds); drained > 0 {
+		log.Printf("postman: drained %d stale post/ messages at startup\n", drained)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

@@ -30,6 +30,24 @@ const (
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 )
 
+// Dead-letter filename suffixes appended before .md extension (Issue #206).
+const (
+	dlSuffixParseError       = "-dl-parse-error"
+	dlSuffixEnvelopeMismatch = "-dl-envelope-mismatch"
+	dlSuffixUnknownRecipient = "-dl-unknown-recipient"
+	dlSuffixUnknownSender    = "-dl-unknown-sender"
+	dlSuffixRoutingDenied    = "-dl-routing-denied"
+	dlSuffixSessionDisabled  = "-dl-session-disabled"
+	DlSuffixTTLExpired       = "-dl-ttl-expired"
+)
+
+// deadLetterDst builds the dead-letter destination path with reason suffix.
+// Transforms "msg.md" → "msg-dl-{reason}.md" in dead-letter/ directory.
+func deadLetterDst(sessionDir, filename, suffix string) string {
+	base := strings.TrimSuffix(filename, ".md")
+	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
+}
+
 // DaemonEvent represents an event to be sent to the TUI (Issue #53).
 type DaemonEvent struct {
 	Type    string
@@ -152,7 +170,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	info, err := ParseMessageFilename(filename)
 	if err != nil {
 		// Parse error: move to dead-letter/ in source session
-		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixParseError)
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
@@ -174,7 +192,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		} else {
 			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
 			if parseErr != nil || envFrom != info.From || envTo != info.To {
-				dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+				dst := deadLetterDst(sourceSessionDir, filename, dlSuffixEnvelopeMismatch)
 				sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonEnvelopeMismatch, filename)
 				if events != nil {
 					events <- DaemonEvent{
@@ -191,7 +209,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, knownNodes)
 	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
-		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownRecipient)
 		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonUnknownRecipient, filename)
 		// Issue #53: Notify dead-letter event
 		if events != nil {
@@ -209,7 +227,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)
 	if senderFullName == "" && info.From != "postman" && info.From != "daemon" {
 		// Unknown sender: move to dead-letter/ in source session
-		dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownSender)
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
@@ -316,7 +334,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			}
 
 			// Routing denied: move to dead-letter/ in source session
-			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixRoutingDenied)
 			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			// Issue #53: Notify dead-letter event
 			if events != nil {
@@ -339,7 +357,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Postman sends PING; daemon sends alerts to ui_node (#172).
 	if info.From != "postman" && info.From != "daemon" {
 		if !isSessionEnabled(senderSessionName) {
-			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
 			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonSenderSessionDisabled, filename)
 			// Issue #53: Notify dead-letter event
@@ -354,7 +372,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 	if info.From != "postman" && info.From != "daemon" {
 		if !isSessionEnabled(recipientSessionName) {
-			dst := filepath.Join(sourceSessionDir, "dead-letter", filename)
+			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
 			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonRecipientSessionDisabled, filename)
 			// Issue #53: Notify dead-letter event
@@ -500,6 +518,45 @@ func parseEnvelopeFromTo(content string) (from, to string, err error) {
 		return "", "", fmt.Errorf("missing from or to in params block")
 	}
 	return from, to, nil
+}
+
+// DrainStalePost moves stale messages from post/ to dead-letter/ with ttl-expired suffix.
+// A message is stale if its file modification time exceeds ttlSeconds.
+// Returns the number of drained messages. Skips if ttlSeconds <= 0.
+func DrainStalePost(sessionDir string, ttlSeconds float64) int {
+	if ttlSeconds <= 0 {
+		return 0
+	}
+	postDir := filepath.Join(sessionDir, "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		return 0
+	}
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if mkErr := os.MkdirAll(deadLetterDir, 0o700); mkErr != nil {
+		log.Printf("postman: WARNING: failed to create dead-letter dir for TTL drain: %v\n", mkErr)
+		return 0
+	}
+	ttl := time.Duration(ttlSeconds * float64(time.Second))
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		fi, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if time.Since(fi.ModTime()) > ttl {
+			src := filepath.Join(postDir, entry.Name())
+			dst := deadLetterDst(sessionDir, entry.Name(), DlSuffixTTLExpired)
+			if err := os.Rename(src, dst); err == nil {
+				log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
+				count++
+			}
+		}
+	}
+	return count
 }
 
 // ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.
