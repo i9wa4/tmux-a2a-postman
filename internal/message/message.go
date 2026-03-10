@@ -48,6 +48,16 @@ func deadLetterDst(sessionDir, filename, suffix string) string {
 	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
 }
 
+// StripDeadLetterSuffix removes the -dl-{reason} suffix from a dead-letter filename.
+// Transforms "msg-dl-routing-denied.md" → "msg.md".
+func StripDeadLetterSuffix(filename string) string {
+	base := strings.TrimSuffix(filename, ".md")
+	if idx := strings.Index(base, "-dl-"); idx >= 0 {
+		return base[:idx] + ".md"
+	}
+	return filename
+}
+
 // DaemonEvent represents an event to be sent to the TUI (Issue #53).
 type DaemonEvent struct {
 	Type    string

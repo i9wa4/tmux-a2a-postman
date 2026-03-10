@@ -142,6 +142,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
 			os.Exit(1)
 		}
+	case "resend":
+		if err := runResend(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman resend: %v\n", err)
+			os.Exit(1)
+		}
 	case "help":
 		runHelp(args)
 	default:
@@ -1120,6 +1125,63 @@ func runGetSessionHealth(args []string) error {
 	return enc.Encode(result)
 }
 
+func runResend(args []string) error {
+	fs := flag.NewFlagSet("resend", flag.ContinueOnError)
+	contextID := fs.String("context-id", "", "context ID (required)")
+	file := fs.String("file", "", "path to dead-letter file (required)")
+	configPath := fs.String("config", "", "path to config file (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *contextID == "" {
+		return fmt.Errorf("--context-id is required")
+	}
+	if *file == "" {
+		return fmt.Errorf("--file is required")
+	}
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	// Verify dead-letter file exists
+	absFile, err := filepath.Abs(*file)
+	if err != nil {
+		return fmt.Errorf("resolving file path: %w", err)
+	}
+	if _, err := os.Stat(absFile); err != nil {
+		return fmt.Errorf("dead-letter file not found: %w", err)
+	}
+
+	// Find session directory
+	sessionName := config.GetTmuxSessionName()
+	if sessionName == "" {
+		return fmt.Errorf("must be run inside tmux")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	sessionDir := filepath.Join(baseDir, *contextID, sessionName)
+	postDir := filepath.Join(sessionDir, "post")
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
+		return fmt.Errorf("creating post/ directory: %w", err)
+	}
+
+	// Strip dead-letter suffix (-dl-*.md -> .md) for redelivery filename
+	baseName := filepath.Base(absFile)
+	cleanName := message.StripDeadLetterSuffix(baseName)
+
+	dst := filepath.Join(postDir, cleanName)
+	if err := os.Rename(absFile, dst); err != nil {
+		return fmt.Errorf("moving to post/: %w", err)
+	}
+
+	fmt.Printf("Resent: %s -> %s\n", baseName, dst)
+	return nil
+}
+
 func runHelp(args []string) {
 	topics := []string{"messaging", "directories", "config", "commands"}
 	printTopicList := func() {
@@ -1247,6 +1309,14 @@ func runHelp(args []string) {
 		fmt.Println("  Print session health: node count, inbox/waiting counts per node.")
 		fmt.Println("  Flags:")
 		fmt.Println("    --context-id <id>    Context ID (required)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("")
+		fmt.Println("resend")
+		fmt.Println("  Re-send a dead-letter message by moving it back to post/.")
+		fmt.Println("  Strips -dl-{reason} suffix from filename for redelivery.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Context ID (required)")
+		fmt.Println("    --file <path>        Path to dead-letter file (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("count")
