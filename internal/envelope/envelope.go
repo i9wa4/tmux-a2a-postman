@@ -67,7 +67,7 @@ func BuildEnvelope(
 	talksTo := config.GetTalksTo(adjacency, recipient)
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
-		nodeFullName := resolveNodeName(node, sourceSessionName, nodes)
+		nodeFullName := discovery.ResolveNodeName(node, sourceSessionName, nodes)
 		if nodeFullName != "" && (pongActiveNodes == nil || pongActiveNodes[nodeFullName]) {
 			activeTalksTo = append(activeTalksTo, node)
 		}
@@ -108,7 +108,7 @@ func BuildEnvelope(
 
 	// Resolve recipient session directory for inbox_path and session_dir.
 	sessionDir := ""
-	recipientFullName := resolveNodeName(recipient, sourceSessionName, nodes)
+	recipientFullName := discovery.ResolveNodeName(recipient, sourceSessionName, nodes)
 	if recipientFullName != "" {
 		if recipientInfo, found := nodes[recipientFullName]; found {
 			sessionDir = recipientInfo.SessionDir
@@ -174,32 +174,4 @@ func BuildRoleContent(cfg *config.Config, nodeName string) string {
 		roleContent = nodeTemplate
 	}
 	return strings.ReplaceAll(roleContent, "<!-- end of message -->", "<!-- end of msg -->")
-}
-
-// resolveNodeName resolves a simple node name to a session-prefixed node name.
-// Priority: same-session first, then any session.
-//
-// NOTE: This function is duplicated in internal/message and internal/notification.
-// Consolidation into internal/discovery is tracked in issue #148.
-func resolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) string {
-	if strings.Contains(nodeName, ":") {
-		if _, found := knownNodes[nodeName]; found {
-			return nodeName
-		}
-		return ""
-	}
-
-	sameSessionKey := sourceSessionName + ":" + nodeName
-	if _, found := knownNodes[sameSessionKey]; found {
-		return sameSessionKey
-	}
-
-	for fullName := range knownNodes {
-		parts := strings.SplitN(fullName, ":", 2)
-		if len(parts) == 2 && parts[1] == nodeName {
-			return fullName
-		}
-	}
-
-	return ""
 }
