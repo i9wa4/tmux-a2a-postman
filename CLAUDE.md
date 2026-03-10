@@ -8,6 +8,7 @@ Project-specific instructions for tmux-a2a-postman.
 
 After any implementation work:
 
+- Ensure new files are staged: `git add <new-files>` (Nix flakes only see git-tracked files)
 - Run: `nix flake check`
 - Run: `nix build`
 - Both must pass before switching sessions or creating new tasks
