@@ -586,6 +586,25 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							Type:    "message_received",
 							Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 						}
+					case "create_draft":
+						// Issue #230: TUI shortcut for create-draft
+						err := runCreateDraft([]string{
+							"--to", cmd.Value,
+							"--context-id", contextID,
+							"--session", cmd.Target,
+							"--config", resolvedConfigPath,
+						})
+						if err != nil {
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("Draft failed: %v", err),
+							}
+						} else {
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: fmt.Sprintf("Draft created: to=%s session=%s", cmd.Value, cmd.Target),
+							}
+						}
 					case "clear_edge_history":
 						// Debounce 200ms to prevent TUI flicker from rapid session switches (#190)
 						if edgeClearTimer != nil {

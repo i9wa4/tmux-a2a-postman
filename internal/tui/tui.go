@@ -150,8 +150,9 @@ type DaemonEventMsg DaemonEvent
 // TUICommand represents a command from TUI to the daemon.
 // Issue #47: Added for manual PING functionality.
 type TUICommand struct {
-	Type   string // "send_ping"
+	Type   string // "send_ping", "create_draft", etc.
 	Target string // Session name for PING target
+	Value  string // Extra data (e.g., node name for create_draft)
 }
 
 // Model holds the TUI state.
@@ -479,6 +480,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "l":
 			// Issue #127: Toggle layout mode
 			m.layoutMode = !m.layoutMode
+			return m, nil
+		case "d":
+			// Issue #230: Create draft shortcut
+			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
+				sess := m.sessions[m.selectedSession]
+				nodes := m.sessionNodes[sess.Name]
+				if len(nodes) > 0 && m.tuiCommands != nil {
+					m.tuiCommands <- TUICommand{
+						Type:   "create_draft",
+						Target: sess.Name,
+						Value:  nodes[0],
+					}
+				}
+			}
 			return m, nil
 		}
 
@@ -992,7 +1007,7 @@ func (m Model) renderVerticalLayout(width, height int) string {
 		}
 	}
 
-	b.WriteString("[q: quit] [1/2: view] [l: layout]")
+	b.WriteString("[q: quit] [1/2: view] [l: layout] [d: draft]")
 	return b.String()
 }
 
