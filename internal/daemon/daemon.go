@@ -94,31 +94,34 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
-	edgeHistory              map[string]EdgeActivity
-	edgeHistoryMu            sync.RWMutex
-	enabledSessions          map[string]bool
-	enabledSessionsMu        sync.RWMutex
-	notifiedInboxFiles       map[string]time.Time       // Issue #96: Track notified inbox files (filename -> notification time)
-	notifiedInboxFilesMu     sync.RWMutex               // Issue #96: Mutex for notifiedInboxFiles
-	notifiedNodeInactivity   map[string]time.Time       // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
-	notifiedNodeInactivityMu sync.RWMutex               // Issue #99: Mutex for notifiedNodeInactivity
-	prevPaneStates           map[string]uinode.PaneInfo // Issue #98: Track previous pane states for restart detection
-	prevPaneStatesMu         sync.RWMutex               // Issue #98: Mutex for prevPaneStates
-	prevPaneToNode           map[string]string          // Track previous pane ID -> node key mapping for restart detection
-	lastAlertTimestamp       map[string]time.Time       // Issue #118: Track last alert timestamps (alertKey -> time)
-	lastAlertTimestampMu     sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
+	edgeHistory                   map[string]EdgeActivity
+	edgeHistoryMu                 sync.RWMutex
+	enabledSessions               map[string]bool
+	enabledSessionsMu             sync.RWMutex
+	notifiedInboxFiles            map[string]time.Time       // Issue #96: Track notified inbox files (filename -> notification time)
+	notifiedInboxFilesMu          sync.RWMutex               // Issue #96: Mutex for notifiedInboxFiles
+	notifiedNodeInactivity        map[string]time.Time       // Issue #99: Track notified node inactivity (nodeKey:severity -> notification time)
+	notifiedNodeInactivityMu      sync.RWMutex               // Issue #99: Mutex for notifiedNodeInactivity
+	prevPaneStates                map[string]uinode.PaneInfo // Issue #98: Track previous pane states for restart detection
+	prevPaneStatesMu              sync.RWMutex               // Issue #98: Mutex for prevPaneStates
+	prevPaneToNode                map[string]string          // Track previous pane ID -> node key mapping for restart detection
+	lastAlertTimestamp            map[string]time.Time       // Issue #118: Track last alert timestamps (alertKey -> time)
+	lastAlertTimestampMu          sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
+	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
+	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 func NewDaemonState() *DaemonState {
 	return &DaemonState{
-		edgeHistory:            make(map[string]EdgeActivity),
-		enabledSessions:        make(map[string]bool),
-		notifiedInboxFiles:     make(map[string]time.Time),       // Issue #96
-		notifiedNodeInactivity: make(map[string]time.Time),       // Issue #99
-		prevPaneStates:         make(map[string]uinode.PaneInfo), // Issue #98
-		prevPaneToNode:         make(map[string]string),          // paneID -> nodeKey mapping
-		lastAlertTimestamp:     make(map[string]time.Time),       // Issue #118
+		edgeHistory:                   make(map[string]EdgeActivity),
+		enabledSessions:               make(map[string]bool),
+		notifiedInboxFiles:            make(map[string]time.Time),       // Issue #96
+		notifiedNodeInactivity:        make(map[string]time.Time),       // Issue #99
+		prevPaneStates:                make(map[string]uinode.PaneInfo), // Issue #98
+		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
+		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
+		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 	}
 }
 
@@ -418,6 +421,21 @@ func RunDaemonLoop(
 								},
 							}
 						}
+						// Issue #211: Rate limit duplicate deliveries
+						if cfg.MinDeliveryGapSeconds > 0 {
+							if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+								deliveryKey := msgInfo.From + ":" + msgInfo.To
+								gap := time.Duration(cfg.MinDeliveryGapSeconds * float64(time.Second))
+								daemonState.lastDeliveryMu.RLock()
+								lastTime, exists := daemonState.lastDeliveryBySenderRecipient[deliveryKey]
+								daemonState.lastDeliveryMu.RUnlock()
+								if exists && time.Since(lastTime) < gap {
+									log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs)\n", msgInfo.From, msgInfo.To, cfg.MinDeliveryGapSeconds)
+									continue
+								}
+							}
+						}
+
 						// Use eventPath directly for multi-session support
 						// Issue #53: Create wrapper channel for dead-letter notifications
 						messageEvents := make(chan message.DaemonEvent, 1)
@@ -439,6 +457,16 @@ func RunDaemonLoop(
 								deadLetterEventSent = true
 							default:
 								// No dead-letter event, normal delivery
+							}
+
+							// Issue #211: Record delivery timestamp for rate limiting
+							if !deadLetterEventSent {
+								if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+									deliveryKey := msgInfo.From + ":" + msgInfo.To
+									daemonState.lastDeliveryMu.Lock()
+									daemonState.lastDeliveryBySenderRecipient[deliveryKey] = time.Now()
+									daemonState.lastDeliveryMu.Unlock()
+								}
 							}
 
 							// Send normal delivery event only if not dead-lettered

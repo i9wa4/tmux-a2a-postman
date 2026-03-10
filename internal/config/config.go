@@ -40,6 +40,7 @@ type Config struct {
 	NodeSpinningSeconds      float64 `toml:"node_spinning_seconds"`       // Hard ceiling for active-but-no-reply detection; 0 = disabled
 	MessageAgeWarningSeconds float64 `toml:"message_age_warning_seconds"` // Delivery latency warning threshold; 0 = disabled
 	MessageTTLSeconds        float64 `toml:"message_ttl_seconds"`         // Stale post/ drain TTL; 0 = disabled
+	MinDeliveryGapSeconds    float64 `toml:"min_delivery_gap_seconds"`    // Duplicate delivery rate limit; 0 = disabled
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
@@ -199,6 +200,7 @@ func DefaultConfig() *Config {
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
 		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
 		MessageTTLSeconds:               600, // Stale post/ drain TTL (10 minutes); 0 = disabled
+		MinDeliveryGapSeconds:           1.0, // Duplicate delivery rate limit (1 second)
 		CompactionDetection: CompactionDetectionConfig{
 			TailLines: 10, // Issue #133: Default tail lines for compaction check
 		},
@@ -523,6 +525,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.MessageTTLSeconds != 0 {
 		base.MessageTTLSeconds = override.MessageTTLSeconds
+	}
+	if override.MinDeliveryGapSeconds != 0 {
+		base.MinDeliveryGapSeconds = override.MinDeliveryGapSeconds
 	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds
