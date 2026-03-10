@@ -107,7 +107,7 @@ Inbox: {session_dir}/inbox/{node}/
 Reply:
 1. {reply_command}
 2. Edit content
-3. mv from draft/ to post/
+3. tmux-a2a-postman send <file>
 """
 
 [orchestrator]

@@ -364,7 +364,7 @@ All messages use YAML frontmatter followed by content:
 1. Create draft: {reply_command}
    Replace `<recipient>` with target node name
 2. Edit the draft content in {session_dir}/draft/
-3. Move to post/: mv {session_dir}/draft/<file> {session_dir}/post/
+3. Send: tmux-a2a-postman send <file>
 
 ### Receiving Messages
 
@@ -384,7 +384,7 @@ File content includes a `state` field:
 - stuck       daemon detected pane went stale while composing
 - spinning    daemon detected pane active but no reply after node_spinning_seconds
 
-The file is automatically removed when you send a reply (move draft to post/).
+The file is automatically removed when you send a reply (tmux-a2a-postman send <file>).
 
 Monitoring:
   # Agents stuck (pane went stale while composing):
@@ -412,7 +412,7 @@ Monitoring:
 # 1. {reply_command}
 #    Replace `<recipient>` with target node name
 # 2. Edit the draft content
-# 3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/
+# 3. Send: tmux-a2a-postman send <file>
 # """
 
 # Idle reminder header template (Issue #82)
@@ -469,13 +469,13 @@ If nothing needs attention:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
     --context-id {context_id} --to postman
   Set Content to: HEARTBEAT_OK
-  Move the draft from draft/ to post/
+  Run: tmux-a2a-postman send <filename>
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
     --context-id {context_id} --to messenger
   Set Content to: [HEARTBEAT ALERT] <your message>
-  Move the draft from draft/ to post/"""
+  Run: tmux-a2a-postman send <filename>"""
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes

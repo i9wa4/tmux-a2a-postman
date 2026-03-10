@@ -74,6 +74,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
+		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
@@ -122,6 +123,11 @@ func main() {
 	case "create-draft":
 		if err := runCreateDraft(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman create-draft: %v\n", err)
+			os.Exit(1)
+		}
+	case "send":
+		if err := runSend(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman send: %v\n", err)
 			os.Exit(1)
 		}
 	case "get-session-status-oneline":
@@ -775,6 +781,7 @@ func runCreateDraft(args []string) error {
 	}
 
 	fmt.Println(draftPath)
+	fmt.Fprintf(os.Stderr, "After editing: tmux-a2a-postman send %s\n", filepath.Base(draftPath))
 	return nil
 }
 
@@ -1097,6 +1104,56 @@ func runArchive(args []string) error {
 	return nil
 }
 
+// runSend moves a draft file to post/ to submit it for delivery.
+// The argument is a bare filename (no path); the file is located by globbing draft/ directories.
+func runSend(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: send <filename> [filename...]")
+	}
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	for _, filename := range args {
+		if strings.ContainsAny(filename, "/\\*?[]") {
+			return fmt.Errorf("send: %q must be a plain filename (no path separators or wildcards)", filename)
+		}
+
+		pattern := filepath.Join(baseDir, "*", "*", "draft", filename)
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("globbing for %s: %w", filename, err)
+		}
+		switch len(matches) {
+		case 0:
+			return fmt.Errorf("send: %q not found in any draft/ directory", filename)
+		case 1:
+			// OK
+		default:
+			return fmt.Errorf("send: %q found in multiple draft/ directories: %v", filename, matches)
+		}
+
+		match := matches[0]
+		// match = {baseDir}/{contextID}/{sessionName}/draft/{filename}
+		// two Dir() calls yield {baseDir}/{contextID}/{sessionName}
+		sessionDir := filepath.Dir(filepath.Dir(match))
+		postDir := filepath.Join(sessionDir, "post")
+		if err := os.MkdirAll(postDir, 0o700); err != nil {
+			return fmt.Errorf("creating post/ directory: %w", err)
+		}
+		dst := filepath.Join(postDir, filename)
+		if err := os.Rename(match, dst); err != nil {
+			return fmt.Errorf("sending %s: %w", filename, err)
+		}
+		fmt.Printf("Sent: %s\n", filename)
+	}
+	return nil
+}
+
 // printDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).
 func printDoubleDashDefaults(fs *flag.FlagSet) {
 	fs.VisitAll(func(f *flag.Flag) {
@@ -1269,7 +1326,7 @@ func runHelp(args []string) {
 		fmt.Println("  1. Start daemon:   tmux-a2a-postman start --context-id <id>")
 		fmt.Println("  2. Create draft:   tmux-a2a-postman create-draft --context-id <id> --to <node>")
 		fmt.Println("  3. Edit draft:     $EDITOR draft/<filename>.md")
-		fmt.Println("  4. Send message:   mv draft/<filename>.md post/")
+		fmt.Println("  4. Send message:   tmux-a2a-postman send <filename>.md")
 		fmt.Println("  5. Daemon routes the file from post/ to recipient's inbox/{sender}/")
 		fmt.Println("  6. Recipient reads file and moves it to read/ to acknowledge delivery")
 		fmt.Println("")
@@ -1299,6 +1356,7 @@ func runHelp(args []string) {
 		fmt.Println("Commands:")
 		fmt.Println("  start                      Start the daemon (TUI dashboard)")
 		fmt.Println("  create-draft               Create a new message draft")
+		fmt.Println("  send <filename>            Move draft to post/ to send it")
 		fmt.Println("  resend                     Re-send a dead-letter message")
 		fmt.Println("  count                      Count unread inbox messages")
 		fmt.Println("  read                       List inbox message file paths")
@@ -1319,7 +1377,7 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("Lifecycle:")
 		fmt.Println("  1. Agent writes message to draft/{timestamp}-from-{sender}-to-{recipient}.md")
-		fmt.Println("  2. Agent moves file: draft/ -> post/")
+		fmt.Println("  2. Agent runs: tmux-a2a-postman send <filename>")
 		fmt.Println("  3. Daemon picks up file from post/, routes to inbox/{node}/ of recipient")
 		fmt.Println("  4. Recipient reads from inbox/{node}/, then moves to read/ (signals delivery)")
 		fmt.Println("  5. Unknown recipients: file moved to dead-letter/")
@@ -1338,7 +1396,7 @@ func runHelp(args []string) {
 		fmt.Println("Reply workflow:")
 		fmt.Println("  1. Run: tmux-a2a-postman create-draft --context-id <id> --to <recipient>")
 		fmt.Println("  2. Edit the generated file in draft/")
-		fmt.Println("  3. Move to post/: mv draft/<file> post/")
+		fmt.Println("  3. Send: tmux-a2a-postman send <filename>")
 		fmt.Println("")
 		fmt.Println("Sender is auto-detected from the tmux pane title (no --from flag).")
 	case "directories":
@@ -1410,6 +1468,14 @@ func runHelp(args []string) {
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
+		fmt.Println("")
+		fmt.Println("send <filename> [filename...]")
+		fmt.Println("  Move a draft file to post/ to submit it for delivery.")
+		fmt.Println("  The filename is matched by glob across all draft/ directories; no path needed.")
+		fmt.Println("  Typical workflow:")
+		fmt.Println("    1. tmux-a2a-postman create-draft --to <node>  # creates draft, prints filename")
+		fmt.Println("    2. $EDITOR draft/<filename>.md                 # edit the draft")
+		fmt.Println("    3. tmux-a2a-postman send <filename>.md         # submit for delivery")
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")

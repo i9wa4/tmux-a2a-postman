@@ -330,7 +330,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					if !strings.Contains(replyCmd, "--context-id") {
 						replyCmd = fmt.Sprintf("%s --context-id %s", replyCmd, contextID)
 					}
-					replyInstructions := fmt.Sprintf("\n\nSteps:\n\n1. %s --to <recipient>\n   - Replace `<recipient>` with one of: %s\n2. Edit the draft content\n3. mv from draft/ to post/",
+					replyInstructions := fmt.Sprintf("\n\nSteps:\n\n1. %s --to <recipient>\n   - Replace `<recipient>` with one of: %s\n2. Edit the draft content\n3. tmux-a2a-postman send <file>",
 						replyCmd,
 						neighborsStr,
 					)
@@ -480,7 +480,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", originalFilename)
 
 	content := fmt.Sprintf(
-		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send, create a new draft with corrected recipient and move to post/.\n",
+		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send with corrected recipient: tmux-a2a-postman resend --context-id <id> --file <dead-letter-path>\n",
 		contextID,
 		senderNode,
 		now.Format(time.RFC3339),

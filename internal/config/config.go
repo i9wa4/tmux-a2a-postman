@@ -210,7 +210,7 @@ func DefaultConfig() *Config {
 		IdleReminderMessageTemplate:     "",
 		RulesTemplate:                   "",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
-		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Move draft to post/: mv {session_dir}/draft/<file> {session_dir}/post/",
+		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Send: tmux-a2a-postman send <file>",
 		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
 		MinDeliveryGapSeconds:           1.0,  // Duplicate delivery rate limit (1 second)
 		StartupDrainWindowSeconds:       10.0, // Session-enabled bypass window (10 seconds) (#217)
