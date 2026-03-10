@@ -437,6 +437,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 		// Start TUI command handler goroutine
 		safeGo("tui-command-handler", daemonEvents, func() {
+			var edgeClearTimer *time.Timer
 			for {
 				select {
 				case <-ctx.Done():
@@ -555,16 +556,21 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
 						}
 					case "clear_edge_history":
-						// Clear edge activity history when switching sessions
-						daemonState.ClearEdgeHistory()
-						edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
-						daemonEvents <- tui.DaemonEvent{
-							Type: "edge_update",
-							Details: map[string]interface{}{
-								"edges": edgeList,
-							},
+						// Debounce 200ms to prevent TUI flicker from rapid session switches (#190)
+						if edgeClearTimer != nil {
+							edgeClearTimer.Stop()
 						}
-						log.Println("postman: Edge history cleared (session switch)")
+						edgeClearTimer = time.AfterFunc(200*time.Millisecond, func() {
+							daemonState.ClearEdgeHistory()
+							edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
+							daemonEvents <- tui.DaemonEvent{
+								Type: "edge_update",
+								Details: map[string]interface{}{
+									"edges": edgeList,
+								},
+							}
+							log.Println("postman: Edge history cleared (session switch)")
+						})
 					}
 				}
 			}
