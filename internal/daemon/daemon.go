@@ -414,7 +414,7 @@ func RunDaemonLoop(
 									sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 								}
 							}
-							sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+							sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 							// Update node count and session info
 							events <- tui.DaemonEvent{
@@ -651,7 +651,7 @@ func RunDaemonLoop(
 								sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 							}
 						}
-						sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+						sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 						events <- tui.DaemonEvent{
 							Type: "config_update",
@@ -765,7 +765,7 @@ func RunDaemonLoop(
 					sessionNodes[sessionName] = append(sessionNodes[sessionName], simpleNodeName)
 				}
 			}
-			sessionList := session.BuildSessionList(nodes, allSessions, daemonState.IsSessionEnabled)
+			sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 			// Issue #117: Send event only on state change (avoid spam)
 			if len(nodes) != prevNodeCount || len(sessionList) != prevSessionCount {
@@ -1122,6 +1122,18 @@ func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
 	if ds.drainWindow > 0 && time.Since(ds.startedAt) < ds.drainWindow {
 		return true
 	}
+	ds.enabledSessionsMu.RLock()
+	defer ds.enabledSessionsMu.RUnlock()
+	enabled, exists := ds.enabledSessions[sessionName]
+	if !exists {
+		return false // Default: disabled
+	}
+	return enabled
+}
+
+// GetConfiguredSessionEnabled returns the explicitly configured session state,
+// ignoring the startup drain window. Use for TUI display only.
+func (ds *DaemonState) GetConfiguredSessionEnabled(sessionName string) bool {
 	ds.enabledSessionsMu.RLock()
 	defer ds.enabledSessionsMu.RUnlock()
 	enabled, exists := ds.enabledSessions[sessionName]
