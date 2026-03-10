@@ -152,6 +152,9 @@ How to reply: {reply_command}
 
 ## Ping
 
+This message is from the postman daemon. Do NOT reply to postman.
+Resume your work or reply to your orchestrator if you need to communicate.
+
 {talks_to_line}
 
 ## After Reading
