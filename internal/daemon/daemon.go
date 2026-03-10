@@ -1006,7 +1006,7 @@ func RunDaemonLoop(
 						}
 						continue
 					}
-					// composing → spinning: pane active after spinning threshold
+					// composing → spinning: pane active after spinning threshold; sendAlertToUINode for spinning (#221)
 					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
 						updated := replaceWaitingState(contentStr, "composing", "spinning")
 						_ = os.WriteFile(filePath, []byte(updated), 0o644)
