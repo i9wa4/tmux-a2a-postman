@@ -1,4 +1,4 @@
-# CLAUDE.md
+# CLAUDE.md / AGENTS.md
 
 Project-specific instructions for tmux-a2a-postman.
 
