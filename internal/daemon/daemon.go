@@ -1694,6 +1694,9 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 	ds.prevPaneStatesMu.RLock()
 	defer ds.prevPaneStatesMu.RUnlock()
 
+	// Collect disappeared panes grouped by session (Issue #209)
+	disappearedBySession := make(map[string][]string) // session -> []nodeKey
+
 	// Find panes that existed before but don't exist now
 	for prevPaneID := range ds.prevPaneStates {
 		if _, stillExists := currentPaneStates[prevPaneID]; !stillExists {
@@ -1709,7 +1712,30 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 					},
 				}
 				log.Printf("postman: pane disappeared for node %s (paneID: %s)\n", nodeKey, prevPaneID)
+
+				// Group by session name
+				sessionName := nodeKey
+				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+					sessionName = parts[0]
+				}
+				disappearedBySession[sessionName] = append(disappearedBySession[sessionName], nodeKey)
 			}
+		}
+	}
+
+	// Emit session_collapsed event when 2+ panes from same session disappeared (Issue #209)
+	for sessionName, nodes := range disappearedBySession {
+		if len(nodes) >= 2 {
+			events <- tui.DaemonEvent{
+				Type:    "session_collapsed",
+				Message: fmt.Sprintf("Session collapsed: %s (%d panes disappeared)", sessionName, len(nodes)),
+				Details: map[string]interface{}{
+					"session": sessionName,
+					"nodes":   nodes,
+					"count":   len(nodes),
+				},
+			}
+			log.Printf("postman: session collapsed: %s (%d panes disappeared: %v)\n", sessionName, len(nodes), nodes)
 		}
 	}
 }
