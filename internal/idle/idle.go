@@ -438,7 +438,7 @@ func hashContentCRC32(content string) uint32 {
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
 // Issue #xxx: Hybrid idle detection with screen capture.
 func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) {
-	if !cfg.PaneCaptureEnabled {
+	if !config.BoolVal(cfg.PaneCaptureEnabled, true) {
 		return
 	}
 
@@ -562,7 +562,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
 // Issue #xxx: Hybrid idle detection with screen capture.
 func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string) {
-	if !cfg.PaneCaptureEnabled || cfg.PaneCaptureIntervalSeconds <= 0 {
+	if !config.BoolVal(cfg.PaneCaptureEnabled, true) || cfg.PaneCaptureIntervalSeconds <= 0 {
 		return // Pane capture disabled
 	}
 

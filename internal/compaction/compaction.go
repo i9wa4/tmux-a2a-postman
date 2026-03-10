@@ -42,7 +42,7 @@ func NewCompactionTracker() *CompactionTracker {
 
 // StartCompactionCheck starts a goroutine that periodically checks for compaction events (Issue #71).
 func (ct *CompactionTracker) StartCompactionCheck(ctx context.Context, cfg *config.Config, nodes map[string]discovery.NodeInfo, sessionDir string) {
-	if !cfg.CompactionDetection.Enabled {
+	if !config.BoolVal(cfg.CompactionDetection.Enabled, false) {
 		return
 	}
 

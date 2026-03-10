@@ -44,7 +44,7 @@ type Config struct {
 	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 
 	// Pane capture settings (hybrid idle detection)
-	PaneCaptureEnabled         bool    `toml:"pane_capture_enabled"`
+	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
 	PaneCaptureIntervalSeconds float64 `toml:"pane_capture_interval_seconds"`
 	PaneCaptureMaxPanes        int     `toml:"pane_capture_max_panes"`
 	ActivityWindowSeconds      float64 `toml:"activity_window_seconds"`
@@ -83,8 +83,8 @@ type Config struct {
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Issue #46: Generalized target node name
 	InboxUnreadThreshold  int      `toml:"inbox_unread_threshold"`   // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
-	AutoEnableNewSessions bool     `toml:"auto_enable_new_sessions"` // Issue #135: default false
-	AutoEnableNewAgents   bool     `toml:"auto_enable_new_agents"`   // Issue #135: default true
+	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false) (#219)
+	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -117,7 +117,7 @@ type NodeConfig struct {
 	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                  float64 `toml:"enter_delay_seconds"`           // 0 = use global default
-	MaterializeTemplate         bool    `toml:"materialize_template"`          // Issue #134: write template as state file; reference by labeled path (no @ prefix)
+	MaterializeTemplate         *bool   `toml:"materialize_template"`          // nil = use default; Issue #134, #219
 }
 
 // AgentCard holds agent card information.
@@ -132,7 +132,7 @@ type AgentCard struct {
 
 // CompactionDetectionConfig holds compaction detection configuration.
 type CompactionDetectionConfig struct {
-	Enabled         bool                      `toml:"enabled"`
+	Enabled         *bool                     `toml:"enabled"` // nil = use default (false) (#219)
 	Pattern         string                    `toml:"pattern"`
 	DelaySeconds    float64                   `toml:"delay_seconds"`
 	TailLines       int                       `toml:"tail_lines"` // Issue #133: Lines to capture for compaction check (default: 10)
@@ -147,10 +147,21 @@ type CompactionMessageTemplate struct {
 
 // HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
 type HeartbeatConfig struct {
-	Enabled         bool    `toml:"enabled"`
+	Enabled         *bool   `toml:"enabled"` // nil = use default (false) (#219)
 	IntervalSeconds float64 `toml:"interval_seconds"`
 	LLMNode         string  `toml:"llm_node"`
 	Prompt          string  `toml:"prompt"`
+}
+
+// boolPtr returns a pointer to a bool value (#219).
+func boolPtr(v bool) *bool { return &v }
+
+// BoolVal dereferences a *bool with a default fallback (#219).
+func BoolVal(p *bool, defaultVal bool) bool {
+	if p == nil {
+		return defaultVal
+	}
+	return *p
 }
 
 // DefaultConfig returns a Config with sane default values.
@@ -166,7 +177,7 @@ func DefaultConfig() *Config {
 		NodeIdleSeconds:                 900.0, // 5-15min: idle (orange)
 		NodeStaleSeconds:                900.0, // 15min+: stale (red)
 		NodeSpinningSeconds:             0.0,   // disabled by default; set positive to enable spinning detection
-		PaneCaptureEnabled:              true,
+		PaneCaptureEnabled:              boolPtr(true),
 		PaneCaptureIntervalSeconds:      60.0,
 		PaneCaptureMaxPanes:             0,
 		ActivityWindowSeconds:           300.0,
@@ -176,10 +187,10 @@ func DefaultConfig() *Config {
 		DraftTemplate:                   "",
 		ReminderMessage:                 "",
 		ReplyCommand:                    "",
-		UINode:                          "",    // Issue #46: Default UI target node (empty = no default)
-		InboxUnreadThreshold:            3,     // Default threshold for inbox unread summary notification
-		AutoEnableNewSessions:           false, // Issue #135: default false; set true to opt in
-		AutoEnableNewAgents:             true,  // Issue #135: auto-enable agents in already-enabled sessions
+		UINode:                          "",             // Issue #46: Default UI target node (empty = no default)
+		InboxUnreadThreshold:            3,              // Default threshold for inbox unread summary notification
+		AutoEnableNewSessions:           boolPtr(false), // Issue #135: default false; set true to opt in (#219)
+		AutoEnableNewAgents:             boolPtr(true),  // Issue #135: auto-enable agents in already-enabled sessions (#219)
 		Edges:                           []string{},
 		Nodes:                           make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate:    "you can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.",
@@ -478,17 +489,12 @@ func mergeConfig(base, override *Config) {
 	if override.UINode != "" {
 		base.UINode = override.UINode
 	}
-	// NOTE: bool merge only propagates true values (Go zero-value = false is indistinguishable
-	// from "field not set in override"). Setting auto_enable_new_sessions = false or
-	// auto_enable_new_agents = false in a project-local config will NOT override an XDG
-	// config that sets these to true. Use *bool fields if bidirectional override is needed (Issue #135 v2).
-	// AutoEnableNewSessions: standard false->true direction (default false)
-	if override.AutoEnableNewSessions {
-		base.AutoEnableNewSessions = true
+	// *bool merge: bidirectional override — nil = unset (use base), non-nil = explicit (#219)
+	if override.AutoEnableNewSessions != nil {
+		base.AutoEnableNewSessions = override.AutoEnableNewSessions
 	}
-	// AutoEnableNewAgents: default true; standard pattern
-	if override.AutoEnableNewAgents {
-		base.AutoEnableNewAgents = true
+	if override.AutoEnableNewAgents != nil {
+		base.AutoEnableNewAgents = override.AutoEnableNewAgents
 	}
 
 	// Float64 fields
@@ -549,9 +555,9 @@ func mergeConfig(base, override *Config) {
 		base.InboxUnreadThreshold = override.InboxUnreadThreshold
 	}
 
-	// Bool fields (cannot override to false via project-local)
-	if override.PaneCaptureEnabled {
-		base.PaneCaptureEnabled = true
+	// *bool fields: bidirectional override (#219)
+	if override.PaneCaptureEnabled != nil {
+		base.PaneCaptureEnabled = override.PaneCaptureEnabled
 	}
 
 	// Edges: replace if override is non-empty
@@ -601,8 +607,8 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
-		if overNode.MaterializeTemplate {
-			baseNode.MaterializeTemplate = true
+		if overNode.MaterializeTemplate != nil {
+			baseNode.MaterializeTemplate = overNode.MaterializeTemplate
 		}
 		base.Nodes[name] = baseNode
 	}
@@ -611,13 +617,13 @@ func mergeConfig(base, override *Config) {
 	if override.NodeDefaults.EnterCount != 0 {
 		base.NodeDefaults.EnterCount = override.NodeDefaults.EnterCount
 	}
-	if override.NodeDefaults.MaterializeTemplate {
-		base.NodeDefaults.MaterializeTemplate = true
+	if override.NodeDefaults.MaterializeTemplate != nil {
+		base.NodeDefaults.MaterializeTemplate = override.NodeDefaults.MaterializeTemplate
 	}
 
-	// CompactionDetection: field-level merge
-	if override.CompactionDetection.Enabled {
-		base.CompactionDetection.Enabled = true
+	// CompactionDetection: field-level merge (#219)
+	if override.CompactionDetection.Enabled != nil {
+		base.CompactionDetection.Enabled = override.CompactionDetection.Enabled
 	}
 	if override.CompactionDetection.Pattern != "" {
 		base.CompactionDetection.Pattern = override.CompactionDetection.Pattern
@@ -635,8 +641,8 @@ func mergeConfig(base, override *Config) {
 		base.CompactionDetection.MessageTemplate.Body = override.CompactionDetection.MessageTemplate.Body
 	}
 
-	if override.Heartbeat.Enabled {
-		base.Heartbeat.Enabled = true
+	if override.Heartbeat.Enabled != nil {
+		base.Heartbeat.Enabled = override.Heartbeat.Enabled
 	}
 	if override.Heartbeat.IntervalSeconds != 0 {
 		base.Heartbeat.IntervalSeconds = override.Heartbeat.IntervalSeconds
@@ -1090,8 +1096,8 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
 	}
-	if specific.MaterializeTemplate {
-		result.MaterializeTemplate = true
+	if specific.MaterializeTemplate != nil {
+		result.MaterializeTemplate = specific.MaterializeTemplate
 	}
 	return result
 }

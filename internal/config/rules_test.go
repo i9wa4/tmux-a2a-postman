@@ -78,11 +78,11 @@ func TestMaterializeNodeTemplates(t *testing.T) {
 		Nodes: map[string]NodeConfig{
 			nodeName: {
 				Template:            nodeTemplate,
-				MaterializeTemplate: true,
+				MaterializeTemplate: boolPtr(true),
 			},
 			"observer": {
 				Template:            "# OBSERVER",
-				MaterializeTemplate: false,
+				MaterializeTemplate: boolPtr(false),
 			},
 		},
 	}

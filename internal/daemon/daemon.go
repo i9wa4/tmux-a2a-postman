@@ -319,7 +319,7 @@ func RunDaemonLoop(
 	defer inboxCheckTicker.Stop()
 
 	// Issue #136: Start heartbeat-LLM trigger goroutine if configured
-	if cfg.Heartbeat.Enabled && cfg.Heartbeat.LLMNode != "" && cfg.Heartbeat.IntervalSeconds > 0 {
+	if config.BoolVal(cfg.Heartbeat.Enabled, false) && cfg.Heartbeat.LLMNode != "" && cfg.Heartbeat.IntervalSeconds > 0 {
 		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg, adjacency)
 	}
 
