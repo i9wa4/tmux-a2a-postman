@@ -107,7 +107,7 @@ func SendHeartbeatTrigger(
 		})
 	}
 
-	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
 		log.Printf("heartbeat: failed to write trigger %s: %v", filePath, err)
 		return fmt.Errorf("heartbeat: writing trigger: %w", err)
 	}

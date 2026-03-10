@@ -11,11 +11,11 @@ import (
 // Path: {baseDir}/diplomat/audit.log
 func AppendAuditLog(baseDir, entry string) error {
 	dir := filepath.Join(baseDir, "diplomat")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating diplomat dir: %w", err)
 	}
 	logPath := filepath.Join(dir, "audit.log")
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening audit log: %w", err)
 	}

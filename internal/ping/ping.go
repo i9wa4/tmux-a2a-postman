@@ -50,11 +50,11 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 	// Ensure post directory exists for this node's session
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
-	if err := os.MkdirAll(postDir, 0o755); err != nil {
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		return fmt.Errorf("creating post directory: %w", err)
 	}
 
-	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing PING message: %w", err)
 	}
 

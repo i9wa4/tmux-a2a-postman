@@ -63,7 +63,7 @@ func (d *Deliverer) DeliverCrossContextMessage(
 
 	// Resolve inbox path
 	inboxDir := filepath.Join(baseDir, contextID, sessionName, "inbox", to)
-	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 		return "inbox_mkdir_failed", fmt.Errorf("creating inbox dir: %w", err)
 	}
 
@@ -78,7 +78,7 @@ func (d *Deliverer) DeliverCrossContextMessage(
 
 // deadLetter moves a file to the dead-letter directory.
 func (d *Deliverer) deadLetter(postPath, deadLetterDir string, renamer Renamer) error {
-	if err := os.MkdirAll(deadLetterDir, 0o755); err != nil {
+	if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
 		return err
 	}
 	return renamer.Rename(postPath, filepath.Join(deadLetterDir, filepath.Base(postPath)))

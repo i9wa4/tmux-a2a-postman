@@ -32,7 +32,7 @@ func GenerateRulesFile(sessionDir, contextID string, cfg *Config) error {
 	content := template.ExpandTemplate(cfg.RulesTemplate, vars, timeout)
 
 	rulesPath := filepath.Join(sessionDir, "RULES.md")
-	return os.WriteFile(rulesPath, []byte(content), 0o644)
+	return os.WriteFile(rulesPath, []byte(content), 0o600)
 }
 
 // GenerateBoilerplateFiles generates boilerplate response files in {session_dir}/boilerplate/.
@@ -51,7 +51,7 @@ func GenerateBoilerplateFiles(sessionDir, contextID string, cfg *Config) error {
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 
 	boilerplateDir := filepath.Join(sessionDir, "boilerplate")
-	if err := os.MkdirAll(boilerplateDir, 0o755); err != nil {
+	if err := os.MkdirAll(boilerplateDir, 0o700); err != nil {
 		return fmt.Errorf("creating boilerplate directory: %w", err)
 	}
 
@@ -65,7 +65,7 @@ func GenerateBoilerplateFiles(sessionDir, contextID string, cfg *Config) error {
 		}
 		content := template.ExpandTemplate(tmpl, vars, timeout)
 		path := filepath.Join(boilerplateDir, filename)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing %s: %w", filename, err)
 		}
 	}
@@ -95,7 +95,7 @@ func MaterializeNodeTemplates(baseDir, contextID string, cfg *Config) {
 
 	contextDir := filepath.Join(baseDir, contextID)
 	templatesDir := filepath.Join(contextDir, "templates")
-	if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
 		log.Printf("postman: WARNING: failed to create templates directory: %v\n", err)
 		return
 	}

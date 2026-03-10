@@ -197,7 +197,7 @@ func (m DraftModel) View() tea.View {
 // submitDraft writes the draft file.
 func (m *DraftModel) submitDraft() error {
 	draftDir := filepath.Join(m.sessionDir, "draft")
-	if err := os.MkdirAll(draftDir, 0o755); err != nil {
+	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
 	}
 
@@ -235,7 +235,7 @@ func (m *DraftModel) submitDraft() error {
 	timeout := time.Duration(m.cfg.TmuxTimeout * float64(time.Second))
 	content = template.ExpandTemplate(content, vars, timeout)
 
-	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing draft: %w", err)
 	}
 

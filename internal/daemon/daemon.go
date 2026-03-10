@@ -588,7 +588,7 @@ func RunDaemonLoop(
 									waitingContent := fmt.Sprintf(
 										"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: %s\nstate_updated_at: %s\n---\n",
 										info.From, info.To, waitingSince, state, waitingSince)
-									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o644); writeErr != nil {
+									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o600); writeErr != nil {
 										log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
 									}
 								}
@@ -966,7 +966,7 @@ func RunDaemonLoop(
 						// spinning → stuck: pane went stale after spinning was detected
 						if paneState == "stale" {
 							updated := replaceWaitingState(contentStr, "spinning", "stuck")
-							_ = os.WriteFile(filePath, []byte(updated), 0o644)
+							_ = os.WriteFile(filePath, []byte(updated), 0o600)
 							// Send stuck alert mirroring spinning alert pattern (#180)
 							alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
 							if daemonState.ShouldSendAlert(alertKey, 300.0) {
@@ -996,7 +996,7 @@ func RunDaemonLoop(
 					// composing → stuck: pane stale after composing window
 					if paneState == "stale" {
 						updated := replaceWaitingState(contentStr, "composing", "stuck")
-						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						_ = os.WriteFile(filePath, []byte(updated), 0o600)
 						// Send stuck alert mirroring spinning alert pattern (#180)
 						alertKey := fmt.Sprintf("stuck:%s:%s", nodeInfo.SessionName, fileInfo.To)
 						if daemonState.ShouldSendAlert(alertKey, 300.0) {
@@ -1020,7 +1020,7 @@ func RunDaemonLoop(
 					// composing → spinning: pane active after spinning threshold; sendAlertToUINode for spinning (#221)
 					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
 						updated := replaceWaitingState(contentStr, "composing", "spinning")
-						_ = os.WriteFile(filePath, []byte(updated), 0o644)
+						_ = os.WriteFile(filePath, []byte(updated), 0o600)
 						// Send spinning alert with rate-limiting
 						alertKey := fmt.Sprintf("spinning:%s:%s", nodeInfo.SessionName, fileInfo.To)
 						if daemonState.ShouldSendAlert(alertKey, 300.0) {
@@ -1202,7 +1202,7 @@ params:
 %s
 `, contextID, uiNode, now.Format(time.RFC3339), alertType, alertType, message)
 
-	return os.WriteFile(postPath, []byte(content), 0o644)
+	return os.WriteFile(postPath, []byte(content), 0o600)
 }
 
 // sendAlertToUINode sends an alert message to the ui_node inbox (Issue #118).
@@ -1237,7 +1237,7 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, message, alertType string,
 		"role_content": envelope.BuildRoleContent(cfg, uiNode),
 	})
 
-	return os.WriteFile(postPath, []byte(content), 0o644)
+	return os.WriteFile(postPath, []byte(content), 0o600)
 }
 
 // parseMessageTimestamp extracts timestamp from message filename (Issue #96).

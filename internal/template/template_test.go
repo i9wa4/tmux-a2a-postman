@@ -48,7 +48,7 @@ func TestExpandVariables_Empty(t *testing.T) {
 	}
 }
 
-func TestexpandShellCommands(t *testing.T) {
+func TestExpandShellCommands(t *testing.T) {
 	template := "Current user: $(whoami)"
 	timeout := 5 * time.Second
 
@@ -70,7 +70,7 @@ func TestexpandShellCommands(t *testing.T) {
 	}
 }
 
-func TestexpandShellCommands_Timeout(t *testing.T) {
+func TestExpandShellCommands_Timeout(t *testing.T) {
 	template := "Result: $(sleep 10 && echo done)"
 	timeout := 100 * time.Millisecond
 
@@ -82,7 +82,7 @@ func TestexpandShellCommands_Timeout(t *testing.T) {
 	}
 }
 
-func TestexpandShellCommands_Failure(t *testing.T) {
+func TestExpandShellCommands_Failure(t *testing.T) {
 	template := "Result: $(exit 1)"
 	timeout := 5 * time.Second
 

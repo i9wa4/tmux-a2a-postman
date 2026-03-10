@@ -22,7 +22,7 @@ type ContextRegistration struct {
 // Path: {baseDir}/diplomat/active-contexts/{contextID}.json
 func WriteRegistration(baseDir string, reg ContextRegistration) error {
 	dir := filepath.Join(baseDir, "diplomat", "active-contexts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating active-contexts dir: %w", err)
 	}
 	data, err := json.MarshalIndent(reg, "", "  ")
@@ -30,7 +30,7 @@ func WriteRegistration(baseDir string, reg ContextRegistration) error {
 		return fmt.Errorf("marshaling registration: %w", err)
 	}
 	path := filepath.Join(dir, reg.ContextID+".json")
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // DeleteRegistration removes a context registration file.

@@ -70,7 +70,7 @@ func SaveState(path string, state *State) error {
 		return fmt.Errorf("marshaling state: %w", err)
 	}
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("writing state tmp: %w", err)
 	}
 	return os.Rename(tmpPath, path)

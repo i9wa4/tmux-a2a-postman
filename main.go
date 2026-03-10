@@ -193,10 +193,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		logPath = filepath.Join(contextDir, "postman.log")
 	}
 	logDir := filepath.Dir(logPath)
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening log file: %w", err)
 	}
@@ -233,7 +233,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
 		lockDir := filepath.Join(baseDir, "lock")
-		if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		if err := os.MkdirAll(lockDir, 0o700); err != nil {
 			return fmt.Errorf("creating lock directory: %w", err)
 		}
 		lockObj, err := lock.NewSessionLock(filepath.Join(lockDir, tmuxSessionName+".lock"))
@@ -244,7 +244,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	pidPath := filepath.Join(sessionDir, "postman.pid")
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
@@ -723,7 +723,7 @@ func runCreateDraft(args []string) error {
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
 
-	if err := os.MkdirAll(draftDir, 0o755); err != nil {
+	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
 	}
 
@@ -770,7 +770,7 @@ func runCreateDraft(args []string) error {
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content = template.ExpandTemplate(content, vars, timeout)
 
-	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing draft: %w", err)
 	}
 
@@ -956,7 +956,7 @@ func runGetSessionStatusOneline(args []string) error {
 // This cleans up stale messages from previous sessions.
 func cleanupStaleInbox(inboxDir, readDir string) error {
 	// Ensure read/ directory exists
-	if err := os.MkdirAll(readDir, 0o755); err != nil {
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
 		return fmt.Errorf("creating read directory: %w", err)
 	}
 
@@ -1086,7 +1086,7 @@ func runArchive(args []string) error {
 		// inbox path: {base}/{contextID}/{sessionName}/inbox/{nodeName}/{msg}.md
 		// read/  dir: {base}/{contextID}/{sessionName}/read/
 		readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
-		if err := os.MkdirAll(readDir, 0o755); err != nil {
+		if err := os.MkdirAll(readDir, 0o700); err != nil {
 			return fmt.Errorf("creating read directory: %w", err)
 		}
 		dst := filepath.Join(readDir, filepath.Base(abs))

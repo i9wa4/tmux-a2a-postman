@@ -14,7 +14,7 @@ type SessionLock struct {
 // NewSessionLock acquires an exclusive non-blocking lock on the given path.
 // Returns an error if the lock is already held by another process.
 func NewSessionLock(path string) (*SessionLock, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening lock file: %w", err)
 	}

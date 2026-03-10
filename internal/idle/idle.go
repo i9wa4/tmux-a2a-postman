@@ -169,7 +169,7 @@ func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath stri
 	if err != nil {
 		return fmt.Errorf("marshaling pane activity: %w", err)
 	}
-	return os.WriteFile(filePath, data, 0o644)
+	return os.WriteFile(filePath, data, 0o600)
 }
 
 // IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).
@@ -373,7 +373,7 @@ func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, se
 	if tmpl == "" {
 		// Legacy path: write hardcoded format directly to inbox/
 		inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
-		if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			return fmt.Errorf("creating inbox directory: %w", err)
 		}
 
@@ -395,7 +395,7 @@ func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, se
 		content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n%s\n\n%s\n",
 			nodeName, time.Now().Format(time.RFC3339), header, message)
 
-		if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing reminder file: %w", err)
 		}
 		return nil
@@ -424,7 +424,7 @@ func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, se
 		"alert_type":   "idle_reminder",
 	})
 
-	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing reminder file: %w", err)
 	}
 	return nil
