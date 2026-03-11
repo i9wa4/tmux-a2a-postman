@@ -139,6 +139,7 @@ func BuildEnvelope(
 		"session_dir":      sessionDir,
 		"active_nodes":     strings.Join(activeNodes, ", "),
 		"template_path":    templatePath,
+		"session_name":     sourceSessionName,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))

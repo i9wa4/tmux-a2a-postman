@@ -767,6 +767,7 @@ func runCreateDraft(args []string) error {
 		"templates_dir": filepath.Join(baseDir, resolvedContextID, "templates"),
 		"reply_command": expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
 		"template":      getNodeTemplate(cfg, *to),
+		"session_name":  sessionName,
 		// Backward compatibility
 		"from": sender,
 		"to":   *to,

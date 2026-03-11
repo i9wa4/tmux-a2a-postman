@@ -16,6 +16,7 @@
 #   {reply_command}  - Command to create draft message
 #   {context_id}     - Current context ID
 #   {session_dir}    - Session directory path
+#   {session_name}   - tmux session name of the sender
 #
 #
 # draft_template:
@@ -140,6 +141,7 @@ params:
   to: {node}
   timestamp: {iso_timestamp}
   messageType: ping
+  tmuxSession: {session_name}
 ---
 
 # tmux-a2a-postman
@@ -175,6 +177,7 @@ params:
   from: {sender}
   to: {recipient}
   timestamp: {timestamp}
+  tmuxSession: {session_name}
 role: {templates_dir}/{recipient}.md
 protocol: {session_dir}/RULES.md
 ---
@@ -208,6 +211,7 @@ params:
   timestamp: {iso_timestamp}
   alertType: {alert_type}
   messageType: alert
+  tmuxSession: {session_name}
 ---
 
 # tmux-a2a-postman
@@ -244,6 +248,7 @@ params:
   to: {node}
   timestamp: {iso_timestamp}
   messageType: heartbeat
+  tmuxSession: {session_name}
 ---
 
 # tmux-a2a-postman
@@ -280,6 +285,7 @@ params:
   to: {node}
   timestamp: {iso_timestamp}
   alertType: idle_reminder
+  tmuxSession: {session_name}
 ---
 
 # tmux-a2a-postman
@@ -390,6 +396,11 @@ Monitoring:
 
   # User input waits (expected, not stuck — always ignore):
   grep -rl "state: user_input" {session_dir}/waiting/
+
+### Session Validation
+
+Before processing a message, verify `params.tmuxSession` matches your own session.
+If it does not match, move the file to `{session_dir}/mismatch/<your-node>/`.
 
 ### Standard Replies
 

@@ -219,13 +219,14 @@ func (m *DraftModel) submitDraft() error {
 
 	// Build variables map for template expansion (Issue #38)
 	vars := map[string]string{
-		"context_id": m.contextID,
-		"task_id":    taskID,
-		"sender":     m.senderNode,
-		"recipient":  m.selectedNode,
-		"timestamp":  now.Format(time.RFC3339),
-		"message":    m.messageBody,
-		"filename":   filename, // Issue #38: Add filename for template expansion
+		"context_id":   m.contextID,
+		"task_id":      taskID,
+		"sender":       m.senderNode,
+		"recipient":    m.selectedNode,
+		"timestamp":    now.Format(time.RFC3339),
+		"message":      m.messageBody,
+		"filename":     filename, // Issue #38: Add filename for template expansion
+		"session_name": sessionName,
 		// Backward compatibility
 		"from": m.senderNode,
 		"to":   m.selectedNode,
