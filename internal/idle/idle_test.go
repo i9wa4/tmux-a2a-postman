@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -209,53 +208,6 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 
 	if len(entries) > 0 {
 		t.Errorf("expected no reminder after activity reset, but found %d files", len(entries))
-	}
-}
-
-func TestSendIdleReminder(t *testing.T) {
-	tracker := NewIdleTracker()
-	tmpDir := t.TempDir()
-	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		t.Fatalf("config.CreateSessionDirs failed: %v", err)
-	}
-
-	cfg := config.DefaultConfig()
-	nodeName := "test-worker"
-	message := "Test idle reminder message"
-
-	if err := tracker.sendIdleReminder(cfg, nodeName, message, sessionDir, "ctx-test", nil, nil); err != nil {
-		t.Fatalf("sendIdleReminder failed: %v", err)
-	}
-
-	// Verify file created in inbox
-	inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
-		t.Fatalf("reading inbox failed: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 reminder file, got %d", len(entries))
-	}
-
-	// Verify file content
-	content, err := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
-	if err != nil {
-		t.Fatalf("reading reminder file failed: %v", err)
-	}
-
-	contentStr := string(content)
-	if !strings.Contains(contentStr, message) {
-		t.Errorf("reminder content missing message, got: %s", contentStr)
-	}
-
-	if !strings.Contains(contentStr, "from: postman") {
-		t.Errorf("reminder missing 'from: postman', got: %s", contentStr)
-	}
-
-	if !strings.Contains(contentStr, "## Idle Reminder") {
-		t.Errorf("reminder missing '## Idle Reminder' header, got: %s", contentStr)
 	}
 }
 

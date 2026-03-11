@@ -15,9 +15,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
-	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
@@ -341,72 +339,6 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 		}
 
 	}
-}
-
-// sendIdleReminder sends an idle reminder message to the specified node.
-// Issue #82: Use configurable template for header.
-// When IdleReminderMessageTemplate is configured, writes to post/ for daemon-routed delivery.
-// Legacy fallback: writes hardcoded format directly to inbox/ when template is empty.
-func (t *IdleTracker) sendIdleReminder(cfg *config.Config, nodeName, message, sessionDir, contextID string, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	tmpl := cfg.IdleReminderMessageTemplate
-	if tmpl == "" {
-		// Legacy path: write hardcoded format directly to inbox/
-		inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
-		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-			return fmt.Errorf("creating inbox directory: %w", err)
-		}
-
-		timestamp := time.Now().Format("20060102-150405")
-		filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", timestamp, nodeName)
-		filePath := filepath.Join(inboxDir, filename)
-
-		// Issue #82: Expand header template
-		headerTemplate := cfg.IdleReminderHeaderTemplate
-		if headerTemplate == "" {
-			headerTemplate = "## Idle Reminder"
-		}
-		timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-		vars := map[string]string{
-			"node": nodeName,
-		}
-		header := template.ExpandTemplate(headerTemplate, vars, timeout)
-
-		content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n%s\n\n%s\n",
-			nodeName, time.Now().Format(time.RFC3339), header, message)
-
-		if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
-			return fmt.Errorf("writing reminder file: %w", err)
-		}
-		return nil
-	}
-
-	// New path: write to post/ for daemon-routed delivery (fixes sentinel protocol bypass).
-	now := time.Now()
-	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
-	filename := fmt.Sprintf("%s-from-postman-to-%s-idle-reminder.md", ts, nodeName)
-	postPath := filepath.Join(sessionDir, "post", filename)
-	taskID := ts + "-idle"
-	sourceSessionName := filepath.Base(filepath.Dir(sessionDir))
-
-	// Pass 1: BuildEnvelope
-	scaffolded := envelope.BuildEnvelope(
-		cfg, tmpl, nodeName, "postman",
-		contextID, taskID, postPath,
-		nil, adjacency, nodes, sourceSessionName,
-		nil, // pongActiveNodes = nil → static adjacency
-	)
-
-	// Pass 2: role_content + message
-	content := template.ExpandVariables(scaffolded, map[string]string{
-		"role_content": envelope.BuildRoleContent(cfg, nodeName),
-		"message":      message,
-		"alert_type":   "idle_reminder",
-	})
-
-	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("writing reminder file: %w", err)
-	}
-	return nil
 }
 
 // hashContentCRC32 computes CRC32 hash of the content.
