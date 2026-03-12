@@ -16,15 +16,28 @@ import (
 
 // ReminderState manages per-node message counters for reminder feature.
 type ReminderState struct {
-	mu       sync.Mutex
-	counters map[string]int
+	mu            sync.Mutex
+	counters      map[string]int
+	totalCounters map[string]int // cumulative; never resets (Issue #246)
 }
 
 // NewReminderState creates a new ReminderState.
 func NewReminderState() *ReminderState {
 	return &ReminderState{
-		counters: make(map[string]int),
+		counters:      make(map[string]int),
+		totalCounters: make(map[string]int),
 	}
+}
+
+// GetCounts returns a copy of the cumulative read counts per node (Issue #246).
+func (r *ReminderState) GetCounts() map[string]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[string]int, len(r.totalCounters))
+	for k, v := range r.totalCounters {
+		result[k] = v
+	}
+	return result
 }
 
 // Increment increments the counter for a node and sends reminder if threshold is reached.
@@ -33,6 +46,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 	defer r.mu.Unlock()
 
 	r.counters[nodeName]++
+	r.totalCounters[nodeName]++
 	count := r.counters[nodeName]
 
 	// Check if reminder should be sent

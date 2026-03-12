@@ -554,6 +554,13 @@ func RunDaemonLoop(
 								// Only count human-authored messages (not daemon/postman alerts).
 								if reminderShouldIncrement(info.From) {
 									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
+									// Emit updated cumulative read counts to TUI (Issue #246).
+									events <- tui.DaemonEvent{
+										Type: "read_count_update",
+										Details: map[string]interface{}{
+											"counts": reminderState.GetCounts(),
+										},
+									}
 								}
 								// Create waiting file: only for agent-to-agent messages (not daemon alerts)
 								if info.From != "postman" && info.From != "daemon" {
