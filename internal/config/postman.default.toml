@@ -96,6 +96,7 @@ edges = []
 # reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
 # ui_node = "messenger"            # TUI target node for daemon alerts
 # diplomat_node = ""               # Cross-context (cross-daemon) node name; empty = disabled (Issue #164)
+# diplomat_allowlist = []          # Accepted source diplomat_node names; empty = allow all (Issue #165)
 
 # reminder_message:
 #   {node}      - Node name

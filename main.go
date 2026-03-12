@@ -431,6 +431,16 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, &sharedNodes)
 	})
 
+	// Issue #165: Start diplomat stale-registration cleanup goroutine
+	if cfg.GetDiplomatEnabled() {
+		diplomat.StartDiplomatCleanup(ctx, baseDir, 30.0, func(contextID string) {
+			daemonEvents <- tui.DaemonEvent{
+				Type:    "diplomat_stale_removed",
+				Details: map[string]interface{}{"context_id": contextID},
+			}
+		})
+	}
+
 	// Issue #117: Discover all tmux sessions
 	allSessions, _ := discovery.DiscoverAllSessions()
 	if allSessions == nil {

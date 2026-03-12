@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // CrossContextDelivered is the event type for successful cross-context delivery.
@@ -35,30 +36,45 @@ func NewDeliverer() *Deliverer {
 
 // DeliverCrossContextMessage delivers a cross-context message from the diplomat
 // drop directory to the target node's inbox. Performs hop-limit, trace-ID dedup,
-// and target validation checks. Dead-letters invalid messages.
+// allowlist, and target validation checks. Dead-letters invalid messages.
+// Issue #165: allowlist and audit logging added.
 func (d *Deliverer) DeliverCrossContextMessage(
-	postPath, baseDir, contextID, sessionName, to, traceID string,
+	postPath, baseDir, contextID, sessionName, to, traceID, sourceNode string,
 	hopCount int,
+	allowlist []string,
 	renamer Renamer,
 ) (string, error) {
 	deadLetterDir := filepath.Join(baseDir, "diplomat", contextID, "dead-letter")
 
+	deadLetterWithAudit := func(reason string) error {
+		err := d.deadLetter(postPath, deadLetterDir, renamer)
+		entry := fmt.Sprintf(`{"timestamp":%q,"trace_id":%q,"reason":%q,"outcome":"dead_letter"}`,
+			time.Now().Format(time.RFC3339), traceID, reason)
+		_ = AppendAuditLog(baseDir, entry)
+		return err
+	}
+
 	// Check hop limit
 	if hopCount >= 1 {
-		return "hop_limit", d.deadLetter(postPath, deadLetterDir, renamer)
+		return "hop_limit", deadLetterWithAudit("hop_limit")
 	}
 
 	// Validate target node
 	if to == "" {
-		return "missing_target_node", d.deadLetter(postPath, deadLetterDir, renamer)
+		return "missing_target_node", deadLetterWithAudit("missing_target_node")
 	}
 
 	// Check trace-ID dedup
 	if traceID != "" && d.seenTraceIDs[traceID] {
-		return "duplicate_trace_id", d.deadLetter(postPath, deadLetterDir, renamer)
+		return "duplicate_trace_id", deadLetterWithAudit("duplicate_trace_id")
 	}
 	if traceID != "" {
 		d.seenTraceIDs[traceID] = true
+	}
+
+	// Issue #165 Task 2: Allowlist enforcement
+	if !CheckAllowlist(allowlist, sourceNode) {
+		return "not_in_allowlist", deadLetterWithAudit("not_in_allowlist")
 	}
 
 	// Resolve inbox path
@@ -72,6 +88,11 @@ func (d *Deliverer) DeliverCrossContextMessage(
 		_ = d.deadLetter(postPath, deadLetterDir, renamer)
 		return "rename_failed", err
 	}
+
+	// Issue #165 Task 3: Audit successful delivery
+	entry := fmt.Sprintf(`{"timestamp":%q,"trace_id":%q,"from":%q,"to":%q,"outcome":"delivered"}`,
+		time.Now().Format(time.RFC3339), traceID, sourceNode, to)
+	_ = AppendAuditLog(baseDir, entry)
 
 	return "", nil // success
 }

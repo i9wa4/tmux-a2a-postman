@@ -1316,3 +1316,10 @@ func TestGetDiplomatEnabled(t *testing.T) {
 		}
 	})
 }
+
+func TestDiplomatAllowlist_DefaultEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	if len(cfg.DiplomatAllowlist) != 0 {
+		t.Errorf("DiplomatAllowlist default: got %v, want empty", cfg.DiplomatAllowlist)
+	}
+}
