@@ -177,3 +177,34 @@ func TestParseCrossContextTarget_Invalid(t *testing.T) {
 		}
 	}
 }
+
+func TestCrossContextParsing(t *testing.T) {
+	contextID, node, err := ParseCrossContextTarget("ctx-abc:worker")
+	if err != nil {
+		t.Fatalf("ParseCrossContextTarget: %v", err)
+	}
+	if contextID != "ctx-abc" {
+		t.Errorf("contextID = %q, want %q", contextID, "ctx-abc")
+	}
+	if node != "worker" {
+		t.Errorf("node = %q, want %q", node, "worker")
+	}
+}
+
+func TestCrossContextTraceIDFormat(t *testing.T) {
+	id, err := GenerateTraceID()
+	if err != nil {
+		t.Fatalf("GenerateTraceID: %v", err)
+	}
+	// Version 4 UUID: 8-4-4-4-12 hex chars, version nibble = 4
+	parts := strings.SplitN(id, "-", 5)
+	if len(parts) != 5 {
+		t.Fatalf("trace ID has %d parts, want 5: %q", len(parts), id)
+	}
+	if len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 || len(parts[4]) != 12 {
+		t.Errorf("trace ID part lengths wrong: %q", id)
+	}
+	if parts[2][0] != '4' {
+		t.Errorf("trace ID version nibble = %q, want '4': %q", string(parts[2][0]), id)
+	}
+}

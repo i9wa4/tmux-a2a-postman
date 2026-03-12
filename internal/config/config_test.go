@@ -1299,3 +1299,20 @@ func TestResolveContextIDFromSession(t *testing.T) {
 		}
 	})
 }
+
+func TestGetDiplomatEnabled(t *testing.T) {
+	t.Run("disabled when empty", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DiplomatNode = ""
+		if cfg.GetDiplomatEnabled() {
+			t.Error("GetDiplomatEnabled() = true, want false when diplomat_node is empty")
+		}
+	})
+	t.Run("enabled when set", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DiplomatNode = "orchestrator"
+		if !cfg.GetDiplomatEnabled() {
+			t.Error("GetDiplomatEnabled() = false, want true when diplomat_node is set")
+		}
+	})
+}

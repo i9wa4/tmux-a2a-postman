@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/compaction"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
+	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
@@ -641,7 +642,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			}
 		})
 
-		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands, cfg))
+		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands, cfg, contextID))
 		finalModel, err := p.Run()
 		if err != nil {
 			log.Printf("postman: TUI exited with error: %v\n", err)
@@ -663,14 +664,18 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
-	to := fs.String("to", "", "recipient node name (required)")
+	to := fs.String("to", "", "recipient node name (required unless --cross-context is set)")
+	crossContext := fs.String("cross-context", "", "cross-context target as <contextID>:<node> (mutually exclusive with --to)")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detect if not specified)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *to == "" {
+	if *crossContext != "" && *to != "" {
+		return fmt.Errorf("cannot combine --cross-context with --to")
+	}
+	if *crossContext == "" && *to == "" {
 		return fmt.Errorf("--to is required")
 	}
 
@@ -727,6 +732,37 @@ func runCreateDraft(args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Issue #164: Handle --cross-context flag (cross-daemon delivery via diplomat drop dir)
+	if *crossContext != "" {
+		if cfg.DiplomatNode == "" {
+			return fmt.Errorf("diplomat_node is not set in config; cannot use --cross-context")
+		}
+		targetContextID, targetNode, err := diplomat.ParseCrossContextTarget(*crossContext)
+		if err != nil {
+			return err
+		}
+		traceID, err := diplomat.GenerateTraceID()
+		if err != nil {
+			return fmt.Errorf("generating trace ID: %w", err)
+		}
+		dropDir := diplomat.DropDirPath(baseDir, targetContextID)
+		if err := os.MkdirAll(dropDir, 0o700); err != nil {
+			return fmt.Errorf("creating diplomat drop dir: %w", err)
+		}
+		now := time.Now()
+		ts := now.Format("20060102-150405")
+		filename := message.GenerateFilename(ts, sender, targetNode, sessionName)
+		dropPath := filepath.Join(dropDir, filename)
+		content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  sourceContextId: %s\n  sourceNode: %s\n  to: %s\n  crossContext: true\n  hop_count: 0\n  trace_id: %s\n---\n",
+			targetContextID, resolvedContextID, cfg.DiplomatNode, targetNode, traceID)
+		if err := os.WriteFile(dropPath, []byte(content), 0o600); err != nil {
+			return fmt.Errorf("writing diplomat draft: %w", err)
+		}
+		fmt.Println(dropPath)
+		fmt.Fprintf(os.Stderr, "After editing: tmux-a2a-postman send %s\n", filepath.Base(dropPath))
+		return nil
 	}
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")

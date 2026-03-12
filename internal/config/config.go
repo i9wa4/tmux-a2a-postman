@@ -86,6 +86,9 @@ type Config struct {
 	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false) (#219)
 	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
+	// Diplomat settings (Issue #164)
+	DiplomatNode string `toml:"diplomat_node"` // Cross-context node name; empty = disabled
+
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
 
@@ -1132,4 +1135,9 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 		result.MaterializeTemplate = specific.MaterializeTemplate
 	}
 	return result
+}
+
+// GetDiplomatEnabled returns true if diplomat_node is non-empty (Issue #164).
+func (cfg *Config) GetDiplomatEnabled() bool {
+	return cfg.DiplomatNode != ""
 }

@@ -13,7 +13,7 @@ func TestTUI_InitialModel(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	if m.status != "Starting..." {
 		t.Errorf("initial status: got %q, want %q", m.status, "Starting...")
@@ -33,7 +33,7 @@ func TestTUI_Update_Quit(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	// Test 'q' key
 	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
@@ -51,7 +51,7 @@ func TestTUI_Update_MessageReceived(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	// Send message received event
 	event := DaemonEventMsg{
@@ -77,7 +77,7 @@ func TestTUI_Update_StatusUpdate(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	// Send status update event
 	event := DaemonEventMsg{
@@ -103,7 +103,7 @@ func TestTUI_View(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.status = "Running"
 	m.nodeCount = 3
 	m.events = []EventEntry{
@@ -143,7 +143,7 @@ func TestTUI_View_Quitting(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.quitting = true
 
 	view := m.View().Content
@@ -156,7 +156,7 @@ func TestTUI_View_Quitting(t *testing.T) {
 func TestTUI_View_ShowsVersion(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	view := m.View().Content
 	if !strings.Contains(view, "tmux-a2a-postman "+version.Version) {
 		t.Errorf("view missing title+version: want %q in view", "tmux-a2a-postman "+version.Version)
@@ -166,7 +166,7 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 func TestTUI_Update_LayoutToggle(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	if m.layoutMode {
 		t.Error("initial layoutMode should be false")
 	}
@@ -185,7 +185,7 @@ func TestTUI_Update_LayoutToggle(t *testing.T) {
 func TestTUI_View_VerticalLayout(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.layoutMode = true
 	m.sessions = []SessionInfo{
 		{Name: "session-a", Enabled: true},
@@ -204,7 +204,7 @@ func TestTUI_MessageTruncation(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	// Add 15 messages (should keep only last 10)
 	for i := 1; i <= 15; i++ {
@@ -225,7 +225,7 @@ func TestTUI_RoutingView_AddEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.currentView = ViewRouting
 
 	// Send config_update event with edges
@@ -255,7 +255,7 @@ func TestTUI_RoutingView_RemoveEdge(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.currentView = ViewRouting
 	m.edges = []Edge{
 		{Raw: "orchestrator -- worker"},
@@ -289,7 +289,7 @@ func TestTUI_HotReload(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
 	// Initial edges
 	edgeList1 := []Edge{
@@ -365,7 +365,7 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	m := InitialModel(ch, nil, config.DefaultConfig())
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.width = 80
 	m.height = 24
 	m.sessions = []SessionInfo{
@@ -418,4 +418,33 @@ func TestTruncateString(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDiplomatTabEnabled(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	t.Run("disabled when diplomat_node empty", func(t *testing.T) {
+		cfg := config.DefaultConfig()
+		cfg.DiplomatNode = ""
+		m := InitialModel(ch, nil, cfg, "test-ctx")
+		if m.diplomatEnabled {
+			t.Error("diplomatEnabled = true, want false when diplomat_node is empty")
+		}
+	})
+	t.Run("enabled when diplomat_node set", func(t *testing.T) {
+		cfg := config.DefaultConfig()
+		cfg.DiplomatNode = "orchestrator"
+		m := InitialModel(ch, nil, cfg, "test-ctx")
+		if !m.diplomatEnabled {
+			t.Error("diplomatEnabled = false, want true when diplomat_node is set")
+		}
+	})
+	t.Run("ownContextID stored", func(t *testing.T) {
+		cfg := config.DefaultConfig()
+		m := InitialModel(ch, nil, cfg, "session-abc")
+		if m.ownContextID != "session-abc" {
+			t.Errorf("ownContextID = %q, want %q", m.ownContextID, "session-abc")
+		}
+	})
 }
