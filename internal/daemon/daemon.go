@@ -502,9 +502,6 @@ func RunDaemonLoop(
 							}
 							// Send observer digest on successful delivery (only for normal delivery)
 							if !deadLetterEventSent {
-								// Issue #79: Extract session name for PONG tracking
-								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-								sourceSessionName := filepath.Base(sourceSessionDir)
 								if info, err := message.ParseMessageFilename(filename); err == nil {
 									// Normal message delivery - record edge activity, send digest, etc.
 									// Issue #37: Record edge activity
@@ -517,13 +514,6 @@ func RunDaemonLoop(
 										Details: map[string]interface{}{
 											"edges": edgeList,
 										},
-									}
-
-									// Only count human-authored messages toward reminder threshold.
-									// Daemon-generated alerts (from="postman" or from="daemon") must not
-									// accelerate the reminder counter.
-									if reminderShouldIncrement(info.From) {
-										reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
 									}
 
 									// Issue #55: Emit ball state update after message delivery
@@ -559,6 +549,11 @@ func RunDaemonLoop(
 										"node":   prefixedKey,
 										"source": "read_move",
 									},
+								}
+								// Count actual reads toward reminder threshold (#244).
+								// Only count human-authored messages (not daemon/postman alerts).
+								if reminderShouldIncrement(info.From) {
+									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
 								}
 								// Create waiting file: only for agent-to-agent messages (not daemon alerts)
 								if info.From != "postman" && info.From != "daemon" {
