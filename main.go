@@ -104,7 +104,7 @@ func main() {
 	}
 
 	if *showHelp {
-		fs.Usage()
+		runHelp([]string{})
 		return
 	}
 
