@@ -193,13 +193,71 @@ alias a2a='tmux-a2a-postman create-draft'
 # Usage: a2a --to <recipient>
 ```
 
-## 9. Skills
+## 9. Deployment Topology
+
+**Constraint**: 1 tmux session = 1 postman daemon. Multiple daemons may run on the same
+machine only when they are in different tmux sessions.
+
+Three supported configurations:
+
+| Topology                    | tmux servers | Daemons | Machines | Diplomat required |
+| --------------------------- | ------------ | ------- | -------- | ----------------- |
+| Single daemon               | 1            | 1       | 1        | No                |
+| Multi-daemon, same machine  | 1            | N       | 1        | No                |
+| Multi-daemon, cross-machine | N            | N       | N        | Yes               |
+
+### 9.1. Single Daemon (Primary Model)
+
+One tmux server, one daemon, N nodes — all agents on one machine.
+
+```text
+tmux server
+└── session (1 daemon)
+    ├── pane: orchestrator
+    ├── pane: worker
+    └── pane: messenger
+```
+
+### 9.2. Multi-Daemon, Same Machine
+
+One tmux server, multiple daemons with distinct context IDs — useful for isolated project
+contexts running in parallel.
+
+```text
+tmux server
+├── session-A (daemon A)
+│   ├── pane: orchestrator
+│   └── pane: worker
+└── session-B (daemon B)
+    ├── pane: orchestrator
+    └── pane: worker
+```
+
+Each daemon maintains its own `{base_dir}/{contextId}/` state directory. Sessions are
+isolated from each other by default.
+
+### 9.3. Multi-Daemon, Cross-Machine
+
+Multiple machines each running a daemon, sharing a common `base_dir` via a shared
+filesystem (NFS, SSHFS, Syncthing, etc.).
+
+```text
+machine-A                    machine-B
+└── session (daemon A)  ←→  └── session (daemon B)
+    shared base_dir ─────────── shared base_dir
+```
+
+**Required for the diplomat feature** (`diplomat_node` config): cross-context messaging
+depends on all participating daemons writing to the same `base_dir` path on a common
+filesystem. Each machine runs its own daemon; the shared filesystem is the only coupling.
+
+## 10. Skills
 
 The `skills/` directory contains reusable agent skill files for use with AI coding assistants
 (Claude Code, Codex CLI, etc.). Each skill lives at `skills/{skill-name}/SKILL.md` and is
 invoked via the assistant's skill mechanism (e.g., `/a2a-role-auditor` in Claude Code).
 
-### 9.1. a2a-role-auditor
+### 10.1. a2a-role-auditor
 
 Path: `skills/a2a-role-auditor/SKILL.md`
 
