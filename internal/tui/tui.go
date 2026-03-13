@@ -192,6 +192,10 @@ type Model struct {
 	quitting     bool
 	layoutMode   bool // Issue #127: false = horizontal (default), true = vertical stacking
 
+	// Issue #249: Startup guard toggle (initially disabled at code level, not config).
+	// Press 'g' to enable. Warns if a duplicate daemon is detected for the current session.
+	startupGuardEnabled bool
+
 	// Config reference (for node state thresholds)
 	config *config.Config
 
@@ -346,26 +350,27 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 // Issue #47: Added tuiCommands channel parameter
 func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand, cfg *config.Config, ownContextID string) Model {
 	return Model{
-		currentView:     ViewEvents,
-		width:           80, // Default width (Issue #35)
-		height:          24, // Default height (Issue #35)
-		edges:           []Edge{},
-		selectedEdge:    0,
-		sessions:        []SessionInfo{},           // Issue #35: Requirement 3
-		selectedSession: 0,                         // Issue #35: Requirement 3
-		sessionNodes:    make(map[string][]string), // Issue #59: Session-node mapping
-		nodeStates:      make(map[string]string),   // Issue #55: Node state tracking
-		waitingStates:   make(map[string]string),
-		readCounts:      make(map[string]int), // Issue #246: Cumulative read counts
-		config:          cfg,
-		daemonEvents:    daemonEvents,
-		tuiCommands:     tuiCommands,    // Issue #47: Command channel
-		events:          []EventEntry{}, // Issue #59: Session-tagged events
-		status:          "Starting...",
-		nodeCount:       0,
-		lastEvent:       "",
-		quitting:        false,
-		layoutMode:      false, // Issue #127: default horizontal layout
+		currentView:         ViewEvents,
+		width:               80, // Default width (Issue #35)
+		height:              24, // Default height (Issue #35)
+		edges:               []Edge{},
+		selectedEdge:        0,
+		sessions:            []SessionInfo{},           // Issue #35: Requirement 3
+		selectedSession:     0,                         // Issue #35: Requirement 3
+		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
+		nodeStates:          make(map[string]string),   // Issue #55: Node state tracking
+		waitingStates:       make(map[string]string),
+		readCounts:          make(map[string]int), // Issue #246: Cumulative read counts
+		config:              cfg,
+		daemonEvents:        daemonEvents,
+		tuiCommands:         tuiCommands,    // Issue #47: Command channel
+		events:              []EventEntry{}, // Issue #59: Session-tagged events
+		status:              "Starting...",
+		nodeCount:           0,
+		lastEvent:           "",
+		quitting:            false,
+		layoutMode:          false, // Issue #127: default horizontal layout
+		startupGuardEnabled: false, // Issue #249: hard-disabled at code level; user enables with 'g'
 		// Issue #164: Diplomat state
 		diplomatEnabled: cfg.GetDiplomatEnabled(),
 		activeContexts:  nil,
@@ -495,6 +500,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			return m, nil
+		case "S":
+			// Issue #249: Toggle startup guard (initially disabled at code level).
+			// 'S' chosen because space/g/G are already bound.
+			m.startupGuardEnabled = !m.startupGuardEnabled
+			m.lastKey = ""
 			return m, nil
 		case "l":
 			// Issue #127: Toggle layout mode
@@ -915,7 +926,11 @@ func (m Model) renderLeftPane(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("[space: session on/off] [p: ping] [l: layout]\n")
+	guardLabel := "off"
+	if m.startupGuardEnabled {
+		guardLabel = "ON"
+	}
+	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [S: guard=%s]\n", guardLabel))
 
 	return b.String()
 }

@@ -27,6 +27,10 @@ func TestTUI_InitialModel(t *testing.T) {
 	if m.quitting {
 		t.Error("initial quitting: got true, want false")
 	}
+	// Issue #249: startup guard must be hard-disabled at code level on first launch.
+	if m.startupGuardEnabled {
+		t.Error("initial startupGuardEnabled: got true, want false (must be hard-disabled at code level)")
+	}
 }
 
 func TestTUI_Update_Quit(t *testing.T) {

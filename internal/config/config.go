@@ -3,13 +3,16 @@ package config
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 )
@@ -1009,10 +1012,33 @@ func ResolveContextID(explicitID string) (string, error) {
 	return "", fmt.Errorf("--context-id is required")
 }
 
+// isSessionPIDAlive reads postman.pid from baseDir/contextName/sessionName/
+// and returns true if the recorded process is still running.
+// Issue #249: liveness check for context disambiguation.
+func isSessionPIDAlive(baseDir, contextName, sessionName string) bool {
+	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	sigErr := proc.Signal(syscall.Signal(0))
+	return sigErr == nil || errors.Is(sigErr, syscall.EPERM)
+}
+
 // ResolveContextIDFromSession scans baseDir for context directories that
-// contain a subdirectory matching sessionName. Returns the context ID if
-// exactly one match is found. Returns error if zero or multiple matches exist.
+// contain a live postman daemon for sessionName. Stale contexts (dead or absent
+// postman.pid) are skipped. Returns error if zero live matches or multiple
+// (which indicates a constraint violation: 1 session = 1 postman).
 // Issue #229: safe auto-resolution without env vars or stale files.
+// Issue #249: liveness-aware resolution using postman.pid.
 func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	if baseDir == "" || sessionName == "" {
 		return "", fmt.Errorf("cannot auto-resolve context-id: base_dir or session name is empty")
@@ -1027,17 +1053,20 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 			continue
 		}
 		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
-		if fi, err := os.Stat(sessionDir); err == nil && fi.IsDir() {
+		if fi, err := os.Stat(sessionDir); err != nil || !fi.IsDir() {
+			continue
+		}
+		if isSessionPIDAlive(baseDir, e.Name(), sessionName) {
 			matches = append(matches, e.Name())
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("cannot auto-resolve context-id: no context found for session %q in %s (use --context-id)", sessionName, baseDir)
+		return "", fmt.Errorf("cannot auto-resolve context-id: no active postman found for session %q in %s (use --context-id)", sessionName, baseDir)
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("cannot auto-resolve context-id: %d contexts found for session %q: %s (use --context-id to disambiguate)", len(matches), sessionName, strings.Join(matches, ", "))
+		return "", fmt.Errorf("cannot auto-resolve context-id: constraint violation: %d live daemons for session %q: %s", len(matches), sessionName, strings.Join(matches, ", "))
 	}
 }
 

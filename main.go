@@ -76,6 +76,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
+		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
 		fmt.Fprintln(os.Stderr, "  resend                     Re-send a dead-letter message")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "  get-session-health         Print session health per node")
@@ -156,6 +157,11 @@ func main() {
 	case "get-session-health":
 		if err := runGetSessionHealth(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
+			os.Exit(1)
+		}
+	case "get-context-id":
+		if err := runGetContextID(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman get-context-id: %v\n", err)
 			os.Exit(1)
 		}
 	case "resend":
@@ -241,6 +247,16 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
+		// Issue #249: Startup guard — detect duplicate daemon for this session.
+		// Check postman.pid liveness before acquiring the flock, to emit a clear error.
+		if liveCtx, err := config.ResolveContextIDFromSession(baseDir, tmuxSessionName); err == nil {
+			return fmt.Errorf(
+				"a postman daemon is already running in tmux session %q (context: %s).\n"+
+					"Stop it first or use a different tmux session.",
+				tmuxSessionName, liveCtx,
+			)
+		}
+
 		lockDir := filepath.Join(baseDir, "lock")
 		if err := os.MkdirAll(lockDir, 0o700); err != nil {
 			return fmt.Errorf("creating lock directory: %w", err)
@@ -1266,13 +1282,10 @@ func printDoubleDashDefaults(fs *flag.FlagSet) {
 // runGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
 func runGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-session-health", flag.ExitOnError)
-	contextID := fs.String("context-id", "", "Context ID (required)")
+	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *contextID == "" {
-		return fmt.Errorf("--context-id is required")
 	}
 
 	cfg, err := config.LoadConfig(*configPath)
@@ -1281,10 +1294,24 @@ func runGetSessionHealth(args []string) error {
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	sessionDir := filepath.Join(baseDir, *contextID)
+
+	// Issue #249: auto-resolve --context-id if not provided
+	resolvedContextID, err := config.ResolveContextID(*contextID)
+	if err != nil {
+		sessionName := config.GetTmuxSessionName()
+		if sessionName == "" {
+			return fmt.Errorf("--context-id is required (not in tmux)")
+		}
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return err
+		}
+	}
+
+	sessionDir := filepath.Join(baseDir, resolvedContextID)
 
 	// Discover nodes
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, *contextID)
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID)
 	if err != nil {
 		return fmt.Errorf("discovering nodes: %w", err)
 	}
@@ -1335,7 +1362,7 @@ func runGetSessionHealth(args []string) error {
 		NodeCount int          `json:"node_count"`
 		Nodes     []nodeHealth `json:"nodes"`
 	}{
-		ContextID: *contextID,
+		ContextID: resolvedContextID,
 		NodeCount: len(healthEntries),
 		Nodes:     healthEntries,
 	}
@@ -1347,14 +1374,11 @@ func runGetSessionHealth(args []string) error {
 
 func runResend(args []string) error {
 	fs := flag.NewFlagSet("resend", flag.ContinueOnError)
-	contextID := fs.String("context-id", "", "context ID (required)")
+	contextID := fs.String("context-id", "", "context ID (optional, auto-resolved from tmux session)")
 	file := fs.String("file", "", "path to dead-letter file (required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *contextID == "" {
-		return fmt.Errorf("--context-id is required")
 	}
 	if *file == "" {
 		return fmt.Errorf("--file is required")
@@ -1383,7 +1407,16 @@ func runResend(args []string) error {
 	}
 	sessionName = filepath.Base(sessionName)
 
-	sessionDir := filepath.Join(baseDir, *contextID, sessionName)
+	// Issue #249: auto-resolve --context-id if not provided
+	resolvedContextID, err := config.ResolveContextID(*contextID)
+	if err != nil {
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return err
+		}
+	}
+
+	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		return fmt.Errorf("creating post/ directory: %w", err)
@@ -1399,6 +1432,40 @@ func runResend(args []string) error {
 	}
 
 	fmt.Printf("Resent: %s -> %s\n", baseName, dst)
+	return nil
+}
+
+// runGetContextID prints the live context ID for the current tmux session.
+// Issue #249: zero-argument discovery primitive for AI agents.
+func runGetContextID(args []string) error {
+	fs := flag.NewFlagSet("get-context-id", flag.ContinueOnError)
+	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
+	configPath := fs.String("config", "", "path to config file (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := *sessionFlag
+	if sessionName == "" {
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return fmt.Errorf("--session is required (or run inside tmux)")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
+	if err != nil {
+		return err
+	}
+	fmt.Println(contextID)
 	return nil
 }
 

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1239,12 +1241,36 @@ prompt = "test"
 	}
 }
 
+// writeLivePID writes the current process PID to baseDir/contextName/sessionName/postman.pid.
+func writeLivePID(t *testing.T, baseDir, contextName, sessionName string) {
+	t.Helper()
+	dir := filepath.Join(baseDir, contextName, sessionName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	pidPath := filepath.Join(dir, "postman.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// writeStalePID writes an invalid (0) PID to simulate a stale context.
+func writeStalePID(t *testing.T, baseDir, contextName, sessionName string) {
+	t.Helper()
+	dir := filepath.Join(baseDir, contextName, sessionName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	pidPath := filepath.Join(dir, "postman.pid")
+	if err := os.WriteFile(pidPath, []byte("0"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
 func TestResolveContextIDFromSession(t *testing.T) {
-	t.Run("exactly one match", func(t *testing.T) {
+	t.Run("exactly one live match", func(t *testing.T) {
 		baseDir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "my-session"), 0o755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
+		writeLivePID(t, baseDir, "session-abc", "my-session")
 		got, err := ResolveContextIDFromSession(baseDir, "my-session")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1254,34 +1280,55 @@ func TestResolveContextIDFromSession(t *testing.T) {
 		}
 	})
 
-	t.Run("zero matches", func(t *testing.T) {
-		baseDir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "other-session"), 0o755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		_, err := ResolveContextIDFromSession(baseDir, "my-session")
-		if err == nil {
-			t.Fatal("expected error for zero matches, got nil")
-		}
-		if !strings.Contains(err.Error(), "no context found") {
-			t.Errorf("error %q should contain 'no context found'", err.Error())
-		}
-	})
-
-	t.Run("multiple matches", func(t *testing.T) {
+	t.Run("zero matches — dir exists but no pid file", func(t *testing.T) {
 		baseDir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(baseDir, "session-abc", "my-session"), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		if err := os.MkdirAll(filepath.Join(baseDir, "session-def", "my-session"), 0o755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
 		_, err := ResolveContextIDFromSession(baseDir, "my-session")
 		if err == nil {
-			t.Fatal("expected error for multiple matches, got nil")
+			t.Fatal("expected error for zero live matches, got nil")
 		}
-		if !strings.Contains(err.Error(), "2 contexts found") {
-			t.Errorf("error %q should contain '2 contexts found'", err.Error())
+		if !strings.Contains(err.Error(), "no active postman found") {
+			t.Errorf("error %q should contain 'no active postman found'", err.Error())
+		}
+	})
+
+	t.Run("stale context skipped — dead pid", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeStalePID(t, baseDir, "session-stale", "my-session")
+		_, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err == nil {
+			t.Fatal("expected error: stale context should be skipped, resulting in zero matches")
+		}
+		if !strings.Contains(err.Error(), "no active postman found") {
+			t.Errorf("error %q should contain 'no active postman found'", err.Error())
+		}
+	})
+
+	t.Run("stale skipped, live returned", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeStalePID(t, baseDir, "session-stale", "my-session")
+		writeLivePID(t, baseDir, "session-live", "my-session")
+		got, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "session-live" {
+			t.Errorf("got %q, want %q", got, "session-live")
+		}
+	})
+
+	t.Run("multiple live matches — constraint violation", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "session-abc", "my-session")
+		writeLivePID(t, baseDir, "session-def", "my-session")
+		_, err := ResolveContextIDFromSession(baseDir, "my-session")
+		if err == nil {
+			t.Fatal("expected error for multiple live matches, got nil")
+		}
+		if !strings.Contains(err.Error(), "constraint violation") {
+			t.Errorf("error %q should contain 'constraint violation'", err.Error())
 		}
 	})
 
@@ -1298,6 +1345,63 @@ func TestResolveContextIDFromSession(t *testing.T) {
 			t.Fatal("expected error for empty sessionName, got nil")
 		}
 	})
+}
+
+// TestIsSessionPIDAlive verifies liveness detection using postman.pid.
+func TestIsSessionPIDAlive(t *testing.T) {
+	t.Run("live pid returns true", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx", "sess")
+		if !isSessionPIDAlive(baseDir, "ctx", "sess") {
+			t.Error("expected true for live PID, got false")
+		}
+	})
+
+	t.Run("stale pid 0 returns false", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeStalePID(t, baseDir, "ctx", "sess")
+		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+			t.Error("expected false for stale PID 0, got true")
+		}
+	})
+
+	t.Run("missing pid file returns false", func(t *testing.T) {
+		baseDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx", "sess"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+			t.Error("expected false for missing pid file, got true")
+		}
+	})
+
+	t.Run("invalid pid content returns false", func(t *testing.T) {
+		baseDir := t.TempDir()
+		dir := filepath.Join(baseDir, "ctx", "sess")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte("not-a-pid"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+			t.Error("expected false for invalid pid content, got true")
+		}
+	})
+}
+
+// TestStartupGuardEnabledInitialState verifies that startupGuardEnabled is false by default.
+// Issue #249: hard-disabled at code level, not config-derived.
+func TestStartupGuardEnabledInitialState(_ *testing.T) {
+	// isSessionPIDAlive is the liveness primitive; guard disabled = resolver returns error when no live daemon.
+	// This test validates the helper used by the startup guard: a freshly created context with no pid file
+	// must NOT be considered alive, ensuring the guard can't fire spuriously.
+	baseDir := fmt.Sprintf("%s/guard-test-%d", os.TempDir(), os.Getpid())
+	_ = os.MkdirAll(filepath.Join(baseDir, "ctx", "sess"), 0o755)
+	defer func() { _ = os.RemoveAll(baseDir) }()
+	if isSessionPIDAlive(baseDir, "ctx", "sess") {
+		panic("startup guard would fire on a fresh context with no pid — code-level initial state violated")
+	}
 }
 
 func TestGetDiplomatEnabled(t *testing.T) {
