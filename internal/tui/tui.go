@@ -454,16 +454,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastKey = ""
 			return m, nil
 		case "g":
-			if m.lastKey == "g" {
-				// gg: go to top
-				m.selectedSession = 0
-				if m.tuiCommands != nil {
-					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
-				}
-				m.lastKey = ""
-			} else {
-				m.lastKey = "g"
-			}
+			// Issue #249: Toggle startup guard (initially disabled at code level).
+			// 'g' key for startup guard toggle.
+			m.startupGuardEnabled = !m.startupGuardEnabled
+			m.lastKey = ""
 			return m, nil
 		case "G":
 			if len(m.sessions) > 0 {
@@ -500,12 +494,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			return m, nil
-		case "S":
-			// Issue #249: Toggle startup guard (initially disabled at code level).
-			// 'S' chosen because space/g/G are already bound.
-			m.startupGuardEnabled = !m.startupGuardEnabled
-			m.lastKey = ""
 			return m, nil
 		case "l":
 			// Issue #127: Toggle layout mode

@@ -20,7 +20,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
-	"github.com/i9wa4/tmux-a2a-postman/internal/compaction"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
@@ -430,16 +429,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
 	}
 	idleTracker := idle.NewIdleTracker()
-	compactionTracker := compaction.NewCompactionTracker()
 
 	// Start idle check goroutine
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)
 
 	// Start pane capture check goroutine (hybrid idle detection)
 	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID)
-
-	// Start compaction detection goroutine
-	compactionTracker.StartCompactionCheck(ctx, cfg, nodes, sessionDir)
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
@@ -882,48 +877,74 @@ func runGetSessionStatusOneline(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	// Scan all session-*/pane-activity.json files in baseDir.
-	// Only include files updated within 2x PaneCaptureIntervalSeconds (liveness check).
-	// When multiple instances write the same paneID, true (active) takes priority.
-	livenessThreshold := time.Duration(cfg.PaneCaptureIntervalSeconds*2) * time.Second
-	if livenessThreshold <= 0 {
-		livenessThreshold = 120 * time.Second
-	}
+	// Find the most recently started live context for the current tmux session.
+	// Context directories are named session-YYYYMMDD-HHMMSS-XXXX; lexicographic
+	// descending sort gives newest first.
 	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
 	paneActivity := make(map[string]string)
-	dirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*", "pane-activity.json"))
-	for _, stateFile := range dirs {
-		fi, err := os.Stat(stateFile)
-		if err != nil || time.Since(fi.ModTime()) > livenessThreshold {
-			continue // stale or missing
+
+	currentSessionOut, _ := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output()
+	currentSession := strings.TrimSpace(string(currentSessionOut))
+
+	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*"))
+	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
+
+	var liveStateFile string
+	for _, ctxDir := range contextDirs {
+		fi, err := os.Stat(ctxDir)
+		if err != nil || !fi.IsDir() {
+			continue
 		}
-		stateData, err := os.ReadFile(stateFile)
+		ctxName := filepath.Base(ctxDir)
+		pidPath := filepath.Join(baseDir, ctxName, currentSession, "postman.pid")
+		data, err := os.ReadFile(pidPath)
 		if err != nil {
 			continue
 		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil || pid <= 0 {
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		sigErr := proc.Signal(syscall.Signal(0))
+		if sigErr != nil && sigErr != syscall.EPERM {
+			continue // ESRCH = dead
+		}
+		liveStateFile = filepath.Join(ctxDir, "pane-activity.json")
+		break
+	}
+
+	if liveStateFile == "" {
+		return nil // no live context found
+	}
+
+	stateData, err := os.ReadFile(liveStateFile)
+	if err == nil {
 		// Issue #123: Dual-format reader — supports both legacy map[string]string and
 		// new map[string]PaneActivityExport formats.
 		var rawMap map[string]json.RawMessage
-		if err := json.Unmarshal(stateData, &rawMap); err != nil {
-			continue
-		}
-		for paneID, raw := range rawMap {
-			var status string
-			// Try legacy format: plain string value
-			if err := json.Unmarshal(raw, &status); err != nil {
-				// Try new format: PaneActivityExport struct
-				var export idle.PaneActivityExport
-				if err := json.Unmarshal(raw, &export); err != nil {
-					continue // skip on schema mismatch
+		if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
+			for paneID, raw := range rawMap {
+				var status string
+				// Try legacy format: plain string value
+				if err := json.Unmarshal(raw, &status); err != nil {
+					// Try new format: PaneActivityExport struct
+					var export idle.PaneActivityExport
+					if err := json.Unmarshal(raw, &export); err != nil {
+						continue // skip on schema mismatch
+					}
+					status = export.Status
 				}
-				status = export.Status
-			}
-			if status == "" {
-				continue
-			}
-			existing, exists := paneActivity[paneID]
-			if !exists || statusPriority[status] > statusPriority[existing] {
-				paneActivity[paneID] = status // higher priority wins on conflict
+				if status == "" {
+					continue
+				}
+				existing, exists := paneActivity[paneID]
+				if !exists || statusPriority[status] > statusPriority[existing] {
+					paneActivity[paneID] = status // higher priority wins on conflict
+				}
 			}
 		}
 	}

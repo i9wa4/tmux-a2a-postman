@@ -64,8 +64,6 @@ type Config struct {
 	EdgeViolationWarningTemplate    string `toml:"edge_violation_warning_template"`     // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode        string `toml:"edge_violation_warning_mode"`         // Issue #92: "compact" or "verbose" (default: compact)
 	IdleReminderHeaderTemplate      string `toml:"idle_reminder_header_template"`       // Issue #82: Idle reminder header
-	CompactionHeaderTemplate        string `toml:"compaction_header_template"`          // Issue #82: Compaction detection header
-	CompactionBodyTemplate          string `toml:"compaction_body_template"`            // Issue #82: Compaction notification body
 	DroppedBallEventTemplate        string `toml:"dropped_ball_event_template"`         // Issue #82: Dropped ball event message
 	AlertActionReachableTemplate    string `toml:"alert_action_reachable_template"`     // Action text when ui_node can reach the target node
 	AlertActionUnreachableTemplate  string `toml:"alert_action_unreachable_template"`   // Action text when ui_node cannot reach the target node
@@ -98,9 +96,6 @@ type Config struct {
 
 	// Node-level defaults applied to all nodes (loaded from [node_defaults] section)
 	NodeDefaults NodeConfig
-
-	// Compaction detection
-	CompactionDetection CompactionDetectionConfig
 
 	// Heartbeat
 	Heartbeat HeartbeatConfig
@@ -135,21 +130,6 @@ type AgentCard struct {
 	TalksTo     []string `toml:"talks_to"`
 	Template    string   `toml:"template"`
 	Role        string   `toml:"role"`
-}
-
-// CompactionDetectionConfig holds compaction detection configuration.
-type CompactionDetectionConfig struct {
-	Enabled         *bool                     `toml:"enabled"` // nil = use default (false) (#219)
-	Pattern         string                    `toml:"pattern"`
-	DelaySeconds    float64                   `toml:"delay_seconds"`
-	TailLines       int                       `toml:"tail_lines"` // Issue #133: Lines to capture for compaction check (default: 10)
-	MessageTemplate CompactionMessageTemplate `toml:"message_template"`
-}
-
-// CompactionMessageTemplate holds message template for compaction notifications.
-type CompactionMessageTemplate struct {
-	Type string `toml:"type"`
-	Body string `toml:"body"`
 }
 
 // HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
@@ -203,8 +183,6 @@ func DefaultConfig() *Config {
 		EdgeViolationWarningTemplate:    "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n  messageType: edge_violation_warning\n---\n\n## Edge Violation Warning\n\nyou can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.\n",
 		EdgeViolationWarningMode:        "compact", // Issue #92: Default to compact mode
 		IdleReminderHeaderTemplate:      "## Idle Reminder",
-		CompactionHeaderTemplate:        "## Compaction Detected",
-		CompactionBodyTemplate:          "Compaction detected for node {node}. Please send status update.",
 		DroppedBallEventTemplate:        "Dropped ball: {node} (holding for {duration})",
 		AlertActionReachableTemplate:    "",
 		AlertActionUnreachableTemplate:  "",
@@ -221,9 +199,6 @@ func DefaultConfig() *Config {
 		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
 		MinDeliveryGapSeconds:           1.0,  // Duplicate delivery rate limit (1 second)
 		StartupDrainWindowSeconds:       10.0, // Session-enabled bypass window (10 seconds) (#217)
-		CompactionDetection: CompactionDetectionConfig{
-			TailLines: 10, // Issue #133: Default tail lines for compaction check
-		},
 	}
 }
 
@@ -254,10 +229,10 @@ func loadEmbeddedConfig() (*Config, error) {
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman, compaction_detection, and heartbeat)
+	// Decode [nodename] sections (everything except postman and heartbeat)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
+		if name == "postman" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 
@@ -266,13 +241,6 @@ func loadEmbeddedConfig() (*Config, error) {
 			return nil, fmt.Errorf("decoding embedded [%s] section: %w", name, err)
 		}
 		cfg.Nodes[name] = node
-	}
-
-	// Decode [compaction_detection] section if exists
-	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
-		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
-			return nil, fmt.Errorf("decoding embedded [compaction_detection] section: %w", err)
-		}
 	}
 
 	// Decode [heartbeat] section if exists
@@ -374,7 +342,7 @@ func loadConfigFile(path string) (*Config, error) {
 	}
 
 	for name, prim := range rootSections {
-		if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
+		if name == "postman" || name == "heartbeat" || name == "node_defaults" {
 			continue
 		}
 		var node NodeConfig
@@ -382,12 +350,6 @@ func loadConfigFile(path string) (*Config, error) {
 			return nil, fmt.Errorf("decoding [%s] in %s: %w", name, path, err)
 		}
 		cfg.Nodes[name] = node
-	}
-
-	if compactionPrim, ok := rootSections["compaction_detection"]; ok {
-		if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
-			return nil, fmt.Errorf("decoding [compaction_detection] in %s: %w", path, err)
-		}
 	}
 
 	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
@@ -441,12 +403,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.IdleReminderHeaderTemplate != "" {
 		base.IdleReminderHeaderTemplate = override.IdleReminderHeaderTemplate
-	}
-	if override.CompactionHeaderTemplate != "" {
-		base.CompactionHeaderTemplate = override.CompactionHeaderTemplate
-	}
-	if override.CompactionBodyTemplate != "" {
-		base.CompactionBodyTemplate = override.CompactionBodyTemplate
 	}
 	if override.DroppedBallEventTemplate != "" {
 		base.DroppedBallEventTemplate = override.DroppedBallEventTemplate
@@ -628,26 +584,6 @@ func mergeConfig(base, override *Config) {
 		base.NodeDefaults.MaterializeTemplate = override.NodeDefaults.MaterializeTemplate
 	}
 
-	// CompactionDetection: field-level merge (#219)
-	if override.CompactionDetection.Enabled != nil {
-		base.CompactionDetection.Enabled = override.CompactionDetection.Enabled
-	}
-	if override.CompactionDetection.Pattern != "" {
-		base.CompactionDetection.Pattern = override.CompactionDetection.Pattern
-	}
-	if override.CompactionDetection.DelaySeconds != 0 {
-		base.CompactionDetection.DelaySeconds = override.CompactionDetection.DelaySeconds
-	}
-	if override.CompactionDetection.TailLines != 0 {
-		base.CompactionDetection.TailLines = override.CompactionDetection.TailLines
-	}
-	if override.CompactionDetection.MessageTemplate.Type != "" {
-		base.CompactionDetection.MessageTemplate.Type = override.CompactionDetection.MessageTemplate.Type
-	}
-	if override.CompactionDetection.MessageTemplate.Body != "" {
-		base.CompactionDetection.MessageTemplate.Body = override.CompactionDetection.MessageTemplate.Body
-	}
-
 	if override.Heartbeat.Enabled != nil {
 		base.Heartbeat.Enabled = override.Heartbeat.Enabled
 	}
@@ -733,10 +669,10 @@ func LoadConfig(path string) (*Config, error) {
 			}
 		}
 
-		// Decode [nodename] sections (everything except postman, compaction_detection, and heartbeat)
+		// Decode [nodename] sections (everything except postman and heartbeat)
 		cfg.Nodes = make(map[string]NodeConfig)
 		for name, prim := range rootSections {
-			if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
+			if name == "postman" || name == "heartbeat" || name == "node_defaults" {
 				continue
 			}
 
@@ -745,13 +681,6 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [%s] section: %w", name, err)
 			}
 			cfg.Nodes[name] = node
-		}
-
-		// Decode [compaction_detection] section if exists
-		if compactionPrim, ok := rootSections["compaction_detection"]; ok {
-			if err := md.PrimitiveDecode(compactionPrim, &cfg.CompactionDetection); err != nil {
-				return nil, fmt.Errorf("decoding [compaction_detection] section: %w", err)
-			}
 		}
 
 		// Decode [heartbeat] section if exists
@@ -788,7 +717,7 @@ func LoadConfig(path string) (*Config, error) {
 					continue
 				}
 				for name, prim := range sections {
-					if name == "postman" || name == "compaction_detection" || name == "heartbeat" || name == "node_defaults" {
+					if name == "postman" || name == "heartbeat" || name == "node_defaults" {
 						continue // skip reserved sections
 					}
 					var node NodeConfig

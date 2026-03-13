@@ -428,13 +428,6 @@ If it does not match, move the file to `{session_dir}/mismatch/<your-node>/`.
 # Idle reminder header template (Issue #82)
 # idle_reminder_header_template = "## Idle Reminder"
 
-# Compaction detection header template (Issue #82)
-# compaction_header_template = "## Compaction Detected"
-
-# Compaction notification body template (Issue #82)
-# Variables: {node}
-# compaction_body_template = "Compaction detected for node {node}. Please send status update."
-
 # Dropped ball event message template (Issue #82)
 # Variables: {node}, {duration}
 # dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
