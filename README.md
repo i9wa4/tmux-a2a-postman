@@ -21,7 +21,8 @@ Version format depends on build context:
 Discovers agents in the same tmux session by reading pane titles, sends PING messages to
 establish communication, and routes messages between nodes based on configured edges.
 
-Communication works within a single tmux session only.
+Communication works within a single tmux session by default. Cross-session routing is
+available when `diplomat_node` is configured (#164).
 
 ## 3. Quick Start
 
@@ -45,12 +46,16 @@ tmux-a2a-postman
 
 ```text
 $XDG_STATE_HOME/tmux-a2a-postman/
+├── diplomat/
+│   └── {targetContextId}/
+│       └── post/       # Cross-session drops (diplomat, #164)
 └── session-{contextId}/
-    ├── inbox/{node}/   # Incoming messages per node
-    ├── post/           # Outgoing messages
-    ├── draft/          # Message drafts
-    ├── read/           # Processed messages
-    └── dead-letter/    # Undeliverable messages
+    └── {sessionName}/
+        ├── inbox/{node}/   # Incoming messages per node
+        ├── post/           # Outgoing messages
+        ├── draft/          # Message drafts
+        ├── read/           # Processed messages
+        └── dead-letter/    # Undeliverable messages
 ```
 
 ## 5. Session Management
@@ -144,11 +149,14 @@ recommended for preserving comments.
 # Start daemon (interactive TUI)
 tmux-a2a-postman
 
-# Start daemon with context ID
-tmux-a2a-postman start --context-id <context-id> [--config path/to/config.toml]
+# Start daemon (context ID auto-generated if omitted)
+tmux-a2a-postman start [--context-id <id>] [--config path/to/config.toml]
 
-# Create draft message
-tmux-a2a-postman create-draft --to <recipient> --context-id <context-id>
+# Print current context ID (useful for AI agents)
+tmux-a2a-postman get-context-id
+
+# Create draft message (context ID auto-detected from tmux session)
+tmux-a2a-postman create-draft --to <recipient>
 
 # Send draft (move from draft/ to post/)
 tmux-a2a-postman send <filename>
@@ -168,7 +176,7 @@ tmux-a2a-postman --version
 Run the daemon without the interactive TUI (non-interactive mode):
 
 ```sh
-tmux-a2a-postman --no-tui --context-id <context-id>
+tmux-a2a-postman --no-tui [--context-id <id>]
 ```
 
 In headless mode:
@@ -181,8 +189,8 @@ In headless mode:
 ### 8.2. Recommended Shell Alias
 
 ```sh
-alias a2a='tmux-a2a-postman create-draft --context-id'
-# Usage: a2a <context-id> --to <recipient>
+alias a2a='tmux-a2a-postman create-draft'
+# Usage: a2a --to <recipient>
 ```
 
 ## 9. Skills
