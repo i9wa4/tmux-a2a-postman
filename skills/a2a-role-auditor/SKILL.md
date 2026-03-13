@@ -102,6 +102,14 @@ Two sub-checks:
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman archive <filename>`
 
+**Diplomat sub-check** (applies only when `diplomat_node` is set in `postman.toml`):
+
+- PASS: template for the diplomat node documents `--cross-context <contextID>:<node>` syntax
+  when cross-context messaging is part of its responsibilities
+- FAIL: diplomat node template has no mention of `--cross-context` — agents cannot discover
+  the cross-context delivery path from the template alone
+  (#164: `create-draft --cross-context` is the canonical cross-context primitive)
+
 ### 2.10. Check 9 — Pre-Approval Verification
 
 Applies only to nodes whose template contains APPROVED or REJECTED signal words
@@ -171,10 +179,14 @@ All files are read from the user's XDG config directory:
 | -------------------------------- | ----------------------------------------------------------- |
 | Main config (edges + node sections) | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`        |
 | Node template files              | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`      |
+| Default config reference         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.default.toml`   |
 
 - `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
 - `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections (per-node config).
 - `nodes/{node}.toml` holds the role template (`template`, `on_join`, `draft_template`, etc.) for each node.
+- `postman.default.toml` is a canonical reference listing all configurable values with their
+  defaults and comments. Consult it when auditing `dropped_ball_timeout_seconds` defaults
+  and other per-node configurable fields (#249 policy: all values must appear explicitly here).
 
 ## 5. Workflow
 
@@ -186,6 +198,27 @@ All files are read from the user's XDG config directory:
 6. Present to user for feedback; iterate until approved
 
 NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or delegates to a worker node.
+
+### 5.1. Nix Store Warning
+
+Before attempting to patch any node file, check if the deployed path is read-only:
+
+```sh
+ls -la $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/
+```
+
+If files are owned by root with permissions `-r--r--r--` and timestamp `Jan 1 1970`,
+they live in the **Nix store** and cannot be edited in place.
+
+In this case:
+
+1. Confirm the store path: `readlink -f $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
+2. Find the editable source in dotfiles (typically
+   `~/ghq/<user>/dotfiles/config/tmux-a2a-postman/nodes/<node>.toml`)
+3. Apply all patches to the dotfiles source, not the deployed path
+4. After patching, rebuild: `home-manager switch` (or equivalent) to redeploy
+
+Report this as a constraint in findings, not as a skill failure.
 
 ## 6. Baseline Examples
 
