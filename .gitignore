@@ -41,3 +41,7 @@ go.work.sum
 /result-*
 .pre-commit-config.yaml
 .rumdl.toml
+
+# AI tools
+.claude/
+.codex/
