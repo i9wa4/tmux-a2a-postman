@@ -133,7 +133,7 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """{inbox_path}/{filename}
-Role: {template_path} | Protocol: {session_dir}/RULES.md
+Role: {template_path} | Protocol: tmux-a2a-postman --help
 After reading: tmux-a2a-postman archive {filename}"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
@@ -186,7 +186,7 @@ params:
   timestamp: {timestamp}
   tmuxSession: {session_name}
 role: {templates_dir}/{recipient}.md
-protocol: {session_dir}/RULES.md
+protocol: tmux-a2a-postman --help
 ---
 
 ## Recipient Role (context only):
@@ -335,86 +335,6 @@ After reading: tmux-a2a-postman archive {filename}
 #
 # you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
 # """
-
-# Rules template (generated as RULES.md in session directory)
-rules_template = """
-## Messaging Protocol
-
-### Message Format
-
-All messages use YAML frontmatter followed by content:
-
-    ---
-    method: message/send
-    params:
-      contextId: <context ID>
-      taskId: <unique task ID>
-      from: <sender node>
-      to: <recipient node>
-      timestamp: <ISO timestamp>
-    ---
-
-    You can only talk to: <comma-separated list>
-
-    # Content
-
-    <message body>
-
-    ## Reply
-
-    Protocol reference: {session_dir}/RULES.md
-
-### Sending Messages
-
-1. Create draft: {reply_command}
-   Replace `<recipient>` with target node name
-2. Edit the draft content in {session_dir}/draft/
-3. Send: tmux-a2a-postman send <file>
-
-### Receiving Messages
-
-- Notification arrives in your pane as a file path
-- Notification is wrapped in `<!-- message start -->` / `<!-- end of message -->` (pane protocol only)
-- Read the file at the given path
-- After reading: tmux-a2a-postman archive <filename>
-
-### Waiting State
-
-After moving a message to read/, a waiting file is automatically created:
-  {session_dir}/waiting/<same-filename-as-read-message>
-
-File content includes a `state` field:
-- composing   agent received a message and is preparing a reply
-- user_input  agent is waiting for user input (ui_node, never stuck)
-- stuck       daemon detected pane went stale while composing
-- spinning    daemon detected pane active but no reply after node_spinning_seconds
-
-The file is automatically removed when you send a reply (tmux-a2a-postman send <file>).
-
-Monitoring:
-  # Agents stuck (pane went stale while composing):
-  grep -rl "state: stuck" {session_dir}/waiting/
-
-  # Agents actively composing:
-  grep -rl "state: composing" {session_dir}/waiting/
-
-  # Agents spinning (active pane, no reply — possible infinite loop):
-  grep -rl "state: spinning" {session_dir}/waiting/
-
-  # User input waits (expected, not stuck — always ignore):
-  grep -rl "state: user_input" {session_dir}/waiting/
-
-### Session Validation
-
-Before processing a message, verify `params.tmuxSession` matches your own session.
-If it does not match, move the file to `{session_dir}/mismatch/<your-node>/`.
-
-### Standard Replies
-
-- HEARTBEAT_OK: see {session_dir}/boilerplate/heartbeat_ok.md
-- [status] - current task, blockers, next action
-- [error] - description, mitigation, next step
-"""
 
 # Boilerplate response files (auto-generated per session in {session_dir}/boilerplate/)
 # boilerplate_heartbeat_ok = "HEARTBEAT_OK"

@@ -233,12 +233,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
-	// Issue #75: Generate RULES.md in session directory
-	if err := config.GenerateRulesFile(sessionDir, contextID, cfg); err != nil {
-		log.Printf("⚠️  postman: failed to generate RULES.md: %v\n", err)
-		// Non-fatal: continue without RULES.md
-	}
-
 	// Issue #134: Materialize per-node template files at startup
 	config.MaterializeNodeTemplates(baseDir, contextID, cfg)
 
@@ -804,7 +798,7 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nrole: {templates_dir}/{recipient}.md\nprotocol: {session_dir}/RULES.md\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nrole: {templates_dir}/{recipient}.md\nprotocol: tmux-a2a-postman --help\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
 
 	// Build can_talk_to from adjacency

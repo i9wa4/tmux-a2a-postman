@@ -139,7 +139,7 @@ Applies to all non-observer nodes (nodes whose role does NOT contain "observer")
 
 ### 2.13. Check B-I8 — Protocol Reminder Presence
 
-- PASS: template references the postman protocol (e.g., contains "RULES.md",
+- PASS: template references the postman protocol (e.g., contains "tmux-a2a-postman --help",
   "protocol", "tmux-a2a-postman", or "create-draft")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation

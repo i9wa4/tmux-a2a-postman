@@ -357,10 +357,6 @@ func RunDaemonLoop(
 										continue
 									}
 
-									// Generate RULES.md for newly discovered node session
-									if err := config.GenerateRulesFile(nodeInfo.SessionDir, contextID, cfg); err != nil {
-										log.Printf("postman: WARNING: failed to generate RULES.md for %s: %v\n", nodeName, err)
-									}
 									if err := config.GenerateBoilerplateFiles(nodeInfo.SessionDir, contextID, cfg); err != nil {
 										log.Printf("postman: WARNING: failed to generate boilerplate files for %s: %v\n", nodeName, err)
 									}
@@ -620,10 +616,6 @@ func RunDaemonLoop(
 						cfg = newCfg
 						adjacency = newAdjacency
 
-						// Issue #75: Regenerate RULES.md on config reload
-						if err := config.GenerateRulesFile(sessionDir, contextID, newCfg); err != nil {
-							log.Printf("⚠️  postman: failed to regenerate RULES.md: %v\n", err)
-						}
 						if err := config.GenerateBoilerplateFiles(sessionDir, contextID, newCfg); err != nil {
 							log.Printf("postman: WARNING: failed to generate boilerplate files on reload: %v\n", err)
 						}
@@ -705,10 +697,6 @@ func RunDaemonLoop(
 						continue
 					}
 
-					// Generate RULES.md for newly discovered node session
-					if err := config.GenerateRulesFile(nodeInfo.SessionDir, contextID, cfg); err != nil {
-						log.Printf("postman: WARNING: failed to generate RULES.md for %s: %v\n", nodeName, err)
-					}
 					if err := config.GenerateBoilerplateFiles(nodeInfo.SessionDir, contextID, cfg); err != nil {
 						log.Printf("postman: WARNING: failed to generate boilerplate files for %s: %v\n", nodeName, err)
 					}

@@ -75,7 +75,6 @@ type Config struct {
 	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
 	IdleReminderMessageTemplate     string `toml:"idle_reminder_message_template"`      // Unified idle reminder message format
-	RulesTemplate                   string `toml:"rules_template"`                      // Issue #75: Shared protocol rules
 	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
 	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
 
@@ -170,7 +169,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:           300.0,
 		BaseDir:                         "",
 		NotificationTemplate:            "Message from {from_node}",
-		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\nRole: {template_path} | Protocol: {session_dir}/RULES.md\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
+		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\nRole: {template_path} | Protocol: tmux-a2a-postman --help\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
 		DraftTemplate:                   "",
 		ReminderMessage:                 "",
 		ReplyCommand:                    "",
@@ -193,7 +192,6 @@ func DefaultConfig() *Config {
 		AlertMessageTemplate:            "",
 		HeartbeatMessageTemplate:        "",
 		IdleReminderMessageTemplate:     "",
-		RulesTemplate:                   "",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
 		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Send: tmux-a2a-postman send <file>",
 		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
@@ -436,9 +434,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.IdleReminderMessageTemplate != "" {
 		base.IdleReminderMessageTemplate = override.IdleReminderMessageTemplate
-	}
-	if override.RulesTemplate != "" {
-		base.RulesTemplate = override.RulesTemplate
 	}
 	if override.BoilerplateHeartbeatOk != "" {
 		base.BoilerplateHeartbeatOk = override.BoilerplateHeartbeatOk
