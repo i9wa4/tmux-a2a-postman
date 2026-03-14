@@ -194,6 +194,8 @@ You can only talk to: {can_talk_to}
 ```
 
 ## Content
+
+<!-- write here -->
 """
 
 # Alert message template (unified format for daemon alerts)
