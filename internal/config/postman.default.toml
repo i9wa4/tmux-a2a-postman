@@ -29,7 +29,6 @@
 #   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
-#   {templates_dir}  - Path to templates directory (context-level, not session-level)
 #   {reply_command}  - Command to create draft reply with context_id substituted
 #   {template}       - Recipient's role template from config
 #
@@ -106,8 +105,7 @@ edges = []
 # reminder_message:
 #   {node}      - Node name
 #   {count}     - Message count since last reminder
-#   {template}  - Node's role template (inline content, or "Role template: <path>" for
-#                 materialized nodes — agent must read the file for full content)
+#   {template}  - Node's role template (inline content from config)
 #   {inbox_path} - Full path to recipient's inbox directory
 #
 # NOTE: if reminder_message = "{template}" and a node has no template defined,
@@ -381,4 +379,3 @@ If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
-materialize_template = true  # Write role templates to files; reference by path in notifications
