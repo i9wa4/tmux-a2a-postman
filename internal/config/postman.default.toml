@@ -164,7 +164,7 @@ How to reply: {reply_command}
 
 ## Message
 
-PING from postman daemon.
+PING from postman daemon. Do NOT reply to this message.
 """
 
 # Draft message template
