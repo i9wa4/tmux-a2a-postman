@@ -224,19 +224,20 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	log.SetFlags(log.LstdFlags)
 	log.Printf("postman: daemon starting (context=%s, log=%s)\n", contextID, logPath)
 
-	// TODO: Multi-session support - for now, use "default" as session name
-	// Later phases will discover actual tmux sessions and create dirs for each
-	defaultSessionName := "default"
-	sessionDir := filepath.Join(contextDir, defaultSessionName)
+	tmuxSessionName := config.GetTmuxSessionName()
+	sessionName := tmuxSessionName
+	if sessionName == "" {
+		sessionName = "default"
+	}
+	sessionDir := filepath.Join(contextDir, sessionName)
 
-	if err := config.CreateMultiSessionDirs(contextDir, defaultSessionName); err != nil {
+	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
 	// Issue #134: Materialize per-node template files at startup
 	config.MaterializeNodeTemplates(baseDir, contextID, cfg)
 
-	tmuxSessionName := config.GetTmuxSessionName()
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
