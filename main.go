@@ -773,8 +773,7 @@ func runCreateDraft(args []string) error {
 		if err := os.WriteFile(dropPath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing diplomat draft: %w", err)
 		}
-		fmt.Println(dropPath)
-		fmt.Fprintf(os.Stderr, "After editing: tmux-a2a-postman send %s\n", filepath.Base(dropPath))
+		fmt.Printf("Draft created: draft/%s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filepath.Base(dropPath), filepath.Base(dropPath))
 		return nil
 	}
 
@@ -831,8 +830,7 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("writing draft: %w", err)
 	}
 
-	fmt.Println(draftPath)
-	fmt.Fprintf(os.Stderr, "After editing: tmux-a2a-postman send %s\n", filepath.Base(draftPath))
+	fmt.Printf("Draft created: draft/%s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filepath.Base(draftPath), filepath.Base(draftPath))
 	return nil
 }
 
