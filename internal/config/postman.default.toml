@@ -133,7 +133,6 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """{inbox_path}/{filename}
-Role: {template_path} | Protocol: tmux-a2a-postman --help
 After reading: tmux-a2a-postman archive {filename}"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
@@ -151,7 +150,11 @@ params:
   tmuxSession: {session_name}
 ---
 
-# tmux-a2a-postman
+# Ping
+
+How to reply: {reply_command}
+
+{talks_to_line}
 
 ## Role of {node}
 
@@ -159,20 +162,9 @@ params:
 {role_content}
 ```
 
-## Contacts
+## Message
 
-{contacts_section}
-
-How to reply: {reply_command}
-
-## Ping
-
-This message is from the postman daemon. Do NOT reply to postman.
-Resume your work or reply to your orchestrator if you need to communicate.
-
-{talks_to_line}
-
-After reading: tmux-a2a-postman archive {filename}
+PING from postman daemon.
 """
 
 # Draft message template
@@ -189,19 +181,19 @@ role: {templates_dir}/{recipient}.md
 protocol: tmux-a2a-postman --help
 ---
 
-## Recipient Role (context only):
-
-{template}
-
----
-
-You can only talk to: {can_talk_to}
+# Message
 
 How to reply: {reply_command}
 
-# Content
+You can only talk to: {can_talk_to}
 
-After reading: tmux-a2a-postman archive <this-filename>  (replace with actual filename)
+## Role of {recipient}
+
+```
+{template}
+```
+
+## Content
 """
 
 # Alert message template (unified format for daemon alerts)
@@ -221,7 +213,11 @@ params:
   tmuxSession: {session_name}
 ---
 
-# tmux-a2a-postman
+# Alert: {alert_type}
+
+How to reply: {reply_command}
+
+{talks_to_line}
 
 ## Role of {node}
 
@@ -229,17 +225,9 @@ params:
 {role_content}
 ```
 
-## Contacts
-
-{contacts_section}
-
-How to reply: {reply_command}
-
-## Alert: {alert_type}
+## Message
 
 {message}
-
-After reading: tmux-a2a-postman archive {filename}
 """
 
 # Heartbeat message template (unified format for heartbeat-LLM triggers)
@@ -258,7 +246,11 @@ params:
   tmuxSession: {session_name}
 ---
 
-# tmux-a2a-postman
+# Heartbeat
+
+How to reply: {reply_command}
+
+{talks_to_line}
 
 ## Role of {node}
 
@@ -266,17 +258,9 @@ params:
 {role_content}
 ```
 
-## Contacts
-
-{contacts_section}
-
-How to reply: {reply_command}
-
-## Heartbeat
+## Message
 
 {message}
-
-After reading: tmux-a2a-postman archive {filename}
 """
 
 # Idle reminder message template (unified format; written to post/ for daemon-routed delivery)
@@ -295,7 +279,11 @@ params:
   tmuxSession: {session_name}
 ---
 
-# tmux-a2a-postman
+# Alert: {alert_type}
+
+How to reply: {reply_command}
+
+{talks_to_line}
 
 ## Role of {node}
 
@@ -303,17 +291,9 @@ params:
 {role_content}
 ```
 
-## Contacts
-
-{contacts_section}
-
-How to reply: {reply_command}
-
-## Alert: idle_reminder
+## Message
 
 {message}
-
-After reading: tmux-a2a-postman archive {filename}
 """
 
 # Edge violation warning template (Issue #92, DM-1 normalized #222)
