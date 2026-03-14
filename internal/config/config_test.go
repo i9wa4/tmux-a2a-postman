@@ -214,9 +214,6 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
 	}
-	if !BoolVal(cfg.NodeDefaults.MaterializeTemplate, false) {
-		t.Errorf("NodeDefaults.MaterializeTemplate: got false/nil, want true")
-	}
 }
 
 func TestLoadConfig_Partial(t *testing.T) {

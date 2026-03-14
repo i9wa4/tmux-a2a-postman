@@ -2,7 +2,6 @@ package envelope
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -36,25 +35,17 @@ func BuildEnvelope(
 	sourceSessionName string,
 	pongActiveNodes map[string]bool,
 ) string {
-	// Role template resolution: MaterializedPaths → Nodes → CommonTemplate prepend.
-	templatePath := ""
+	// Role template resolution: Nodes → CommonTemplate prepend.
 	recipientTemplate := ""
-	if matPath, ok := cfg.MaterializedPaths[recipient]; ok {
-		// Issue #134: Template materialized as file; reference by path. Label added so agents
-		// can identify the file purpose without @-prefix (which triggers autocomplete).
-		templatePath = matPath
-		recipientTemplate = "Role template: " + matPath + "\n"
-	} else {
-		if nodeConfig, ok := cfg.Nodes[recipient]; ok {
-			recipientTemplate = nodeConfig.Template
-		}
-		// Issue #49: Prepend common_template if present.
-		if cfg.CommonTemplate != "" {
-			if recipientTemplate != "" {
-				recipientTemplate = cfg.CommonTemplate + "\n\n" + recipientTemplate
-			} else {
-				recipientTemplate = cfg.CommonTemplate
-			}
+	if nodeConfig, ok := cfg.Nodes[recipient]; ok {
+		recipientTemplate = nodeConfig.Template
+	}
+	// Issue #49: Prepend common_template if present.
+	if cfg.CommonTemplate != "" {
+		if recipientTemplate != "" {
+			recipientTemplate = cfg.CommonTemplate + "\n\n" + recipientTemplate
+		} else {
+			recipientTemplate = cfg.CommonTemplate
 		}
 	}
 
@@ -138,7 +129,6 @@ func BuildEnvelope(
 		"reply_command":    replyCmd,
 		"session_dir":      sessionDir,
 		"active_nodes":     strings.Join(activeNodes, ", "),
-		"template_path":    templatePath,
 		"session_name":     sourceSessionName,
 	}
 
@@ -147,25 +137,11 @@ func BuildEnvelope(
 }
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.
-// 3-step resolution: (1) materialized file with header strip, (2) config template fallback,
-// (3) CommonTemplate prepend. Used by sendAlertToUINode, SendPingToNode, heartbeat, idle.
+// Resolution: config template with CommonTemplate prepend.
+// Used by sendAlertToUINode, SendPingToNode, heartbeat, idle.
 func BuildRoleContent(cfg *config.Config, nodeName string) string {
-	nodeTemplate := ""
-	if matPath, ok := cfg.MaterializedPaths[nodeName]; ok {
-		if data, err := os.ReadFile(matPath); err == nil {
-			content := string(data)
-			// Strip "<!-- role template: {node} -->\n\n" header from MaterializeNodeTemplates.
-			if parts := strings.SplitN(content, "\n\n", 2); len(parts) == 2 {
-				nodeTemplate = parts[1]
-			} else {
-				nodeTemplate = content
-			}
-		}
-	}
-	if nodeTemplate == "" {
-		nc := cfg.GetNodeConfig(nodeName)
-		nodeTemplate = nc.Template
-	}
+	nc := cfg.GetNodeConfig(nodeName)
+	nodeTemplate := nc.Template
 	roleContent := ""
 	if cfg.CommonTemplate != "" && nodeTemplate != "" {
 		roleContent = cfg.CommonTemplate + "\n\n" + nodeTemplate

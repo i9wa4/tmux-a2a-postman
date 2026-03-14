@@ -235,9 +235,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
-	// Issue #134: Materialize per-node template files at startup
-	config.MaterializeNodeTemplates(baseDir, contextID, cfg)
-
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
@@ -799,7 +796,7 @@ func runCreateDraft(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nrole: {templates_dir}/{recipient}.md\nprotocol: tmux-a2a-postman --help\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
+		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nprotocol: tmux-a2a-postman --help\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
 
 	// Build can_talk_to from adjacency
@@ -818,7 +815,6 @@ func runCreateDraft(args []string) error {
 		"timestamp":     now.Format(time.RFC3339),
 		"can_talk_to":   canTalkTo,
 		"session_dir":   filepath.Join(baseDir, resolvedContextID, sessionName),
-		"templates_dir": filepath.Join(baseDir, resolvedContextID, "templates"),
 		"reply_command": expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
 		"template":      getNodeTemplate(cfg, *to),
 		"session_name":  sessionName,

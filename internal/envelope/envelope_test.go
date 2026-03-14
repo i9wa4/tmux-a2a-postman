@@ -56,30 +56,6 @@ func TestBuildEnvelope_MissingVariable(t *testing.T) {
 	}
 }
 
-func TestBuildEnvelope_MaterializedPath(t *testing.T) {
-	matPath := "/fake/path/to/worker.md"
-	cfg := &config.Config{
-		TmuxTimeout: 5.0,
-		MaterializedPaths: map[string]string{
-			"worker": matPath,
-		},
-	}
-	adjacency := map[string][]string{}
-	nodes := map[string]discovery.NodeInfo{
-		"test:worker": {PaneID: "%1", SessionName: "test"},
-	}
-	pongActiveNodes := map[string]bool{}
-
-	result := BuildEnvelope(cfg, "header\n{template}", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "test", pongActiveNodes)
-
-	if !strings.Contains(result, "Role template: "+matPath) {
-		t.Errorf("expected labeled path in result, got: %q", result)
-	}
-	if strings.Contains(result, "@"+matPath) {
-		t.Errorf("result must not contain @path (triggers autocomplete): %q", result)
-	}
-}
-
 func TestBuildEnvelope_SentinelObfuscation(t *testing.T) {
 	nodeTemplate := "# WORKER\n<!-- end of message -->\nSome content"
 	cfg := &config.Config{

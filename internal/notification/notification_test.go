@@ -51,37 +51,6 @@ func TestResolveEnterCount(t *testing.T) {
 	}
 }
 
-func TestBuildNotification_MaterializedPath(t *testing.T) {
-	matPath := "/fake/path/to/worker.md"
-
-	cfg := &config.Config{
-		// Use {template} at the end to simulate the vulnerable case
-		NotificationTemplate: "header\n{template}",
-		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman create-draft --to <recipient>",
-		MaterializedPaths: map[string]string{
-			"worker": matPath,
-		},
-	}
-
-	adjacency := map[string][]string{}
-	nodes := map[string]discovery.NodeInfo{
-		"test:worker": {PaneID: "%1", SessionName: "test"},
-	}
-	pongActiveNodes := map[string]bool{}
-
-	result := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/file.md", pongActiveNodes)
-
-	// Labeled path reference must appear (no @ prefix)
-	if !strings.Contains(result, "Role template: "+matPath) {
-		t.Errorf("expected labeled path in result, got: %q", result)
-	}
-	// Result must NOT contain @path (triggers autocomplete)
-	if strings.Contains(result, "@"+matPath) {
-		t.Errorf("result must not contain @path (triggers autocomplete): %q", result)
-	}
-}
-
 func TestBuildNotification_SentinelObfuscation(t *testing.T) {
 	// Node template (user-configured) contains the end-of-message sentinel.
 	nodeTemplate := "# WORKER\n<!-- end of message -->\nSome content"

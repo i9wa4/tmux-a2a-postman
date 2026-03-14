@@ -177,7 +177,6 @@ params:
   to: {recipient}
   timestamp: {timestamp}
   tmuxSession: {session_name}
-role: {templates_dir}/{recipient}.md
 protocol: tmux-a2a-postman --help
 ---
 
@@ -349,8 +348,6 @@ How to reply: {reply_command}
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# materialize_template = false       # Write template as state file; reference by labeled path (no @ prefix).
-#                                    # NOTE: Takes effect only at daemon startup. Restart daemon after enabling.
 # reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
 # idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)

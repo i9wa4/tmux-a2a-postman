@@ -98,9 +98,6 @@ type Config struct {
 
 	// Heartbeat
 	Heartbeat HeartbeatConfig
-
-	// Runtime state (not serialized from TOML)
-	MaterializedPaths map[string]string // Issue #134: node name -> absolute path of materialized template file
 }
 
 // NodeConfig holds per-node configuration.
@@ -118,7 +115,6 @@ type NodeConfig struct {
 	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                  float64 `toml:"enter_delay_seconds"`           // 0 = use global default
-	MaterializeTemplate         *bool   `toml:"materialize_template"`          // nil = use default; Issue #134, #219
 }
 
 // AgentCard holds agent card information.
@@ -169,7 +165,7 @@ func DefaultConfig() *Config {
 		ActivityWindowSeconds:           300.0,
 		BaseDir:                         "",
 		NotificationTemplate:            "Message from {from_node}",
-		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\nRole: {template_path} | Protocol: tmux-a2a-postman --help\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
+		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
 		DraftTemplate:                   "",
 		ReminderMessage:                 "",
 		ReplyCommand:                    "",
@@ -565,18 +561,12 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
-		if overNode.MaterializeTemplate != nil {
-			baseNode.MaterializeTemplate = overNode.MaterializeTemplate
-		}
 		base.Nodes[name] = baseNode
 	}
 
 	// NodeDefaults: field-level merge
 	if override.NodeDefaults.EnterCount != 0 {
 		base.NodeDefaults.EnterCount = override.NodeDefaults.EnterCount
-	}
-	if override.NodeDefaults.MaterializeTemplate != nil {
-		base.NodeDefaults.MaterializeTemplate = override.NodeDefaults.MaterializeTemplate
 	}
 
 	if override.Heartbeat.Enabled != nil {
@@ -1084,9 +1074,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
-	}
-	if specific.MaterializeTemplate != nil {
-		result.MaterializeTemplate = specific.MaterializeTemplate
 	}
 	return result
 }

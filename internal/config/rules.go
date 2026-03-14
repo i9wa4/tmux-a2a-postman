@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,52 +45,4 @@ func GenerateBoilerplateFiles(sessionDir, contextID string, cfg *Config) error {
 		}
 	}
 	return nil
-}
-
-// sanitizeNodeName replaces characters outside [a-zA-Z0-9_-] with '_' (Issue #134).
-func sanitizeNodeName(name string) string {
-	b := make([]byte, len(name))
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			b[i] = c
-		} else {
-			b[i] = '_'
-		}
-	}
-	return string(b)
-}
-
-// MaterializeNodeTemplates writes per-node template content as state files (Issue #134).
-// Files are written atomically to contextDir/templates/<sanitized-node>.md.
-// cfg.MaterializedPaths is populated with nodeName -> filePath for successful writes.
-// Failures are logged but non-fatal; message delivery falls back to inline template.
-func MaterializeNodeTemplates(baseDir, contextID string, cfg *Config) {
-	cfg.MaterializedPaths = make(map[string]string)
-
-	contextDir := filepath.Join(baseDir, contextID)
-	templatesDir := filepath.Join(contextDir, "templates")
-	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
-		log.Printf("postman: WARNING: failed to create templates directory: %v\n", err)
-		return
-	}
-
-	for nodeName, nodeConfig := range cfg.Nodes {
-		if !BoolVal(cfg.GetNodeConfig(nodeName).MaterializeTemplate, true) || nodeConfig.Template == "" {
-			continue
-		}
-		sanitized := sanitizeNodeName(nodeName)
-		filePath := filepath.Join(templatesDir, sanitized+".md")
-		tmpPath := filePath + ".tmp"
-		fileContent := "<!-- role template: " + nodeName + " -->\n\n" + nodeConfig.Template
-		if err := os.WriteFile(tmpPath, []byte(fileContent), 0o600); err != nil {
-			log.Printf("postman: WARNING: failed to write template tmp for node %s: %v\n", nodeName, err)
-			continue
-		}
-		if err := os.Rename(tmpPath, filePath); err != nil {
-			log.Printf("postman: WARNING: failed to rename template file for node %s: %v\n", nodeName, err)
-			continue
-		}
-		cfg.MaterializedPaths[nodeName] = filePath
-	}
 }
