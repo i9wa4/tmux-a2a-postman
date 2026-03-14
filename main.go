@@ -773,7 +773,7 @@ func runCreateDraft(args []string) error {
 		if err := os.WriteFile(dropPath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing diplomat draft: %w", err)
 		}
-		fmt.Printf("Draft created: draft/%s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filepath.Base(dropPath), filepath.Base(dropPath))
+		fmt.Printf("Drop created: diplomat/%s/post/%s\n\nNote:\n  This file has been placed directly in the cross-context drop path.\n  No send step required.\n", targetContextID, filepath.Base(dropPath))
 		return nil
 	}
 
