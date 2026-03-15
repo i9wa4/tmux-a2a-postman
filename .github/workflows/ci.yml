@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  check:
     strategy:
       matrix:
         include:
@@ -85,3 +85,21 @@ jobs:
 
       - name: Run govulncheck
         run: nix develop .#ci --command govulncheck ./...
+
+  ci:
+    needs: [check, security]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs were cancelled"
+            exit 1
+          fi
+          echo "All checks passed"
