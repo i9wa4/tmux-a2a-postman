@@ -879,6 +879,8 @@ func RunDaemonLoop(
 		case <-inboxCheckTicker.C:
 			// Issue #245: Check inbox unread count and alert UINode
 			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
+			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
+			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
@@ -1146,6 +1148,251 @@ func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Confi
 		}
 
 		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "inbox_unread_summary", cfg, adjacency, nodes); err == nil {
+			alertRateLimiter.Record(cfg.UINode, now)
+		}
+	}
+}
+
+// checkNodeInactivity alerts UINode when a monitored node has been inactive
+// (no send + no receive) for longer than its configured IdleTimeoutSeconds.
+// Three guards: TUI event (unconditional), Guard 1 (rate limiter), Guard 2 (delivery window).
+// Guard 3 (signal): excludes nodes with state:user_input waiting files.
+func checkNodeInactivity(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
+	if cfg.UINode == "" || cfg.NodeInactivityAlertTemplate == "" {
+		return
+	}
+
+	now := time.Now()
+
+	for nodeKey, nodeInfo := range nodes {
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+
+		if simpleName == cfg.UINode {
+			continue
+		}
+
+		nodeConfig, ok := cfg.Nodes[simpleName]
+		if !ok || nodeConfig.IdleTimeoutSeconds <= 0 {
+			continue
+		}
+
+		// Exclude nodes with state:user_input waiting files
+		waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
+		waitingEntries, err := os.ReadDir(waitingDir)
+		if err == nil {
+			userInputFound := false
+			for _, entry := range waitingEntries {
+				if !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				filePath := filepath.Join(waitingDir, entry.Name())
+				fileContent, readErr := os.ReadFile(filePath)
+				if readErr != nil {
+					continue
+				}
+				contentStr := string(fileContent)
+				if strings.Contains(contentStr, "state: user_input") {
+					userInputFound = true
+					break
+				}
+			}
+			if userInputFound {
+				continue
+			}
+		}
+
+		nodeStates := idleTracker.GetNodeStates()
+		activity, actOk := nodeStates[nodeKey]
+		if !actOk {
+			continue
+		}
+		lastAct := activity.LastSent
+		if activity.LastReceived.After(lastAct) {
+			lastAct = activity.LastReceived
+		}
+		if lastAct.IsZero() {
+			continue
+		}
+		idleDuration := time.Since(lastAct)
+		threshold := time.Duration(nodeConfig.IdleTimeoutSeconds * float64(time.Second))
+		if idleDuration < threshold {
+			continue
+		}
+
+		alertVars := map[string]string{
+			"node":     simpleName,
+			"duration": idleDuration.Round(time.Second).String(),
+		}
+		msg := template.ExpandVariables(cfg.NodeInactivityAlertTemplate, alertVars)
+		events <- tui.DaemonEvent{
+			Type:    "node_inactivity",
+			Message: msg,
+			Details: map[string]interface{}{
+				"node":     simpleName,
+				"duration": idleDuration.String(),
+			},
+		}
+
+		// Guard 1: per-recipient cooldown
+		if !alertRateLimiter.Allow(cfg.UINode, now) {
+			continue
+		}
+
+		// Guard 2: suppress if UINode received a message recently
+		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
+		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
+		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
+			continue
+		}
+
+		var replyCmd string
+		if cfg.ReplyCommand != "" {
+			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+		} else {
+			replyCmd = fmt.Sprintf(
+				"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+				contextID, simpleName,
+			)
+		}
+		canReach := false
+		for _, neighbor := range adjacency[cfg.UINode] {
+			if neighbor == simpleName {
+				canReach = true
+				break
+			}
+		}
+		actionVars := map[string]string{
+			"node":          simpleName,
+			"reply_command": replyCmd,
+		}
+		var actionText string
+		if canReach && cfg.AlertActionReachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+		}
+
+		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "node_inactivity", cfg, adjacency, nodes); err == nil {
+			alertRateLimiter.Record(cfg.UINode, now)
+		}
+	}
+}
+
+// checkUnrepliedMessages alerts UINode when a monitored node has messages in
+// read/ that are older than DroppedBallTimeoutSeconds without a reply.
+// Excludes daemon-generated messages (From == "postman" in filename).
+// Three guards: TUI event (unconditional), Guard 1 (rate limiter), Guard 2 (delivery window).
+func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
+	if cfg.UINode == "" || cfg.UnrepliedMessageAlertTemplate == "" {
+		return
+	}
+
+	now := time.Now()
+
+	for nodeKey, nodeInfo := range nodes {
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+
+		if simpleName == cfg.UINode {
+			continue
+		}
+
+		nodeConfig, ok := cfg.Nodes[simpleName]
+		if !ok || nodeConfig.DroppedBallTimeoutSeconds <= 0 {
+			continue
+		}
+
+		readDir := filepath.Join(nodeInfo.SessionDir, "read")
+		entries, err := os.ReadDir(readDir)
+		if err != nil {
+			continue
+		}
+
+		unrepliedCount := 0
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
+			if parseErr != nil {
+				continue
+			}
+			if fileInfo.From == "postman" {
+				continue
+			}
+			entryInfo, infoErr := entry.Info()
+			if infoErr != nil {
+				continue
+			}
+			if time.Since(entryInfo.ModTime()) >= time.Duration(nodeConfig.DroppedBallTimeoutSeconds)*time.Second {
+				unrepliedCount++
+			}
+		}
+		if unrepliedCount == 0 {
+			continue
+		}
+
+		alertVars := map[string]string{
+			"node":  simpleName,
+			"count": fmt.Sprintf("%d", unrepliedCount),
+		}
+		msg := template.ExpandVariables(cfg.UnrepliedMessageAlertTemplate, alertVars)
+		events <- tui.DaemonEvent{
+			Type:    "unreplied_message",
+			Message: msg,
+			Details: map[string]interface{}{
+				"node":  simpleName,
+				"count": unrepliedCount,
+			},
+		}
+
+		// Guard 1: per-recipient cooldown
+		if !alertRateLimiter.Allow(cfg.UINode, now) {
+			continue
+		}
+
+		// Guard 2: suppress if UINode received a message recently
+		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
+		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
+		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
+			continue
+		}
+
+		var replyCmd string
+		if cfg.ReplyCommand != "" {
+			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+		} else {
+			replyCmd = fmt.Sprintf(
+				"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+				contextID, simpleName,
+			)
+		}
+		canReach := false
+		for _, neighbor := range adjacency[cfg.UINode] {
+			if neighbor == simpleName {
+				canReach = true
+				break
+			}
+		}
+		actionVars := map[string]string{
+			"node":          simpleName,
+			"reply_command": replyCmd,
+		}
+		var actionText string
+		if canReach && cfg.AlertActionReachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+		}
+
+		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "unreplied_message", cfg, adjacency, nodes); err == nil {
 			alertRateLimiter.Record(cfg.UINode, now)
 		}
 	}
