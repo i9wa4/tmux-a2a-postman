@@ -30,9 +30,9 @@ template-level.
 
 **Template-level confirmed** (node exists, edges correct, but behavior is wrong):
 
-- Proceed to the 13-check audit below.
+- Proceed to the 11-check audit below.
 
-## 2. 13-Check Audit
+## 2. 11-Check Audit
 
 ### 2.1. Pre-check: File Existence (binary)
 
@@ -41,29 +41,18 @@ For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml` ex
 - PASS: file present
 - FAIL: file missing → emit BLOCKING finding; abort all further checks for that node
 
-### 2.2. Check 1 — PONG Anachronism (inverted post-1fbd73f)
-
-The PONG protocol was removed (commit 1fbd73f). Nodes must NOT send PONG
-replies to postman — liveness is proved by archiving messages (inbox→read/ move),
-not by an explicit PONG response. The daemon now uses archive-based liveness
-detection instead of PONG registration.
-
-- PASS: template does NOT instruct the node to send PONG to postman
-- FAIL: template contains "Send PONG to postman" or similar PONG instruction
-  — anachronistic protocol that causes dead-letter entries
-
-### 2.3. Check 2 — Routing Clarity
+### 2.2. Check 1 — Routing Clarity
 
 - PASS: template names at least one recipient for output messages
 - FAIL: template says "send a message" without specifying who receives it
 
-### 2.4. Check 3 — Completion Protocol
+### 2.3. Check 2 — Completion Protocol
 
 - PASS: template specifies a machine-readable signal word (e.g., APPROVED, DONE, BLOCKED)
   for task completion
 - FAIL: completion state is undefined or described only in natural language
 
-### 2.5. Check 4 — Fallback Routing
+### 2.4. Check 3 — Fallback Routing
 
 - PASS: template names an alternative recipient when the primary contact is absent from
   `talks_to_line`, AND the fallback recipient has an actual edge in `postman.toml`
@@ -71,7 +60,7 @@ detection instead of PONG registration.
 - FAIL (unreachable fallback): template specifies a fallback to a node that has no edge
   connecting it to this node in `postman.toml` — the fallback is unreachable
 
-### 2.6. Check 5 — Cross-Edge Consistency
+### 2.5. Check 4 — Cross-Edge Consistency
 
 Two sub-checks:
 
@@ -80,17 +69,12 @@ Two sub-checks:
 - **Judgment**: are the described routing semantics consistent with edge direction?
   (LLM assessment — label findings with `Type: JUDGMENT-BASED`)
 
-### 2.7. Check 6 — on_join Completeness
+### 2.6. Check 5 — on_join Completeness
 
 - PASS: `on_join` field is non-empty
 - FAIL: `on_join = ""`
 
-### 2.8. Check 7 — on_join Anachronism
-
-- PASS: `on_join` does not contain "Send PONG to postman" (PONG protocol was removed; liveness is proved by archiving messages)
-- FAIL: `on_join` contains "Send PONG to postman" — anachronistic instruction that confuses agents
-
-### 2.9. Check 8 — Messaging Protocol Instructions
+### 2.7. Check 6 — Messaging Protocol Instructions
 
 - PASS: template contains instruction to use `create-draft` CLI command for drafting messages
   (e.g., "tmux-a2a-postman -- create-draft")
@@ -112,7 +96,7 @@ Two sub-checks:
   the cross-context delivery path from the template alone
   (#164: `create-draft --cross-context` is the canonical cross-context primitive)
 
-### 2.10. Check 9 — Pre-Approval Verification
+### 2.8. Check 7 — Pre-Approval Verification
 
 Applies only to nodes whose template contains APPROVED or REJECTED signal words
 (typically reviewer or approver nodes).
@@ -122,7 +106,7 @@ Applies only to nodes whose template contains APPROVED or REJECTED signal words
 - FAIL: template issues APPROVED/REJECTED without requiring artifact verification
   — approvals based on plan text alone are unreliable
 
-### 2.11. Check 10 — draft_template Disclaimer
+### 2.9. Check 8 — draft_template Disclaimer
 
 Applies only to nodes that define a `draft_template` field.
 
@@ -131,7 +115,7 @@ Applies only to nodes that define a `draft_template` field.
 - FAIL: `draft_template` is present but lacks a reachability disclaimer — agents may
   assume all nodes listed in the template are contactable, leading to dead-lettered messages
 
-### 2.12. Check 11 — Dropped Ball Timeout Configured
+### 2.10. Check 9 — Dropped Ball Timeout Configured
 
 Applies to all non-observer nodes (nodes whose role does NOT contain "observer").
 
@@ -139,14 +123,14 @@ Applies to all non-observer nodes (nodes whose role does NOT contain "observer")
 - FAIL: `dropped_ball_timeout_seconds` is 0 or absent — the node can hold the ball
   indefinitely without triggering a dropped-ball alert, causing silent stalls
 
-### 2.13. Check B-I8 — Protocol Reminder Presence
+### 2.11. Check B-I8 — Protocol Reminder Presence
 
 - PASS: template references the postman protocol (e.g., contains "tmux-a2a-postman --help",
   "protocol", "tmux-a2a-postman", or "create-draft")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
 
-### 2.14. Check B-I9 — on_join Help Reference
+### 2.12. Check B-I9 — on_join Help Reference
 
 - PASS: `on_join` field references the help command (e.g., contains
   "tmux-a2a-postman -- help")
@@ -194,7 +178,7 @@ All files are read from the user's XDG config directory:
 
 1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build adjacency map
 2. Read each `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` (source of truth; runtime session templates are NOT compared)
-3. For each node: run Pre-check, then Checks 1–11, B-I8, and B-I9 in order
+3. For each node: run Pre-check, then Checks 1–9, B-I8, and B-I9 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
 6. Present to user for feedback; iterate until approved
