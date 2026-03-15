@@ -832,7 +832,7 @@ func runCreateDraft(args []string) error {
 		return fmt.Errorf("writing draft: %w", err)
 	}
 
-	fmt.Printf("Draft created: draft/%s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filepath.Base(draftPath), filepath.Base(draftPath))
+	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", draftPath, filepath.Base(draftPath))
 	return nil
 }
 
