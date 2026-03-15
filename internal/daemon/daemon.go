@@ -1195,8 +1195,10 @@ func checkNodeInactivity(nodes map[string]discovery.NodeInfo, cfg *config.Config
 				}
 				contentStr := string(fileContent)
 				if strings.Contains(contentStr, "state: user_input") {
-					userInputFound = true
-					break
+					if fi, fiErr := message.ParseMessageFilename(entry.Name()); fiErr == nil && fi.From == simpleName {
+						userInputFound = true
+						break
+					}
 				}
 			}
 			if userInputFound {
@@ -1324,6 +1326,9 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 				continue
 			}
 			if fileInfo.From == "postman" {
+				continue
+			}
+			if fileInfo.To != simpleName {
 				continue
 			}
 			entryInfo, infoErr := entry.Info()
