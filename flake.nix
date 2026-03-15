@@ -92,6 +92,7 @@
             ci = pkgs.mkShell {
               buildInputs = with pkgs; [
                 go_1_25
+                gitleaks
                 golangci-lint
                 govulncheck
               ];
