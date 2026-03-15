@@ -4,13 +4,21 @@ run-name: ${{ github.event_name }} on ${{ github.ref_name }}
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
-permissions:
-  contents: read
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,8 +26,6 @@ concurrency:
 
 jobs:
   test:
-    permissions:
-      contents: read
     strategy:
       matrix:
         include:
@@ -29,14 +35,22 @@ jobs:
             timeout_minutes: 30
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
         with:
           github_access_token: ${{ github.token }}
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
@@ -44,24 +58,29 @@ jobs:
         run: nix flake check
 
   security:
-    permissions:
-      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
         with:
           github_access_token: ${{ github.token }}
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
-      - name: Security checks
-        # NOTE: continue-on-error is temporary — GO-2026-4602 (os@go1.25.7) is deferred
-        # pending nixpkgs shipping Go 1.25.8+. Remove once Renovate lockFileMaintenance
-        # picks up a fixed nixpkgs commit.
+      - name: Run govulncheck
+        # NOTE: continue-on-error is temporary — GO-2026-4602 (os@go1.25.7)
+        # is deferred pending nixpkgs shipping Go 1.25.8+.
         continue-on-error: true
         run: nix develop .#ci --command govulncheck ./...

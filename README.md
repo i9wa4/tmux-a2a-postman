@@ -18,11 +18,12 @@ Version format depends on build context:
 
 ## 2. How it Works
 
-Discovers agents in the same tmux session by reading pane titles, sends PING messages to
-establish communication, and routes messages between nodes based on configured edges.
+Discovers agents in the same tmux session by reading pane titles, sends PING
+messages to establish communication, and routes messages between nodes based on
+configured edges.
 
-Communication works within a single tmux session by default. Cross-session routing is
-available when `diplomat_node` is configured (#164).
+Communication works within a single tmux session by default. Cross-session
+routing is available when `diplomat_node` is configured (#164).
 
 ## 3. Quick Start
 
@@ -60,10 +61,11 @@ $XDG_STATE_HOME/tmux-a2a-postman/
 
 ## 5. Session Management
 
-Sessions are toggled enabled/disabled in the TUI, controlling automatic PING delivery. Two
-config fields govern auto-enable behavior: `auto_enable_new_sessions` (default `false`)
-controls whether newly discovered sessions are automatically enabled; `auto_enable_new_agents`
-(default `true`) controls whether new agents in an already-enabled session are auto-pinged.
+Sessions are toggled enabled/disabled in the TUI, controlling automatic PING
+delivery. Two config fields govern auto-enable behavior:
+`auto_enable_new_sessions` (default `false`) controls whether newly discovered
+sessions are automatically enabled; `auto_enable_new_agents` (default `true`)
+controls whether new agents in an already-enabled session are auto-pinged.
 Manual PING (press `p` in TUI) always works regardless of session state.
 
 | Field                      | Default | Behavior                                               |
@@ -71,17 +73,17 @@ Manual PING (press `p` in TUI) always works regardless of session state.
 | `auto_enable_new_sessions` | `false` | Auto-enable newly discovered sessions                  |
 | `auto_enable_new_agents`   | `true`  | Auto-ping new agents in already-enabled sessions       |
 
-**Bool merge limitation**: Setting `auto_enable_new_sessions = false` in a project-local
-config file will NOT override an XDG-level `true`. Bool fields only propagate `true` values —
-the Go zero-value (`false`) is indistinguishable from "field not set". Use the XDG config to
-set these fields definitively.
+**Bool merge limitation**: Setting `auto_enable_new_sessions = false` in a
+project-local config file will NOT override an XDG-level `true`. Bool fields
+only propagate `true` values — the Go zero-value (`false`) is indistinguishable
+from "field not set". Use the XDG config to set these fields definitively.
 
 ## 6. Environment Variables
 
 ### 6.1. Pane Title (Node Identity)
 
-**Required** for agent nodes to be discovered by postman. Set the tmux pane title to identify
-a pane as an agent node:
+**Required** for agent nodes to be discovered by postman. Set the tmux pane
+title to identify a pane as an agent node:
 
 ```sh
 tmux rename-pane orchestrator
@@ -90,7 +92,8 @@ tmux rename-pane worker
 
 ### 6.2. Other Variables
 
-See `internal/config/postman.default.toml` for advanced variables (`POSTMAN_HOME`, etc.).
+See `internal/config/postman.default.toml` for advanced variables
+(`POSTMAN_HOME`, etc.).
 
 ## 7. Configuration
 
@@ -140,8 +143,8 @@ Key config options:
 
 See `internal/config/postman.default.toml` for all available options.
 
-**NOTE:** Editing edges via TUI removes comments from `postman.toml`; manual editing is
-recommended for preserving comments.
+**NOTE:** Editing edges via TUI removes comments from `postman.toml`; manual
+editing is recommended for preserving comments.
 
 ## 8. Usage
 
@@ -195,8 +198,8 @@ alias a2a='tmux-a2a-postman create-draft'
 
 ## 9. Deployment Topology
 
-**Constraint**: 1 tmux session = 1 postman daemon. Multiple daemons may run on the same
-machine only when they are in different tmux sessions.
+**Constraint**: 1 tmux session = 1 postman daemon. Multiple daemons may run on
+the same machine only when they are in different tmux sessions.
 
 Three supported configurations:
 
@@ -220,8 +223,8 @@ tmux server
 
 ### 9.2. Multi-Daemon, Same Machine
 
-One tmux server, multiple daemons with distinct context IDs — useful for isolated project
-contexts running in parallel.
+One tmux server, multiple daemons with distinct context IDs — useful for
+isolated project contexts running in parallel.
 
 ```text
 tmux server
@@ -233,13 +236,13 @@ tmux server
     └── pane: worker
 ```
 
-Each daemon maintains its own `{base_dir}/{contextId}/` state directory. Sessions are
-isolated from each other by default.
+Each daemon maintains its own `{base_dir}/{contextId}/` state directory.
+Sessions are isolated from each other by default.
 
 ### 9.3. Multi-Daemon, Cross-Machine
 
-Multiple machines each running a daemon, sharing a common `base_dir` via a shared
-filesystem (NFS, SSHFS, Syncthing, etc.).
+Multiple machines each running a daemon, sharing a common `base_dir` via a
+shared filesystem (NFS, SSHFS, Syncthing, etc.).
 
 ```text
 machine-A                    machine-B
@@ -247,28 +250,34 @@ machine-A                    machine-B
     shared base_dir ─────────── shared base_dir
 ```
 
-**Required for the diplomat feature** (`diplomat_node` config): cross-context messaging
-depends on all participating daemons writing to the same `base_dir` path on a common
-filesystem. Each machine runs its own daemon; the shared filesystem is the only coupling.
+**Required for the diplomat feature** (`diplomat_node` config): cross-context
+messaging depends on all participating daemons writing to the same `base_dir`
+path on a common filesystem. Each machine runs its own daemon; the shared
+filesystem is the only coupling.
 
 ## 10. Skills
 
-The `skills/` directory contains reusable agent skill files for use with AI coding assistants
-(Claude Code, Codex CLI, etc.). Each skill lives at `skills/{skill-name}/SKILL.md` and is
-invoked via the assistant's skill mechanism (e.g., `/a2a-role-auditor` in Claude Code).
+The `skills/` directory contains reusable agent skill files for use with AI
+coding assistants (Claude Code, Codex CLI, etc.). Each skill lives at
+`skills/{skill-name}/SKILL.md` and is invoked via the assistant's skill
+mechanism (e.g., `/a2a-role-auditor` in Claude Code).
 
 ### 10.1. a2a-role-auditor
 
 Path: `skills/a2a-role-auditor/SKILL.md`
 
-Audits `nodes/*.toml` role templates to diagnose and fix node-to-node interaction breakdowns.
+Audits `nodes/*.toml` role templates to diagnose and fix node-to-node
+interaction breakdowns.
 
 Use when:
 
-- A node behaves unexpectedly (routes wrongly, ignores messages, approves nothing)
-- Nodes cannot see each other in `talks_to_line` (after ruling out session/PING issues)
+- A node behaves unexpectedly (routes wrongly, ignores messages, approves
+  nothing)
+- Nodes cannot see each other in `talks_to_line` (after ruling out session/PING
+  issues)
 - Adding a new node and need to verify its template is complete and consistent
 - Reviewing or improving role definitions for any node
 
-Do NOT use for daemon-level failures (dead-letter from routing/edge misconfiguration); run
-triage first to determine whether the issue is template-level.
+Do NOT use for daemon-level failures (dead-letter from routing/edge
+misconfiguration); run triage first to determine whether the issue is
+template-level.

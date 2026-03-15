@@ -19,16 +19,18 @@ node-to-node interaction breakdowns.
 
 ## 1. Mandatory Triage Gate
 
-Before running any template audit, determine whether the issue is daemon-level or
-template-level.
+Before running any template audit, determine whether the issue is daemon-level
+or template-level.
 
-**Daemon-level indicators** (stop here — report as config issue, do NOT produce patches):
+**Daemon-level indicators** (stop here — report as config issue, do NOT produce
+patches):
 
 - Wrong or missing edges in `postman.toml`
 - `nodes/{node}.toml` file does not exist
 - Session disabled in postman TUI
 
-**Template-level confirmed** (node exists, edges correct, but behavior is wrong):
+**Template-level confirmed** (node exists, edges correct, but behavior is
+wrong):
 
 - Proceed to the 11-check audit below.
 
@@ -36,10 +38,12 @@ template-level.
 
 ### 2.1. Pre-check: File Existence (binary)
 
-For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml` exists.
+For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml`
+exists.
 
 - PASS: file present
-- FAIL: file missing → emit BLOCKING finding; abort all further checks for that node
+- FAIL: file missing → emit BLOCKING finding; abort all further checks for that
+  node
 
 ### 2.2. Check 1 — Routing Clarity
 
@@ -48,26 +52,28 @@ For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml` ex
 
 ### 2.3. Check 2 — Completion Protocol
 
-- PASS: template specifies a machine-readable signal word (e.g., APPROVED, DONE, BLOCKED)
-  for task completion
+- PASS: template specifies a machine-readable signal word (e.g., APPROVED, DONE,
+  BLOCKED) for task completion
 - FAIL: completion state is undefined or described only in natural language
 
 ### 2.4. Check 3 — Fallback Routing
 
-- PASS: template names an alternative recipient when the primary contact is absent from
-  `talks_to_line`, AND the fallback recipient has an actual edge in `postman.toml`
+- PASS: template names an alternative recipient when the primary contact is
+  absent from `talks_to_line`, AND the fallback recipient has an actual edge in
+  `postman.toml`
 - FAIL (no fallback): no fallback specified
-- FAIL (unreachable fallback): template specifies a fallback to a node that has no edge
-  connecting it to this node in `postman.toml` — the fallback is unreachable
+- FAIL (unreachable fallback): template specifies a fallback to a node that has
+  no edge connecting it to this node in `postman.toml` — the fallback is
+  unreachable
 
 ### 2.5. Check 4 — Cross-Edge Consistency
 
 Two sub-checks:
 
-- **Binary**: does the template mention only nodes that exist as edges in `postman.toml`?
-  (PASS/FAIL — no judgment)
-- **Judgment**: are the described routing semantics consistent with edge direction?
-  (LLM assessment — label findings with `Type: JUDGMENT-BASED`)
+- **Binary**: does the template mention only nodes that exist as edges in
+  `postman.toml`? (PASS/FAIL — no judgment)
+- **Judgment**: are the described routing semantics consistent with edge
+  direction? (LLM assessment — label findings with `Type: JUDGMENT-BASED`)
 
 ### 2.6. Check 5 — on_join Completeness
 
@@ -76,25 +82,30 @@ Two sub-checks:
 
 ### 2.7. Check 6 — Messaging Protocol Instructions
 
-- PASS: template contains instruction to use `create-draft` CLI command for drafting messages
-  (e.g., "tmux-a2a-postman -- create-draft")
-- PASS (also verify): template does NOT instruct the agent to use `mv draft/ post/`;
-  agents must use `tmux-a2a-postman send <filename>` to submit drafts
-- PASS (also verify): template does NOT instruct the agent to use `mv` to move files to
-  `read/`; agents must use `tmux-a2a-postman archive <filename>` to mark messages as read
-- FAIL: template lacks create-draft protocol instruction — agents may manually create files
-  in draft/, causing malformed envelope metadata
-- FAIL: template instructs `mv draft/ post/` — deprecated; use `tmux-a2a-postman send <filename>`
+- PASS: template contains instruction to use `create-draft` CLI command for
+  drafting messages (e.g., "tmux-a2a-postman -- create-draft")
+- PASS (also verify): template does NOT instruct the agent to use
+  `mv draft/ post/`; agents must use `tmux-a2a-postman send <filename>` to
+  submit drafts
+- PASS (also verify): template does NOT instruct the agent to use `mv` to move
+  files to `read/`; agents must use `tmux-a2a-postman archive <filename>` to
+  mark messages as read
+- FAIL: template lacks create-draft protocol instruction — agents may manually
+  create files in draft/, causing malformed envelope metadata
+- FAIL: template instructs `mv draft/ post/` — deprecated; use
+  `tmux-a2a-postman send <filename>`
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman archive <filename>`
 
-**Diplomat sub-check** (applies only when `diplomat_node` is set in `postman.toml`):
+**Diplomat sub-check** (applies only when `diplomat_node` is set in
+`postman.toml`):
 
-- PASS: template for the diplomat node documents `--cross-context <contextID>:<node>` syntax
-  when cross-context messaging is part of its responsibilities
-- FAIL: diplomat node template has no mention of `--cross-context` — agents cannot discover
-  the cross-context delivery path from the template alone
-  (#164: `create-draft --cross-context` is the canonical cross-context primitive)
+- PASS: template for the diplomat node documents
+  `--cross-context <contextID>:<node>` syntax when cross-context messaging is
+  part of its responsibilities
+- FAIL: diplomat node template has no mention of `--cross-context` — agents
+  cannot discover the cross-context delivery path from the template alone (#164:
+  `create-draft --cross-context` is the canonical cross-context primitive)
 
 ### 2.8. Check 7 — Pre-Approval Verification
 
@@ -103,30 +114,33 @@ Applies only to nodes whose template contains APPROVED or REJECTED signal words
 
 - PASS: template contains an explicit verification step before issuing verdict
   (e.g., "verify artifact exists with git status")
-- FAIL: template issues APPROVED/REJECTED without requiring artifact verification
-  — approvals based on plan text alone are unreliable
+- FAIL: template issues APPROVED/REJECTED without requiring artifact
+  verification — approvals based on plan text alone are unreliable
 
 ### 2.9. Check 8 — draft_template Disclaimer
 
 Applies only to nodes that define a `draft_template` field.
 
-- PASS: `draft_template` includes a disclaimer such as "(for context only — only nodes
-  in 'You can only talk to:' are reachable)"
-- FAIL: `draft_template` is present but lacks a reachability disclaimer — agents may
-  assume all nodes listed in the template are contactable, leading to dead-lettered messages
+- PASS: `draft_template` includes a disclaimer such as "(for context only — only
+  nodes in 'You can only talk to:' are reachable)"
+- FAIL: `draft_template` is present but lacks a reachability disclaimer — agents
+  may assume all nodes listed in the template are contactable, leading to
+  dead-lettered messages
 
 ### 2.10. Check 9 — Dropped Ball Timeout Configured
 
-Applies to all non-observer nodes (nodes whose role does NOT contain "observer").
+Applies to all non-observer nodes (nodes whose role does NOT contain
+"observer").
 
 - PASS: `dropped_ball_timeout_seconds` is greater than 0
-- FAIL: `dropped_ball_timeout_seconds` is 0 or absent — the node can hold the ball
-  indefinitely without triggering a dropped-ball alert, causing silent stalls
+- FAIL: `dropped_ball_timeout_seconds` is 0 or absent — the node can hold the
+  ball indefinitely without triggering a dropped-ball alert, causing silent
+  stalls
 
 ### 2.11. Check B-I8 — Protocol Reminder Presence
 
-- PASS: template references the postman protocol (e.g., contains "tmux-a2a-postman --help",
-  "protocol", "tmux-a2a-postman", or "create-draft")
+- PASS: template references the postman protocol (e.g., contains
+  "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", or "create-draft")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
 
@@ -168,37 +182,45 @@ All files are read from the user's XDG config directory:
 | Default config reference         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.default.toml`   |
 
 - `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
-- `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections (per-node config).
-- `nodes/{node}.toml` holds the role template (`template`, `on_join`, `draft_template`, etc.) for each node.
-- `postman.default.toml` is a canonical reference listing all configurable values with their
-  defaults and comments. Consult it when auditing `dropped_ball_timeout_seconds` defaults
-  and other per-node configurable fields (#249 policy: all values must appear explicitly here).
+- `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections
+  (per-node config).
+- `nodes/{node}.toml` holds the role template (`template`, `on_join`,
+  `draft_template`, etc.) for each node.
+- `postman.default.toml` is a canonical reference listing all configurable
+  values with their defaults and comments. Consult it when auditing
+  `dropped_ball_timeout_seconds` defaults and other per-node configurable fields
+  (#249 policy: all values must appear explicitly here).
 
 ## 5. Workflow
 
-1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build adjacency map
-2. Read each `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` (source of truth; runtime session templates are NOT compared)
+1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build
+   adjacency map
+2. Read each `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` (source of
+   truth; runtime session templates are NOT compared)
 3. For each node: run Pre-check, then Checks 1–9, B-I8, and B-I9 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
 6. Present to user for feedback; iterate until approved
 
-NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or delegates to a worker node.
+NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or
+delegates to a worker node.
 
 ### 5.1. Nix Store Warning
 
-Before attempting to patch any node file, check if the deployed path is read-only:
+Before attempting to patch any node file, check if the deployed path is
+read-only:
 
 ```sh
 ls -la $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/
 ```
 
-If files are owned by root with permissions `-r--r--r--` and timestamp `Jan 1 1970`,
-they live in the **Nix store** and cannot be edited in place.
+If files are owned by root with permissions `-r--r--r--` and timestamp
+`Jan 1 1970`, they live in the **Nix store** and cannot be edited in place.
 
 In this case:
 
-1. Confirm the store path: `readlink -f $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
+1. Confirm the store path:
+   `readlink -f $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
 2. Find the editable source in dotfiles (typically
    `~/ghq/<user>/dotfiles/config/tmux-a2a-postman/nodes/<node>.toml`)
 3. Apply all patches to the dotfiles source, not the deployed path
@@ -268,8 +290,8 @@ Fix:
 ## 7. Constraints
 
 - Propose patches only; do NOT auto-apply
-- When an issue is daemon-level (wrong edges, missing file, disabled session), note it as
-  a config finding — template patches cannot fix it
-- Manual integration test for `talks_to_line` visibility: if a node has not yet been
-  discovered by PING in the current session, mark the result `INCONCLUSIVE` (environment), not
-  a skill failure
+- When an issue is daemon-level (wrong edges, missing file, disabled session),
+  note it as a config finding — template patches cannot fix it
+- Manual integration test for `talks_to_line` visibility: if a node has not yet
+  been discovered by PING in the current session, mark the result `INCONCLUSIVE`
+  (environment), not a skill failure
