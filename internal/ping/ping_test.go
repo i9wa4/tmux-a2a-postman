@@ -124,8 +124,8 @@ func TestSendPingToNode(t *testing.T) {
 	}
 
 	activeNodes := []string{"worker", "orchestrator"}
-	pongActiveNodes := map[string]bool{} // Empty for this test (PING time)
-	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, pongActiveNodes, map[string][]string{}, map[string]discovery.NodeInfo{})
+	livenessMap := map[string]bool{} // Empty for this test (PING time)
+	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, livenessMap, map[string][]string{}, map[string]discovery.NodeInfo{})
 	if err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}

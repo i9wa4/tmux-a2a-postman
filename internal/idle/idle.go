@@ -22,7 +22,7 @@ import (
 type NodeActivity struct {
 	LastReceived        time.Time
 	LastSent            time.Time
-	PongReceived        bool
+	LivenessConfirmed   bool
 	LastNotifiedDropped time.Time // Issue #56: cooldown tracking for dropped-ball alerts
 	LastScreenChange    time.Time // Last screen content change (for debug/display only, not used for idle detection)
 }
@@ -79,13 +79,13 @@ func (t *IdleTracker) UpdateReceiveActivity(nodeKey string) {
 	t.nodeActivity[nodeKey] = activity
 }
 
-// MarkPongReceived marks that a node has received PONG confirmation (Issue #55).
+// MarkNodeAlive marks that a node has confirmed liveness (Issue #55).
 // Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
-func (t *IdleTracker) MarkPongReceived(nodeKey string) {
+func (t *IdleTracker) MarkNodeAlive(nodeKey string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	activity := t.nodeActivity[nodeKey]
-	activity.PongReceived = true
+	activity.LivenessConfirmed = true
 	t.nodeActivity[nodeKey] = activity
 }
 
@@ -100,15 +100,15 @@ func (t *IdleTracker) GetNodeStates() map[string]NodeActivity {
 	return result
 }
 
-// GetPongActiveNodes returns a set of node keys that have received PONG (Issue #84).
-// Returns non-nil map (empty if no PONG received).
-// NOTE: PONG-active status is informational (UX), not an access control mechanism.
-func (t *IdleTracker) GetPongActiveNodes() map[string]bool {
+// GetLivenessMap returns a set of node keys that have confirmed liveness (Issue #84).
+// Returns non-nil map (empty if no liveness confirmed).
+// NOTE: Liveness status is informational (UX), not an access control mechanism.
+func (t *IdleTracker) GetLivenessMap() map[string]bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	result := make(map[string]bool)
 	for key, activity := range t.nodeActivity {
-		if activity.PongReceived {
+		if activity.LivenessConfirmed {
 			result[key] = true
 		}
 	}
@@ -212,8 +212,8 @@ func (t *IdleTracker) CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
 		}
-		// Skip if PONG not received (handshake incomplete)
-		if !activity.PongReceived {
+		// Skip if liveness not yet confirmed
+		if !activity.LivenessConfirmed {
 			continue
 		}
 		// Check holding: LastReceived > LastSent
@@ -266,8 +266,8 @@ func (t *IdleTracker) GetCurrentlyDroppedNodes(nodeConfigs map[string]config.Nod
 		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
 			continue
 		}
-		// Skip if PONG not received (handshake incomplete)
-		if !activity.PongReceived {
+		// Skip if liveness not yet confirmed
+		if !activity.LivenessConfirmed {
 			continue
 		}
 		// Check holding: LastReceived > LastSent

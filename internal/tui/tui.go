@@ -305,7 +305,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		switch {
 		case droppedNodes != nil && droppedNodes[nodeKey]:
 			state = "stale"
-		case !activity.PongReceived:
+		case !activity.LivenessConfirmed:
 			state = "stale"
 		case activity.LastReceived.After(activity.LastSent) && !activity.LastReceived.IsZero():
 			// BLOCKING FIX: Preserve existing ball possession logic
@@ -624,8 +624,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedEdge = 0
 				}
 			}
-		case "pong_received":
-			// Issue #55: Mark node as active when PONG received
+		case "node_alive":
+			// Issue #55: Mark node as active when liveness confirmed
 			// Issue #79: Simplified - node key is already session-prefixed
 			if node, ok := msg.Details["node"].(string); ok {
 				m.nodeStates[node] = "active"

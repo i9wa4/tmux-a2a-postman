@@ -288,9 +288,9 @@ func TestGetCurrentlyDroppedNodes(t *testing.T) {
 		tracker := NewIdleTracker()
 		tracker.mu.Lock()
 		tracker.nodeActivity["test-session:worker"] = NodeActivity{
-			LastReceived: time.Now().Add(-11 * time.Second),
-			LastSent:     time.Now().Add(-15 * time.Second),
-			PongReceived: true,
+			LastReceived:      time.Now().Add(-11 * time.Second),
+			LastSent:          time.Now().Add(-15 * time.Second),
+			LivenessConfirmed: true,
 		}
 		tracker.mu.Unlock()
 
@@ -304,9 +304,9 @@ func TestGetCurrentlyDroppedNodes(t *testing.T) {
 		tracker := NewIdleTracker()
 		tracker.mu.Lock()
 		tracker.nodeActivity["test-session:worker"] = NodeActivity{
-			LastReceived: time.Now().Add(-5 * time.Second),
-			LastSent:     time.Now().Add(-8 * time.Second),
-			PongReceived: true,
+			LastReceived:      time.Now().Add(-5 * time.Second),
+			LastSent:          time.Now().Add(-8 * time.Second),
+			LivenessConfirmed: true,
 		}
 		tracker.mu.Unlock()
 
@@ -316,19 +316,19 @@ func TestGetCurrentlyDroppedNodes(t *testing.T) {
 		}
 	})
 
-	t.Run("no pong received", func(t *testing.T) {
+	t.Run("liveness not confirmed", func(t *testing.T) {
 		tracker := NewIdleTracker()
 		tracker.mu.Lock()
 		tracker.nodeActivity["test-session:worker"] = NodeActivity{
-			LastReceived: time.Now().Add(-11 * time.Second),
-			LastSent:     time.Now().Add(-15 * time.Second),
-			PongReceived: false,
+			LastReceived:      time.Now().Add(-11 * time.Second),
+			LastSent:          time.Now().Add(-15 * time.Second),
+			LivenessConfirmed: false,
 		}
 		tracker.mu.Unlock()
 
 		dropped := tracker.GetCurrentlyDroppedNodes(nodeConfigs)
 		if len(dropped) != 0 {
-			t.Errorf("expected no dropped nodes (PONG not received), got %v", dropped)
+			t.Errorf("expected no dropped nodes (liveness not confirmed), got %v", dropped)
 		}
 	})
 
@@ -336,9 +336,9 @@ func TestGetCurrentlyDroppedNodes(t *testing.T) {
 		tracker := NewIdleTracker()
 		tracker.mu.Lock()
 		tracker.nodeActivity["test-session:worker"] = NodeActivity{
-			LastReceived: time.Now().Add(-11 * time.Second),
-			LastSent:     time.Now().Add(-15 * time.Second),
-			PongReceived: true,
+			LastReceived:      time.Now().Add(-11 * time.Second),
+			LastSent:          time.Now().Add(-15 * time.Second),
+			LivenessConfirmed: true,
 		}
 		tracker.mu.Unlock()
 
@@ -398,7 +398,7 @@ func TestCheckDroppedBalls_BasicDetection(t *testing.T) {
 	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
-		PongReceived:        true,
+		LivenessConfirmed:   true,
 		LastNotifiedDropped: time.Time{}, // Never notified
 	}
 	tracker.mu.Unlock()
@@ -429,9 +429,9 @@ func TestCheckDroppedBalls_ThresholdNotExceeded(t *testing.T) {
 	// Setup: Node holding ball but within threshold
 	tracker.mu.Lock()
 	tracker.nodeActivity["test-session:worker"] = NodeActivity{
-		LastReceived: time.Now().Add(-5 * time.Second),
-		LastSent:     time.Now().Add(-7 * time.Second),
-		PongReceived: true,
+		LastReceived:      time.Now().Add(-5 * time.Second),
+		LastSent:          time.Now().Add(-7 * time.Second),
+		LivenessConfirmed: true,
 	}
 	tracker.mu.Unlock()
 
@@ -457,7 +457,7 @@ func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
 	tracker.nodeActivity["test-session:worker"] = NodeActivity{
 		LastReceived:        time.Now().Add(-11 * time.Second),
 		LastSent:            time.Now().Add(-15 * time.Second),
-		PongReceived:        true,
+		LivenessConfirmed:   true,
 		LastNotifiedDropped: time.Now().Add(-5 * time.Second), // Notified 5s ago
 	}
 	tracker.mu.Unlock()
@@ -476,15 +476,15 @@ func TestCheckDroppedBalls_CooldownActive(t *testing.T) {
 	}
 }
 
-func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
+func TestCheckDroppedBalls_LivenessNotConfirmed(t *testing.T) {
 	tracker := NewIdleTracker()
 
-	// Setup: Node holding ball but handshake incomplete (no PONG)
+	// Setup: Node holding ball but liveness not yet confirmed
 	tracker.mu.Lock()
 	tracker.nodeActivity["test-session:worker"] = NodeActivity{
-		LastReceived: time.Now().Add(-11 * time.Second),
-		LastSent:     time.Now().Add(-15 * time.Second),
-		PongReceived: false, // No PONG yet
+		LastReceived:      time.Now().Add(-11 * time.Second),
+		LastSent:          time.Now().Add(-15 * time.Second),
+		LivenessConfirmed: false, // No liveness yet
 	}
 	tracker.mu.Unlock()
 
@@ -498,7 +498,7 @@ func TestCheckDroppedBalls_NoPongReceived(t *testing.T) {
 	dropped := tracker.CheckDroppedBalls(nodeConfigs)
 
 	if len(dropped) != 0 {
-		t.Errorf("expected no dropped nodes (PONG not received), got %d", len(dropped))
+		t.Errorf("expected no dropped nodes (liveness not confirmed), got %d", len(dropped))
 	}
 }
 
@@ -508,9 +508,9 @@ func TestCheckDroppedBalls_DisabledNode(t *testing.T) {
 	// Setup: Node holding ball but dropped-ball detection disabled (threshold=0)
 	tracker.mu.Lock()
 	tracker.nodeActivity["test-session:worker"] = NodeActivity{
-		LastReceived: time.Now().Add(-11 * time.Second),
-		LastSent:     time.Now().Add(-15 * time.Second),
-		PongReceived: true,
+		LastReceived:      time.Now().Add(-11 * time.Second),
+		LastSent:          time.Now().Add(-15 * time.Second),
+		LivenessConfirmed: true,
 	}
 	tracker.mu.Unlock()
 
@@ -695,21 +695,21 @@ func TestGetPaneActivityStatus_EmptyState(t *testing.T) {
 	}
 }
 
-func TestGetPongActiveNodes(t *testing.T) {
+func TestGetLivenessMap(t *testing.T) {
 	tracker := NewIdleTracker()
 
 	// Initially empty
-	result := tracker.GetPongActiveNodes()
+	result := tracker.GetLivenessMap()
 	if len(result) != 0 {
 		t.Errorf("expected empty, got %v", result)
 	}
 
-	// Mark PONG received
-	tracker.MarkPongReceived("session1:nodeA")
-	tracker.MarkPongReceived("session1:nodeB")
-	tracker.UpdateSendActivity("session1:nodeC") // No PONG
+	// Mark nodes alive
+	tracker.MarkNodeAlive("session1:nodeA")
+	tracker.MarkNodeAlive("session1:nodeB")
+	tracker.UpdateSendActivity("session1:nodeC") // No liveness confirmed
 
-	result = tracker.GetPongActiveNodes()
+	result = tracker.GetLivenessMap()
 	if len(result) != 2 {
 		t.Errorf("expected 2, got %d", len(result))
 	}
@@ -717,6 +717,6 @@ func TestGetPongActiveNodes(t *testing.T) {
 		t.Errorf("expected nodeA and nodeB, got %v", result)
 	}
 	if result["session1:nodeC"] {
-		t.Errorf("nodeC should not be active (no PONG)")
+		t.Errorf("nodeC should not be in liveness map (no liveness confirmed)")
 	}
 }

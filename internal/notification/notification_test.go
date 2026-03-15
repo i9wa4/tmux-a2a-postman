@@ -67,9 +67,9 @@ func TestBuildNotification_SentinelObfuscation(t *testing.T) {
 
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "orchestrator", "test", "/path/file.md", pongActiveNodes)
+	result := BuildNotification(cfg, adjacency, nodes, "ctx", "worker", "orchestrator", "test", "/path/file.md", livenessMap)
 
 	// User content sentinel must be obfuscated.
 	if strings.Contains(result, "# WORKER\n<!-- end of message -->") {
@@ -109,20 +109,20 @@ func TestBuildNotification(t *testing.T) {
 	}
 
 	// sourceSessionName is "test"
-	// Issue #84: Add pongActiveNodes parameter (all active for this test)
-	pongActiveNodes := map[string]bool{
+	// Issue #84: Add livenessMap parameter (all active for this test)
+	livenessMap := map[string]bool{
 		"test:worker":       true,
 		"test:orchestrator": true,
 	}
-	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md", pongActiveNodes)
+	notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md", livenessMap)
 
 	if !strings.Contains(notification, "Message from orchestrator to worker") {
 		t.Errorf("notification = %q, want to contain 'Message from orchestrator to worker'", notification)
 	}
 }
 
-// TestBuildNotification_PongActiveFiltering tests Issue #84 - talks_to_line filtering
-func TestBuildNotification_PongActiveFiltering(t *testing.T) {
+// TestBuildNotification_LivenessFiltering tests Issue #84 - talks_to_line filtering
+func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message: {talks_to_line}",
 		TmuxTimeout:          5.0,
@@ -150,13 +150,13 @@ func TestBuildNotification_PongActiveFiltering(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		pongActiveNodes map[string]bool
+		livenessMap     map[string]bool
 		wantContains    string
 		wantNotContains string
 	}{
 		{
-			name: "All nodes PONG-active",
-			pongActiveNodes: map[string]bool{
+			name: "All nodes liveness-confirmed",
+			livenessMap: map[string]bool{
 				"test:orchestrator": true,
 				"test:observer":     true,
 			},
@@ -164,16 +164,16 @@ func TestBuildNotification_PongActiveFiltering(t *testing.T) {
 			wantNotContains: "",
 		},
 		{
-			name: "Only orchestrator PONG-active",
-			pongActiveNodes: map[string]bool{
+			name: "Only orchestrator liveness-confirmed",
+			livenessMap: map[string]bool{
 				"test:orchestrator": true,
 			},
 			wantContains:    "orchestrator",
 			wantNotContains: "observer",
 		},
 		{
-			name:            "No nodes PONG-active",
-			pongActiveNodes: map[string]bool{},
+			name:            "No nodes liveness-confirmed",
+			livenessMap:     map[string]bool{},
 			wantContains:    "",
 			wantNotContains: "Can talk to",
 		},
@@ -181,7 +181,7 @@ func TestBuildNotification_PongActiveFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/file.md", tt.pongActiveNodes)
+			notification := BuildNotification(cfg, adjacency, nodes, "test-ctx", "worker", "orchestrator", "test", "/path/to/file.md", tt.livenessMap)
 
 			if tt.wantContains != "" && !strings.Contains(notification, tt.wantContains) {
 				t.Errorf("notification = %q, want to contain %q", notification, tt.wantContains)

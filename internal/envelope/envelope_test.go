@@ -14,9 +14,9 @@ func TestBuildEnvelope_BasicExpansion(t *testing.T) {
 	}
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildEnvelope(cfg, "PING {node} in {context_id}", "worker", "postman", "test-ctx", "task-1", "/session/post/file.md", []string{"worker"}, adjacency, nodes, "", pongActiveNodes)
+	result := BuildEnvelope(cfg, "PING {node} in {context_id}", "worker", "postman", "test-ctx", "task-1", "/session/post/file.md", []string{"worker"}, adjacency, nodes, "", livenessMap)
 
 	if result != "PING worker in test-ctx" {
 		t.Errorf("BuildEnvelope() = %q, want %q", result, "PING worker in test-ctx")
@@ -29,9 +29,9 @@ func TestBuildEnvelope_NoVariables(t *testing.T) {
 	}
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildEnvelope(cfg, "PING message", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", pongActiveNodes)
+	result := BuildEnvelope(cfg, "PING message", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
 
 	if result != "PING message" {
 		t.Errorf("BuildEnvelope() = %q, want %q", result, "PING message")
@@ -44,9 +44,9 @@ func TestBuildEnvelope_MissingVariable(t *testing.T) {
 	}
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildEnvelope(cfg, "PING {node} in {missing}", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", pongActiveNodes)
+	result := BuildEnvelope(cfg, "PING {node} in {missing}", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
 
 	if !strings.Contains(result, "PING worker") {
 		t.Errorf("BuildEnvelope() = %q, want to contain 'PING worker'", result)
@@ -66,9 +66,9 @@ func TestBuildEnvelope_SentinelObfuscation(t *testing.T) {
 	}
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildEnvelope(cfg, "<!-- message start -->\n{template}\n<!-- end of message -->\n", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", pongActiveNodes)
+	result := BuildEnvelope(cfg, "<!-- message start -->\n{template}\n<!-- end of message -->\n", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
 
 	if strings.Contains(result, "# WORKER\n<!-- end of message -->") {
 		t.Errorf("user template sentinel was not obfuscated; result: %q", result)
@@ -92,17 +92,17 @@ func TestBuildEnvelope_TalksToLine(t *testing.T) {
 		"test:orchestrator": {PaneID: "%2", SessionName: "test"},
 		"test:observer":     {PaneID: "%3", SessionName: "test"},
 	}
-	pongActiveNodes := map[string]bool{
+	livenessMap := map[string]bool{
 		"test:orchestrator": true,
 	}
 
-	result := BuildEnvelope(cfg, "msg: {talks_to_line}", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "test", pongActiveNodes)
+	result := BuildEnvelope(cfg, "msg: {talks_to_line}", "worker", "postman", "ctx", "", "/session/post/file.md", nil, adjacency, nodes, "test", livenessMap)
 
 	if !strings.Contains(result, "orchestrator") {
 		t.Errorf("result = %q, want to contain 'orchestrator'", result)
 	}
 	if strings.Contains(result, "observer") {
-		t.Errorf("result = %q, should not contain 'observer' (not PONG-active)", result)
+		t.Errorf("result = %q, should not contain 'observer' (not liveness-confirmed)", result)
 	}
 }
 
@@ -112,9 +112,9 @@ func TestBuildEnvelope_InboxPath(t *testing.T) {
 	}
 	adjacency := map[string][]string{}
 	nodes := map[string]discovery.NodeInfo{}
-	pongActiveNodes := map[string]bool{}
+	livenessMap := map[string]bool{}
 
-	result := BuildEnvelope(cfg, "inbox: {inbox_path}", "worker", "postman", "ctx", "", "/my/session/post/file.md", nil, adjacency, nodes, "", pongActiveNodes)
+	result := BuildEnvelope(cfg, "inbox: {inbox_path}", "worker", "postman", "ctx", "", "/my/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
 
 	if strings.Contains(result, "{inbox_path}") {
 		t.Errorf("inbox_path was not expanded: %q", result)

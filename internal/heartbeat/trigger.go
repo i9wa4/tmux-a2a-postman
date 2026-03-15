@@ -86,26 +86,23 @@ func SendHeartbeatTrigger(
 	expandedPrompt := strings.ReplaceAll(prompt, "{context_id}", contextID)
 
 	tmpl := cfg.HeartbeatMessageTemplate
-	var content string
 	if tmpl == "" {
-		// Legacy path: hardcoded format
-		content = fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  taskId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n---\n\n## Content\n\n%s\n",
-			contextID, taskID, llmNode, now.Format(time.RFC3339), expandedPrompt)
-	} else {
-		// New path: BuildEnvelope + Pass 2
-		nodes := *sharedNodes.Load()
-		sourceSessionName := nodeInfo.SessionName
-		scaffolded := envelope.BuildEnvelope(
-			cfg, tmpl, llmNode, "postman",
-			contextID, taskID, filePath,
-			nil, adjacency, nodes, sourceSessionName,
-			nil, // pongActiveNodes = nil → static adjacency
-		)
-		content = template.ExpandVariables(scaffolded, map[string]string{
-			"role_content": envelope.BuildRoleContent(cfg, llmNode),
-			"message":      expandedPrompt,
-		})
+		// No template configured: heartbeat send is a no-op.
+		return nil
 	}
+
+	activeNodes := *sharedNodes.Load()
+	sourceSessionName := nodeInfo.SessionName
+	scaffolded := envelope.BuildEnvelope(
+		cfg, tmpl, llmNode, "postman",
+		contextID, taskID, filePath,
+		nil, adjacency, activeNodes, sourceSessionName,
+		nil, // livenessMap = nil → static adjacency
+	)
+	content := template.ExpandVariables(scaffolded, map[string]string{
+		"role_content": envelope.BuildRoleContent(cfg, llmNode),
+		"message":      expandedPrompt,
+	})
 
 	if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
 		log.Printf("heartbeat: failed to write trigger %s: %v", filePath, err)

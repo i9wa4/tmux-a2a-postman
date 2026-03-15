@@ -13,7 +13,7 @@ import (
 
 // BuildEnvelope builds a message string by expanding tmpl with a shared set of variables.
 // Shared logic: role-template resolution, sentinel obfuscation, talks_to_line construction
-// (session-aware, same-session priority, PONG-filtered), and reply_command building
+// (session-aware, same-session priority, liveness-filtered), and reply_command building
 // (--context-id injection).
 //
 // tmpl is caller-provided: pass cfg.MessageTemplate for ping/A2A envelopes, or
@@ -33,7 +33,7 @@ func BuildEnvelope(
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	sourceSessionName string,
-	pongActiveNodes map[string]bool,
+	livenessMap map[string]bool,
 ) string {
 	// Role template resolution: Nodes → CommonTemplate prepend.
 	recipientTemplate := ""
@@ -53,13 +53,13 @@ func BuildEnvelope(
 	// protocol prematurely. @path references are unaffected (no sentinel in file paths).
 	recipientTemplate = strings.ReplaceAll(recipientTemplate, "<!-- end of message -->", "<!-- end of msg -->")
 
-	// talks_to_line: session-aware PONG-filtered neighbor list.
+	// talks_to_line: session-aware liveness-filtered neighbor list.
 	// Uses notification-path semantics: same-session priority, exact key lookup.
 	talksTo := config.GetTalksTo(adjacency, recipient)
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
 		nodeFullName := discovery.ResolveNodeName(node, sourceSessionName, nodes)
-		if nodeFullName != "" && (pongActiveNodes == nil || pongActiveNodes[nodeFullName]) {
+		if nodeFullName != "" && (livenessMap == nil || livenessMap[nodeFullName]) {
 			activeTalksTo = append(activeTalksTo, node)
 		}
 	}
@@ -68,7 +68,7 @@ func BuildEnvelope(
 		talksToLine = fmt.Sprintf("Can talk to: %s", strings.Join(activeTalksTo, ", "))
 	}
 
-	// contacts_section: adjacent nodes with role descriptions (PONG-filtered, or all-adjacent when nil).
+	// contacts_section: adjacent nodes with role descriptions (liveness-filtered, or all-adjacent when nil).
 	contactLines := []string{}
 	for _, node := range activeTalksTo {
 		nodeConfig := cfg.GetNodeConfig(node)

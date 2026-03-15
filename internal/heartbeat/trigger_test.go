@@ -34,8 +34,10 @@ func TestSendHeartbeatTrigger_WritesFile(t *testing.T) {
 	}
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
+	cfg := config.DefaultConfig()
+	cfg.HeartbeatMessageTemplate = "{message}"
 
-	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "check {context_id}", 1800, config.DefaultConfig(), nil); err != nil {
+	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "check {context_id}", 1800, cfg, nil); err != nil {
 		t.Fatalf("SendHeartbeatTrigger: %v", err)
 	}
 
@@ -79,9 +81,11 @@ func TestSendHeartbeatTrigger_SkipsWhenUnread(t *testing.T) {
 	}
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
+	cfg := config.DefaultConfig()
+	cfg.HeartbeatMessageTemplate = "{message}"
 
 	// intervalSeconds = 1800 → TTL = 3600s; the fresh file is well within TTL
-	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1800, config.DefaultConfig(), nil); err != nil {
+	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1800, cfg, nil); err != nil {
 		t.Fatalf("SendHeartbeatTrigger: %v", err)
 	}
 
@@ -117,9 +121,11 @@ func TestSendHeartbeatTrigger_RecyclesStale(t *testing.T) {
 	}
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
+	cfg := config.DefaultConfig()
+	cfg.HeartbeatMessageTemplate = "{message}"
 
 	// intervalSeconds = 1 → TTL = 2s; 2-hour-old file is stale
-	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1, config.DefaultConfig(), nil); err != nil {
+	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1, cfg, nil); err != nil {
 		t.Fatalf("SendHeartbeatTrigger: %v", err)
 	}
 
@@ -150,5 +156,33 @@ func TestSendHeartbeatTrigger_NodeNotFound(t *testing.T) {
 	// Node not in sharedNodes: should return nil and write nothing
 	if err := SendHeartbeatTrigger(&ptr, "ctx-test", "heartbeat-llm", "prompt", 1800, config.DefaultConfig(), nil); err != nil {
 		t.Errorf("expected nil error for missing node, got: %v", err)
+	}
+}
+
+func TestSendHeartbeatTrigger_NoTemplate_NoOp(t *testing.T) {
+	tmpDir := t.TempDir()
+	postDir := filepath.Join(tmpDir, "post")
+	inboxDir := filepath.Join(tmpDir, "inbox", "heartbeat-llm")
+	if err := os.MkdirAll(postDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll post: %v", err)
+	}
+	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
+	cfg := config.DefaultConfig()
+	cfg.HeartbeatMessageTemplate = ""
+
+	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1800, cfg, nil); err != nil {
+		t.Fatalf("SendHeartbeatTrigger: %v", err)
+	}
+
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no trigger files when template is empty, got %d", len(entries))
 	}
 }

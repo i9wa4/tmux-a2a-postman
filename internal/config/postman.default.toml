@@ -122,7 +122,7 @@ alert_action_unreachable_template = "\n\n### Action Required\nNote: {node} is no
 # Alert message body templates (used as alert content sent to ui_node)
 inbox_stagnation_alert_template = "Inbox stagnation [{severity}]: {node} has unread message in inbox for {age} (threshold: {threshold})"
 inbox_unread_summary_alert_template = "Inbox unread summary: {node} has {count} unread messages (threshold: {threshold})"
-node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive for {inactive_duration} (threshold: {threshold}). Last sent: {last_sent}, Last received: {last_received}, PONG received: {pong_received}"
+node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive for {inactive_duration} (threshold: {threshold}). Last sent: {last_sent}, Last received: {last_received}, Liveness confirmed: {liveness_confirmed}"
 unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has message in read/ for {time_since_read} without reply (from: {from}, threshold: {threshold})"
 spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_duration} (threshold: {threshold}). Pane is active — possible infinite loop or runaway computation."
 

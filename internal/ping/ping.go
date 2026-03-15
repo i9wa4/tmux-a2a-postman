@@ -26,7 +26,7 @@ func ExtractSimpleName(fullName string) string {
 
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
-func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, pongActiveNodes map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
 	// Extract simple name for filename and config lookups (Issue #33)
 	simpleName := ExtractSimpleName(nodeName)
 
@@ -42,7 +42,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	filename := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
-	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, pongActiveNodes)
+	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
 	// Pass 2: inject role_content (guaranteed actual role template content).
 	roleContent := envelope.BuildRoleContent(cfg, simpleName)

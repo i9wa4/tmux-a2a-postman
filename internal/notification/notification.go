@@ -17,8 +17,8 @@ import (
 // talks_to_line, template, reply_command, context_id.
 // recipient and sender are simple node names (not session-prefixed).
 // sourceSessionName is the session name where the message originated.
-func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, pongActiveNodes map[string]bool) string {
-	return envelope.BuildEnvelope(cfg, cfg.NotificationTemplate, recipient, sender, contextID, "", filename, nil, adjacency, nodes, sourceSessionName, pongActiveNodes)
+func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, livenessMap map[string]bool) string {
+	return envelope.BuildEnvelope(cfg, cfg.NotificationTemplate, recipient, sender, contextID, "", filename, nil, adjacency, nodes, sourceSessionName, livenessMap)
 }
 
 // SendToPane sends a message to a tmux pane using set-buffer + paste-buffer.

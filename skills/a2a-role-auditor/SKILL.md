@@ -43,8 +43,10 @@ For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml` ex
 
 ### 2.2. Check 1 — PONG Anachronism (inverted post-1fbd73f)
 
-The PONG protocol was removed (commit 1fbd73f). Nodes must NOT send PONG to
-postman. The daemon now uses PING-based discovery instead of PONG registration.
+The PONG protocol was removed (commit 1fbd73f). Nodes must NOT send PONG
+replies to postman — liveness is proved by archiving messages (inbox→read/ move),
+not by an explicit PONG response. The daemon now uses archive-based liveness
+detection instead of PONG registration.
 
 - PASS: template does NOT instruct the node to send PONG to postman
 - FAIL: template contains "Send PONG to postman" or similar PONG instruction
@@ -85,7 +87,7 @@ Two sub-checks:
 
 ### 2.8. Check 7 — on_join Anachronism
 
-- PASS: `on_join` does not contain "Send PONG to postman" (PONG protocol was removed)
+- PASS: `on_join` does not contain "Send PONG to postman" (PONG protocol was removed; liveness is proved by archiving messages)
 - FAIL: `on_join` contains "Send PONG to postman" — anachronistic instruction that confuses agents
 
 ### 2.9. Check 8 — Messaging Protocol Instructions
