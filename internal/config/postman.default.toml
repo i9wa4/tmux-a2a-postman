@@ -64,6 +64,8 @@ inbox_unread_threshold = 2         # Alert ui_node when inbox has N+ unread mess
 # min_delivery_gap_seconds = 1.0       # Duplicate delivery rate limit in seconds (0 = disabled)
 # startup_drain_window_seconds = 10.0  # Session-enabled bypass window after daemon start (0 = disabled)
 # message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)
+# alert_cooldown_seconds = 300         # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
+# alert_delivery_window_seconds = 60   # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)

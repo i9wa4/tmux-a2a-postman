@@ -79,12 +79,14 @@ type Config struct {
 	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
 
 	// Global settings
-	Edges                 []string `toml:"edges"`
-	ReplyCommand          string   `toml:"reply_command"`
-	UINode                string   `toml:"ui_node"`                  // Issue #46: Generalized target node name
-	InboxUnreadThreshold  int      `toml:"inbox_unread_threshold"`   // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false) (#219)
-	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
+	Edges                      []string `toml:"edges"`
+	ReplyCommand               string   `toml:"reply_command"`
+	UINode                     string   `toml:"ui_node"`                       // Issue #46: Generalized target node name
+	InboxUnreadThreshold       int      `toml:"inbox_unread_threshold"`        // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
+	AlertCooldownSeconds       int      `toml:"alert_cooldown_seconds"`        // min seconds between any alert/warning to same recipient
+	AlertDeliveryWindowSeconds int      `toml:"alert_delivery_window_seconds"` // suppress alert if recipient received msg within this window
+	AutoEnableNewSessions      *bool    `toml:"auto_enable_new_sessions"`      // nil = use default (false) (#219)
+	AutoEnableNewAgents        *bool    `toml:"auto_enable_new_agents"`        // nil = use default (true) (#219)
 
 	// Diplomat settings (Issue #164, #165)
 	DiplomatNode      string   `toml:"diplomat_node"`      // Cross-context node name; empty = disabled
@@ -169,8 +171,10 @@ func DefaultConfig() *Config {
 		DraftTemplate:                   "",
 		ReminderMessage:                 "",
 		ReplyCommand:                    "",
-		UINode:                          "",             // Issue #46: Default UI target node (empty = no default)
-		InboxUnreadThreshold:            3,              // Default threshold for inbox unread summary notification
+		UINode:                          "", // Issue #46: Default UI target node (empty = no default)
+		InboxUnreadThreshold:            3,  // Default threshold for inbox unread summary notification
+		AlertCooldownSeconds:            300,
+		AlertDeliveryWindowSeconds:      60,
 		AutoEnableNewSessions:           boolPtr(false), // Issue #135: default false; set true to opt in (#219)
 		AutoEnableNewAgents:             boolPtr(true),  // Issue #135: auto-enable agents in already-enabled sessions (#219)
 		Edges:                           []string{},
@@ -507,6 +511,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.InboxUnreadThreshold != 0 {
 		base.InboxUnreadThreshold = override.InboxUnreadThreshold
+	}
+	if override.AlertCooldownSeconds != 0 {
+		base.AlertCooldownSeconds = override.AlertCooldownSeconds
+	}
+	if override.AlertDeliveryWindowSeconds != 0 {
+		base.AlertDeliveryWindowSeconds = override.AlertDeliveryWindowSeconds
 	}
 
 	// *bool fields: bidirectional override (#219)

@@ -20,6 +20,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
+	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
@@ -421,6 +422,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
 	}
 	idleTracker := idle.NewIdleTracker()
+	alertRateLimiter := alert.NewAlertRateLimiter(time.Duration(cfg.AlertCooldownSeconds) * time.Second)
 
 	// Start idle check goroutine
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)
@@ -431,7 +433,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, &sharedNodes)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, alertRateLimiter, &sharedNodes)
 	})
 
 	// Issue #165: Start diplomat stale-registration cleanup goroutine

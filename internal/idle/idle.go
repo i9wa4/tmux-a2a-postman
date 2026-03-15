@@ -79,6 +79,17 @@ func (t *IdleTracker) UpdateReceiveActivity(nodeKey string) {
 	t.nodeActivity[nodeKey] = activity
 }
 
+// GetLastReceived returns the last time the given node received a message.
+// Returns zero time if the node has no recorded activity.
+func (t *IdleTracker) GetLastReceived(nodeKey string) time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if a, ok := t.nodeActivity[nodeKey]; ok {
+		return a.LastReceived
+	}
+	return time.Time{}
+}
+
 // MarkNodeAlive marks that a node has confirmed liveness (Issue #55).
 // Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
 func (t *IdleTracker) MarkNodeAlive(nodeKey string) {

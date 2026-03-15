@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -283,6 +285,7 @@ func RunDaemonLoop(
 	nodesDir string,
 	daemonState *DaemonState,
 	idleTracker *idle.IdleTracker,
+	alertRateLimiter *alert.AlertRateLimiter,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 ) {
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
@@ -874,6 +877,9 @@ func RunDaemonLoop(
 				},
 			}
 		case <-inboxCheckTicker.C:
+			// Issue #245: Check inbox unread count and alert UINode
+			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
+
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
 			idleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
@@ -1006,6 +1012,141 @@ func RunDaemonLoop(
 					"waiting_states": waitingStates,
 				},
 			}
+		}
+	}
+}
+
+// sendAlertToUINode sends an alert message to the ui_node inbox.
+// Writes directly to post/ so the daemon delivery loop routes and notifies normally.
+// When AlertMessageTemplate is configured, uses two-pass expansion (BuildEnvelope + Pass 2).
+func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	tmpl := cfg.AlertMessageTemplate
+	if tmpl == "" {
+		return nil // no template configured; silent no-op
+	}
+	sourceSessionName := filepath.Base(filepath.Dir(sessionDir))
+	now := time.Now()
+	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
+	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
+	postPath := filepath.Join(sessionDir, "post", filename)
+	taskID := ts + "-alert"
+
+	scaffolded := envelope.BuildEnvelope(
+		cfg, tmpl, uiNode, "daemon",
+		contextID, taskID, postPath,
+		nil, adjacency, nodes, sourceSessionName,
+		nil,
+	)
+	content := template.ExpandVariables(scaffolded, map[string]string{
+		"alert_type":   alertType,
+		"message":      body,
+		"role_content": envelope.BuildRoleContent(cfg, uiNode),
+	})
+	return os.WriteFile(postPath, []byte(content), 0o600)
+}
+
+// checkInboxStagnation checks inbox unread count for all nodes and sends an alert to
+// cfg.UINode when the count reaches cfg.InboxUnreadThreshold.
+// Only the inbox_unread_summary count-based path is restored here (design doc #245).
+// Three guards are enforced:
+//   - Guard 1: alertRateLimiter.Allow — per-recipient cooldown
+//   - Guard 2: idleTracker.GetLastReceived — suppress if UINode received recently
+//   - Guard 3: count-based signal (distinct from stagnation / node_inactivity)
+func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
+	if cfg.UINode == "" || cfg.InboxUnreadThreshold <= 0 {
+		return
+	}
+
+	now := time.Now()
+
+	for nodeKey, nodeInfo := range nodes {
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+
+		// Do not alert about UINode's own inbox here
+		if simpleName == cfg.UINode {
+			continue
+		}
+
+		inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+		entries, err := os.ReadDir(inboxPath)
+		if err != nil {
+			continue
+		}
+
+		inboxCount := 0
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+				inboxCount++
+			}
+		}
+		if inboxCount < cfg.InboxUnreadThreshold {
+			continue
+		}
+
+		// Send TUI event unconditionally (no rate limit for TUI display)
+		alertVars := map[string]string{
+			"node":      simpleName,
+			"count":     fmt.Sprintf("%d", inboxCount),
+			"threshold": fmt.Sprintf("%d", cfg.InboxUnreadThreshold),
+		}
+		msg := template.ExpandVariables(cfg.InboxUnreadSummaryAlertTemplate, alertVars)
+		events <- tui.DaemonEvent{
+			Type:    "inbox_unread_summary",
+			Message: msg,
+			Details: map[string]interface{}{
+				"node":      simpleName,
+				"count":     inboxCount,
+				"threshold": cfg.InboxUnreadThreshold,
+			},
+		}
+
+		// Guard 1: per-recipient cooldown
+		if !alertRateLimiter.Allow(cfg.UINode, now) {
+			continue
+		}
+
+		// Guard 2: suppress if UINode received a message recently
+		// Use session-prefixed key matching UpdateReceiveActivity convention
+		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
+		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
+		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
+			continue
+		}
+
+		// Build action text
+		var replyCmd string
+		if cfg.ReplyCommand != "" {
+			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
+			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+		} else {
+			replyCmd = fmt.Sprintf(
+				"nix run github:i9wa4/tmux-a2a-postman -- create-draft --context-id %s --to %s",
+				contextID, simpleName,
+			)
+		}
+		canReach := false
+		for _, neighbor := range adjacency[cfg.UINode] {
+			if neighbor == simpleName {
+				canReach = true
+				break
+			}
+		}
+		actionVars := map[string]string{
+			"node":          simpleName,
+			"reply_command": replyCmd,
+		}
+		var actionText string
+		if canReach && cfg.AlertActionReachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
+		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
+			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
+		}
+
+		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "inbox_unread_summary", cfg, adjacency, nodes); err == nil {
+			alertRateLimiter.Record(cfg.UINode, now)
 		}
 	}
 }
