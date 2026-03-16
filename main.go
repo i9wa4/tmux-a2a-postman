@@ -1257,8 +1257,40 @@ func runArchive(args []string) error {
 		if err := os.Rename(abs, dst); err != nil {
 			return fmt.Errorf("archiving %s: %w", resolvedPath, err)
 		}
+		sender := extractSenderFromFile(dst)
+		if sender != "" {
+			fmt.Printf("Next steps: Reply with tmux-a2a-postman create-draft --to %s\n", sender)
+		}
 	}
 	return nil
+}
+
+// extractSenderFromFile reads the YAML front matter of a message file and returns
+// the value of the params.from field. Returns empty string on any error or if not found.
+func extractSenderFromFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	inFrontMatter := false
+	for _, line := range lines {
+		if line == "---" {
+			if !inFrontMatter {
+				inFrontMatter = true
+				continue
+			}
+			break // second --- closes front matter
+		}
+		if !inFrontMatter {
+			continue
+		}
+		// Match "  from: <value>" (2-space indent under params:)
+		if strings.HasPrefix(line, "  from: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
+		}
+	}
+	return ""
 }
 
 // runSend moves a draft file to post/ to submit it for delivery.
