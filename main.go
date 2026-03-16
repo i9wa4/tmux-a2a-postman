@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -552,25 +551,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							Message: fmt.Sprintf("Session %s toggled %s", cmd.Target, stateStr),
 						}
 					case "send_ping":
-						// Fresh discovery to include nodes added after startup (Issue #new)
-						freshNodes, _, freshErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
-						if freshErr != nil {
-							cachedPtr := sharedNodes.Load()
-							if cachedPtr == nil {
-								log.Printf("\u274c postman: send_ping discovery failed: %v\n", freshErr)
-								daemonEvents <- tui.DaemonEvent{
-									Type:    "message_received",
-									Message: fmt.Sprintf("PING failed: node discovery error: %v", freshErr),
-								}
-								break
+						cachedPtr := sharedNodes.Load()
+						if cachedPtr == nil {
+							log.Printf("\u274c postman: send_ping: no cached nodes available\n")
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "message_received",
+								Message: "PING failed: no cached nodes available",
 							}
-							// Deep-copy: edge-filter uses delete() on freshNodes; must not mutate shared map.
-							cached := *cachedPtr
-							freshNodes = make(map[string]discovery.NodeInfo, len(cached))
-							for k, v := range cached {
-								freshNodes[k] = v
-							}
-							log.Printf("\u26a0\ufe0f  postman: send_ping using cached nodes (discovery failed): %v\n", freshErr)
+							break
+						}
+						cached := *cachedPtr
+						freshNodes := make(map[string]discovery.NodeInfo, len(cached))
+						for k, v := range cached {
+							freshNodes[k] = v
 						}
 						// Edge-filter fresh nodes (replicate startup logic, main.go:268-274)
 						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
@@ -581,25 +574,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								delete(freshNodes, nodeName)
 							}
 						}
-						// Claim discovered panes with this daemon's context ID (concurrent).
-						var claimWg sync.WaitGroup
-						for _, nodeInfo := range freshNodes {
-							claimWg.Add(1)
-							go func(paneID string) {
-								defer claimWg.Done()
-								claimCmd := exec.Command(
-									"tmux", "set-option", "-p", "-t", paneID,
-									"@a2a_context_id", contextID,
-								)
-								if err := claimCmd.Run(); err != nil {
-									log.Printf(
-										"postman: WARNING: failed to claim pane %s: %v\n",
-										paneID, err,
-									)
-								}
-							}(nodeInfo.PaneID)
-						}
-						claimWg.Wait()
 						targetNodes := make(map[string]discovery.NodeInfo)
 						for k, v := range freshNodes {
 							if v.SessionName == cmd.Target {
