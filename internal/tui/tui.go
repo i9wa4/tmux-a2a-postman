@@ -492,6 +492,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.tuiCommands != nil {
+					m.status = "Sending ping..."
 					m.tuiCommands <- TUICommand{
 						Type:   "send_ping",
 						Target: sess.Name,
