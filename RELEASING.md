@@ -16,7 +16,8 @@
 
 - Tag must match `v[0-9]*` pattern (e.g., v0.2.0, v1.0.0)
 - Local builds: show `git-abc1234` (commit hash) - Nix limitation
-- GitHub builds: show `vX.Y.Z` (semantic version) via `self.ref`
+- GitHub Nix builds: show `vX.Y.Z` (semantic version) via `self.ref`
+- GitHub GoReleaser builds: show `vX.Y.Z` via `{{.Tag}}` ldflag
 
 ## Manual Release Trigger (Fallback)
 
