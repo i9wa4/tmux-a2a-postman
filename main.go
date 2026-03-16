@@ -552,38 +552,48 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 					case "send_ping":
 						cachedPtr := sharedNodes.Load()
-						if cachedPtr == nil {
-							log.Printf("\u274c postman: send_ping: no cached nodes available\n")
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "status_update",
-								Message: "PING failed: no cached nodes available",
+						var freshNodes map[string]discovery.NodeInfo
+						if cachedPtr != nil {
+							cached := *cachedPtr
+							freshNodes = make(map[string]discovery.NodeInfo, len(cached))
+							for k, v := range cached {
+								freshNodes[k] = v
 							}
-							break
 						}
-						cached := *cachedPtr
-						freshNodes := make(map[string]discovery.NodeInfo, len(cached))
-						for k, v := range cached {
-							freshNodes[k] = v
-						}
-						// Edge-filter fresh nodes (replicate startup logic, main.go:268-274)
+						// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
 						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
-						for nodeName := range freshNodes {
-							parts := strings.SplitN(nodeName, ":", 2)
-							rawName := parts[len(parts)-1]
-							if !edgeNodesFilter[rawName] {
-								delete(freshNodes, nodeName)
+						filterNodes := func(nodes map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
+							for nodeName := range nodes {
+								parts := strings.SplitN(nodeName, ":", 2)
+								rawName := parts[len(parts)-1]
+								if !edgeNodesFilter[rawName] {
+									delete(nodes, nodeName)
+								}
 							}
+							target := make(map[string]discovery.NodeInfo)
+							for k, v := range nodes {
+								if v.SessionName == cmd.Target {
+									target[k] = v
+								}
+							}
+							return target
 						}
-						targetNodes := make(map[string]discovery.NodeInfo)
-						for k, v := range freshNodes {
-							if v.SessionName == cmd.Target {
-								targetNodes[k] = v
+						targetNodes := filterNodes(freshNodes)
+						// Fallback: run fresh discovery if cache is empty or session has no nodes (#271)
+						if cachedPtr == nil || len(targetNodes) == 0 {
+							log.Printf("\U0001f4e1 postman: send_ping: cache cold or no session nodes, running fresh discovery\n")
+							if discovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID); discErr == nil && len(discovered) > 0 {
+								freshNodes = discovered
+								targetNodes = filterNodes(freshNodes)
 							}
 						}
 						if len(targetNodes) == 0 {
+							if cachedPtr == nil {
+								log.Printf("\u274c postman: send_ping: no cached nodes available\n")
+							}
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
-								Message: fmt.Sprintf("PING: no nodes found for session %s", cmd.Target),
+								Message: fmt.Sprintf("No nodes found for session %s \u2014 retry in a moment", cmd.Target),
 							}
 							break
 						}
