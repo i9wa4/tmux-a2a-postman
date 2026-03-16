@@ -487,6 +487,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Issue #47: Send PING to selected session
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
+				if !sess.Enabled {
+					m.status = "Session is disabled"
+					return m, nil
+				}
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
 						Type:   "send_ping",

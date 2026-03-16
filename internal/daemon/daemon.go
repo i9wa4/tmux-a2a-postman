@@ -108,6 +108,8 @@ type DaemonState struct {
 	prevPaneToNode                map[string]string          // Track previous pane ID -> node key mapping for restart detection
 	lastAlertTimestamp            map[string]time.Time       // Issue #118: Track last alert timestamps (alertKey -> time)
 	lastAlertTimestampMu          sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
+	lastInboxUnreadCount          map[string]int             // Issue #264: per-node last alerted inbox count
+	lastInboxUnreadCountMu        sync.RWMutex               // Issue #264
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 }
@@ -125,6 +127,7 @@ func NewDaemonState(drainWindowSeconds float64) *DaemonState {
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
 		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
+		lastInboxUnreadCount:          make(map[string]int),             // Issue #264
 	}
 }
 
@@ -904,7 +907,7 @@ func RunDaemonLoop(
 			}
 		case <-inboxCheckTicker.C:
 			// Issue #245: Check inbox unread count and alert UINode
-			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
+			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 
@@ -1080,7 +1083,7 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cf
 //   - Guard 1: alertRateLimiter.Allow — per-recipient cooldown
 //   - Guard 2: idleTracker.GetLastReceived — suppress if UINode received recently
 //   - Guard 3: count-based signal (distinct from stagnation / node_inactivity)
-func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
+func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter, ds *DaemonState) {
 	if cfg.UINode == "" || cfg.InboxUnreadThreshold <= 0 {
 		return
 	}
@@ -1111,8 +1114,20 @@ func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Confi
 			}
 		}
 		if inboxCount < cfg.InboxUnreadThreshold {
+			ds.lastInboxUnreadCountMu.Lock()
+			delete(ds.lastInboxUnreadCount, simpleName)
+			ds.lastInboxUnreadCountMu.Unlock()
 			continue
 		}
+		ds.lastInboxUnreadCountMu.RLock()
+		lastCount := ds.lastInboxUnreadCount[simpleName]
+		ds.lastInboxUnreadCountMu.RUnlock()
+		if inboxCount <= lastCount {
+			continue
+		}
+		ds.lastInboxUnreadCountMu.Lock()
+		ds.lastInboxUnreadCount[simpleName] = inboxCount
+		ds.lastInboxUnreadCountMu.Unlock()
 
 		// Send TUI event unconditionally (no rate limit for TUI display)
 		alertVars := map[string]string{
@@ -1343,6 +1358,10 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 		}
 
 		unrepliedCount := 0
+		var (
+			oldestFrom          string
+			oldestTimeSinceRead time.Duration
+		)
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
@@ -1363,6 +1382,11 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 			}
 			if time.Since(entryInfo.ModTime()) >= time.Duration(nodeConfig.DroppedBallTimeoutSeconds)*time.Second {
 				unrepliedCount++
+				age := time.Since(entryInfo.ModTime())
+				if unrepliedCount == 1 || age > oldestTimeSinceRead {
+					oldestTimeSinceRead = age
+					oldestFrom = fileInfo.From
+				}
 			}
 		}
 		if unrepliedCount == 0 {
@@ -1370,8 +1394,11 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 		}
 
 		alertVars := map[string]string{
-			"node":  simpleName,
-			"count": fmt.Sprintf("%d", unrepliedCount),
+			"node":            simpleName,
+			"count":           fmt.Sprintf("%d", unrepliedCount),
+			"time_since_read": oldestTimeSinceRead.Round(time.Second).String(),
+			"from":            oldestFrom,
+			"threshold":       fmt.Sprintf("%d", nodeConfig.DroppedBallTimeoutSeconds),
 		}
 		msg := template.ExpandVariables(cfg.UnrepliedMessageAlertTemplate, alertVars)
 		events <- tui.DaemonEvent{

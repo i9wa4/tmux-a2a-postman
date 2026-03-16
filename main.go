@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -580,19 +581,25 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								delete(freshNodes, nodeName)
 							}
 						}
-						// Claim discovered panes with this daemon's context ID.
+						// Claim discovered panes with this daemon's context ID (concurrent).
+						var claimWg sync.WaitGroup
 						for _, nodeInfo := range freshNodes {
-							claimCmd := exec.Command(
-								"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
-								"@a2a_context_id", contextID,
-							)
-							if err := claimCmd.Run(); err != nil {
-								log.Printf(
-									"postman: WARNING: failed to claim pane %s: %v\n",
-									nodeInfo.PaneID, err,
+							claimWg.Add(1)
+							go func(paneID string) {
+								defer claimWg.Done()
+								claimCmd := exec.Command(
+									"tmux", "set-option", "-p", "-t", paneID,
+									"@a2a_context_id", contextID,
 								)
-							}
+								if err := claimCmd.Run(); err != nil {
+									log.Printf(
+										"postman: WARNING: failed to claim pane %s: %v\n",
+										paneID, err,
+									)
+								}
+							}(nodeInfo.PaneID)
 						}
+						claimWg.Wait()
 						targetNodes := make(map[string]discovery.NodeInfo)
 						for k, v := range freshNodes {
 							if v.SessionName == cmd.Target {
