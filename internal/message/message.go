@@ -425,7 +425,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		},
 	)
 
-	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount)
+	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 

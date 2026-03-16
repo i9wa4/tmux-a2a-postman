@@ -215,7 +215,7 @@ func TestSanitizeForTmux(t *testing.T) {
 
 func TestSendToPane_InvalidPane(t *testing.T) {
 	// Test that SendToPane gracefully handles invalid pane
-	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second, 1)
+	err := SendToPane("invalid-pane", "test message", 100*time.Millisecond, 1*time.Second, 1, true)
 	if err == nil {
 		t.Error("SendToPane() with invalid pane should return error")
 	}
@@ -233,7 +233,7 @@ func TestSendToPane_EnterCount2(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 2)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 2, true)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestSendToPane_EnterCount3(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 3)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 3, true)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestSendToPane_EnterCount1(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestSendToPane_EnterCount0(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 0, true)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestSendToPane_EnterCountNegative(t *testing.T) {
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
 	// Negative enterCount: loop does not execute, no panic; sends exactly 1 Enter
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, -1)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, -1, true)
 	if err != nil {
 		t.Fatalf("SendToPane with negative enterCount should not error: %v", err)
 	}

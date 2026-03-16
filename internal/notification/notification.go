@@ -40,11 +40,13 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Security: Sanitizes message before passing to tmux set-buffer.
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
-func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int) error {
+// bypassCooldown skips the per-pane rate limit; pass true for direct message delivery,
+// false for periodic reminders/alerts where the cooldown should apply.
+func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool) error {
 	// Rate limit: skip if pane was notified within cooldown window (#273).
 	// paneNotifyCooldown <= 0 disables the limiter (used in tests).
 	paneNotifyMu.Lock()
-	if paneNotifyCooldown > 0 {
+	if !bypassCooldown && paneNotifyCooldown > 0 {
 		if last, ok := paneLastNotified[paneID]; ok && time.Since(last) < paneNotifyCooldown {
 			paneNotifyMu.Unlock()
 			return nil
