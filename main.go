@@ -314,6 +314,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			delete(nodes, nodeName)
 		}
 	}
+	// Claim discovered panes with this daemon's context ID.
+	for _, nodeInfo := range nodes {
+		claimCmd := exec.Command(
+			"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
+			"@a2a_context_id", contextID,
+		)
+		if err := claimCmd.Run(); err != nil {
+			log.Printf(
+				"postman: WARNING: failed to claim pane %s: %v\n",
+				nodeInfo.PaneID, err,
+			)
+		}
+	}
 	// Shared node snapshot for background periodic refresh (Issue #139)
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
 	sharedNodes.Store(&nodes)
@@ -565,6 +578,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							rawName := parts[len(parts)-1]
 							if !edgeNodesFilter[rawName] {
 								delete(freshNodes, nodeName)
+							}
+						}
+						// Claim discovered panes with this daemon's context ID.
+						for _, nodeInfo := range freshNodes {
+							claimCmd := exec.Command(
+								"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
+								"@a2a_context_id", contextID,
+							)
+							if err := claimCmd.Run(); err != nil {
+								log.Printf(
+									"postman: WARNING: failed to claim pane %s: %v\n",
+									nodeInfo.PaneID, err,
+								)
 							}
 						}
 						targetNodes := make(map[string]discovery.NodeInfo)

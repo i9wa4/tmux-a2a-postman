@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -153,7 +154,37 @@ func DiscoverNodesWithCollisions(baseDir, contextID string) (map[string]NodeInfo
 		})
 	}
 
-	nodes, collisions := reduceCollisions(nodeKeyOrder, candidates)
+	// Filter candidates: only retain panes whose context inbox directory exists on
+	// disk. This scopes discovery to the current daemon's context and prevents
+	// foreign-context panes from being included (cross-session interference fix).
+	filteredCandidates := make(map[string][]paneCandidate, len(candidates))
+	var filteredNodeKeyOrder []string
+	for _, nodeKey := range nodeKeyOrder {
+		var kept []paneCandidate
+		for _, c := range candidates[nodeKey] {
+			inboxDir := filepath.Join(baseDir, contextID, c.sessionName, "inbox")
+			if _, err := os.Stat(inboxDir); err == nil {
+				// Per-pane ownership check: skip panes claimed by a different
+				// daemon context. show-options -v exits non-zero when unset
+				// (unclaimed), so err != nil means the pane is available.
+				if out, err := exec.Command(
+					"tmux", "show-options", "-p", "-v", "-t", c.paneID, "@a2a_context_id",
+				).Output(); err == nil {
+					claimedContext := strings.TrimSpace(string(out))
+					if claimedContext != "" && claimedContext != contextID {
+						continue // pane claimed by a different daemon context
+					}
+				}
+				kept = append(kept, c)
+			}
+		}
+		if len(kept) > 0 {
+			filteredCandidates[nodeKey] = kept
+			filteredNodeKeyOrder = append(filteredNodeKeyOrder, nodeKey)
+		}
+	}
+
+	nodes, collisions := reduceCollisions(filteredNodeKeyOrder, filteredCandidates)
 	return nodes, collisions, nil
 }
 

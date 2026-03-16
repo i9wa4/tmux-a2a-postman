@@ -346,6 +346,19 @@ func RunDaemonLoop(
 						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
+							// Claim discovered panes with this daemon's context ID.
+							for _, nodeInfo := range freshNodes {
+								claimCmd := exec.Command(
+									"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
+									"@a2a_context_id", contextID,
+								)
+								if err := claimCmd.Run(); err != nil {
+									log.Printf(
+										"postman: WARNING: failed to claim pane %s: %v\n",
+										nodeInfo.PaneID, err,
+									)
+								}
+							}
 							// Detect new nodes
 							for nodeName, nodeInfo := range freshNodes {
 								if !knownNodes[nodeName] {
@@ -676,6 +689,19 @@ func RunDaemonLoop(
 				continue
 			}
 			filterNodesByEdges(freshNodes, cfg.Edges)
+			// Claim discovered panes with this daemon's context ID.
+			for _, nodeInfo := range freshNodes {
+				claimCmd := exec.Command(
+					"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
+					"@a2a_context_id", contextID,
+				)
+				if err := claimCmd.Run(); err != nil {
+					log.Printf(
+						"postman: WARNING: failed to claim pane %s: %v\n",
+						nodeInfo.PaneID, err,
+					)
+				}
+			}
 			for _, collision := range scanCollisions {
 				alertKey := "pane_collision:" + collision.WinnerPaneID + ":" + collision.LoserPaneID
 				if daemonState.ShouldSendAlert(alertKey, 300) {
