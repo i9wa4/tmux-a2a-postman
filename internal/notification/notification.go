@@ -5,12 +5,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 )
+
+var (
+	paneNotifyMu       sync.Mutex
+	paneLastNotified   = map[string]time.Time{}
+	paneNotifyCooldown = 10 * time.Minute
+)
+
+// InitPaneCooldown sets the per-pane notification cooldown duration.
+// Must be called once at startup before any SendToPane calls.
+func InitPaneCooldown(d time.Duration) {
+	paneNotifyMu.Lock()
+	paneNotifyCooldown = d
+	paneNotifyMu.Unlock()
+}
 
 // BuildNotification builds a notification message using notification_template.
 // Variables available: from_node, node, timestamp, filename, inbox_path,
@@ -26,6 +41,17 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int) error {
+	// Rate limit: skip if pane was notified within cooldown window (#273).
+	// paneNotifyCooldown <= 0 disables the limiter (used in tests).
+	paneNotifyMu.Lock()
+	if paneNotifyCooldown > 0 {
+		if last, ok := paneLastNotified[paneID]; ok && time.Since(last) < paneNotifyCooldown {
+			paneNotifyMu.Unlock()
+			return nil
+		}
+	}
+	paneLastNotified[paneID] = time.Now()
+	paneNotifyMu.Unlock()
 	// Wrap with protocol sentinels so all pane output is clearly delimited.
 	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
 	// Security: Sanitize message for tmux set-buffer

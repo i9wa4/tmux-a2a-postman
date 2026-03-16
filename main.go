@@ -28,6 +28,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
@@ -461,6 +462,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	idleTracker := idle.NewIdleTracker()
 	alertRateLimiter := alert.NewAlertRateLimiter(time.Duration(cfg.AlertCooldownSeconds) * time.Second)
+	notification.InitPaneCooldown(time.Duration(cfg.PaneNotifyCooldownSeconds) * time.Second)
 
 	// Start idle check goroutine
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)

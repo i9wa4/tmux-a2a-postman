@@ -66,6 +66,7 @@ inbox_unread_threshold = 2         # Alert ui_node when inbox has N+ unread mess
 # startup_drain_window_seconds = 10.0  # Session-enabled bypass window after daemon start (0 = disabled)
 # message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)
 # alert_cooldown_seconds = 300         # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
+# pane_notify_cooldown_seconds = 600   # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
 # alert_delivery_window_seconds = 60   # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
 
 # TUI settings

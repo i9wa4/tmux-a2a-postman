@@ -85,6 +85,7 @@ type Config struct {
 	InboxUnreadThreshold       int      `toml:"inbox_unread_threshold"`        // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
 	AlertCooldownSeconds       int      `toml:"alert_cooldown_seconds"`        // min seconds between any alert/warning to same recipient
 	AlertDeliveryWindowSeconds int      `toml:"alert_delivery_window_seconds"` // suppress alert if recipient received msg within this window
+	PaneNotifyCooldownSeconds  int      `toml:"pane_notify_cooldown_seconds"`  // min seconds between SendToPane calls to the same pane; 0 = use default (600)
 	AutoEnableNewSessions      *bool    `toml:"auto_enable_new_sessions"`      // nil = use default (false) (#219)
 	AutoEnableNewAgents        *bool    `toml:"auto_enable_new_agents"`        // nil = use default (true) (#219)
 
@@ -175,6 +176,7 @@ func DefaultConfig() *Config {
 		InboxUnreadThreshold:            3,  // Default threshold for inbox unread summary notification
 		AlertCooldownSeconds:            300,
 		AlertDeliveryWindowSeconds:      60,
+		PaneNotifyCooldownSeconds:       600,
 		AutoEnableNewSessions:           boolPtr(false), // Issue #135: default false; set true to opt in (#219)
 		AutoEnableNewAgents:             boolPtr(true),  // Issue #135: auto-enable agents in already-enabled sessions (#219)
 		Edges:                           []string{},
@@ -517,6 +519,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.AlertDeliveryWindowSeconds != 0 {
 		base.AlertDeliveryWindowSeconds = override.AlertDeliveryWindowSeconds
+	}
+	if override.PaneNotifyCooldownSeconds != 0 {
+		base.PaneNotifyCooldownSeconds = override.PaneNotifyCooldownSeconds
 	}
 
 	// *bool fields: bidirectional override (#219)
