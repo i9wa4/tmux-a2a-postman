@@ -1349,7 +1349,7 @@ func TestIsSessionPIDAlive(t *testing.T) {
 	t.Run("live pid returns true", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeLivePID(t, baseDir, "ctx", "sess")
-		if !isSessionPIDAlive(baseDir, "ctx", "sess") {
+		if !IsSessionPIDAlive(baseDir, "ctx", "sess") {
 			t.Error("expected true for live PID, got false")
 		}
 	})
@@ -1357,7 +1357,7 @@ func TestIsSessionPIDAlive(t *testing.T) {
 	t.Run("stale pid 0 returns false", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeStalePID(t, baseDir, "ctx", "sess")
-		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+		if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 			t.Error("expected false for stale PID 0, got true")
 		}
 	})
@@ -1367,7 +1367,7 @@ func TestIsSessionPIDAlive(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(baseDir, "ctx", "sess"), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+		if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 			t.Error("expected false for missing pid file, got true")
 		}
 	})
@@ -1381,7 +1381,7 @@ func TestIsSessionPIDAlive(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte("not-a-pid"), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
-		if isSessionPIDAlive(baseDir, "ctx", "sess") {
+		if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 			t.Error("expected false for invalid pid content, got true")
 		}
 	})
@@ -1396,7 +1396,7 @@ func TestStartupGuardEnabledInitialState(_ *testing.T) {
 	baseDir := fmt.Sprintf("%s/guard-test-%d", os.TempDir(), os.Getpid())
 	_ = os.MkdirAll(filepath.Join(baseDir, "ctx", "sess"), 0o755)
 	defer func() { _ = os.RemoveAll(baseDir) }()
-	if isSessionPIDAlive(baseDir, "ctx", "sess") {
+	if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 		panic("startup guard would fire on a fresh context with no pid — code-level initial state violated")
 	}
 }

@@ -298,6 +298,31 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	defer func() { _ = watcher.Close() }()
 
+	// Reclaim panes from dead daemon contexts (#272)
+	if out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").CombinedOutput(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line == "" {
+				continue
+			}
+			parts := strings.SplitN(line, " ", 3)
+			if len(parts) != 3 || parts[2] == "" {
+				continue
+			}
+			paneID, paneSessionName := parts[0], parts[1]
+			claimedOut, claimedErr := exec.Command("tmux", "show-options", "-p", "-v", "-t", paneID, "@a2a_context_id").Output()
+			if claimedErr != nil {
+				continue
+			}
+			claimedContext := strings.TrimSpace(string(claimedOut))
+			if claimedContext == "" || claimedContext == contextID {
+				continue
+			}
+			if !config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName) {
+				_ = exec.Command("tmux", "set-option", "-p", "-u", "-t", paneID, "@a2a_context_id").Run()
+			}
+		}
+	}
+
 	// Discover nodes at startup (before watching, edge-filtered)
 	nodes, startupCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
 	if err != nil {
@@ -579,21 +604,10 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							return target
 						}
 						targetNodes := filterNodes(freshNodes)
-						// Fallback: run fresh discovery if cache is empty or session has no nodes (#271)
 						if cachedPtr == nil || len(targetNodes) == 0 {
-							log.Printf("\U0001f4e1 postman: send_ping: cache cold or no session nodes, running fresh discovery\n")
-							if discovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID); discErr == nil && len(discovered) > 0 {
-								freshNodes = discovered
-								targetNodes = filterNodes(freshNodes)
-							}
-						}
-						if len(targetNodes) == 0 {
-							if cachedPtr == nil {
-								log.Printf("\u274c postman: send_ping: no cached nodes available\n")
-							}
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
-								Message: fmt.Sprintf("No nodes found for session %s \u2014 retry in a moment", cmd.Target),
+								Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
 							}
 							break
 						}

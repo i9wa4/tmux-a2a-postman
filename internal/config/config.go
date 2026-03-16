@@ -936,10 +936,10 @@ func ResolveContextID(explicitID string) (string, error) {
 	return "", fmt.Errorf("--context-id is required")
 }
 
-// isSessionPIDAlive reads postman.pid from baseDir/contextName/sessionName/
+// IsSessionPIDAlive reads postman.pid from baseDir/contextName/sessionName/
 // and returns true if the recorded process is still running.
 // Issue #249: liveness check for context disambiguation.
-func isSessionPIDAlive(baseDir, contextName, sessionName string) bool {
+func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
@@ -980,7 +980,7 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 		if fi, err := os.Stat(sessionDir); err != nil || !fi.IsDir() {
 			continue
 		}
-		if isSessionPIDAlive(baseDir, e.Name(), sessionName) {
+		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
 			matches = append(matches, e.Name())
 		}
 	}
