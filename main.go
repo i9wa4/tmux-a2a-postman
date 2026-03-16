@@ -607,6 +607,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 						targetNodes := filterNodes(freshNodes)
 						if cachedPtr == nil || len(targetNodes) == 0 {
+							if cachedPtr == nil {
+								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
+							} else {
+								log.Printf("postman: PING skipped for session %s — 0 nodes matched in session (total discovered across all sessions: %d)\n", cmd.Target, len(freshNodes))
+							}
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
 								Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
