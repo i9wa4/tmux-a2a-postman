@@ -184,7 +184,7 @@ protocol: tmux-a2a-postman --help
 # Message
 
 How to reply: {reply_command}
-Direct reply: tmux send-keys -t %{sender_pane_id} 'your message here' Enter
+Direct reply: tmux send-keys -t {sender_pane_id} 'your message here' Enter
 
 You can only talk to: {can_talk_to}
 
@@ -196,7 +196,7 @@ You can only talk to: {can_talk_to}
 
 ## Content
 
-I'm {sender} from pane %{sender_pane_id}
+I'm {sender} from pane {sender_pane_id}
 
 <!-- write here -->
 """
