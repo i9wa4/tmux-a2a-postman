@@ -491,12 +491,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = "Session is disabled"
 					return m, nil
 				}
+				m.status = "Sending ping..."
 				if m.tuiCommands != nil {
-					m.status = "Sending ping..."
 					m.tuiCommands <- TUICommand{
 						Type:   "send_ping",
 						Target: sess.Name,
 					}
+				} else {
+					m.status = "Ping: daemon unavailable"
 				}
 			}
 			return m, nil

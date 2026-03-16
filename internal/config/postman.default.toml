@@ -31,6 +31,7 @@
 #   {session_dir}    - Session directory path
 #   {reply_command}  - Command to create draft reply with context_id substituted
 #   {template}       - Recipient's role template from config
+#   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
 # common_template:
 #   Shared template string prepended to all node templates.
@@ -183,6 +184,7 @@ protocol: tmux-a2a-postman --help
 # Message
 
 How to reply: {reply_command}
+Direct reply: tmux send-keys -t %{sender_pane_id} 'your message here' Enter
 
 You can only talk to: {can_talk_to}
 
@@ -193,6 +195,8 @@ You can only talk to: {can_talk_to}
 ```
 
 ## Content
+
+I'm {sender} from pane %{sender_pane_id}
 
 <!-- write here -->
 """

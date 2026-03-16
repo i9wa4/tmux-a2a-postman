@@ -1016,6 +1016,22 @@ func GetTmuxSessionName() string {
 	return strings.TrimSpace(string(output))
 }
 
+// GetTmuxPaneID returns the current tmux pane ID (e.g. "%42").
+// Uses TMUX_PANE env var when available; falls back to display-message query.
+// Returns empty string if not in tmux or if the command fails.
+func GetTmuxPaneID() string {
+	paneID := os.Getenv("TMUX_PANE")
+	if paneID != "" {
+		return paneID
+	}
+	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_id}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
 // GetTmuxPaneName returns the current tmux pane title.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.

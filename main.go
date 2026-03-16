@@ -555,7 +555,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						if cachedPtr == nil {
 							log.Printf("\u274c postman: send_ping: no cached nodes available\n")
 							daemonEvents <- tui.DaemonEvent{
-								Type:    "message_received",
+								Type:    "status_update",
 								Message: "PING failed: no cached nodes available",
 							}
 							break
@@ -582,7 +582,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 						if len(targetNodes) == 0 {
 							daemonEvents <- tui.DaemonEvent{
-								Type:    "message_received",
+								Type:    "status_update",
 								Message: fmt.Sprintf("PING: no nodes found for session %s", cmd.Target),
 							}
 							break
@@ -816,16 +816,17 @@ func runCreateDraft(args []string) error {
 
 	// Build variables map for template expansion
 	vars := map[string]string{
-		"context_id":    resolvedContextID,
-		"task_id":       taskID,
-		"sender":        sender,
-		"recipient":     *to,
-		"timestamp":     now.Format(time.RFC3339),
-		"can_talk_to":   canTalkTo,
-		"session_dir":   filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command": expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
-		"template":      getNodeTemplate(cfg, *to),
-		"session_name":  sessionName,
+		"context_id":     resolvedContextID,
+		"task_id":        taskID,
+		"sender":         sender,
+		"recipient":      *to,
+		"timestamp":      now.Format(time.RFC3339),
+		"can_talk_to":    canTalkTo,
+		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":  expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
+		"template":       getNodeTemplate(cfg, *to),
+		"session_name":   sessionName,
+		"sender_pane_id": config.GetTmuxPaneID(),
 		// Backward compatibility
 		"from": sender,
 		"to":   *to,
