@@ -971,6 +971,77 @@ func (m Model) renderRightPane(width, height int) string {
 	return b.String()
 }
 
+// renderEdgeLine renders a single edge line with colored node names and directional arrows.
+// sessionName is the session context for state key lookup ("" means All).
+func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
+	line := edge.Raw
+	if len(edge.SegmentDirections) > 0 {
+		nodes := ParseEdgeNodes(line)
+		if len(nodes) == len(edge.SegmentDirections)+1 {
+			var builder strings.Builder
+			for j, node := range nodes {
+				nodeStyle := lipgloss.NewStyle()
+				var stateKey string
+				if sessionName != "" {
+					stateKey = sessionName + ":" + node
+				} else {
+					for sName, nodesInSession := range m.sessionNodes {
+						for _, nodeName := range nodesInSession {
+							if nodeName == node {
+								stateKey = sName + ":" + node
+								break
+							}
+						}
+						if stateKey != "" {
+							break
+						}
+					}
+					if stateKey == "" {
+						stateKey = node
+					}
+				}
+				if es := m.effectiveNodeState(stateKey); es != "" {
+					switch es {
+					case "active", "user_input":
+						nodeStyle = activeNodeStyle
+					case "composing":
+						nodeStyle = composingNodeStyle
+					case "idle", "spinning":
+						nodeStyle = ballHolderStyle
+					case "stale", "stuck":
+						nodeStyle = droppedNodeStyle
+					}
+				}
+				builder.WriteString(nodeStyle.Render(node))
+				if cnt := m.readCounts[node]; cnt > 0 {
+					builder.WriteString(fmt.Sprintf(" (%d)", cnt))
+				}
+				if j < len(edge.SegmentDirections) {
+					var arrow string
+					var arrowStyle lipgloss.Style
+					switch edge.SegmentDirections[j] {
+					case "forward":
+						arrow = " -->  "
+						arrowStyle = greenArrowStyle
+					case "backward":
+						arrow = " <--  "
+						arrowStyle = greenArrowStyle
+					case "bidirectional":
+						arrow = " <--> "
+						arrowStyle = greenArrowStyle
+					default:
+						arrow = "  --  "
+						arrowStyle = grayArrowStyle
+					}
+					builder.WriteString(arrowStyle.Render(arrow))
+				}
+			}
+			line = builder.String()
+		}
+	}
+	return line
+}
+
 // renderVerticalLayout renders all sessions stacked vertically.
 // Issue #127: Vertical layout mode — one panel per session.
 func (m Model) renderVerticalLayout(width, height int) string {
@@ -1040,7 +1111,7 @@ func (m Model) renderVerticalLayout(width, height int) string {
 					count = len(filtered)
 				}
 				for _, edge := range filtered[:count] {
-					b.WriteString(fmt.Sprintf("  %s\n", truncateString(edge.Raw, width-4)))
+					b.WriteString(fmt.Sprintf("  %s\n", m.renderEdgeLine(edge, sess.Name)))
 				}
 			}
 		}
@@ -1187,88 +1258,7 @@ func (m Model) renderRoutingView(width, height int) string {
 
 		for i := startIdx; i < endIdx; i++ {
 			edge := filteredEdges[i]
-			line := edge.Raw
-
-			// Issue #42: Replace each segment with colored directional arrow
-			if len(edge.SegmentDirections) > 0 {
-				// Parse nodes from edge
-				nodes := ParseEdgeNodes(line)
-
-				// Rebuild line with styled arrows and colored node names (Issue #55)
-				if len(nodes) == len(edge.SegmentDirections)+1 {
-					var builder strings.Builder
-					for j, node := range nodes {
-						// Issue #55: Color node name based on state
-						// Issue #56: Added "dropped" state
-						// Issue #77: Use session-prefixed keys to avoid collision across sessions
-						nodeStyle := lipgloss.NewStyle() // default (gray)
-
-						// Construct session-prefixed key
-						var stateKey string
-						if selectedName != "" {
-							// Specific session selected: use that session's prefix
-							stateKey = selectedName + ":" + node
-						} else {
-							// "(All)" selected: find any session containing this node
-							for sessionName, nodesInSession := range m.sessionNodes {
-								for _, nodeName := range nodesInSession {
-									if nodeName == node {
-										stateKey = sessionName + ":" + node
-										break
-									}
-								}
-								if stateKey != "" {
-									break
-								}
-							}
-							// Fallback: if node not found in any session, try simple name (shouldn't happen)
-							if stateKey == "" {
-								stateKey = node
-							}
-						}
-
-						if es := m.effectiveNodeState(stateKey); es != "" {
-							switch es {
-							case "active", "user_input":
-								nodeStyle = activeNodeStyle
-							case "composing":
-								nodeStyle = composingNodeStyle
-							case "idle", "spinning":
-								nodeStyle = ballHolderStyle
-							case "stale", "stuck":
-								nodeStyle = droppedNodeStyle
-							}
-						}
-						builder.WriteString(nodeStyle.Render(node))
-						// Issue #246: Append cumulative read count if non-zero.
-						if cnt := m.readCounts[node]; cnt > 0 {
-							builder.WriteString(fmt.Sprintf(" (%d)", cnt))
-						}
-						if j < len(edge.SegmentDirections) {
-							// Get arrow and style for this segment
-							// Issue #44: Align all arrows to 6 characters width
-							var arrow string
-							var arrowStyle lipgloss.Style
-							switch edge.SegmentDirections[j] {
-							case "forward":
-								arrow = " -->  "
-								arrowStyle = greenArrowStyle
-							case "backward":
-								arrow = " <--  "
-								arrowStyle = greenArrowStyle
-							case "bidirectional":
-								arrow = " <--> "
-								arrowStyle = greenArrowStyle
-							default: // "none"
-								arrow = "  --  "
-								arrowStyle = grayArrowStyle
-							}
-							builder.WriteString(arrowStyle.Render(arrow))
-						}
-					}
-					line = builder.String()
-				}
-			}
+			line := m.renderEdgeLine(edge, selectedName)
 
 			// Issue #45: Simplified display (no selection indicator in right pane)
 			b.WriteString(fmt.Sprintf("  %s\n", line))
