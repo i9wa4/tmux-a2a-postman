@@ -21,6 +21,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
@@ -933,9 +934,11 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
-// Example: [0]🟢🟢🔴:🟢🟢 [1]🟢🟢🟢
-// Pane status: 🟢 = active (idle.go: 2+ changes in activity_window_seconds), 🔴 = inactive
+// TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
+// Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
+// Pane status: active=green, composing=blue, idle/spinning=yellow, stale=red
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
+// Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
 func runGetSessionStatusOneline(args []string) error {
 	// Load config to get base directory
 	cfg, err := config.LoadConfig("")
@@ -1043,6 +1046,9 @@ func runGetSessionStatusOneline(args []string) error {
 	idleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 
+	// Issue #275: Use plain emoji when stdout is not a TTY (e.g. tmux status-right #()).
+	isTerminal := term.IsTerminal(os.Stdout.Fd())
+
 	var output []string
 
 	for sessionIdx, sessionName := range sessions {
@@ -1082,16 +1088,29 @@ func runGetSessionStatusOneline(args []string) error {
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
-				// Check pane status using ANSI colors matching tui.go exactly.
-				switch paneActivity[paneID] {
-				case "active", "user_input":
-					paneStatuses += activeStyle.Render("●")
-				case "composing":
-					paneStatuses += composingStyle.Render("●")
-				case "idle", "spinning":
-					paneStatuses += idleStyle.Render("●")
-				default:
-					paneStatuses += staleStyle.Render("●")
+				// Check pane status: ANSI colors for TTY, plain emoji for non-TTY (Issue #275).
+				if isTerminal {
+					switch paneActivity[paneID] {
+					case "active", "user_input":
+						paneStatuses += activeStyle.Render("●")
+					case "composing":
+						paneStatuses += composingStyle.Render("●")
+					case "idle", "spinning":
+						paneStatuses += idleStyle.Render("●")
+					default:
+						paneStatuses += staleStyle.Render("●")
+					}
+				} else {
+					switch paneActivity[paneID] {
+					case "active", "user_input":
+						paneStatuses += "🟢"
+					case "composing":
+						paneStatuses += "🔵"
+					case "idle", "spinning":
+						paneStatuses += "🟡"
+					default:
+						paneStatuses += "🔴"
+					}
 				}
 			}
 
@@ -1644,7 +1663,7 @@ func runHelp(args []string) {
 		fmt.Println("  count                      Count unread inbox messages")
 		fmt.Println("  read                       List inbox message file paths")
 		fmt.Println("  archive <filename> [filename...]   Move inbox messages to read/")
-		fmt.Println("  get-session-status-oneline Print all sessions' pane status")
+		fmt.Println("  get-session-status-oneline Print pane status (emoji in pipes/tmux #(), ANSI in TTY)")
 		fmt.Println("  get-session-health         Print session health per node")
 		fmt.Println("  help [topic]               Show help (topics: messaging, directories, config, commands)")
 		fmt.Println("")
@@ -1766,6 +1785,8 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
+		fmt.Println("  TTY (interactive terminal): ANSI-colored dots matching the TUI.")
+		fmt.Println("  Non-TTY (e.g. tmux status-right #()): plain emoji 🟢🔵🟡🔴.")
 		fmt.Println("")
 		fmt.Println("get-context-id")
 		fmt.Println("  Print the live context ID for the current tmux session.")
