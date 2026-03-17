@@ -19,6 +19,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
@@ -1035,6 +1036,12 @@ func runGetSessionStatusOneline(args []string) error {
 		return nil
 	}
 
+	// Pane status styles matching tui.go style definitions exactly (Issue #120).
+	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	composingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+	idleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+
 	var output []string
 
 	for sessionIdx, sessionName := range sessions {
@@ -1074,14 +1081,16 @@ func runGetSessionStatusOneline(args []string) error {
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
-				// Check pane status (🟢 active / 🟡 idle / 🔴 stale)
+				// Check pane status using ANSI colors matching tui.go exactly.
 				switch paneActivity[paneID] {
-				case "active":
-					paneStatuses += "🟢"
-				case "idle":
-					paneStatuses += "🟡"
+				case "active", "user_input":
+					paneStatuses += activeStyle.Render("●")
+				case "composing":
+					paneStatuses += composingStyle.Render("●")
+				case "idle", "spinning":
+					paneStatuses += idleStyle.Render("●")
 				default:
-					paneStatuses += "🔴"
+					paneStatuses += staleStyle.Render("●")
 				}
 			}
 
