@@ -112,6 +112,8 @@ type DaemonState struct {
 	lastInboxUnreadCountMu        sync.RWMutex               // Issue #264
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
+	alertedReadFiles              map[string]struct{}        // Paths of read/ files already alerted (suppress repeats)
+	alertedReadFilesMu            sync.Mutex                 // Mutex for alertedReadFiles
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -128,6 +130,7 @@ func NewDaemonState(drainWindowSeconds float64) *DaemonState {
 		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		lastInboxUnreadCount:          make(map[string]int),             // Issue #264
+		alertedReadFiles:              make(map[string]struct{}),
 	}
 }
 
@@ -909,7 +912,7 @@ func RunDaemonLoop(
 			// Issue #245: Check inbox unread count and alert UINode
 			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
-			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
+			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
@@ -1329,7 +1332,7 @@ func checkNodeInactivity(nodes map[string]discovery.NodeInfo, cfg *config.Config
 // read/ that are older than DroppedBallTimeoutSeconds without a reply.
 // Excludes daemon-generated messages (From == "postman" in filename).
 // Three guards: TUI event (unconditional), Guard 1 (rate limiter), Guard 2 (delivery window).
-func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
+func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter, daemonState *DaemonState) {
 	if cfg.UINode == "" || cfg.UnrepliedMessageAlertTemplate == "" {
 		return
 	}
@@ -1361,6 +1364,7 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 		var (
 			oldestFrom          string
 			oldestTimeSinceRead time.Duration
+			newAlertPaths       []string
 		)
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
@@ -1380,6 +1384,13 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 			if infoErr != nil {
 				continue
 			}
+			absPath := filepath.Join(readDir, entry.Name())
+			daemonState.alertedReadFilesMu.Lock()
+			_, alreadyAlerted := daemonState.alertedReadFiles[absPath]
+			daemonState.alertedReadFilesMu.Unlock()
+			if alreadyAlerted {
+				continue
+			}
 			if time.Since(entryInfo.ModTime()) >= time.Duration(nodeConfig.DroppedBallTimeoutSeconds)*time.Second {
 				unrepliedCount++
 				age := time.Since(entryInfo.ModTime())
@@ -1387,6 +1398,7 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 					oldestTimeSinceRead = age
 					oldestFrom = fileInfo.From
 				}
+				newAlertPaths = append(newAlertPaths, absPath)
 			}
 		}
 		if unrepliedCount == 0 {
@@ -1409,6 +1421,12 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 				"count": unrepliedCount,
 			},
 		}
+		// Record newly alerted files to suppress future repeats.
+		daemonState.alertedReadFilesMu.Lock()
+		for _, p := range newAlertPaths {
+			daemonState.alertedReadFiles[p] = struct{}{}
+		}
+		daemonState.alertedReadFilesMu.Unlock()
 
 		// Guard 1: per-recipient cooldown
 		if !alertRateLimiter.Allow(cfg.UINode, now) {
