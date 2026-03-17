@@ -738,6 +738,37 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, err
 		}
 		mergeConfig(cfg, localCfg)
+		// Issue #274: Apply project-local nodes/ directory on top of merged config.
+		localNodesDir := filepath.Join(filepath.Dir(localPath), "nodes")
+		if info, err := os.Stat(localNodesDir); err == nil && info.IsDir() {
+			nodeFiles, _ := filepath.Glob(filepath.Join(localNodesDir, "*.toml"))
+			sort.Strings(nodeFiles) // deterministic alphabetical order
+			for _, nodeFile := range nodeFiles {
+				nodeBytes, err := os.ReadFile(nodeFile)
+				if err != nil {
+					log.Printf("warning: skipping %s (read error): %v", nodeFile, err)
+					continue
+				}
+				warnDeprecatedKeys(nodeBytes, nodeFile)
+				var sections map[string]toml.Primitive
+				md2, err := toml.Decode(string(nodeBytes), &sections)
+				if err != nil {
+					log.Printf("warning: skipping %s: %v", nodeFile, err)
+					continue
+				}
+				for name, prim := range sections {
+					if name == "postman" || name == "heartbeat" || name == "node_defaults" {
+						continue // skip reserved sections
+					}
+					var node NodeConfig
+					if err := md2.PrimitiveDecode(prim, &node); err != nil {
+						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
+						continue
+					}
+					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
+				}
+			}
+		}
 	}
 
 	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
