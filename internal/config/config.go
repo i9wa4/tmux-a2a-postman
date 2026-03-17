@@ -1012,21 +1012,24 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
-		if fi, err := os.Stat(sessionDir); err != nil || !fi.IsDir() {
-			continue
-		}
-		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
-			matches = append(matches, e.Name())
+		subdirs, _ := os.ReadDir(filepath.Join(baseDir, e.Name()))
+		for _, sub := range subdirs {
+			if !sub.IsDir() {
+				continue
+			}
+			if IsSessionPIDAlive(baseDir, e.Name(), sub.Name()) {
+				matches = append(matches, e.Name())
+				break
+			}
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("cannot auto-resolve context-id: no active postman found for session %q in %s (use --context-id)", sessionName, baseDir)
+		return "", fmt.Errorf("cannot auto-resolve context-id: no active postman found in %s (use --context-id)", baseDir)
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("cannot auto-resolve context-id: constraint violation: %d live daemons for session %q: %s", len(matches), sessionName, strings.Join(matches, ", "))
+		return "", fmt.Errorf("cannot auto-resolve context-id: constraint violation: %d live daemons found: %s", len(matches), strings.Join(matches, ", "))
 	}
 }
 

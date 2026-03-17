@@ -563,6 +563,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						// Toggle session enable/disable
 						currentState := daemonState.GetConfiguredSessionEnabled(cmd.Target)
 						newState := !currentState
+
+						// Enforce 1-daemon-per-session: block enable if another live daemon already owns it.
+						if newState {
+							if liveCtx, err := config.ResolveContextIDFromSession(baseDir, cmd.Target); err == nil && liveCtx != contextID {
+								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, liveCtx)
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, liveCtx),
+								}
+								continue
+							}
+						}
+
 						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
@@ -957,7 +970,7 @@ func runGetSessionStatusOneline(args []string) error {
 	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*"))
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
-	var liveStateFile string
+	var liveStateFiles []string
 	for _, ctxDir := range contextDirs {
 		fi, err := os.Stat(ctxDir)
 		if err != nil || !fi.IsDir() {
@@ -971,42 +984,41 @@ func runGetSessionStatusOneline(args []string) error {
 				continue
 			}
 			if config.IsSessionPIDAlive(baseDir, ctxName, se.Name()) {
-				liveStateFile = filepath.Join(ctxDir, "pane-activity.json")
+				liveStateFiles = append(liveStateFiles, filepath.Join(ctxDir, "pane-activity.json"))
 				break
 			}
 		}
-		if liveStateFile != "" {
-			break
-		}
 	}
 
-	if liveStateFile == "" {
+	if len(liveStateFiles) == 0 {
 		return nil // no live context found
 	}
 
-	stateData, err := os.ReadFile(liveStateFile)
-	if err == nil {
-		// Issue #123: Dual-format reader — supports both legacy map[string]string and
-		// new map[string]PaneActivityExport formats.
-		var rawMap map[string]json.RawMessage
-		if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
-			for paneID, raw := range rawMap {
-				var status string
-				// Try legacy format: plain string value
-				if err := json.Unmarshal(raw, &status); err != nil {
-					// Try new format: PaneActivityExport struct
-					var export idle.PaneActivityExport
-					if err := json.Unmarshal(raw, &export); err != nil {
-						continue // skip on schema mismatch
+	for _, liveStateFile := range liveStateFiles {
+		stateData, err := os.ReadFile(liveStateFile)
+		if err == nil {
+			// Issue #123: Dual-format reader — supports both legacy map[string]string and
+			// new map[string]PaneActivityExport formats.
+			var rawMap map[string]json.RawMessage
+			if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
+				for paneID, raw := range rawMap {
+					var status string
+					// Try legacy format: plain string value
+					if err := json.Unmarshal(raw, &status); err != nil {
+						// Try new format: PaneActivityExport struct
+						var export idle.PaneActivityExport
+						if err := json.Unmarshal(raw, &export); err != nil {
+							continue // skip on schema mismatch
+						}
+						status = export.Status
 					}
-					status = export.Status
-				}
-				if status == "" {
-					continue
-				}
-				existing, exists := paneActivity[paneID]
-				if !exists || statusPriority[status] > statusPriority[existing] {
-					paneActivity[paneID] = status // higher priority wins on conflict
+					if status == "" {
+						continue
+					}
+					existing, exists := paneActivity[paneID]
+					if !exists || statusPriority[status] > statusPriority[existing] {
+						paneActivity[paneID] = status // higher priority wins on conflict
+					}
 				}
 			}
 		}
