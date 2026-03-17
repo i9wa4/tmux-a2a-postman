@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -653,37 +654,45 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							simpleName := ping.ExtractSimpleName(nodeName)
 							activeNodes = append(activeNodes, simpleName)
 						}
-						// Send PING to each node in the target session
-						successCount := 0
-						failCount := 0
+						// Send PING to each node in the target session concurrently.
 						livenessMap := idleTracker.GetLivenessMap()
 						pingAdjacency, _ := config.ParseEdges(cfg.Edges)
 						if pingAdjacency == nil {
 							pingAdjacency = map[string][]string{}
 						}
-						for nodeName, nodeInfo := range targetNodes {
-							if err := ping.SendPingToNode(nodeInfo, contextID, nodeName,
-								cfg.MessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, freshNodes); err != nil {
-								log.Printf("\u274c postman: PING to %s failed: %v\n", nodeName, err)
-								failCount++
-								daemonEvents <- tui.DaemonEvent{
-									Type:    "message_received",
-									Message: fmt.Sprintf("PING failed for %s: %v", nodeName, err),
-								}
-							} else {
-								log.Printf("\U0001f4ee postman: PING sent to %s\n", nodeName)
-								successCount++
-								daemonEvents <- tui.DaemonEvent{
-									Type:    "message_received",
-									Message: fmt.Sprintf("PING sent to %s", nodeName),
-								}
+						go func() {
+							var wg sync.WaitGroup
+							var successCount, failCount atomic.Int32
+							for nodeName, nodeInfo := range targetNodes {
+								wg.Add(1)
+								go func(name string, info discovery.NodeInfo) {
+									defer wg.Done()
+									if err := ping.SendPingToNode(info, contextID, name,
+										cfg.MessageTemplate, cfg, activeNodes, livenessMap,
+										pingAdjacency, freshNodes); err != nil {
+										log.Printf("❌ postman: PING to %s failed: %v\n", name, err)
+										failCount.Add(1)
+										daemonEvents <- tui.DaemonEvent{
+											Type:    "message_received",
+											Message: fmt.Sprintf("PING failed for %s: %v", name, err),
+										}
+									} else {
+										log.Printf("📮 postman: PING sent to %s\n", name)
+										successCount.Add(1)
+										daemonEvents <- tui.DaemonEvent{
+											Type:    "message_received",
+											Message: fmt.Sprintf("PING sent to %s", name),
+										}
+									}
+								}(nodeName, nodeInfo)
 							}
-						}
-						totalCount := successCount + failCount
-						daemonEvents <- tui.DaemonEvent{
-							Type:    "message_received",
-							Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount, totalCount),
-						}
+							wg.Wait()
+							total := int(successCount.Load()) + int(failCount.Load())
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "status_update",
+								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount.Load(), total),
+							}
+						}()
 					case "create_draft":
 						// Issue #230: TUI shortcut for create-draft
 						err := runCreateDraft([]string{
