@@ -926,6 +926,9 @@ func (m Model) renderLeftPane(width, height int) string {
 		guardLabel = "ON"
 	}
 	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [S: guard=%s]\n", guardLabel))
+	if m.status != "" {
+		b.WriteString(m.status + "\n")
+	}
 
 	return b.String()
 }
@@ -1122,7 +1125,11 @@ func (m Model) renderVerticalLayout(width, height int) string {
 		}
 	}
 
-	b.WriteString("[q: quit] [1/2: view] [l: layout] [d: draft]")
+	footer := "[q: quit] [1/2: view] [l: layout] [d: draft]"
+	if m.status != "" {
+		footer += "  | " + m.status
+	}
+	b.WriteString(footer)
 	return b.String()
 }
 
