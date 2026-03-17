@@ -233,6 +233,15 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
 
+	// Pre-create inbox dirs for all known tmux sessions so that cross-session
+	// panes are discoverable at startup (without requiring a session_toggle first).
+	if startupSessions, err := discovery.DiscoverAllSessions(); err == nil {
+		for _, s := range startupSessions {
+			if err := config.CreateMultiSessionDirs(contextDir, s); err != nil {
+				log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", s, err)
+			}
+		}
+	}
 	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
@@ -553,6 +562,25 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						newState := !currentState
 						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
+
+						// When enabling a session: create its inbox dirs and refresh node
+						// discovery so cross-session panes become visible to send_ping.
+						if newState {
+							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
+								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
+							} else {
+								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+								edgeNodesRefresh := config.GetEdgeNodeNames(cfg.Edges)
+								for nodeName := range refreshed {
+									parts := strings.SplitN(nodeName, ":", 2)
+									if !edgeNodesRefresh[parts[len(parts)-1]] {
+										delete(refreshed, nodeName)
+									}
+								}
+								sharedNodes.Store(&refreshed)
+								log.Printf("postman: node snapshot refreshed after enabling session %s (%d nodes)\n", cmd.Target, len(refreshed))
+							}
+						}
 
 						// Rebuild session list and send status update (all sessions, not just nodes)
 						allSessions, _ := discovery.DiscoverAllSessions()
