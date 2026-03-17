@@ -942,9 +942,6 @@ func runGetSessionStatusOneline(args []string) error {
 	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
 	paneActivity := make(map[string]string)
 
-	currentSessionOut, _ := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output()
-	currentSession := strings.TrimSpace(string(currentSessionOut))
-
 	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*"))
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
@@ -955,25 +952,20 @@ func runGetSessionStatusOneline(args []string) error {
 			continue
 		}
 		ctxName := filepath.Base(ctxDir)
-		pidPath := filepath.Join(baseDir, ctxName, currentSession, "postman.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
+		// Scan all session subdirs for any live postman.pid.
+		sessionEntries, _ := os.ReadDir(ctxDir)
+		for _, se := range sessionEntries {
+			if !se.IsDir() {
+				continue
+			}
+			if config.IsSessionPIDAlive(baseDir, ctxName, se.Name()) {
+				liveStateFile = filepath.Join(ctxDir, "pane-activity.json")
+				break
+			}
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil || pid <= 0 {
-			continue
+		if liveStateFile != "" {
+			break
 		}
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		sigErr := proc.Signal(syscall.Signal(0))
-		if sigErr != nil && sigErr != syscall.EPERM {
-			continue // ESRCH = dead
-		}
-		liveStateFile = filepath.Join(ctxDir, "pane-activity.json")
-		break
 	}
 
 	if liveStateFile == "" {
