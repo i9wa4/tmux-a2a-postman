@@ -119,9 +119,12 @@ edges = []
 reminder_message = "{inbox_path}"
 
 # Alert action templates (appended to daemon alert messages sent to ui_node)
+# NOTE: These templates are rendered for inbox_unread_summary, node_inactivity, and
+#       unreplied_message alert types. They are only appended when the alert passes
+#       the rate-limiter and delivery-window guards.
 # Variables: {node} - target node name, {reply_command} - command to create draft
-alert_action_reachable_template = "\n\n### Action Required\nTo send a message to {node}, run:\n\n  {reply_command}\n"
-alert_action_unreachable_template = "\n\n### Action Required\nNote: {node} is not in your allowed contacts list.\nAsk your orchestrator to follow up.\n"
+alert_action_reachable_template = "\n\nAction: {node} is in your allowed contacts. Send a nudge now:\n\n  {reply_command}\n"
+alert_action_unreachable_template = "\n\nAction: {node} is not in your allowed contacts. Forward this alert to orchestrator immediately.\n"
 
 # Alert message body templates (used as alert content sent to ui_node)
 inbox_stagnation_alert_template = "Inbox stagnation [{severity}]: {node} has unread message in inbox for {age} (threshold: {threshold})"
