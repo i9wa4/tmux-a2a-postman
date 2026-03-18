@@ -63,7 +63,6 @@ type Config struct {
 	CommonTemplate                  string `toml:"common_template"`                     // Issue #49: Shared template for all nodes
 	EdgeViolationWarningTemplate    string `toml:"edge_violation_warning_template"`     // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode        string `toml:"edge_violation_warning_mode"`         // Issue #92: "compact" or "verbose" (default: compact)
-	IdleReminderHeaderTemplate      string `toml:"idle_reminder_header_template"`       // Issue #82: Idle reminder header
 	DroppedBallEventTemplate        string `toml:"dropped_ball_event_template"`         // Issue #82: Dropped ball event message
 	AlertActionReachableTemplate    string `toml:"alert_action_reachable_template"`     // Action text when ui_node can reach the target node
 	AlertActionUnreachableTemplate  string `toml:"alert_action_unreachable_template"`   // Action text when ui_node cannot reach the target node
@@ -74,7 +73,6 @@ type Config struct {
 	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
 	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
-	IdleReminderMessageTemplate     string `toml:"idle_reminder_message_template"`      // Unified idle reminder message format
 	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
 	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
 
@@ -105,19 +103,17 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template                    string  `toml:"template"`
-	OnJoin                      string  `toml:"on_join"`
-	Role                        string  `toml:"role"`
-	ReminderInterval            float64 `toml:"reminder_interval_messages"`
-	ReminderMessage             string  `toml:"reminder_message"`
-	IdleTimeoutSeconds          float64 `toml:"idle_timeout_seconds"`
-	IdleReminderMessage         string  `toml:"idle_reminder_message"`
-	IdleReminderCooldownSeconds float64 `toml:"idle_reminder_cooldown_seconds"`
-	DroppedBallTimeoutSeconds   int     `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
-	DroppedBallCooldownSeconds  int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
-	DroppedBallNotification     string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
-	EnterCount                  int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
-	EnterDelay                  float64 `toml:"enter_delay_seconds"`           // 0 = use global default
+	Template                   string  `toml:"template"`
+	OnJoin                     string  `toml:"on_join"`
+	Role                       string  `toml:"role"`
+	ReminderInterval           float64 `toml:"reminder_interval_messages"`
+	ReminderMessage            string  `toml:"reminder_message"`
+	IdleTimeoutSeconds         float64 `toml:"idle_timeout_seconds"`
+	DroppedBallTimeoutSeconds  int     `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
+	DroppedBallCooldownSeconds int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
+	DroppedBallNotification    string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
+	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
+	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 }
 
 // AgentCard holds agent card information.
@@ -183,7 +179,6 @@ func DefaultConfig() *Config {
 		Nodes:                           make(map[string]NodeConfig),
 		EdgeViolationWarningTemplate:    "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n  messageType: edge_violation_warning\n---\n\n## Edge Violation Warning\n\nyou can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.\n",
 		EdgeViolationWarningMode:        "compact", // Issue #92: Default to compact mode
-		IdleReminderHeaderTemplate:      "## Idle Reminder",
 		DroppedBallEventTemplate:        "Dropped ball: {node} (holding for {duration})",
 		AlertActionReachableTemplate:    "",
 		AlertActionUnreachableTemplate:  "",
@@ -193,7 +188,6 @@ func DefaultConfig() *Config {
 		UnrepliedMessageAlertTemplate:   "",
 		AlertMessageTemplate:            "",
 		HeartbeatMessageTemplate:        "",
-		IdleReminderMessageTemplate:     "",
 		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
 		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Send: tmux-a2a-postman send <file>",
 		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
@@ -401,9 +395,6 @@ func mergeConfig(base, override *Config) {
 	if override.EdgeViolationWarningMode != "" {
 		base.EdgeViolationWarningMode = override.EdgeViolationWarningMode
 	}
-	if override.IdleReminderHeaderTemplate != "" {
-		base.IdleReminderHeaderTemplate = override.IdleReminderHeaderTemplate
-	}
 	if override.DroppedBallEventTemplate != "" {
 		base.DroppedBallEventTemplate = override.DroppedBallEventTemplate
 	}
@@ -433,9 +424,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.HeartbeatMessageTemplate != "" {
 		base.HeartbeatMessageTemplate = override.HeartbeatMessageTemplate
-	}
-	if override.IdleReminderMessageTemplate != "" {
-		base.IdleReminderMessageTemplate = override.IdleReminderMessageTemplate
 	}
 	if override.BoilerplateHeartbeatOk != "" {
 		base.BoilerplateHeartbeatOk = override.BoilerplateHeartbeatOk
@@ -554,12 +542,6 @@ func mergeConfig(base, override *Config) {
 		}
 		if overNode.IdleTimeoutSeconds != 0 {
 			baseNode.IdleTimeoutSeconds = overNode.IdleTimeoutSeconds
-		}
-		if overNode.IdleReminderMessage != "" {
-			baseNode.IdleReminderMessage = overNode.IdleReminderMessage
-		}
-		if overNode.IdleReminderCooldownSeconds != 0 {
-			baseNode.IdleReminderCooldownSeconds = overNode.IdleReminderCooldownSeconds
 		}
 		if overNode.DroppedBallTimeoutSeconds != 0 {
 			baseNode.DroppedBallTimeoutSeconds = overNode.DroppedBallTimeoutSeconds
@@ -1118,12 +1100,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.IdleTimeoutSeconds != 0 {
 		result.IdleTimeoutSeconds = specific.IdleTimeoutSeconds
-	}
-	if specific.IdleReminderMessage != "" {
-		result.IdleReminderMessage = specific.IdleReminderMessage
-	}
-	if specific.IdleReminderCooldownSeconds != 0 {
-		result.IdleReminderCooldownSeconds = specific.IdleReminderCooldownSeconds
 	}
 	if specific.DroppedBallTimeoutSeconds != 0 {
 		result.DroppedBallTimeoutSeconds = specific.DroppedBallTimeoutSeconds
