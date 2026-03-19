@@ -572,13 +572,6 @@ func RunDaemonLoop(
 								// Only count human-authored messages (not daemon/postman alerts).
 								if reminderShouldIncrement(info.From) {
 									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
-									// Emit updated cumulative read counts to TUI (Issue #246).
-									events <- tui.DaemonEvent{
-										Type: "read_count_update",
-										Details: map[string]interface{}{
-											"counts": reminderState.GetCounts(),
-										},
-									}
 								}
 								// Create waiting file: only for agent-to-agent messages (not daemon alerts)
 								if info.From != "postman" && info.From != "daemon" {
@@ -913,6 +906,13 @@ func RunDaemonLoop(
 			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
+			// Issue #283: Emit live inbox counts for TUI display (replaces cumulative reminder counts).
+			events <- tui.DaemonEvent{
+				Type: "read_count_update",
+				Details: map[string]interface{}{
+					"counts": scanLiveInboxCounts(nodes),
+				},
+			}
 
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
@@ -1195,6 +1195,33 @@ func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Confi
 			alertRateLimiter.Record(cfg.UINode, now)
 		}
 	}
+}
+
+// scanLiveInboxCounts returns the current .md file count per node from the
+// inbox filesystem, keyed by session-prefixed node key (e.g. "session:worker").
+// Used to update the TUI readCounts display with live data (Issue #283).
+func scanLiveInboxCounts(nodes map[string]discovery.NodeInfo) map[string]int {
+	counts := make(map[string]int, len(nodes))
+	for nodeKey, nodeInfo := range nodes {
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+		inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+		entries, err := os.ReadDir(inboxPath)
+		if err != nil {
+			counts[nodeKey] = 0
+			continue
+		}
+		n := 0
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+				n++
+			}
+		}
+		counts[nodeKey] = n
+	}
+	return counts
 }
 
 // checkNodeInactivity alerts UINode when a monitored node has been inactive
