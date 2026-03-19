@@ -54,8 +54,6 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	}
 	paneLastNotified[paneID] = time.Now()
 	paneNotifyMu.Unlock()
-	// Wrap with protocol sentinels so all pane output is clearly delimited.
-	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
 	// Security: Sanitize message for tmux set-buffer
 	sanitized := sanitizeForTmux(message)
 
