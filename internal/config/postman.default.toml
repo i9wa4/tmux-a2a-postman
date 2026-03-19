@@ -60,12 +60,12 @@ tmux_timeout_seconds = 30.0        # Timeout for tmux commands
 enter_delay_seconds = 3.0          # Delay before sending Enter key
 startup_delay_seconds = 10.0       # Initial startup delay
 reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
-inbox_unread_threshold = 2         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
+inbox_unread_threshold = 3         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
 # message_ttl_seconds = 600            # Stale post/ drain TTL in seconds (0 = disabled)
 # min_delivery_gap_seconds = 1.0       # Duplicate delivery rate limit in seconds (0 = disabled)
 # startup_drain_window_seconds = 10.0  # Session-enabled bypass window after daemon start (0 = disabled)
 # message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)
-# alert_cooldown_seconds = 300         # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
+alert_cooldown_seconds = 600          # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
 # pane_notify_cooldown_seconds = 600   # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
 # alert_delivery_window_seconds = 60   # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
 
@@ -272,39 +272,6 @@ How to reply: {reply_command}
 {message}
 """
 
-# Idle reminder message template (unified format; written to post/ for daemon-routed delivery)
-# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp}, {alert_type},
-#            {contacts_section}, {reply_command}, {session_dir}, {filename},
-#            {role_content} (Pass 2), {message} (Pass 2; = node's IdleReminderMessage)
-idle_reminder_message_template = """---
-method: message/send
-params:
-  contextId: {context_id}
-  taskId: {task_id}
-  from: {from_node}
-  to: {node}
-  timestamp: {iso_timestamp}
-  alertType: idle_reminder
-  tmuxSession: {session_name}
----
-
-# Alert: {alert_type}
-
-How to reply: {reply_command}
-
-{talks_to_line}
-
-## Role of {node}
-
-```
-{role_content}
-```
-
-## Message
-
-{message}
-"""
-
 # Edge violation warning template (Issue #92, DM-1 normalized #222)
 # Full envelope template with messageType discriminator in frontmatter.
 # Variables: {context_id}, {node}, {iso_timestamp}, {attempted_recipient},
@@ -334,9 +301,6 @@ How to reply: {reply_command}
 # 3. Send: tmux-a2a-postman send <file>
 # """
 
-# Idle reminder header template (Issue #82)
-# idle_reminder_header_template = "## Idle Reminder"
-
 # Dropped ball event message template (Issue #82)
 # Variables: {node}, {duration}
 # dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
@@ -359,8 +323,6 @@ How to reply: {reply_command}
 # reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
 # reminder_message = ""              # Node-specific reminder message
 # idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)
-# idle_reminder_message = ""         # Idle reminder message
-# idle_reminder_cooldown_seconds = 0.0
 # dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
 # dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
 # dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
@@ -377,15 +339,12 @@ prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tas
 
 If nothing needs attention:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
-    --context-id {context_id} --to postman
-  Set Content to: HEARTBEAT_OK
-  Run: tmux-a2a-postman send <filename>
+    --context-id {context_id} --to postman --body "HEARTBEAT_OK" --send
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
   nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
-    --context-id {context_id} --to messenger
-  Set Content to: [HEARTBEAT ALERT] <your message>
-  Run: tmux-a2a-postman send <filename>"""
+    --context-id {context_id} --to messenger \\
+    --body "[HEARTBEAT ALERT] <your message>" --send"""
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes

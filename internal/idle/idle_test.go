@@ -59,9 +59,7 @@ func TestCheckIdleNodes_NoTimeout(t *testing.T) {
 	cfg := &config.Config{
 		Nodes: map[string]config.NodeConfig{
 			"worker": {
-				IdleTimeoutSeconds:          5.0,
-				IdleReminderMessage:         "Test reminder",
-				IdleReminderCooldownSeconds: 10.0,
+				IdleTimeoutSeconds: 5.0,
 			},
 		},
 	}
@@ -96,9 +94,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	cfg := &config.Config{
 		Nodes: map[string]config.NodeConfig{
 			"worker": {
-				IdleTimeoutSeconds:          1.0, // 1 second threshold
-				IdleReminderMessage:         "Test reminder message",
-				IdleReminderCooldownSeconds: 10.0,
+				IdleTimeoutSeconds: 1.0, // 1 second threshold
 			},
 		},
 	}
@@ -125,48 +121,6 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	}
 }
 
-func TestCheckIdleNodes_WithCooldown(t *testing.T) {
-	tracker := NewIdleTracker()
-
-	tmpDir := t.TempDir()
-	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		t.Fatalf("config.CreateSessionDirs failed: %v", err)
-	}
-
-	cfg := &config.Config{
-		Nodes: map[string]config.NodeConfig{
-			"worker": {
-				IdleTimeoutSeconds:          1.0,
-				IdleReminderMessage:         "Test reminder",
-				IdleReminderCooldownSeconds: 5.0, // 5 second cooldown
-			},
-		},
-	}
-
-	// Set old activity and recent reminder sent
-	tracker.mu.Lock()
-	tracker.nodeActivity["test-session:worker"] = NodeActivity{
-		LastSent: time.Now().Add(-2 * time.Second),
-	}
-	tracker.lastReminderSent["test-session:worker"] = time.Now().Add(-1 * time.Second) // Within cooldown
-	tracker.mu.Unlock()
-
-	// Check idle nodes - should NOT send reminder (cooldown active)
-	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
-
-	// Verify no new reminder sent
-	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("reading inbox failed: %v", err)
-	}
-
-	if len(entries) > 0 {
-		t.Errorf("expected no reminder during cooldown, but found %d files", len(entries))
-	}
-}
-
 func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 	tracker := NewIdleTracker()
 
@@ -179,9 +133,7 @@ func TestCheckIdleNodes_ActivityReset(t *testing.T) {
 	cfg := &config.Config{
 		Nodes: map[string]config.NodeConfig{
 			"worker": {
-				IdleTimeoutSeconds:          1.0,
-				IdleReminderMessage:         "Test reminder",
-				IdleReminderCooldownSeconds: 10.0,
+				IdleTimeoutSeconds: 1.0,
 			},
 		},
 	}

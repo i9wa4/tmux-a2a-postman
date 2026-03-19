@@ -173,6 +173,21 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman resend: %v\n", err)
 			os.Exit(1)
 		}
+	case "show-inbox-message":
+		if err := runShowInboxMessage(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman show-inbox-message: %v\n", err)
+			os.Exit(1)
+		}
+	case "list-archived-messages":
+		if err := runListArchivedMessages(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman list-archived-messages: %v\n", err)
+			os.Exit(1)
+		}
+	case "show-archived-message":
+		if err := runShowArchivedMessage(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman show-archived-message: %v\n", err)
+			os.Exit(1)
+		}
 	case "help":
 		runHelp(args)
 	default:
@@ -563,6 +578,19 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						// Toggle session enable/disable
 						currentState := daemonState.GetConfiguredSessionEnabled(cmd.Target)
 						newState := !currentState
+
+						// Enforce 1-daemon-per-session: block enable if another live daemon already owns it.
+						if newState {
+							if liveCtx, err := config.ResolveContextIDFromSession(baseDir, cmd.Target); err == nil && liveCtx != contextID {
+								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, liveCtx)
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, liveCtx),
+								}
+								continue
+							}
+						}
+
 						daemonState.SetSessionEnabled(cmd.Target, newState)
 						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
 
@@ -761,6 +789,8 @@ func runCreateDraft(args []string) error {
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detect if not specified)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
+	body := fs.String("body", "", "inline message body (replaces <!-- write here --> placeholder)")
+	sendFlag := fs.Bool("send", false, "send immediately after creating draft (atomic)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -769,6 +799,9 @@ func runCreateDraft(args []string) error {
 	}
 	if *crossContext == "" && *to == "" {
 		return fmt.Errorf("--to is required")
+	}
+	if *sendFlag && *crossContext != "" {
+		return fmt.Errorf("--send cannot be combined with --cross-context")
 	}
 
 	cfg, err := config.LoadConfig(*configPath)
@@ -906,11 +939,33 @@ func runCreateDraft(args []string) error {
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content = template.ExpandTemplate(content, vars, timeout)
 
+	if *body != "" {
+		content = strings.ReplaceAll(content, "<!-- write here -->", *body)
+	}
+
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing draft: %w", err)
 	}
 
-	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", draftPath, filepath.Base(draftPath))
+	if *sendFlag {
+		if *body == "" {
+			fmt.Fprintf(os.Stderr, "warning: --send without --body: message will contain '<!-- write here -->' placeholder\n")
+		}
+		postDir := filepath.Clean(filepath.Join(draftDir, "..", "post"))
+		if err := os.MkdirAll(postDir, 0o700); err != nil {
+			return fmt.Errorf("creating post/ directory: %w", err)
+		}
+		dst := filepath.Join(postDir, filename)
+		if err := os.Rename(draftPath, dst); err != nil {
+			return fmt.Errorf("sending draft: %w", err)
+		}
+		fmt.Printf("Sent: %s\n", filename)
+		return nil
+	} else if *body != "" {
+		fmt.Printf("Draft created: %s\n\nNext steps:\n  1. tmux-a2a-postman send %s\n", filename, filename)
+		return nil
+	}
+	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filename, filename)
 	return nil
 }
 
@@ -957,7 +1012,7 @@ func runGetSessionStatusOneline(args []string) error {
 	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*"))
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
-	var liveStateFile string
+	var liveStateFiles []string
 	for _, ctxDir := range contextDirs {
 		fi, err := os.Stat(ctxDir)
 		if err != nil || !fi.IsDir() {
@@ -971,42 +1026,41 @@ func runGetSessionStatusOneline(args []string) error {
 				continue
 			}
 			if config.IsSessionPIDAlive(baseDir, ctxName, se.Name()) {
-				liveStateFile = filepath.Join(ctxDir, "pane-activity.json")
+				liveStateFiles = append(liveStateFiles, filepath.Join(ctxDir, "pane-activity.json"))
 				break
 			}
 		}
-		if liveStateFile != "" {
-			break
-		}
 	}
 
-	if liveStateFile == "" {
+	if len(liveStateFiles) == 0 {
 		return nil // no live context found
 	}
 
-	stateData, err := os.ReadFile(liveStateFile)
-	if err == nil {
-		// Issue #123: Dual-format reader — supports both legacy map[string]string and
-		// new map[string]PaneActivityExport formats.
-		var rawMap map[string]json.RawMessage
-		if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
-			for paneID, raw := range rawMap {
-				var status string
-				// Try legacy format: plain string value
-				if err := json.Unmarshal(raw, &status); err != nil {
-					// Try new format: PaneActivityExport struct
-					var export idle.PaneActivityExport
-					if err := json.Unmarshal(raw, &export); err != nil {
-						continue // skip on schema mismatch
+	for _, liveStateFile := range liveStateFiles {
+		stateData, err := os.ReadFile(liveStateFile)
+		if err == nil {
+			// Issue #123: Dual-format reader — supports both legacy map[string]string and
+			// new map[string]PaneActivityExport formats.
+			var rawMap map[string]json.RawMessage
+			if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
+				for paneID, raw := range rawMap {
+					var status string
+					// Try legacy format: plain string value
+					if err := json.Unmarshal(raw, &status); err != nil {
+						// Try new format: PaneActivityExport struct
+						var export idle.PaneActivityExport
+						if err := json.Unmarshal(raw, &export); err != nil {
+							continue // skip on schema mismatch
+						}
+						status = export.Status
 					}
-					status = export.Status
-				}
-				if status == "" {
-					continue
-				}
-				existing, exists := paneActivity[paneID]
-				if !exists || statusPriority[status] > statusPriority[existing] {
-					paneActivity[paneID] = status // higher priority wins on conflict
+					if status == "" {
+						continue
+					}
+					existing, exists := paneActivity[paneID]
+					if !exists || statusPriority[status] > statusPriority[existing] {
+						paneActivity[paneID] = status // higher priority wins on conflict
+					}
 				}
 			}
 		}
@@ -1248,9 +1302,125 @@ func runRead(args []string) error {
 		return nil
 	}
 	for _, msg := range msgs {
-		fmt.Println(filepath.Join(inboxPath, msg.Filename))
+		fmt.Println(msg.Filename)
 	}
 	return nil
+}
+
+// runShowInboxMessage prints the content of a named inbox message to stdout.
+// The filename is resolved by globbing all inbox/ directories under baseDir.
+func runShowInboxMessage(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: show-inbox-message <filename>")
+	}
+	filename := args[0]
+	if strings.ContainsAny(filename, "/\\") {
+		return fmt.Errorf("show-inbox-message: filename must not contain path separators")
+	}
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := config.GetTmuxSessionName()
+	if sessionName == "" {
+		return fmt.Errorf("tmux session name required (run inside tmux)")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	pattern := filepath.Join(baseDir, "*", sessionName, "inbox", "*", filename)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("globbing for %s: %w", filename, err)
+	}
+	switch len(matches) {
+	case 0:
+		return fmt.Errorf("error: %s not found in any inbox/ directory", filename)
+	case 1:
+		data, err := os.ReadFile(matches[0])
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", filename, err)
+		}
+		fmt.Print(string(data))
+		return nil
+	default:
+		return fmt.Errorf("error: %s found in multiple inbox/ directories: %v", filename, matches)
+	}
+}
+
+// runListArchivedMessages prints filenames of all messages in read/, one per line.
+func runListArchivedMessages(args []string) error {
+	// Derive read/ path from resolveInboxPath result
+	// inboxPath = {base}/{contextID}/{session}/inbox/{node}
+	// readPath  = {base}/{contextID}/{session}/read/
+	inboxPath, err := resolveInboxPath(args)
+	if err != nil {
+		return err
+	}
+	readPath := filepath.Join(filepath.Dir(filepath.Dir(inboxPath)), "read")
+
+	entries, err := os.ReadDir(readPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no read/ dir yet — empty output is valid
+		}
+		return fmt.Errorf("reading archived messages: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Println(name)
+	}
+	return nil
+}
+
+// runShowArchivedMessage prints the content of a named archived (read/) message.
+func runShowArchivedMessage(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: show-archived-message <filename>")
+	}
+	filename := args[0]
+	if strings.ContainsAny(filename, "/\\") {
+		return fmt.Errorf("show-archived-message: filename must not contain path separators")
+	}
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := config.GetTmuxSessionName()
+	if sessionName == "" {
+		return fmt.Errorf("tmux session name required (run inside tmux)")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	pattern := filepath.Join(baseDir, "*", sessionName, "read", filename)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("globbing for %s: %w", filename, err)
+	}
+	switch len(matches) {
+	case 0:
+		return fmt.Errorf("error: %s not found in any read/ directory", filename)
+	case 1:
+		data, err := os.ReadFile(matches[0])
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", filename, err)
+		}
+		fmt.Print(string(data))
+		return nil
+	default:
+		return fmt.Errorf("error: %s found in multiple read/ directories: %v", filename, matches)
+	}
 }
 
 // runArchive moves inbox message files to read/ to mark them as read.
@@ -1571,7 +1741,7 @@ func runResend(args []string) error {
 		return fmt.Errorf("moving to post/: %w", err)
 	}
 
-	fmt.Printf("Resent: %s -> %s\n", baseName, dst)
+	fmt.Printf("Resent: %s\n", baseName)
 	return nil
 }
 

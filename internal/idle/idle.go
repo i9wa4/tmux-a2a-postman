@@ -45,7 +45,6 @@ type PaneCaptureState struct {
 // IdleTracker manages idle detection state (Issue #71).
 type IdleTracker struct {
 	nodeActivity     map[string]NodeActivity
-	lastReminderSent map[string]time.Time
 	paneCaptureState map[string]PaneCaptureState // paneKey -> PaneCaptureState
 	mu               sync.Mutex
 }
@@ -54,7 +53,6 @@ type IdleTracker struct {
 func NewIdleTracker() *IdleTracker {
 	return &IdleTracker{
 		nodeActivity:     make(map[string]NodeActivity),
-		lastReminderSent: make(map[string]time.Time),
 		paneCaptureState: make(map[string]PaneCaptureState),
 	}
 }
@@ -339,14 +337,6 @@ func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]
 		idleDuration := now.Sub(lastAct)
 		if idleDuration.Seconds() < nodeConfig.IdleTimeoutSeconds {
 			continue
-		}
-
-		// Check cooldown period (use session-prefixed key)
-		if lastSent, ok := t.lastReminderSent[nodeKey]; ok {
-			cooldown := time.Duration(nodeConfig.IdleReminderCooldownSeconds) * time.Second
-			if now.Sub(lastSent) < cooldown {
-				continue
-			}
 		}
 
 	}
