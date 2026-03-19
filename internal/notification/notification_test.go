@@ -245,8 +245,8 @@ func TestSendToPane_EnterCount2(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
 	// Expected calls: set-buffer, paste-buffer -t %99, send-keys -t %99 C-m, send-keys -t %99 C-m
-	if len(lines) != 4 {
-		t.Errorf("expected 4 lines (set-buffer+paste-buffer+2 send-keys), got %d: %v", len(lines), lines)
+	if len(lines) != 6 {
+		t.Errorf("expected 6 lines (set-buffer+2 sentinel lines+paste-buffer+2 send-keys), got %d: %v", len(lines), lines)
 	}
 
 	// Count send-keys invocations (should be exactly 2)
@@ -284,8 +284,8 @@ func TestSendToPane_EnterCount3(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
 	// Expected calls: set-buffer, paste-buffer, send-keys x3
-	if len(lines) != 5 {
-		t.Errorf("expected 5 lines (set-buffer+paste-buffer+3 send-keys), got %d: %v", len(lines), lines)
+	if len(lines) != 7 {
+		t.Errorf("expected 7 lines (set-buffer+2 sentinel lines+paste-buffer+3 send-keys), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
@@ -322,8 +322,8 @@ func TestSendToPane_EnterCount1(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
 	// Expected calls: set-buffer, paste-buffer, send-keys x1
-	if len(lines) != 3 {
-		t.Errorf("expected 3 lines (set-buffer+paste-buffer+1 send-keys), got %d: %v", len(lines), lines)
+	if len(lines) != 5 {
+		t.Errorf("expected 5 lines (set-buffer+2 sentinel lines+paste-buffer+1 send-keys), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
@@ -360,8 +360,8 @@ func TestSendToPane_EnterCount0(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
 	// Expected: set-buffer, paste-buffer, send-keys x1 (0 treated same as 1)
-	if len(lines) != 3 {
-		t.Errorf("expected 3 lines (enterCount=0 sends one Enter), got %d: %v", len(lines), lines)
+	if len(lines) != 5 {
+		t.Errorf("expected 5 lines (enterCount=0 sends one Enter), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
