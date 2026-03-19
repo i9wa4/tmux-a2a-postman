@@ -1015,6 +1015,26 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	}
 }
 
+// FindSessionOwner scans baseDir for a context (other than ownContextID) that has
+// a live postman daemon for sessionName specifically.
+// Returns the first matching context ID, or "" if none found.
+// Issue #249: Used by TUI-level session-ON guard to prevent duplicate routing.
+func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == ownContextID {
+			continue
+		}
+		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
+			return e.Name()
+		}
+	}
+	return ""
+}
+
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.

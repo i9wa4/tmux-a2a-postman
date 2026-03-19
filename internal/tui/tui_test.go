@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -451,4 +454,42 @@ func TestDiplomatTabEnabled(t *testing.T) {
 			t.Errorf("ownContextID = %q, want %q", m.ownContextID, "session-abc")
 		}
 	})
+}
+
+func TestTUI_SpaceKey_GuardBlocks(t *testing.T) {
+	// Create a temp baseDir that simulates another daemon owning "other-ctx/sess-name"
+	baseDir := t.TempDir()
+	otherCtx := filepath.Join(baseDir, "other-ctx", "sess-name")
+	if err := os.MkdirAll(otherCtx, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// Write current PID — always alive
+	pidPath := filepath.Join(otherCtx, "postman.pid")
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.BaseDir = baseDir
+
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, cfg, "own-ctx")
+	m.startupGuardEnabled = true
+	m.sessions = []SessionInfo{{Name: "sess-name", Enabled: false, NodeCount: 1}}
+	m.selectedSession = 0
+
+	// Simulate space key press (toggle ON)
+	newModel, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	got := newModel.(Model)
+
+	// Expect: session NOT flipped to enabled
+	if got.sessions[0].Enabled {
+		t.Error("guard failed: session was enabled despite owning daemon in other-ctx")
+	}
+	// Expect: status contains "already active"
+	if !strings.Contains(got.status, "already active") {
+		t.Errorf("expected status with 'already active', got %q", got.status)
+	}
 }

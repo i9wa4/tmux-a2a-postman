@@ -278,7 +278,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if liveCtx, err := config.ResolveContextIDFromSession(baseDir, tmuxSessionName); err == nil {
 			return fmt.Errorf(
 				"a postman daemon is already running in tmux session %q (context: %s).\n"+
-					"Run: tmux-a2a-postman stop",
+					"Stop it first or use a different tmux session.",
 				tmuxSessionName, liveCtx,
 			)
 		}

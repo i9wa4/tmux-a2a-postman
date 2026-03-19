@@ -472,6 +472,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Session toggle via TUICommand
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
+				// Issue #249: TUI-level guard — block toggle-ON if another daemon owns this session.
+				// Only active when m.startupGuardEnabled (press 'g' to enable guard; default: off).
+				// Early return here skips both the TUICommand send AND the optimistic update at line 482.
+				// TODO: make async via tea.Cmd for network filesystem support
+				if !sess.Enabled && m.startupGuardEnabled && m.config != nil && m.ownContextID != "" {
+					baseDir := config.ResolveBaseDir(m.config.BaseDir)
+					if liveCtx := config.FindSessionOwner(baseDir, sess.Name, m.ownContextID); liveCtx != "" {
+						m.status = fmt.Sprintf("session %q already active in %s (guard=ON blocks enable)", sess.Name, liveCtx)
+						m.lastKey = ""
+						return m, nil
+					}
+				}
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
 						Type:   "session_toggle",
@@ -925,7 +937,7 @@ func (m Model) renderLeftPane(width, height int) string {
 	if m.startupGuardEnabled {
 		guardLabel = "ON"
 	}
-	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [S: guard=%s]\n", guardLabel))
+	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [g: guard=%s]\n", guardLabel))
 	if m.status != "" {
 		b.WriteString(m.status + "\n")
 	}
