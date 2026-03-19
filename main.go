@@ -78,6 +78,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
+		fmt.Fprintln(os.Stderr, "  stop                       Stop the running daemon for this tmux session")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
 		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
@@ -126,6 +127,11 @@ func main() {
 	case "start":
 		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
+			os.Exit(1)
+		}
+	case "stop":
+		if err := runStop(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman stop: %v\n", err)
 			os.Exit(1)
 		}
 	case "create-draft":
@@ -272,7 +278,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if liveCtx, err := config.ResolveContextIDFromSession(baseDir, tmuxSessionName); err == nil {
 			return fmt.Errorf(
 				"a postman daemon is already running in tmux session %q (context: %s).\n"+
-					"Stop it first or use a different tmux session.",
+					"Run: tmux-a2a-postman stop",
 				tmuxSessionName, liveCtx,
 			)
 		}
@@ -1779,6 +1785,83 @@ func runGetContextID(args []string) error {
 	return nil
 }
 
+// runStop gracefully stops the running postman daemon for this tmux session.
+// Sends SIGTERM and polls until the process exits or --timeout expires.
+func runStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
+	sessionFlag := fs.String("session", "", "tmux session name (auto-detect if in tmux)")
+	configPath := fs.String("config", "", "path to config file")
+	timeoutSecs := fs.Int("timeout", 10, "seconds to wait for daemon to exit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := *sessionFlag
+	if sessionName == "" {
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return fmt.Errorf("--session is required (or run inside tmux)")
+	}
+	sessionName = filepath.Base(sessionName)
+
+	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
+	if err != nil {
+		// "no active postman found" is benign — nothing to stop.
+		// "constraint violation" (multiple live daemons) is a real error.
+		if strings.Contains(err.Error(), "no active postman found") {
+			fmt.Println("postman: no daemon running")
+			return nil
+		}
+		return err
+	}
+
+	// Verify the resolved context has a live daemon for THIS session specifically.
+	// ResolveContextIDFromSession scans all subdirs — the live PID may be for a
+	// different session within the same context. Confirm before signalling.
+	if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
+		fmt.Println("postman: no daemon running for this session")
+		return nil
+	}
+
+	pidPath := filepath.Join(baseDir, contextID, sessionName, "postman.pid")
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return fmt.Errorf("reading pid file %s: %w", pidPath, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return fmt.Errorf("invalid pid in %s", pidPath)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("finding process %d: %w", pid, err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("sending SIGTERM to pid %d: %w", pid, err)
+	}
+
+	deadline := time.Now().Add(time.Duration(*timeoutSecs) * time.Second)
+	for time.Now().Before(deadline) {
+		if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
+			fmt.Printf("postman: daemon (pid %d) stopped\n", pid)
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf(
+		"daemon (pid %d) did not stop within %ds; try: kill -9 %d",
+		pid, *timeoutSecs, pid,
+	)
+}
+
 func runHelp(args []string) {
 	topics := []string{"messaging", "directories", "config", "commands"}
 	printTopicList := func() {
@@ -1827,6 +1910,7 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("Commands:")
 		fmt.Println("  start                      Start the daemon (TUI dashboard)")
+		fmt.Println("  stop                       Stop the running daemon for this tmux session")
 		fmt.Println("  create-draft               Create a new message draft")
 		fmt.Println("  send <filename>            Move draft to post/ to send it")
 		fmt.Println("  resend                     Re-send a dead-letter message")
@@ -1931,6 +2015,18 @@ func runHelp(args []string) {
 		fmt.Println("    --config <path>      Config file path (auto-detected from XDG_CONFIG_HOME)")
 		fmt.Println("    --log-file <path>    Log file path (default: {baseDir}/{contextId}/postman.log)")
 		fmt.Println("    --no-tui             Run without the TUI dashboard")
+		fmt.Println("")
+		fmt.Println("stop")
+		fmt.Println("  Stop the running daemon for the current tmux session.")
+		fmt.Println("  Sends SIGTERM and waits up to --timeout seconds (default 10) for exit.")
+		fmt.Println("  Exits 0 if no daemon is running (idempotent).")
+		fmt.Println("  Flags:")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("    --timeout <secs>     Seconds to wait for daemon exit (default 10)")
+		fmt.Println("  NOTE: --timeout default (10s) is chosen to exceed the default tmux_timeout")
+		fmt.Println("        (5s) plus goroutine drain margin. Increase if your config sets")
+		fmt.Println("        tmux_timeout > 8s.")
 		fmt.Println("")
 		fmt.Println("create-draft")
 		fmt.Println("  Create a new message draft file in the session draft/ directory.")
