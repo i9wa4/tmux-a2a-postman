@@ -1016,7 +1016,7 @@ func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
 					}
 				}
 				builder.WriteString(nodeStyle.Render(node))
-				if cnt := m.readCounts[node]; cnt > 0 {
+				if cnt := m.readCounts[stateKey]; cnt > 0 {
 					builder.WriteString(fmt.Sprintf(" (%d)", cnt))
 				}
 				if j < len(edge.SegmentDirections) {

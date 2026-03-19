@@ -217,7 +217,7 @@ func TestReminderPhaseTwoLookup(t *testing.T) {
 	state.Increment("worker", "test-session", nodes, cfg)
 	state.Increment("worker", "test-session", nodes, cfg)
 	state.mu.Lock()
-	count := state.counters["worker"]
+	count := state.counters["test-session:worker"]
 	state.mu.Unlock()
 	if count != 0 {
 		t.Errorf("Phase 2 lookup: after threshold, counter = %d, want 0", count)

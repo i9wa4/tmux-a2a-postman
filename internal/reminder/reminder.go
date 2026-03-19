@@ -45,9 +45,13 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.counters[nodeName]++
-	r.totalCounters[nodeName]++
-	count := r.counters[nodeName]
+	key := nodeName
+	if sessionName != "" {
+		key = sessionName + ":" + nodeName
+	}
+	r.counters[key]++
+	r.totalCounters[key]++
+	count := r.counters[key]
 
 	// Check if reminder should be sent
 	if cfg.ReminderInterval > 0 && count >= int(cfg.ReminderInterval) {
@@ -131,7 +135,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount, false)
 			}
 			// Reset counter after sending reminder
-			r.counters[nodeName] = 0
+			r.counters[key] = 0
 		}
 	}
 }
