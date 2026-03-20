@@ -170,7 +170,7 @@ func DefaultConfig() *Config {
 		ReplyCommand:                    "",
 		UINode:                          "", // Issue #46: Default UI target node (empty = no default)
 		InboxUnreadThreshold:            3,  // Default threshold for inbox unread summary notification
-		AlertCooldownSeconds:            300,
+		AlertCooldownSeconds:            600,
 		AlertDeliveryWindowSeconds:      60,
 		PaneNotifyCooldownSeconds:       600,
 		AutoEnableNewSessions:           boolPtr(false), // Issue #135: default false; set true to opt in (#219)

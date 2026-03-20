@@ -109,7 +109,7 @@ func TestCheckIdleNodes_WithTimeout(t *testing.T) {
 	// Check idle nodes - send path removed; should not write to inbox
 	tracker.checkIdleNodes(cfg, nil, sessionDir, "ctx-test", nil)
 
-	// Verify no reminder sent (idle_reminder send path removed in #242)
+	// Verify no reminder sent to inbox (idle detection only tracks state; no send path)
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	entries, err := os.ReadDir(inboxDir)
 	if err != nil && !os.IsNotExist(err) {
