@@ -210,8 +210,9 @@ func DiscoverNodes(baseDir, contextID, selfSession string) (map[string]NodeInfo,
 // Resolution priority:
 // 1. If nodeName already contains ":", use as-is (already prefixed)
 // 2. Look for nodeName in the same session as sourceSessionName
-// 3. Look for nodeName in any other session
-// Returns the resolved node name or empty string if not found.
+// Returns the resolved node name, or empty string if not found.
+// NOTE: Cross-session fallback is intentionally absent (F2). Bare names are
+// session-scoped only; cross-session delivery requires explicit "session:node" syntax.
 func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]NodeInfo) string {
 	// If already prefixed (contains ":"), use as-is
 	if strings.Contains(nodeName, ":") {
