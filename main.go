@@ -1025,6 +1025,8 @@ func runGetSessionStatusOneline(args []string) error {
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
 	var liveStateFiles []string
+	var liveCtxSessionPairs [][2]string // [ctxDir, sessionSubdir]
+	paneActivityAdded := make(map[string]bool)
 	for _, ctxDir := range contextDirs {
 		fi, err := os.Stat(ctxDir)
 		if err != nil || !fi.IsDir() {
@@ -1038,8 +1040,12 @@ func runGetSessionStatusOneline(args []string) error {
 				continue
 			}
 			if config.IsSessionPIDAlive(baseDir, ctxName, se.Name()) {
-				liveStateFiles = append(liveStateFiles, filepath.Join(ctxDir, "pane-activity.json"))
-				break
+				if !paneActivityAdded[ctxDir] {
+					liveStateFiles = append(liveStateFiles, filepath.Join(ctxDir, "pane-activity.json"))
+					paneActivityAdded[ctxDir] = true
+				}
+				liveCtxSessionPairs = append(liveCtxSessionPairs, [2]string{ctxDir, se.Name()})
+				// NOTE: no break — collect ALL live session subdirs for waiting-file overlay (#285)
 			}
 		}
 	}
@@ -1080,14 +1086,23 @@ func runGetSessionStatusOneline(args []string) error {
 
 	// Build edge node set and pane title map for filtering
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_title}").Output()
-	paneTitles := make(map[string]string) // paneID -> paneTitle
+	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").Output()
+	paneTitles := make(map[string]string)           // paneID -> paneTitle (for edge filter)
+	sessionTitleToPaneID := make(map[string]string) // "sessionName:paneTitle" -> paneID (for waiting overlay, #285)
 	for _, line := range strings.Split(strings.TrimSpace(string(paneTitleOutput)), "\n") {
-		parts := strings.SplitN(strings.TrimSpace(line), " ", 2)
-		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-			paneTitles[parts[0]] = parts[1]
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 3)
+		if len(parts) == 3 && parts[0] != "" && parts[2] != "" {
+			paneID, sessionName, title := parts[0], parts[1], parts[2]
+			paneTitles[paneID] = title
+			sessionTitleToPaneID[sessionName+":"+title] = paneID
 		}
 	}
+
+	// Overlay waiting-file states onto paneActivity (Issue #285).
+	// waiting/*.md files carry "composing", "spinning", "stuck", "user_input" states
+	// that are never present in pane-activity.json. This mirrors the TUI's
+	// effectiveNodeState merge (tui.go:260).
+	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
 	// Get all tmux sessions
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
@@ -1196,6 +1211,70 @@ func runGetSessionStatusOneline(args []string) error {
 		fmt.Println(strings.Join(output, " "))
 	}
 	return nil
+}
+
+// applyWaitingOverlay scans waiting/ dirs in liveCtxSessionPairs and overlays
+// their states onto paneActivity in-place (Issue #285).
+// sessionTitleToPaneID maps "sessionName:paneTitle" -> paneID.
+// Priority mirrors daemon.go:998-1003: higher rank = worse state = wins.
+// "active", "idle", "stale" are absent from the rank map (default 0), so any
+// waiting state with rank >= 1 correctly overrides them.
+func applyWaitingOverlay(
+	liveCtxSessionPairs [][2]string,
+	sessionTitleToPaneID map[string]string,
+	paneActivity map[string]string,
+) {
+	waitingOverlayRank := map[string]int{
+		"user_input": 0,
+		"composing":  1,
+		"spinning":   3,
+		"stuck":      4,
+	}
+	for _, pair := range liveCtxSessionPairs {
+		ctxDir, sessionSubdir := pair[0], pair[1]
+		waitingDir := filepath.Join(ctxDir, sessionSubdir, "waiting")
+		entries, err := os.ReadDir(waitingDir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
+			if parseErr != nil {
+				continue // malformed filename: skip silently (mirrors daemon.go:1032-1034)
+			}
+			content, readErr := os.ReadFile(filepath.Join(waitingDir, entry.Name()))
+			if readErr != nil {
+				continue
+			}
+			cs := string(content)
+			var fileState string
+			switch {
+			case strings.Contains(cs, "state: stuck"):
+				fileState = "stuck"
+			case strings.Contains(cs, "state: spinning"):
+				fileState = "spinning"
+			case strings.Contains(cs, "state: composing"):
+				fileState = "composing"
+			case strings.Contains(cs, "state: user_input"):
+				fileState = "user_input"
+			default:
+				continue
+			}
+			// sessionSubdir is the tmux session name; fileInfo.To is the recipient node name.
+			// Color the RECIPIENT's dot — the node expected to reply.
+			recipientKey := sessionSubdir + ":" + fileInfo.To
+			paneID, ok := sessionTitleToPaneID[recipientKey]
+			if !ok {
+				continue
+			}
+			if waitingOverlayRank[fileState] >= waitingOverlayRank[paneActivity[paneID]] {
+				paneActivity[paneID] = fileState
+			}
+		}
+	}
 }
 
 // cleanupStaleInbox moves all messages from inbox/ subdirectories to read/.
