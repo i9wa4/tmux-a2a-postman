@@ -83,7 +83,7 @@ func TestParseMessageFilename_Invalid(t *testing.T) {
 }
 
 func TestDeliverMessage(t *testing.T) {
-	sessionDir := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestDeliverMessage(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -167,7 +167,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 }
 
 func TestRouting_Allowed(t *testing.T) {
-	sessionDir := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestRouting_Allowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -222,7 +222,7 @@ func TestRouting_Allowed(t *testing.T) {
 }
 
 func TestRouting_Denied(t *testing.T) {
-	sessionDir := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestRouting_Denied(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -263,7 +263,7 @@ func TestRouting_Denied(t *testing.T) {
 }
 
 func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
-	sessionDir := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -332,7 +332,7 @@ func TestPONG_Handling(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -421,7 +421,7 @@ func TestDeliverMessage_ParseError(t *testing.T) {
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -432,11 +432,14 @@ func TestDeliverMessage_ParseError(t *testing.T) {
 }
 
 func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
-	senderDir := t.TempDir()
+	// After F2, cross-session bare-name routing is removed. This test verifies that a recipient
+	// whose NodeInfo.SessionName is disabled gets dead-lettered. alice sends to bob; both keys
+	// are in sess-a (so same-session lookup works), but bob's NodeInfo records SessionName "sess-b"
+	// which is disabled. The sender's session "sess-a" is enabled; the recipient check fires.
+	senderDir := filepath.Join(t.TempDir(), "sess-a") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(senderDir); err != nil {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
-	recipientDir := t.TempDir()
 
 	filename := "20260201-030000-from-alice-to-bob.md"
 	postPath := filepath.Join(senderDir, "post", filename)
@@ -447,18 +450,18 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 
 	nodes := map[string]discovery.NodeInfo{
 		"sess-a:alice": {PaneID: "%1", SessionName: "sess-a", SessionDir: senderDir},
-		"sess-b:bob":   {PaneID: "%2", SessionName: "sess-b", SessionDir: recipientDir},
+		// bob's key is in sess-a so same-session lookup finds it, but NodeInfo.SessionName is "sess-b"
+		"sess-a:bob": {PaneID: "%2", SessionName: "sess-b", SessionDir: t.TempDir()},
 	}
 	adjacency := map[string][]string{
 		"alice": {"bob"},
 	}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	isSessionEnabled := func(s string) bool {
-		return s != "sess-b"
-	}
+	// sess-a (sender) is enabled; sess-b (recipient's recorded session) is disabled.
+	isSessionEnabled := func(s string) bool { return s == "sess-a" }
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker()); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -481,7 +484,7 @@ func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker())
+	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
 	if err != nil {
 		t.Fatalf("expected nil for already-gone file, got: %v", err)
 	}
@@ -542,7 +545,7 @@ PING from postman
 	idleTracker := idle.NewIdleTracker()
 
 	// Deliver message
-	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker)
+	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker, "")
 	if err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
@@ -560,5 +563,46 @@ PING from postman
 	// Verify NOT holding (IsHoldingBall should return false)
 	if idleTracker.IsHoldingBall(nodeKey) {
 		t.Error("worker should NOT be holding ball after postman message")
+	}
+}
+
+// TestDeliverMessage_ForeignSession verifies that F4 dead-letters messages
+// addressed to a recipient in a foreign (non-daemon, non-enabled) session.
+func TestDeliverMessage_ForeignSession(t *testing.T) {
+	// F4: Verify that a recipient in a foreign (non-daemon, non-enabled) session is dead-lettered.
+	// Setup: daemon owns "own-session". Sender (postman) delivers to bob, who somehow appears
+	// in knownNodes under "own-session" but nodeInfo.SessionName resolves to "foreign-session"
+	// (simulating stale knownNodes after a session was previously enabled then not).
+	senderDir := filepath.Join(t.TempDir(), "own-session") // basename matches daemonSession
+	if err := config.CreateSessionDirs(senderDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+	recipientDir := t.TempDir()
+
+	filename := "20260201-040000-from-postman-to-bob.md"
+	postPath := filepath.Join(senderDir, "post", filename)
+	// postman sender bypasses adjacency and envelope checks
+	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: postman\n  to: bob\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ncontent\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// bob's NodeInfo has SessionName "foreign-session" (a stale cross-session entry in knownNodes).
+	// "own-session:bob" key means same-session lookup succeeds, but nodeInfo reveals the actual session.
+	nodes := map[string]discovery.NodeInfo{
+		"own-session:bob": {PaneID: "%2", SessionName: "foreign-session", SessionDir: recipientDir},
+	}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	// foreign-session is not enabled; daemonSession = "own-session"
+	isSessionEnabled := func(s string) bool { return s == "own-session" }
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "own-session"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-040000-from-postman-to-bob-dl-foreign-session.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not dead-lettered with dlSuffixForeignSession: %v", err)
 	}
 }

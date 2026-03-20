@@ -41,15 +41,16 @@ func TestResolveNodeName_SameSessionPriority(t *testing.T) {
 	}
 }
 
-// TestResolveNodeName_CrossSessionFallback verifies cross-session match is returned
-// when same-session is absent.
+// TestResolveNodeName_CrossSessionFallback verifies that cross-session fallback
+// is NOT performed: a bare node name not found in the source session must return "".
+// F2 fix: cross-session routing requires explicit "session:node" syntax.
 func TestResolveNodeName_CrossSessionFallback(t *testing.T) {
 	knownNodes := map[string]NodeInfo{
 		"sess-b:node": {PaneID: "%2", SessionName: "sess-b", SessionDir: "/dir-b"},
 	}
 	got := ResolveNodeName("node", "sess-a", knownNodes)
-	if got != "sess-b:node" {
-		t.Errorf("got %q, want %q (cross-session fallback)", got, "sess-b:node")
+	if got != "" {
+		t.Errorf("got %q, want %q (cross-session fallback must be disabled)", got, "")
 	}
 }
 

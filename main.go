@@ -257,15 +257,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
 
-	// Pre-create inbox dirs for all known tmux sessions so that cross-session
-	// panes are discoverable at startup (without requiring a session_toggle first).
-	if startupSessions, err := discovery.DiscoverAllSessions(); err == nil {
-		for _, s := range startupSessions {
-			if err := config.CreateMultiSessionDirs(contextDir, s); err != nil {
-				log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", s, err)
-			}
-		}
-	}
 	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
@@ -358,7 +349,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	// Discover nodes at startup (before watching, edge-filtered)
-	nodes, startupCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+	nodes, startupCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 	if err != nil {
 		// WARNING: log but continue - nodes can be empty
 		log.Printf("⚠️  postman: node discovery failed: %v\n", err)
@@ -501,12 +492,12 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)
 
 	// Start pane capture check goroutine (hybrid idle detection)
-	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID)
+	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName)
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, alertRateLimiter, &sharedNodes)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
 	})
 
 	// Issue #165: Start diplomat stale-registration cleanup goroutine
@@ -606,7 +597,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
 								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
 							} else {
-								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 								edgeNodesRefresh := config.GetEdgeNodeNames(cfg.Edges)
 								for nodeName := range refreshed {
 									parts := strings.SplitN(nodeName, ":", 2)
@@ -671,6 +662,21 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							return target
 						}
 						targetNodes := filterNodes(freshNodes)
+						// If ui_node is configured, restrict PING to that node only.
+						if cfg.UINode != "" {
+							uiNodes := make(map[string]discovery.NodeInfo)
+							for nodeName, info := range targetNodes {
+								simpleName := ping.ExtractSimpleName(nodeName)
+								if simpleName == cfg.UINode {
+									uiNodes[nodeName] = info
+								}
+							}
+							if len(uiNodes) == 0 {
+								log.Printf("postman: PING skipped: ui_node '%s' not found in session\n", cfg.UINode)
+								break
+							}
+							targetNodes = uiNodes
+						}
 						if cachedPtr == nil || len(targetNodes) == 0 {
 							if cachedPtr == nil {
 								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
@@ -1706,7 +1712,7 @@ func runGetSessionHealth(args []string) error {
 	sessionDir := filepath.Join(baseDir, resolvedContextID)
 
 	// Discover nodes
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID)
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID, config.GetTmuxSessionName())
 	if err != nil {
 		return fmt.Errorf("discovering nodes: %w", err)
 	}

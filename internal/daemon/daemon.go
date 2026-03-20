@@ -293,6 +293,7 @@ func RunDaemonLoop(
 	idleTracker *idle.IdleTracker,
 	alertRateLimiter *alert.AlertRateLimiter,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
+	selfSession string,
 ) {
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
@@ -350,7 +351,7 @@ func RunDaemonLoop(
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						// Re-discover nodes before each delivery (edge-filtered)
-						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID); err == nil {
+						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
 							// Claim discovered panes with this daemon's context ID.
 							for _, nodeInfo := range freshNodes {
@@ -458,7 +459,7 @@ func RunDaemonLoop(
 						// Use eventPath directly for multi-session support
 						// Issue #53: Create wrapper channel for dead-letter notifications
 						messageEvents := make(chan message.DaemonEvent, 1)
-						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker); err != nil {
+						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker, selfSession); err != nil {
 							events <- tui.DaemonEvent{
 								Type:    "error",
 								Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -683,7 +684,7 @@ func RunDaemonLoop(
 			}
 		case <-scanTicker.C:
 			// Issue #41: Periodic node discovery (edge-filtered)
-			freshNodes, scanCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+			freshNodes, scanCollisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 			if err != nil {
 				continue
 			}

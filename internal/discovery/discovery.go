@@ -100,7 +100,9 @@ func reduceCollisions(nodeKeyOrder []string, candidates map[string][]paneCandida
 // highest numeric pane ID (e.g., %31 beats %26). N-1 CollisionReports are emitted per collision group.
 // Server-wide discovery: scans all sessions (-a flag).
 // SessionDir is calculated as baseDir/contextID/sessionName.
-func DiscoverNodesWithCollisions(baseDir, contextID string) (map[string]NodeInfo, []CollisionReport, error) {
+// selfSession is the daemon's own tmux session name. Unclaimed panes in foreign sessions
+// are excluded (F3: unclaimed-pane guard).
+func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
 	// Format: pane_id session_name pane_title (title last to allow spaces)
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").CombinedOutput()
 	if err != nil {
@@ -174,6 +176,13 @@ func DiscoverNodesWithCollisions(baseDir, contextID string) (map[string]NodeInfo
 					if claimedContext != "" && claimedContext != contextID {
 						continue // pane claimed by a different daemon context
 					}
+				} else {
+					// F3: Unclaimed pane (show-options returned non-zero: option not set).
+					// Only allow unclaimed panes in the daemon's own session.
+					// Foreign unclaimed panes are excluded even if their inbox dir exists.
+					if c.sessionName != selfSession {
+						continue
+					}
 				}
 				kept = append(kept, c)
 			}
@@ -192,8 +201,8 @@ func DiscoverNodesWithCollisions(baseDir, contextID string) (map[string]NodeInfo
 // Only panes that have a non-empty pane title are included.
 // Server-wide discovery: scans all sessions (-a flag).
 // SessionDir is calculated as baseDir/contextID/sessionName.
-func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
-	nodes, _, err := DiscoverNodesWithCollisions(baseDir, contextID)
+func DiscoverNodes(baseDir, contextID, selfSession string) (map[string]NodeInfo, error) {
+	nodes, _, err := DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 	return nodes, err
 }
 
@@ -201,8 +210,9 @@ func DiscoverNodes(baseDir, contextID string) (map[string]NodeInfo, error) {
 // Resolution priority:
 // 1. If nodeName already contains ":", use as-is (already prefixed)
 // 2. Look for nodeName in the same session as sourceSessionName
-// 3. Look for nodeName in any other session
-// Returns the resolved node name or empty string if not found.
+// Returns the resolved node name, or empty string if not found.
+// NOTE: Cross-session fallback is intentionally absent (F2). Bare names are
+// session-scoped only; cross-session delivery requires explicit "session:node" syntax.
 func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]NodeInfo) string {
 	// If already prefixed (contains ":"), use as-is
 	if strings.Contains(nodeName, ":") {
@@ -218,16 +228,7 @@ func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]N
 		return sameSessionKey
 	}
 
-	// Try any other session
-	for fullName := range knownNodes {
-		// Extract node name from "session:node" format
-		parts := strings.SplitN(fullName, ":", 2)
-		if len(parts) == 2 && parts[1] == nodeName {
-			return fullName
-		}
-	}
-
-	return "" // Not found
+	return "" // Not found: cross-session delivery requires explicit "session:node" syntax (F2)
 }
 
 // DiscoverAllSessions returns all tmux session names.
