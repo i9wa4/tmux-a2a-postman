@@ -662,6 +662,21 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							return target
 						}
 						targetNodes := filterNodes(freshNodes)
+						// If ui_node is configured, restrict PING to that node only.
+						if cfg.UINode != "" {
+							uiNodes := make(map[string]discovery.NodeInfo)
+							for nodeName, info := range targetNodes {
+								simpleName := ping.ExtractSimpleName(nodeName)
+								if simpleName == cfg.UINode {
+									uiNodes[nodeName] = info
+								}
+							}
+							if len(uiNodes) == 0 {
+								log.Printf("postman: PING skipped: ui_node '%s' not found in session\n", cfg.UINode)
+								break
+							}
+							targetNodes = uiNodes
+						}
 						if cachedPtr == nil || len(targetNodes) == 0 {
 							if cachedPtr == nil {
 								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
