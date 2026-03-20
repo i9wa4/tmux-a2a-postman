@@ -28,6 +28,7 @@ const (
 	deadLetterReasonUnknownRecipient         = "unknown recipient"
 	deadLetterReasonSenderSessionDisabled    = "sender session disabled"
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
+	deadLetterReasonForeignSession           = "foreign session"
 )
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
@@ -39,6 +40,7 @@ const (
 	dlSuffixRoutingDenied    = "-dl-routing-denied"
 	dlSuffixSessionDisabled  = "-dl-session-disabled"
 	DlSuffixTTLExpired       = "-dl-ttl-expired"
+	dlSuffixForeignSession   = "-dl-foreign-session"
 )
 
 // deadLetterDst builds the dead-letter destination path with reason suffix.
@@ -163,7 +165,7 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // Session check: both sender and recipient sessions must be enabled (unless sender is postman)
 // Issue #53: Added events channel parameter for dead-letter notifications
 // Issue #71: Added idleTracker parameter for activity tracking
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker) error {
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -242,6 +244,22 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 	nodeInfo := knownNodes[recipientFullName]
 	paneID := nodeInfo.PaneID
+
+	// F4: Delivery-time session boundary check.
+	// Reject delivery to a recipient whose session is neither the daemon's own session
+	// nor explicitly enabled. This is the last-resort safety net against 混信.
+	if daemonSession != "" && nodeInfo.SessionName != daemonSession && !isSessionEnabled(nodeInfo.SessionName) {
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForeignSession)
+		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonForeignSession, filename)
+		log.Printf("postman: F4: dead-lettering %s — recipient session %q is foreign (daemon session: %q)\n", filename, nodeInfo.SessionName, daemonSession)
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (foreign session)", info.From, info.To),
+			}
+		}
+		return os.Rename(postPath, dst)
+	}
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
 	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)

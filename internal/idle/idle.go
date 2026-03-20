@@ -473,7 +473,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
 // Issue #xxx: Hybrid idle detection with screen capture.
-func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string) {
+func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string) {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) || cfg.PaneCaptureIntervalSeconds <= 0 {
 		return // Pane capture disabled
 	}
@@ -489,7 +489,7 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 				return
 			case <-ticker.C:
 				// Discover nodes (edge-filtered)
-				nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID)
+				nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 				if err != nil {
 					continue
 				}
