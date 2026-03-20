@@ -167,7 +167,7 @@ tmux-a2a-postman send <filename>
 # Archive inbox message (mark as read)
 tmux-a2a-postman archive <filename>
 
-# Show pane status summary
+# Show pane status summary (plain emoji when piped, ANSI colored dots in a terminal)
 tmux-a2a-postman get-session-status-oneline
 
 # Show version
@@ -195,6 +195,17 @@ In headless mode:
 alias a2a='tmux-a2a-postman create-draft'
 # Usage: a2a --to <recipient>
 ```
+
+### 8.3. tmux status-right Integration
+
+To show agent pane status in the tmux status bar, add to your `~/.tmux.conf`:
+
+```tmux
+set -g status-right '#(tmux-a2a-postman get-session-status-oneline)'
+```
+
+Output is plain emoji (`🟢🔵🟡🔴`) when called from `#()`, and ANSI colored
+dots (`●`) when run directly in a terminal.
 
 ## 9. Deployment Topology
 
