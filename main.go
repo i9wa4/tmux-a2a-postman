@@ -264,13 +264,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
-		// Issue #249: Startup guard — detect duplicate daemon for this session.
-		// Check postman.pid liveness before acquiring the flock, to emit a clear error.
-		if liveCtx, err := config.ResolveContextIDFromSession(baseDir, tmuxSessionName); err == nil {
+		// Issue #249: Startup guard — detect duplicate daemon for this context+session.
+		// Scope check to contextID only: multi-session support allows independent daemons
+		// in separate contexts sharing the same tmux session name.
+		if config.IsSessionPIDAlive(baseDir, contextID, tmuxSessionName) {
 			return fmt.Errorf(
 				"a postman daemon is already running in tmux session %q (context: %s).\n"+
-					"Stop it first or use a different tmux session.",
-				tmuxSessionName, liveCtx,
+					"Stop it first.",
+				tmuxSessionName, contextID,
 			)
 		}
 
@@ -578,11 +579,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 						// Enforce 1-daemon-per-session: block enable if another live daemon already owns it.
 						if newState {
-							if liveCtx, err := config.ResolveContextIDFromSession(baseDir, cmd.Target); err == nil && liveCtx != contextID {
-								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, liveCtx)
+							if owner := config.FindSessionOwner(baseDir, cmd.Target, contextID); owner != "" {
+								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, owner)
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
-									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, liveCtx),
+									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner),
 								}
 								continue
 							}
