@@ -1000,6 +1000,40 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
+// statusDot returns the status indicator string for a pane.
+// When isTerminal is true, returns a lipgloss-styled ANSI dot.
+// When isTerminal is false, returns a plain emoji suitable for tmux #() output.
+// lipgloss's own color detection is intentionally bypassed here because #() contexts
+// require plain text regardless of color capability. (Issue #275)
+func statusDot(status string, isTerminal bool) string {
+	if isTerminal {
+		activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+		composingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+		idleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+		staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		switch status {
+		case "active", "user_input":
+			return activeStyle.Render("●")
+		case "composing":
+			return composingStyle.Render("●")
+		case "idle", "spinning":
+			return idleStyle.Render("●")
+		default:
+			return staleStyle.Render("●")
+		}
+	}
+	switch status {
+	case "active", "user_input":
+		return "🟢"
+	case "composing":
+		return "🔵"
+	case "idle", "spinning":
+		return "🟡"
+	default:
+		return "🔴"
+	}
+}
+
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
@@ -1121,12 +1155,6 @@ func runGetSessionStatusOneline(args []string) error {
 		return nil
 	}
 
-	// Pane status styles matching tui.go style definitions exactly (Issue #120).
-	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	composingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
-	idleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-	staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-
 	// Issue #275: Use plain emoji when stdout is not a TTY (e.g. tmux status-right #()).
 	isTerminal := term.IsTerminal(os.Stdout.Fd())
 
@@ -1169,30 +1197,7 @@ func runGetSessionStatusOneline(args []string) error {
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
-				// Check pane status: ANSI colors for TTY, plain emoji for non-TTY (Issue #275).
-				if isTerminal {
-					switch paneActivity[paneID] {
-					case "active", "user_input":
-						paneStatuses += activeStyle.Render("●")
-					case "composing":
-						paneStatuses += composingStyle.Render("●")
-					case "idle", "spinning":
-						paneStatuses += idleStyle.Render("●")
-					default:
-						paneStatuses += staleStyle.Render("●")
-					}
-				} else {
-					switch paneActivity[paneID] {
-					case "active", "user_input":
-						paneStatuses += "🟢"
-					case "composing":
-						paneStatuses += "🔵"
-					case "idle", "spinning":
-						paneStatuses += "🟡"
-					default:
-						paneStatuses += "🔴"
-					}
-				}
+				paneStatuses += statusDot(paneActivity[paneID], isTerminal)
 			}
 
 			if paneStatuses != "" {
