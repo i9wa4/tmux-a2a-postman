@@ -601,7 +601,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								// Pre-claim panes in the enabled session so the F3 guard passes.
 								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
 								preClaimed := 0
-								if paneOut, paneErr := exec.Command("tmux", "list-panes", "-t", cmd.Target, "-F", "#{pane_id} #{pane_title}").Output(); paneErr == nil {
+								if paneOut, paneErr := exec.Command("tmux", "list-panes", "-s", "-t", cmd.Target, "-F", "#{pane_id} #{pane_title}").Output(); paneErr == nil {
 									for _, line := range strings.Split(strings.TrimSpace(string(paneOut)), "\n") {
 										parts := strings.SplitN(line, " ", 2)
 										if len(parts) == 2 && edgeNodes[parts[1]] {
