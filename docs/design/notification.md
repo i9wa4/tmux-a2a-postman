@@ -348,16 +348,27 @@ the sender's inbox, bypassing `post/` routing. The edge violation warning uses
 
 ### 3.3. Liveness Tracking (PING / Liveness Confirmed)
 
-At startup, the daemon sends a PING message to each discovered node via
-`post/`. When a node replies (any message moves from `post/` to the node's
-inbox and then to `read/`), `IdleTracker.MarkNodeAlive` is called, setting
-`LivenessConfirmed = true` for that node.
+At startup, the daemon sends a PING message via `post/`. When `ui_node` is
+configured, PING is sent only to that node; otherwise it is sent to all
+discovered nodes in the target session (`main.go` — `// If ui_node is
+configured, restrict PING to that node only.`).
+
+Liveness is confirmed via two independent paths:
+
+1. **PING reply**: when a node archives the PING (moves it from inbox to
+   `read/`), `IdleTracker.MarkNodeAlive` is called, setting
+   `LivenessConfirmed = true` for that node.
+2. **`read/` move event**: whenever a node archives any message (inbox →
+   `read/`), `MarkNodeAlive` is called directly — independent of PING. A node
+   that never received a PING can still have liveness confirmed the first time
+   it archives any message.
 
 Dropped ball detection (§2.6) only fires for nodes with confirmed liveness —
 prevents false alerts for nodes that have never been active.
 
 **Source:** `internal/ping/ping.go` — `SendPingToNode`; `internal/idle/idle.go`
-— `MarkNodeAlive`
+— `MarkNodeAlive`; `internal/daemon/daemon.go:551-564` — `read/` move liveness
+confirmation (Issue #150)
 
 ### 3.4. Pane Activity Tracking (Hybrid Idle Detection)
 
