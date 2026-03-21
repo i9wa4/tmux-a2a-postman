@@ -598,11 +598,28 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
 								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
 							} else {
+								// Pre-claim panes in the enabled session so the F3 guard passes.
+								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+								preClaimed := 0
+								if paneOut, paneErr := exec.Command("tmux", "list-panes", "-t", cmd.Target, "-F", "#{pane_id} #{pane_title}").Output(); paneErr == nil {
+									for _, line := range strings.Split(strings.TrimSpace(string(paneOut)), "\n") {
+										parts := strings.SplitN(line, " ", 2)
+										if len(parts) == 2 && edgeNodes[parts[1]] {
+											if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+												log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
+											} else {
+												preClaimed++
+											}
+										}
+									}
+								} else {
+									log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", cmd.Target, paneErr)
+								}
+								log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, cmd.Target, contextID)
 								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-								edgeNodesRefresh := config.GetEdgeNodeNames(cfg.Edges)
 								for nodeName := range refreshed {
 									parts := strings.SplitN(nodeName, ":", 2)
-									if !edgeNodesRefresh[parts[len(parts)-1]] {
+									if !edgeNodes[parts[len(parts)-1]] {
 										delete(refreshed, nodeName)
 									}
 								}
