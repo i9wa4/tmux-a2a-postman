@@ -991,11 +991,11 @@ func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 // Issue #249: liveness-aware resolution using postman.pid.
 func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	if baseDir == "" || sessionName == "" {
-		return "", fmt.Errorf("cannot auto-resolve context-id: base_dir or session name is empty")
+		return "", fmt.Errorf("no active postman found: base_dir or session name is empty")
 	}
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
-		return "", fmt.Errorf("cannot auto-resolve context-id: %w", err)
+		return "", fmt.Errorf("no active postman found: %w", err)
 	}
 	var matches []string
 	for _, e := range entries {
@@ -1015,11 +1015,11 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("cannot auto-resolve context-id: no active postman found in %s (use --context-id)", baseDir)
+		return "", fmt.Errorf("no active postman found: no live daemon in %s", baseDir)
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("cannot auto-resolve context-id: constraint violation: %d live daemons found: %s", len(matches), strings.Join(matches, ", "))
+		return "", fmt.Errorf("constraint violation: %d live daemons: %s", len(matches), strings.Join(matches, ", "))
 	}
 }
 
