@@ -1424,3 +1424,334 @@ func TestDiplomatAllowlist_DefaultEmpty(t *testing.T) {
 		t.Errorf("DiplomatAllowlist default: got %v, want empty", cfg.DiplomatAllowlist)
 	}
 }
+
+// Issue #274: Project-local nodes/ override tests.
+
+func TestLoadConfig_ProjectLocal_Nodes_Override(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir: %v", err)
+	}
+	xdgConfig := `
+[postman]
+edges = ["worker -- orchestrator"]
+
+[worker]
+role = "xdg-worker"
+
+[orchestrator]
+role = "xdg-orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config: %v", err)
+	}
+
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir: %v", err)
+	}
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	// Sentinel: must exist (even empty) for overlay to activate.
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile local sentinel: %v", err)
+	}
+	localNodesDir := filepath.Join(localConfigDir, "nodes")
+	if err := os.MkdirAll(localNodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localNodesDir: %v", err)
+	}
+	// project-local worker.toml overrides XDG worker role.
+	localWorker := `
+[worker]
+role = "local-worker"
+`
+	if err := os.WriteFile(filepath.Join(localNodesDir, "worker.toml"), []byte(localWorker), 0o644); err != nil {
+		t.Fatalf("WriteFile local worker.toml: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	// project-local nodes/ overrides worker role.
+	if cfg.Nodes["worker"].Role != "local-worker" {
+		t.Errorf("worker.Role: got %q, want %q", cfg.Nodes["worker"].Role, "local-worker")
+	}
+	// orchestrator still comes from XDG (not overridden).
+	if cfg.Nodes["orchestrator"].Role != "xdg-orchestrator" {
+		t.Errorf("orchestrator.Role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "xdg-orchestrator")
+	}
+}
+
+func TestLoadConfig_ProjectLocal_Nodes_Merge(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir: %v", err)
+	}
+	xdgConfig := `
+[postman]
+edges = ["worker -- orchestrator"]
+
+[orchestrator]
+role = "xdg-orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config: %v", err)
+	}
+
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir: %v", err)
+	}
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile local sentinel: %v", err)
+	}
+	localNodesDir := filepath.Join(localConfigDir, "nodes")
+	if err := os.MkdirAll(localNodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localNodesDir: %v", err)
+	}
+	// New node only present in project-local.
+	localWorker := `
+[worker]
+role = "local-worker"
+`
+	if err := os.WriteFile(filepath.Join(localNodesDir, "worker.toml"), []byte(localWorker), 0o644); err != nil {
+		t.Fatalf("WriteFile local worker.toml: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	// project-local adds worker; XDG orchestrator still present.
+	if cfg.Nodes["worker"].Role != "local-worker" {
+		t.Errorf("worker.Role: got %q, want %q", cfg.Nodes["worker"].Role, "local-worker")
+	}
+	if cfg.Nodes["orchestrator"].Role != "xdg-orchestrator" {
+		t.Errorf("orchestrator.Role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "xdg-orchestrator")
+	}
+}
+
+func TestLoadConfig_ProjectLocal_Nodes_SkipsReserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir: %v", err)
+	}
+	xdgConfig := `
+[postman]
+edges = ["worker -- orchestrator"]
+
+[worker]
+role = "xdg-worker"
+
+[orchestrator]
+role = "xdg-orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config: %v", err)
+	}
+
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir: %v", err)
+	}
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile local sentinel: %v", err)
+	}
+	localNodesDir := filepath.Join(localConfigDir, "nodes")
+	if err := os.MkdirAll(localNodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localNodesDir: %v", err)
+	}
+	// Node file contains reserved [postman] section — must be skipped.
+	nodeFileContent := `
+[postman]
+scan_interval_seconds = 99.0
+
+[worker]
+role = "local-worker"
+`
+	if err := os.WriteFile(filepath.Join(localNodesDir, "worker.toml"), []byte(nodeFileContent), 0o644); err != nil {
+		t.Fatalf("WriteFile node file: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	// [postman] section in node file must be skipped.
+	if cfg.ScanInterval == 99.0 {
+		t.Error("ScanInterval should not be overridden by [postman] in a node file")
+	}
+	// [worker] section in the same file is still applied.
+	if cfg.Nodes["worker"].Role != "local-worker" {
+		t.Errorf("worker.Role: got %q, want %q", cfg.Nodes["worker"].Role, "local-worker")
+	}
+}
+
+// TestLoadConfig_ExplicitConfig_RespectProjectLocalNodes is the M1 regression test.
+// When LoadConfig is called with an explicit config path, project-local nodes/ must
+// still be applied on top.
+func TestLoadConfig_ExplicitConfig_RespectProjectLocalNodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+
+	// Explicit config file (simulates --config flag).
+	explicitConfigDir := filepath.Join(tmpDir, "explicit")
+	if err := os.MkdirAll(explicitConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll explicitConfigDir: %v", err)
+	}
+	explicitConfig := `
+[postman]
+edges = ["worker -- orchestrator"]
+
+[worker]
+role = "explicit-worker"
+
+[orchestrator]
+role = "explicit-orchestrator"
+`
+	explicitConfigPath := filepath.Join(explicitConfigDir, "config.toml")
+	if err := os.WriteFile(explicitConfigPath, []byte(explicitConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile explicit config: %v", err)
+	}
+
+	// Project dir with project-local nodes/ overlay.
+	subDir := filepath.Join(fakeHome, "project")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll subDir: %v", err)
+	}
+	localConfigDir := filepath.Join(subDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile local sentinel: %v", err)
+	}
+	localNodesDir := filepath.Join(localConfigDir, "nodes")
+	if err := os.MkdirAll(localNodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localNodesDir: %v", err)
+	}
+	localWorker := `
+[worker]
+role = "local-worker"
+`
+	if err := os.WriteFile(filepath.Join(localNodesDir, "worker.toml"), []byte(localWorker), 0o644); err != nil {
+		t.Fatalf("WriteFile local worker.toml: %v", err)
+	}
+
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	// Pass explicit config path — this is the M1 regression scenario.
+	cfg, err := LoadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	// project-local nodes/ must override even when --config is explicit.
+	if cfg.Nodes["worker"].Role != "local-worker" {
+		t.Errorf("worker.Role: got %q, want %q (M1 regression: explicit --config should still respect project-local nodes/)", cfg.Nodes["worker"].Role, "local-worker")
+	}
+	// orchestrator from explicit config is unchanged.
+	if cfg.Nodes["orchestrator"].Role != "explicit-orchestrator" {
+		t.Errorf("orchestrator.Role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "explicit-orchestrator")
+	}
+}
+
+func TestResolveLocalConfigPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	configPath := filepath.Join(configDir, "postman.toml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := ResolveLocalConfigPath(tmpDir, "")
+	if err != nil {
+		t.Fatalf("ResolveLocalConfigPath: %v", err)
+	}
+	if got != configPath {
+		t.Errorf("ResolveLocalConfigPath = %q, want %q", got, configPath)
+	}
+
+	// Returns "" when no sentinel.
+	empty, err := ResolveLocalConfigPath(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("ResolveLocalConfigPath (absent): %v", err)
+	}
+	if empty != "" {
+		t.Errorf("ResolveLocalConfigPath (absent) = %q, want empty", empty)
+	}
+}
