@@ -598,11 +598,28 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
 								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
 							} else {
+								// Pre-claim panes in the enabled session so the F3 guard passes.
+								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+								preClaimed := 0
+								if paneOut, paneErr := exec.Command("tmux", "list-panes", "-s", "-t", cmd.Target, "-F", "#{pane_id} #{pane_title}").Output(); paneErr == nil {
+									for _, line := range strings.Split(strings.TrimSpace(string(paneOut)), "\n") {
+										parts := strings.SplitN(line, " ", 2)
+										if len(parts) == 2 && edgeNodes[parts[1]] {
+											if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+												log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
+											} else {
+												preClaimed++
+											}
+										}
+									}
+								} else {
+									log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", cmd.Target, paneErr)
+								}
+								log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, cmd.Target, contextID)
 								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-								edgeNodesRefresh := config.GetEdgeNodeNames(cfg.Edges)
 								for nodeName := range refreshed {
 									parts := strings.SplitN(nodeName, ":", 2)
-									if !edgeNodesRefresh[parts[len(parts)-1]] {
+									if !edgeNodes[parts[len(parts)-1]] {
 										delete(refreshed, nodeName)
 									}
 								}
@@ -663,21 +680,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							return target
 						}
 						targetNodes := filterNodes(freshNodes)
-						// If ui_node is configured, restrict PING to that node only.
-						if cfg.UINode != "" {
-							uiNodes := make(map[string]discovery.NodeInfo)
-							for nodeName, info := range targetNodes {
-								simpleName := ping.ExtractSimpleName(nodeName)
-								if simpleName == cfg.UINode {
-									uiNodes[nodeName] = info
-								}
-							}
-							if len(uiNodes) == 0 {
-								log.Printf("postman: PING skipped: ui_node '%s' not found in session\n", cfg.UINode)
-								break
-							}
-							targetNodes = uiNodes
-						}
 						if cachedPtr == nil || len(targetNodes) == 0 {
 							if cachedPtr == nil {
 								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
