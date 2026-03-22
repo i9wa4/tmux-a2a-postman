@@ -114,6 +114,8 @@ type NodeConfig struct {
 	DroppedBallNotification    string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
+	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
+	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
 }
 
 // AgentCard holds agent card information.
@@ -558,6 +560,12 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
+		if overNode.DeliveryIdleTimeoutSeconds != 0 {
+			baseNode.DeliveryIdleTimeoutSeconds = overNode.DeliveryIdleTimeoutSeconds
+		}
+		if overNode.DeliveryIdleRetryMax != 0 {
+			baseNode.DeliveryIdleRetryMax = overNode.DeliveryIdleRetryMax
+		}
 		base.Nodes[name] = baseNode
 	}
 
@@ -983,11 +991,11 @@ func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 // Issue #249: liveness-aware resolution using postman.pid.
 func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	if baseDir == "" || sessionName == "" {
-		return "", fmt.Errorf("cannot auto-resolve context-id: base_dir or session name is empty")
+		return "", fmt.Errorf("no active postman found: base_dir or session name is empty")
 	}
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
-		return "", fmt.Errorf("cannot auto-resolve context-id: %w", err)
+		return "", fmt.Errorf("no active postman found: %w", err)
 	}
 	var matches []string
 	for _, e := range entries {
@@ -1007,11 +1015,11 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("cannot auto-resolve context-id: no active postman found in %s (use --context-id)", baseDir)
+		return "", fmt.Errorf("no active postman found: no live daemon in %s", baseDir)
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("cannot auto-resolve context-id: constraint violation: %d live daemons found: %s", len(matches), strings.Join(matches, ", "))
+		return "", fmt.Errorf("constraint violation: %d live daemons: %s", len(matches), strings.Join(matches, ", "))
 	}
 }
 
@@ -1135,6 +1143,12 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
+	}
+	if specific.DeliveryIdleTimeoutSeconds != 0 {
+		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
+	}
+	if specific.DeliveryIdleRetryMax != 0 {
+		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
 }

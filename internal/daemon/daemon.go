@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
@@ -114,6 +115,8 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	alertedReadFiles              map[string]struct{}        // Paths of read/ files already alerted (suppress repeats)
 	alertedReadFilesMu            sync.Mutex                 // Mutex for alertedReadFiles
+	swallowedRetryCount           map[string]int             // Issue #282: inbox file path -> re-delivery attempt count
+	swallowedRetryCountMu         sync.Mutex                 // Issue #282
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -131,6 +134,7 @@ func NewDaemonState(drainWindowSeconds float64) *DaemonState {
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		lastInboxUnreadCount:          make(map[string]int),             // Issue #264
 		alertedReadFiles:              make(map[string]struct{}),
+		swallowedRetryCount:           make(map[string]int),
 	}
 }
 
@@ -907,6 +911,7 @@ func RunDaemonLoop(
 			checkInboxStagnation(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
+			checkSwallowedMessages(nodes, cfg, events, contextID, adjacency, idleTracker, daemonState)
 			// Issue #283: Emit live inbox counts for TUI display (replaces cumulative reminder counts).
 			events <- tui.DaemonEvent{
 				Type: "read_count_update",
@@ -1537,6 +1542,121 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 	}
 }
 
+// checkSwallowedMessages detects inbox messages likely swallowed by a busy agent pane
+// and re-delivers the notification. Detection: inbox file older than delivery_idle_timeout_seconds
+// AND pane idle AND node has not sent since file landed in inbox. Issue #282.
+func checkSwallowedMessages(
+	nodes map[string]discovery.NodeInfo,
+	cfg *config.Config,
+	events chan<- tui.DaemonEvent,
+	contextID string,
+	adjacency map[string][]string,
+	idleTracker *idle.IdleTracker,
+	daemonState *DaemonState,
+) {
+	paneStatus := idleTracker.GetPaneActivityStatus(cfg)
+	livenessMap := idleTracker.GetLivenessMap()
+
+	for nodeKey, nodeInfo := range nodes {
+		simpleName := nodeKey
+		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
+			simpleName = parts[1]
+		}
+
+		nodeCfg := cfg.GetNodeConfig(simpleName)
+		if nodeCfg.DeliveryIdleTimeoutSeconds <= 0 {
+			continue
+		}
+
+		retryMax := nodeCfg.DeliveryIdleRetryMax
+		if retryMax <= 0 {
+			retryMax = 3
+		}
+
+		paneState := paneStatus[nodeInfo.PaneID]
+		if paneState != "idle" && paneState != "stale" {
+			continue
+		}
+
+		timeout := time.Duration(nodeCfg.DeliveryIdleTimeoutSeconds * float64(time.Second))
+		inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
+		entries, err := os.ReadDir(inboxDir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
+			if parseErr != nil {
+				continue
+			}
+			if fileInfo.From == "postman" || fileInfo.From == "daemon" {
+				continue
+			}
+
+			entryInfo, infoErr := entry.Info()
+			if infoErr != nil {
+				continue
+			}
+			deliveryTime := entryInfo.ModTime()
+
+			if time.Since(deliveryTime) < timeout {
+				continue
+			}
+
+			if daemonState.hasNodeSentSince(simpleName, deliveryTime) {
+				continue
+			}
+
+			inboxPath := filepath.Join(inboxDir, entry.Name())
+			daemonState.swallowedRetryCountMu.Lock()
+			count := daemonState.swallowedRetryCount[inboxPath]
+			daemonState.swallowedRetryCountMu.Unlock()
+			if count >= retryMax {
+				continue
+			}
+
+			notificationMsg := notification.BuildNotification(
+				cfg, adjacency, nodes, contextID,
+				simpleName, fileInfo.From,
+				nodeInfo.SessionName, entry.Name(),
+				livenessMap,
+			)
+			enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+			if nodeCfg.EnterDelay != 0 {
+				enterDelay = time.Duration(nodeCfg.EnterDelay * float64(time.Second))
+			}
+			tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+			enterCount := nodeCfg.EnterCount
+			if enterCount == 0 {
+				enterCount = 1
+			}
+
+			_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true)
+
+			daemonState.swallowedRetryCountMu.Lock()
+			daemonState.swallowedRetryCount[inboxPath]++
+			daemonState.swallowedRetryCountMu.Unlock()
+
+			log.Printf("postman: swallowed message re-delivered to %s: %s (attempt %d/%d)\n",
+				simpleName, entry.Name(), count+1, retryMax)
+			events <- tui.DaemonEvent{
+				Type:    "swallowed_redelivery",
+				Message: fmt.Sprintf("Re-delivered to %s: %s (attempt %d/%d)", simpleName, entry.Name(), count+1, retryMax),
+				Details: map[string]interface{}{
+					"node":    nodeKey,
+					"file":    entry.Name(),
+					"attempt": count + 1,
+					"max":     retryMax,
+				},
+			}
+		}
+	}
+}
+
 // SetSessionEnabled sets the enabled/disabled state for a session (Issue #71).
 func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessionsMu.Lock()
@@ -1581,6 +1701,20 @@ func (ds *DaemonState) GetConfiguredSessionEnabled(sessionName string) bool {
 		return false // Default: disabled
 	}
 	return enabled
+}
+
+// hasNodeSentSince returns true if the node has sent a message after the given time.
+// Issue #282: Used to detect swallowed deliveries.
+func (ds *DaemonState) hasNodeSentSince(nodeName string, since time.Time) bool {
+	ds.lastDeliveryMu.RLock()
+	defer ds.lastDeliveryMu.RUnlock()
+	prefix := nodeName + ":"
+	for key, t := range ds.lastDeliveryBySenderRecipient {
+		if strings.HasPrefix(key, prefix) && t.After(since) {
+			return true
+		}
+	}
+	return false
 }
 
 // ShouldSendAlert checks if enough time has passed since the last alert (Issue #118).

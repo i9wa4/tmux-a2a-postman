@@ -79,3 +79,75 @@ func TestShouldSendAlert_ZeroCooldown(t *testing.T) {
 		t.Error("expected true with zero cooldown")
 	}
 }
+
+// TestHasNodeSentSince verifies swallowed-message detection logic (Issue #282).
+// NOTE: checkSwallowedMessages itself is not unit-tested because it depends on
+// filesystem state (real inbox/ directories), tmux (via notification.SendToPane),
+// and idle.IdleTracker (which polls tmux pane activity). Mocking all three would
+// require interface refactoring beyond the scope of this issue.
+func TestHasNodeSentSince(t *testing.T) {
+	now := time.Now()
+	before := now.Add(-10 * time.Second)
+	after := now.Add(10 * time.Second)
+
+	tests := []struct {
+		name     string
+		entries  map[string]time.Time // lastDeliveryBySenderRecipient
+		nodeName string
+		since    time.Time
+		want     bool
+	}{
+		{
+			name:     "NoSend",
+			entries:  map[string]time.Time{},
+			nodeName: "worker",
+			since:    now,
+			want:     false,
+		},
+		{
+			name:     "SendBefore",
+			entries:  map[string]time.Time{"worker:orchestrator": before},
+			nodeName: "worker",
+			since:    now,
+			want:     false,
+		},
+		{
+			name:     "SendAfter",
+			entries:  map[string]time.Time{"worker:orchestrator": after},
+			nodeName: "worker",
+			since:    now,
+			want:     true,
+		},
+		{
+			name:     "OtherNodeSent",
+			entries:  map[string]time.Time{"orchestrator:worker": after},
+			nodeName: "worker",
+			since:    now,
+			want:     false,
+		},
+		{
+			name: "MultipleEntries",
+			entries: map[string]time.Time{
+				"worker:orchestrator": before,
+				"worker:messenger":    after,
+			},
+			nodeName: "worker",
+			since:    now,
+			want:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := NewDaemonState(0)
+			ds.lastDeliveryMu.Lock()
+			ds.lastDeliveryBySenderRecipient = tc.entries
+			ds.lastDeliveryMu.Unlock()
+
+			got := ds.hasNodeSentSince(tc.nodeName, tc.since)
+			if got != tc.want {
+				t.Errorf("hasNodeSentSince(%q, since): got %v, want %v", tc.nodeName, got, tc.want)
+			}
+		})
+	}
+}

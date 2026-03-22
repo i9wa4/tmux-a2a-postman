@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -188,15 +189,16 @@ type Model struct {
 	readCounts    map[string]int    // cumulative read/ moves per node (Issue #246)
 
 	// Shared state
-	daemonEvents <-chan DaemonEvent
-	tuiCommands  chan<- TUICommand // Issue #47: Command channel to daemon
-	events       []EventEntry      // Issue #59: Session-tagged events (was messages []string)
-	status       string
-	nodeCount    int
-	lastEvent    string
-	lastKey      string
-	quitting     bool
-	layoutMode   bool // Issue #127: false = horizontal (default), true = vertical stacking
+	daemonEvents  <-chan DaemonEvent
+	tuiCommands   chan<- TUICommand // Issue #47: Command channel to daemon
+	events        []EventEntry      // Issue #59: Session-tagged events (was messages []string)
+	sessionStatus map[string]string // per-session status keyed by session name
+	generalStatus string            // fallback for non-session-scoped events
+	nodeCount     int
+	lastEvent     string
+	lastKey       string
+	quitting      bool
+	layoutMode    bool // Issue #127: false = horizontal (default), true = vertical stacking
 
 	// Issue #249: Startup guard toggle (initially disabled at code level, not config).
 	// Press 'g' to enable. Warns if a duplicate daemon is detected for the current session.
@@ -372,7 +374,8 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		daemonEvents:        daemonEvents,
 		tuiCommands:         tuiCommands,    // Issue #47: Command channel
 		events:              []EventEntry{}, // Issue #59: Session-tagged events
-		status:              "Starting...",
+		sessionStatus:       map[string]string{},
+		generalStatus:       "Starting...",
 		nodeCount:           0,
 		lastEvent:           "",
 		quitting:            false,
@@ -486,7 +489,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !sess.Enabled && m.startupGuardEnabled && m.config != nil && m.ownContextID != "" {
 					baseDir := config.ResolveBaseDir(m.config.BaseDir)
 					if liveCtx := config.FindSessionOwner(baseDir, sess.Name, m.ownContextID); liveCtx != "" {
-						m.status = fmt.Sprintf("session %q already active in %s (guard=ON blocks enable)", sess.Name, liveCtx)
+						m.sessionStatus[sess.Name] = fmt.Sprintf("session %q already active in %s (guard=ON blocks enable)", sess.Name, liveCtx)
 						m.lastKey = ""
 						return m, nil
 					}
@@ -507,17 +510,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if !sess.Enabled {
-					m.status = "Session is disabled"
+					m.sessionStatus[sess.Name] = "Session is disabled"
 					return m, nil
 				}
-				m.status = "Sending ping..."
+				m.sessionStatus[sess.Name] = "Sending ping..."
+				log.Printf("[PING] keypress received for session %q\n", sess.Name)
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
 						Type:   "send_ping",
 						Target: sess.Name,
 					}
 				} else {
-					m.status = "Ping: daemon unavailable"
+					m.sessionStatus[sess.Name] = "Ping: daemon unavailable"
 				}
 			}
 			return m, nil
@@ -591,7 +595,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = m.events[len(m.events)-10:]
 			}
 		case "status_update":
-			m.status = msg.Message
+			if session, ok := msg.Details["session"].(string); ok {
+				m.sessionStatus[session] = msg.Message
+			} else {
+				m.generalStatus = msg.Message
+			}
 			if count, ok := msg.Details["node_count"].(int); ok {
 				m.nodeCount = count
 			}
@@ -743,6 +751,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = m.events[len(m.events)-10:]
 			}
 		case "unreplied_message":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "swallowed_redelivery": // Issue #282
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
@@ -949,8 +967,13 @@ func (m Model) renderLeftPane(width, height int) string {
 		guardLabel = "ON"
 	}
 	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [g: guard=%s]\n", guardLabel))
-	if m.status != "" {
-		b.WriteString(m.status + "\n")
+	selectedSess := m.getSelectedSessionName()
+	displayStatus := m.sessionStatus[selectedSess]
+	if displayStatus == "" {
+		displayStatus = m.generalStatus
+	}
+	if displayStatus != "" {
+		b.WriteString(displayStatus + "\n")
 	}
 
 	return b.String()
@@ -1097,7 +1120,11 @@ func (m Model) renderVerticalLayout(width, height int) string {
 			statusEmoji = "🟢"
 		}
 		worstState := m.getSessionWorstState(sess.Name)
-		b.WriteString(fmt.Sprintf("%s %s [%s]\n", statusEmoji, sess.Name, worstState))
+		header := fmt.Sprintf("%s %s [%s]", statusEmoji, sess.Name, worstState)
+		if sessStatus := m.sessionStatus[sess.Name]; sessStatus != "" {
+			header += "  " + sessStatus
+		}
+		b.WriteString(header + "\n")
 
 		// Content: per-session events or routing (inline, not via shared helpers)
 		switch m.currentView {
@@ -1155,8 +1182,13 @@ func (m Model) renderVerticalLayout(width, height int) string {
 	}
 
 	footer := "[q: quit] [1/2: view] [l: layout] [d: draft]"
-	if m.status != "" {
-		footer += "  | " + m.status
+	selectedSessName := m.getSelectedSessionName()
+	footerStatus := m.sessionStatus[selectedSessName]
+	if footerStatus == "" {
+		footerStatus = m.generalStatus
+	}
+	if footerStatus != "" {
+		footer += "  | " + footerStatus
 	}
 	b.WriteString(footer)
 	return b.String()
