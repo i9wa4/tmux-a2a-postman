@@ -51,6 +51,13 @@ var (
 	composingNodeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("33")) // Blue: node actively composing a reply
 
+	// Issue #286: New state styles
+	pendingNodeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("51")) // Cyan: inbox message waiting
+
+	userInputNodeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("141")) // Purple: node awaiting user input
+
 	// Issue #89: Selected session row highlight
 	selectedSessionStyle = lipgloss.NewStyle().
 				Reverse(true)
@@ -70,13 +77,12 @@ var (
 // Higher rank = worse state = takes visual priority.
 // spinning is rank 3 (active-failure, more urgent than idle/user_input).
 var waitingStateRank = map[string]int{
-	"active":     0,
 	"user_input": 0,
-	"composing":  1,
-	"idle":       2,
+	"pending":    1,
+	"composing":  2,
 	"spinning":   3,
 	"stale":      3,
-	"stuck":      4,
+	"stalled":    4,
 }
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
@@ -242,16 +248,17 @@ func (m Model) getSessionWorstState(sessionName string) string {
 			worstState = es
 		}
 	}
-	// Normalize waiting-only states to renderable session states
+	// Normalize waiting-only states to renderable session states.
+	// All 6 states pass through; no mapping needed since tui now handles all.
 	switch worstState {
-	case "stuck":
-		return "stale"
+	case "stalled":
+		return "stalled"
 	case "spinning":
-		return "idle"
+		return "spinning"
 	case "user_input":
-		return "active"
+		return "user_input"
 	default:
-		return worstState // "active", "composing", "idle", "stale" pass through
+		return worstState // "ready", "pending", "composing", "stale" pass through
 	}
 }
 
@@ -310,7 +317,7 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		case activity.LastReceived.After(activity.LastSent) && !activity.LastReceived.IsZero():
 			// BLOCKING FIX: Preserve existing ball possession logic
 			// LastReceived > LastSent = recipient has received but not replied
-			state = "idle"
+			state = "ready"
 		default:
 			// Issue #95: Time-based color changes (only for active nodes)
 			// Calculate idle duration from max(LastSent, LastReceived)
@@ -334,9 +341,9 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 			case idleDuration >= idleThreshold:
 				state = "stale"
 			case idleDuration >= activeThreshold:
-				state = "idle"
+				state = "ready"
 			default:
-				state = "active"
+				state = "ready"
 			}
 		}
 
@@ -905,18 +912,22 @@ func (m Model) renderLeftPane(width, height int) string {
 			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 
 			// Issue #97: Apply session color based on worst node state
-			// Priority: stale (red) > idle (orange) > active (green)
+			// Priority: stalled (red) > spinning (yellow) > pending/composing > ready (green)
 			if i != m.selectedSession && sess.Enabled {
 				worstState := m.getSessionWorstState(sess.Name)
 				var sessionStyle lipgloss.Style
 				switch worstState {
-				case "stale":
+				case "stale", "stalled":
 					sessionStyle = droppedNodeStyle
-				case "idle":
+				case "spinning":
 					sessionStyle = ballHolderStyle
+				case "user_input":
+					sessionStyle = userInputNodeStyle
+				case "pending":
+					sessionStyle = pendingNodeStyle
 				case "composing":
 					sessionStyle = composingNodeStyle
-				case "active":
+				case "ready", "active":
 					sessionStyle = activeNodeStyle
 				default:
 					sessionStyle = lipgloss.NewStyle() // No style
@@ -972,10 +983,12 @@ func (m Model) renderRightPane(width, height int) string {
 		b.WriteString(m.renderEventsView(width, height-7))
 	case ViewRouting:
 		legend := "Legend: " +
-			activeNodeStyle.Render("Active") + " | " +
+			activeNodeStyle.Render("Ready") + " | " +
+			pendingNodeStyle.Render("Pending") + " | " +
 			composingNodeStyle.Render("Composing") + " | " +
-			ballHolderStyle.Render("Idle") + " | " +
-			droppedNodeStyle.Render("Stale")
+			ballHolderStyle.Render("Spinning") + " | " +
+			droppedNodeStyle.Render("Stalled") + " | " +
+			userInputNodeStyle.Render("User Input")
 		b.WriteString(legend + "\n\n")
 		b.WriteString(m.renderRoutingView(width, height-7))
 	case ViewDiplomat:
@@ -1017,14 +1030,18 @@ func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
 				}
 				if es := m.effectiveNodeState(stateKey); es != "" {
 					switch es {
-					case "active", "user_input":
+					case "ready", "active":
 						nodeStyle = activeNodeStyle
+					case "pending":
+						nodeStyle = pendingNodeStyle
 					case "composing":
 						nodeStyle = composingNodeStyle
-					case "idle", "spinning":
+					case "spinning":
 						nodeStyle = ballHolderStyle
-					case "stale", "stuck":
+					case "stale", "stalled", "stuck":
 						nodeStyle = droppedNodeStyle
+					case "user_input":
+						nodeStyle = userInputNodeStyle
 					}
 				}
 				builder.WriteString(nodeStyle.Render(node))

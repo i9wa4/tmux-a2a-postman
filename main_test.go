@@ -13,11 +13,14 @@ func TestStatusDot_NonTTY(t *testing.T) {
 		want   string
 	}{
 		{"active", "🟢"},
-		{"user_input", "🟢"},
+		{"ready", "🟢"},
+		{"user_input", "🟣"},
+		{"pending", "🔷"},
 		{"composing", "🔵"},
 		{"idle", "🟡"},
 		{"spinning", "🟡"},
 		{"stale", "🔴"},
+		{"stalled", "🔴"},
 		{"stuck", "🔴"},
 		{"", "🔴"},
 	}
@@ -88,8 +91,8 @@ func TestApplyWaitingOverlay(t *testing.T) {
 			wantPaneActivity:     map[string]string{"%10": "spinning"},
 		},
 		{
-			// stuck (rank 4) beats spinning (rank 3).
-			name: "stuck_overrides_spinning",
+			// stalled (rank 4) beats spinning (rank 3); "stuck" compat maps to "stalled".
+			name: "stalled_overrides_spinning",
 			waitingFiles: map[string]string{
 				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: spinning\n---",
 				"20260101-000001-s0000-from-messenger-to-worker.md":    "---\nstate: stuck\n---",
@@ -97,7 +100,7 @@ func TestApplyWaitingOverlay(t *testing.T) {
 			initialPaneActivity:  map[string]string{"%10": "idle"},
 			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
 			sessionSubdir:        "mysession",
-			wantPaneActivity:     map[string]string{"%10": "stuck"},
+			wantPaneActivity:     map[string]string{"%10": "stalled"},
 		},
 		{
 			// user_input (rank 0) must NOT override composing (rank 1).

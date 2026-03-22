@@ -1011,27 +1011,37 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 func statusDot(status string, isTerminal bool) string {
 	if isTerminal {
 		activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+		pendingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
 		composingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
-		idleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+		spinningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 		staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		userInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
 		switch status {
-		case "active", "user_input":
+		case "ready", "active":
 			return activeStyle.Render("●")
+		case "pending":
+			return pendingStyle.Render("●")
 		case "composing":
 			return composingStyle.Render("●")
-		case "idle", "spinning":
-			return idleStyle.Render("●")
+		case "spinning", "idle":
+			return spinningStyle.Render("●")
+		case "user_input":
+			return userInputStyle.Render("●")
 		default:
 			return staleStyle.Render("●")
 		}
 	}
 	switch status {
-	case "active", "user_input":
+	case "ready", "active":
 		return "🟢"
+	case "pending":
+		return "🔷"
 	case "composing":
 		return "🔵"
-	case "idle", "spinning":
+	case "spinning", "idle":
 		return "🟡"
+	case "user_input":
+		return "🟣"
 	default:
 		return "🔴"
 	}
@@ -1140,6 +1150,7 @@ func runGetSessionStatusOneline(args []string) error {
 	// that are never present in pane-activity.json. This mirrors the TUI's
 	// effectiveNodeState merge (tui.go:260).
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
+	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
 	// Get all tmux sessions
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
@@ -1225,19 +1236,22 @@ func runGetSessionStatusOneline(args []string) error {
 // their states onto paneActivity in-place (Issue #285).
 // sessionTitleToPaneID maps "sessionName:paneTitle" -> paneID.
 // Priority mirrors daemon.go:998-1003: higher rank = worse state = wins.
-// "active", "idle", "stale" are absent from the rank map (default 0), so any
-// waiting state with rank >= 1 correctly overrides them.
+// waitingOverlayRank defines overlay priority for waiting/ and inbox/ state display.
+// Higher rank = worse state = takes visual priority.
+// "ready", "idle", "stale" are absent (default 0); any rank >= 1 overrides them.
+var waitingOverlayRank = map[string]int{
+	"user_input": 0,
+	"pending":    1,
+	"composing":  2,
+	"spinning":   3,
+	"stalled":    4,
+}
+
 func applyWaitingOverlay(
 	liveCtxSessionPairs [][2]string,
 	sessionTitleToPaneID map[string]string,
 	paneActivity map[string]string,
 ) {
-	waitingOverlayRank := map[string]int{
-		"user_input": 0,
-		"composing":  1,
-		"spinning":   3,
-		"stuck":      4,
-	}
 	for _, pair := range liveCtxSessionPairs {
 		ctxDir, sessionSubdir := pair[0], pair[1]
 		waitingDir := filepath.Join(ctxDir, sessionSubdir, "waiting")
@@ -1260,8 +1274,8 @@ func applyWaitingOverlay(
 			cs := string(content)
 			var fileState string
 			switch {
-			case strings.Contains(cs, "state: stuck"):
-				fileState = "stuck"
+			case strings.Contains(cs, "state: stalled"), strings.Contains(cs, "state: stuck"):
+				fileState = "stalled"
 			case strings.Contains(cs, "state: spinning"):
 				fileState = "spinning"
 			case strings.Contains(cs, "state: composing"):
@@ -1280,6 +1294,48 @@ func applyWaitingOverlay(
 			}
 			if waitingOverlayRank[fileState] >= waitingOverlayRank[paneActivity[paneID]] {
 				paneActivity[paneID] = fileState
+			}
+		}
+	}
+}
+
+// applyPendingOverlay overlays "pending" state onto paneActivity
+// for any node that has unarchived messages in its inbox/ subdirectory.
+// Mirrors applyWaitingOverlay signature for composability.
+func applyPendingOverlay(
+	liveCtxSessionPairs [][2]string,
+	sessionTitleToPaneID map[string]string,
+	paneActivity map[string]string,
+) {
+	for _, pair := range liveCtxSessionPairs {
+		ctxDir, sessionSubdir := pair[0], pair[1]
+		inboxBase := filepath.Join(ctxDir, sessionSubdir, "inbox")
+		nodeDirs, err := os.ReadDir(inboxBase)
+		if err != nil {
+			continue
+		}
+		for _, nodeDir := range nodeDirs {
+			if !nodeDir.IsDir() {
+				continue
+			}
+			nodeName := nodeDir.Name()
+			entries, err := os.ReadDir(filepath.Join(inboxBase, nodeName))
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				recipientKey := sessionSubdir + ":" + nodeName
+				paneID, ok := sessionTitleToPaneID[recipientKey]
+				if !ok {
+					break
+				}
+				if waitingOverlayRank["pending"] >= waitingOverlayRank[paneActivity[paneID]] {
+					paneActivity[paneID] = "pending"
+				}
+				break // one message is enough to mark pending
 			}
 		}
 	}
