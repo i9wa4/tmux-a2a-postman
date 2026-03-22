@@ -80,24 +80,25 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
 		fmt.Fprintln(os.Stderr, "  stop                       Stop the running daemon for this tmux session")
-		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
-		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
 		fmt.Fprintln(os.Stderr, "  send-message               Send a message in one step (--to and --body required)")
+		fmt.Fprintln(os.Stderr, "  next                       Read and archive the oldest unread inbox message")
+		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
+		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
+		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft file to post/ (advanced)")
 		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
 		fmt.Fprintln(os.Stderr, "  resend                     Re-send a dead-letter message")
+		fmt.Fprintln(os.Stderr, "  list-dead-letters          List dead-letter messages (no filenames)")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
 		fmt.Fprintln(os.Stderr, "  get-session-health         Print session health per node")
-		fmt.Fprintln(os.Stderr, "  count                      Count unread inbox messages")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
-		fmt.Fprintln(os.Stderr, "  archive <filename> [filename...]   Move inbox messages to read/")
+		fmt.Fprintln(os.Stderr, "  archive <filename> [filename...]   Mark inbox messages as read (advanced)")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive msg.md              # Archive a message by filename")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send-message --to worker --body \"DONE\"  # Send in one step")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman start                               # Start daemon")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send-message --to worker --body \"DONE\"  # Send message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman next                                # Read next message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging                      # Messaging guide")
 	}
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -189,6 +190,11 @@ func main() {
 	case "resend":
 		if err := runResend(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman resend: %v\n", err)
+			os.Exit(1)
+		}
+	case "list-dead-letters":
+		if err := runListDeadLetters(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman list-dead-letters: %v\n", err)
 			os.Exit(1)
 		}
 	case "show-inbox-message":
@@ -1659,6 +1665,76 @@ func runListArchivedMessages(args []string) error {
 	return nil
 }
 
+// listDeadLettersFromDir prints dead-letter messages from a directory path (Issue #287).
+// Exported for testing. Output goes to stdout; empty-dir message goes to stderr.
+func listDeadLettersFromDir(deadLetterPath string) error {
+	entries, err := os.ReadDir(deadLetterPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "No dead-letter messages.")
+			return nil
+		}
+		return fmt.Errorf("reading dead-letter messages: %w", err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	if len(names) == 0 {
+		fmt.Fprintln(os.Stderr, "No dead-letter messages.")
+		return nil
+	}
+
+	for _, name := range names {
+		cleanName := message.StripDeadLetterSuffix(name)
+		info, err := message.ParseMessageFilename(cleanName)
+		if err != nil {
+			fmt.Printf("%s  [unreadable]\n", name)
+			continue
+		}
+		fmt.Printf("%s  from=%s  to=%s\n", info.Timestamp, info.From, info.To)
+	}
+	return nil
+}
+
+// findOldestDeadLetterFile returns the path of the lexicographically first .md
+// file in deadLetterDir, or ("", false, nil) if the directory is empty or absent.
+func findOldestDeadLetterFile(deadLetterDir string) (string, bool, error) {
+	entries, err := os.ReadDir(deadLetterDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("reading dead-letter directory: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", false, nil
+	}
+	return filepath.Join(deadLetterDir, names[0]), true, nil
+}
+
+// runListDeadLetters prints dead-letter messages without exposing filenames (Issue #287).
+func runListDeadLetters(args []string) error {
+	inboxPath, err := resolveInboxPath(args)
+	if err != nil {
+		return err
+	}
+	deadLetterPath := filepath.Join(filepath.Dir(filepath.Dir(inboxPath)), "dead-letter")
+	return listDeadLettersFromDir(deadLetterPath)
+}
+
 // runShowArchivedMessage prints the content of a named archived (read/) message.
 func runShowArchivedMessage(args []string) error {
 	if len(args) == 0 {
@@ -2034,13 +2110,17 @@ func runGetSessionHealth(args []string) error {
 func runResend(args []string) error {
 	fs := flag.NewFlagSet("resend", flag.ContinueOnError)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-resolved from tmux session)")
-	file := fs.String("file", "", "path to dead-letter file (required)")
+	file := fs.String("file", "", "path to dead-letter file")
+	oldest := fs.Bool("oldest", false, "resend the oldest dead-letter (no path required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *file == "" {
-		return fmt.Errorf("--file is required")
+	if *oldest && *file != "" {
+		return fmt.Errorf("--oldest and --file are mutually exclusive")
+	}
+	if !*oldest && *file == "" {
+		return fmt.Errorf("one of --file or --oldest is required")
 	}
 
 	cfg, err := config.LoadConfig(*configPath)
@@ -2049,15 +2129,6 @@ func runResend(args []string) error {
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-
-	// Verify dead-letter file exists
-	absFile, err := filepath.Abs(*file)
-	if err != nil {
-		return fmt.Errorf("resolving file path: %w", err)
-	}
-	if _, err := os.Stat(absFile); err != nil {
-		return fmt.Errorf("dead-letter file not found: %w", err)
-	}
 
 	// Find session directory
 	sessionName := config.GetTmuxSessionName()
@@ -2079,6 +2150,28 @@ func runResend(args []string) error {
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		return fmt.Errorf("creating post/ directory: %w", err)
+	}
+
+	var absFile string
+	if *oldest {
+		deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+		found, ok, err := findOldestDeadLetterFile(deadLetterDir)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "No dead-letter messages.")
+			return nil
+		}
+		absFile = found
+	} else {
+		absFile, err = filepath.Abs(*file)
+		if err != nil {
+			return fmt.Errorf("resolving file path: %w", err)
+		}
+		if _, err := os.Stat(absFile); err != nil {
+			return fmt.Errorf("dead-letter file not found: %w", err)
+		}
 	}
 
 	// Strip dead-letter suffix (-dl-*.md -> .md) for redelivery filename
@@ -2241,16 +2334,14 @@ func runHelp(args []string) {
 	if len(args) == 0 {
 		fmt.Println("tmux-a2a-postman — A2A message routing daemon for tmux panes")
 		fmt.Println("")
-		fmt.Println("AI agents use this tool to exchange structured messages via the filesystem.")
-		fmt.Println("Each agent reads its inbox, replies via draft/, and the daemon routes messages.")
+		fmt.Println("AI agents send and receive messages. Each message is routed to the recipient")
+		fmt.Println("by the daemon. Use send-message to send and next to read.")
 		fmt.Println("")
 		fmt.Println("Quick Start:")
-		fmt.Println("  1. Start daemon:   tmux-a2a-postman start")
-		fmt.Println("  2. Create draft:   tmux-a2a-postman create-draft --to <node>")
-		fmt.Println("  3. Edit draft:     $EDITOR draft/<filename>.md")
-		fmt.Println("  4. Send message:   tmux-a2a-postman send <filename>.md")
-		fmt.Println("  5. Daemon routes the file from post/ to recipient's inbox/{sender}/")
-		fmt.Println("  6. Recipient reads and archives: tmux-a2a-postman next")
+		fmt.Println("  1. Start daemon:    tmux-a2a-postman start")
+		fmt.Println("  2. Send a message:  tmux-a2a-postman send-message --to <node> --body \"text\"")
+		fmt.Println("  3. Read next msg:   tmux-a2a-postman next")
+		fmt.Println("  4. Check inbox:     tmux-a2a-postman count")
 		fmt.Println("")
 		fmt.Println("Key Concepts:")
 		fmt.Println("  Node       An AI agent identified by its tmux pane title.")
@@ -2264,37 +2355,26 @@ func runHelp(args []string) {
 		fmt.Println("                 timestamp: <ISO 8601>")
 		fmt.Println("               ---")
 		fmt.Println("")
-		fmt.Println("Directory Layout:")
-		fmt.Println("  {baseDir}/{sessionName}/")
-		fmt.Println("    draft/          Write new messages here")
-		fmt.Println("    post/           Move drafts here to send")
-		fmt.Println("    inbox/{node}/   Daemon delivers messages here")
-		fmt.Println("    read/           Move messages here after reading")
-		fmt.Println("    dead-letter/    Unroutable messages (bad recipient or edge violation)")
-		fmt.Println("    waiting/        Per-node waiting state files")
-		fmt.Println("")
 		fmt.Println("Commands:")
 		fmt.Println("  start                      Start the daemon (TUI dashboard)")
 		fmt.Println("  stop                       Stop the running daemon for this tmux session")
-		fmt.Println("  create-draft               Create a new message draft")
-		fmt.Println("  send <filename>            Move draft to post/ to send it")
-		fmt.Println("  resend                     Re-send a dead-letter message")
+		fmt.Println("  send-message               Send a message in one step (--to and --body required)")
+		fmt.Println("  next                       Read and archive the oldest unread inbox message")
 		fmt.Println("  count                      Count unread inbox messages")
+		fmt.Println("  create-draft               Create a new message draft (advanced / scripts)")
+		fmt.Println("  send <filename>            Submit draft for delivery (advanced)")
+		fmt.Println("  resend                     Re-send a dead-letter message")
+		fmt.Println("  list-dead-letters          List dead-letter messages (no filenames)")
 		fmt.Println("  read                       List inbox message file paths")
-		fmt.Println("  archive <filename> [filename...]   Move inbox messages to read/")
+		fmt.Println("  archive <filename> [filename...]   Mark inbox messages as read (advanced)")
 		fmt.Println("  get-session-status-oneline Print pane status (emoji in pipes/tmux #(), ANSI in TTY)")
 		fmt.Println("  get-session-health         Print session health per node")
 		fmt.Println("  help [topic]               Show help (topics: messaging, directories, config, commands)")
 		fmt.Println("")
 		fmt.Println("Messaging Protocol:")
-		fmt.Println("  create-draft --to <node>                    Draft a new message")
-		fmt.Println("    Example: tmux-a2a-postman create-draft --to orchestrator")
-		fmt.Println("  send <filename>                             Submit draft for delivery")
-		fmt.Println("    Example: tmux-a2a-postman send draft-abc123.md")
-		fmt.Println("  archive <filename>                          Mark inbox message as read")
-		fmt.Println("    Example: tmux-a2a-postman archive msg-abc123.md")
-		fmt.Println("  create-draft --context-id <id> --to <node>  Reply in same context thread")
-		fmt.Println("    Example: tmux-a2a-postman create-draft --context-id session-abc --to orchestrator")
+		fmt.Println("  send-message --to <node> --body \"text\"  Send a message in one step")
+		fmt.Println("  next                                     Read and archive oldest message")
+		fmt.Println("  count                                    Count unread messages")
 		fmt.Println("")
 		printTopicList()
 		fmt.Println("")
@@ -2305,17 +2385,19 @@ func runHelp(args []string) {
 	topic := args[0]
 	switch topic {
 	case "messaging":
-		fmt.Println("Messaging — message lifecycle and envelope format")
+		fmt.Println("Messaging — send and receive messages")
 		fmt.Println("")
-		fmt.Println("Lifecycle:")
-		fmt.Println("  1. Agent runs: tmux-a2a-postman create-draft --to <node>")
-		fmt.Println("  2. Agent runs: tmux-a2a-postman send <filename>")
-		fmt.Println("  3. Daemon picks up file from post/, routes to inbox/{node}/ of recipient")
-		fmt.Println("  4. Recipient reads from inbox/{node}/, then runs: tmux-a2a-postman archive <filename>")
-		fmt.Println("  5. Unknown recipients: file moved to dead-letter/")
+		fmt.Println("Quick workflow (agents):")
+		fmt.Println("  Send:  tmux-a2a-postman send-message --to <node> --body \"text\"")
+		fmt.Println("  Read:  tmux-a2a-postman next")
+		fmt.Println("  Count: tmux-a2a-postman count")
 		fmt.Println("")
-		fmt.Println("One-step alternative (for scripts and AI agents):")
-		fmt.Println("  tmux-a2a-postman send-message --to <node> --body \"message\"")
+		fmt.Println("Reply workflow:")
+		fmt.Println("  tmux-a2a-postman send-message --to <sender> --body \"DONE: ...\"")
+		fmt.Println("")
+		fmt.Println("  To reply in same context thread:")
+		fmt.Println("    tmux-a2a-postman send-message --to <sender> --context-id <id> --body \"...\"")
+		fmt.Println("    (context-id is auto-detected from the incoming message header)")
 		fmt.Println("")
 		fmt.Println("Envelope format (YAML frontmatter):")
 		fmt.Println("  ---")
@@ -2327,13 +2409,10 @@ func runHelp(args []string) {
 		fmt.Println("    timestamp: <ISO 8601 timestamp>")
 		fmt.Println("  ---")
 		fmt.Println("")
-		fmt.Println("Reply workflow:")
-		fmt.Println("  1. Run: tmux-a2a-postman create-draft --to <recipient>")
-		fmt.Println("  2. Edit the generated file in draft/")
-		fmt.Println("  3. Send: tmux-a2a-postman send <filename>")
-		fmt.Println("")
-		fmt.Println("  To reply in same context thread (preserves contextId):")
-		fmt.Println("    tmux-a2a-postman create-draft --context-id <id> --to <recipient>")
+		fmt.Println("Advanced (scripts and power users):")
+		fmt.Println("  1. tmux-a2a-postman create-draft --to <node>")
+		fmt.Println("  2. Edit the draft file")
+		fmt.Println("  3. tmux-a2a-postman send <filename>")
 		fmt.Println("")
 		fmt.Println("Sender is auto-detected from the tmux pane title (no --from flag).")
 	case "directories":
@@ -2388,6 +2467,35 @@ func runHelp(args []string) {
 	case "commands":
 		fmt.Println("Commands — detailed command reference")
 		fmt.Println("")
+		fmt.Println("send-message")
+		fmt.Println("  Compose and deliver a message atomically in a single command.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --to <node>          Recipient node name (required)")
+		fmt.Println("    --body <text>        Message body (required; replaces <!-- write here --> placeholder)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("  NOTE: --cross-context is not supported; use create-draft --cross-context for cross-context delivery.")
+		fmt.Println("  NOTE: --body is required (error if absent). This is stricter than create-draft --send.")
+		fmt.Println("  Example:")
+		fmt.Println("    tmux-a2a-postman send-message --to orchestrator --body \"DONE: task complete\"")
+		fmt.Println("")
+		fmt.Println("next")
+		fmt.Println("  Read and archive the oldest unread inbox message.")
+		fmt.Println("  Prints full message content to stdout; archives silently.")
+		fmt.Println("  Node is auto-detected from tmux pane title.")
+		fmt.Println("  Empty inbox: exits 0, prints 'No unread messages.' to stderr.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --peek               Show without archiving (non-destructive)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("")
+		fmt.Println("count")
+		fmt.Println("  Print number of unread inbox messages for the current node.")
+		fmt.Println("  Node name is auto-detected from tmux pane title.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("")
 		fmt.Println("start")
 		fmt.Println("  Start the tmux-a2a-postman daemon.")
 		fmt.Println("  Flags:")
@@ -2430,19 +2538,6 @@ func runHelp(args []string) {
 		fmt.Println("    2. $EDITOR draft/<filename>.md                 # edit the draft")
 		fmt.Println("    3. tmux-a2a-postman send <filename>.md         # submit for delivery")
 		fmt.Println("")
-		fmt.Println("send-message")
-		fmt.Println("  Compose and deliver a message atomically in a single command.")
-		fmt.Println("  Flags:")
-		fmt.Println("    --to <node>          Recipient node name (required)")
-		fmt.Println("    --body <text>        Message body (required; replaces <!-- write here --> placeholder)")
-		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
-		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
-		fmt.Println("    --config <path>      Config file path (optional)")
-		fmt.Println("  NOTE: --cross-context is not supported; use create-draft --cross-context for cross-context delivery.")
-		fmt.Println("  NOTE: --body is required (error if absent). This is stricter than create-draft --send.")
-		fmt.Println("  Example:")
-		fmt.Println("    tmux-a2a-postman send-message --to orchestrator --body \"DONE: task complete\"")
-		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
 		fmt.Println("  TTY (interactive terminal): ANSI-colored dots matching the TUI.")
@@ -2464,14 +2559,17 @@ func runHelp(args []string) {
 		fmt.Println("  Re-send a dead-letter message by moving it back to post/.")
 		fmt.Println("  Strips -dl-{reason} suffix from filename for redelivery.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --file <path>        Path to dead-letter file (required)")
+		fmt.Println("    --file <path>        Path to dead-letter file")
+		fmt.Println("    --oldest             Resend the oldest dead-letter (no path required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
-		fmt.Println("count")
-		fmt.Println("  Print number of unread inbox messages for the current node.")
-		fmt.Println("  Node name is auto-detected from tmux pane title.")
+		fmt.Println("list-dead-letters")
+		fmt.Println("  List dead-letter messages without exposing filenames or directory paths.")
+		fmt.Println("  Output format: <timestamp>  from=<sender>  to=<recipient>")
+		fmt.Println("  Empty dead-letter dir: exits 0, prints 'No dead-letter messages.' to stderr.")
 		fmt.Println("  Flags:")
 		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("")
 		fmt.Println("read")
 		fmt.Println("  List inbox message file paths for the current node.")
@@ -2486,16 +2584,6 @@ func runHelp(args []string) {
 		fmt.Println("    1. tmux-a2a-postman read          # list inbox file paths")
 		fmt.Println("    2. cat /path/to/msg.md            # read the message")
 		fmt.Println("    3. tmux-a2a-postman archive msg.md  # mark as read (filename only)")
-		fmt.Println("")
-		fmt.Println("next")
-		fmt.Println("  Read and archive the oldest unread inbox message.")
-		fmt.Println("  Prints full message content to stdout; archives silently.")
-		fmt.Println("  Node is auto-detected from tmux pane title.")
-		fmt.Println("  Empty inbox: exits 0, prints 'No unread messages.' to stderr.")
-		fmt.Println("  Flags:")
-		fmt.Println("    --peek               Show without archiving (non-destructive)")
-		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
-		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
