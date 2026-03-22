@@ -81,6 +81,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  stop                       Stop the running daemon for this tmux session")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
+		fmt.Fprintln(os.Stderr, "  send-message               Send a message in one step (--to and --body required)")
 		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
 		fmt.Fprintln(os.Stderr, "  resend                     Re-send a dead-letter message")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
@@ -95,6 +96,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive msg.md              # Archive a message by filename")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send-message --to worker --body \"DONE\"  # Send in one step")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
 	}
 
@@ -192,6 +194,11 @@ func main() {
 	case "show-archived-message":
 		if err := runShowArchivedMessage(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman show-archived-message: %v\n", err)
+			os.Exit(1)
+		}
+	case "send-message":
+		if err := runSendMessage(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
@@ -982,6 +989,38 @@ func runCreateDraft(args []string) error {
 	}
 	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filename, filename)
 	return nil
+}
+
+func runSendMessage(args []string) error {
+	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
+	to := fs.String("to", "", "recipient node name (required)")
+	body := fs.String("body", "", "message body (required)")
+	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
+	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
+	configPath := fs.String("config", "", "config file path (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *to == "" {
+		return fmt.Errorf("--to is required")
+	}
+	if *body == "" {
+		// NOTE: runCreateDraft issues only a warning (not an error) for --send
+		// without --body (see runCreateDraft:966-968). Enforce here before
+		// delegating so send-message never sends a placeholder-body message.
+		return fmt.Errorf("--body is required")
+	}
+	newArgs := []string{"--to", *to, "--body", *body, "--send"}
+	if *contextID != "" {
+		newArgs = append(newArgs, "--context-id", *contextID)
+	}
+	if *session != "" {
+		newArgs = append(newArgs, "--session", *session)
+	}
+	if *configPath != "" {
+		newArgs = append(newArgs, "--config", *configPath)
+	}
+	return runCreateDraft(newArgs)
 }
 
 // expandReplyCommand substitutes {context_id} in the reply command template
@@ -2032,6 +2071,9 @@ func runHelp(args []string) {
 		fmt.Println("  4. Recipient reads from inbox/{node}/, then runs: tmux-a2a-postman archive <filename>")
 		fmt.Println("  5. Unknown recipients: file moved to dead-letter/")
 		fmt.Println("")
+		fmt.Println("One-step alternative (for scripts and AI agents):")
+		fmt.Println("  tmux-a2a-postman send-message --to <node> --body \"message\"")
+		fmt.Println("")
 		fmt.Println("Envelope format (YAML frontmatter):")
 		fmt.Println("  ---")
 		fmt.Println("  method: message/send")
@@ -2132,6 +2174,8 @@ func runHelp(args []string) {
 		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("    --body <text>        Inline message body (replaces <!-- write here --> placeholder)")
+		fmt.Println("    --send               Send immediately after creating draft (atomic)")
 		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
 		fmt.Println("")
 		fmt.Println("send <filename> [filename...]")
@@ -2141,6 +2185,19 @@ func runHelp(args []string) {
 		fmt.Println("    1. tmux-a2a-postman create-draft --to <node>  # creates draft, prints filename")
 		fmt.Println("    2. $EDITOR draft/<filename>.md                 # edit the draft")
 		fmt.Println("    3. tmux-a2a-postman send <filename>.md         # submit for delivery")
+		fmt.Println("")
+		fmt.Println("send-message")
+		fmt.Println("  Compose and deliver a message atomically in a single command.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --to <node>          Recipient node name (required)")
+		fmt.Println("    --body <text>        Message body (required; replaces <!-- write here --> placeholder)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("  NOTE: --cross-context is not supported; use create-draft --cross-context for cross-context delivery.")
+		fmt.Println("  NOTE: --body is required (error if absent). This is stricter than create-draft --send.")
+		fmt.Println("  Example:")
+		fmt.Println("    tmux-a2a-postman send-message --to orchestrator --body \"DONE: task complete\"")
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
