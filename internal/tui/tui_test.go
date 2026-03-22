@@ -207,6 +207,28 @@ func TestTUI_View_VerticalLayout(t *testing.T) {
 	}
 }
 
+func TestTUI_View_VerticalLayout_SessionStatus(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.layoutMode = true
+	m.sessions = []SessionInfo{
+		{Name: "session-a", Enabled: true},
+		{Name: "session-b", Enabled: true},
+	}
+	m.sessionStatus["session-a"] = "Sending ping..."
+	m.sessionStatus["session-b"] = "PING: 7/7 sent successfully"
+
+	view := m.View().Content
+
+	if !strings.Contains(view, "Sending ping...") {
+		t.Error("vertical layout missing sessionStatus for session-a")
+	}
+	if !strings.Contains(view, "PING: 7/7 sent successfully") {
+		t.Error("vertical layout missing sessionStatus for session-b")
+	}
+}
+
 func TestTUI_MessageTruncation(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

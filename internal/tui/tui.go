@@ -1091,7 +1091,11 @@ func (m Model) renderVerticalLayout(width, height int) string {
 			statusEmoji = "🟢"
 		}
 		worstState := m.getSessionWorstState(sess.Name)
-		b.WriteString(fmt.Sprintf("%s %s [%s]\n", statusEmoji, sess.Name, worstState))
+		header := fmt.Sprintf("%s %s [%s]", statusEmoji, sess.Name, worstState)
+		if sessStatus := m.sessionStatus[sess.Name]; sessStatus != "" {
+			header += "  " + sessStatus
+		}
+		b.WriteString(header + "\n")
 
 		// Content: per-session events or routing (inline, not via shared helpers)
 		switch m.currentView {
@@ -1149,8 +1153,13 @@ func (m Model) renderVerticalLayout(width, height int) string {
 	}
 
 	footer := "[q: quit] [1/2: view] [l: layout] [d: draft]"
-	if m.generalStatus != "" {
-		footer += "  | " + m.generalStatus
+	selectedSessName := m.getSelectedSessionName()
+	footerStatus := m.sessionStatus[selectedSessName]
+	if footerStatus == "" {
+		footerStatus = m.generalStatus
+	}
+	if footerStatus != "" {
+		footer += "  | " + footerStatus
 	}
 	b.WriteString(footer)
 	return b.String()
