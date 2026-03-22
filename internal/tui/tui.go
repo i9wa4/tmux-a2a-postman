@@ -745,6 +745,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "swallowed_redelivery": // Issue #282
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "pane_disappeared":
 			// Mark node as inactive when pane disappears (killed)
 			if node, ok := msg.Details["node"].(string); ok {
