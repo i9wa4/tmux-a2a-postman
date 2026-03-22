@@ -193,23 +193,42 @@ func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	}
 }
 
-func TestSanitizeForTmux(t *testing.T) {
+func TestStripVT(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		name    string
+		input   string
+		wantErr bool
+		want    string
 	}{
-		{"hello", "hello"},
-		{"hello $USER", "hello \\$USER"},
-		{"hello `whoami`", "hello \\`whoami\\`"},
-		{"hello \"world\"", "hello \\\"world\\\""},
-		{"hello\\world", "hello\\\\world"},
+		{"clean text", "hello world", false, "hello world"},
+		{"NUL byte", "foo\x00bar", false, "foobar"},
+		{"ESC+CSI sequence", "foo\x1b[2Jbar", false, "foobar"},
+		{"DEL byte", "foo\x7fbar", false, "foobar"},
+		{"C1 byte (U+009B)", "foo\xc2\x9bbar", false, "foobar"},
+		{"OSC sequence BEL terminated", "foo\x1b]0;title\x07bar", false, "foobar"},
+		{"OSC sequence ST terminated", "foo\x1b]0;title\x1b\\bar", false, "foobar"},
+		{"DCS sequence ST terminated", "foo\x1bPdata\x1b\\bar", false, "foobar"},
+		{"malformed UTF-8 overlong", "foo\xc0\x80bar", true, ""},
+		{"lone continuation byte", "foo\x80bar", true, ""},
+		{"valid multibyte UTF-8", "foo\xe6\x97\xa5bar", false, "foo\u65e5bar"},
+		{"LF preserved", "foo\nbar", false, "foo\nbar"},
+		{"CRLF normalized to LF", "foo\r\nbar", false, "foo\nbar"},
+		{"C0 control stripped", "foo\x01bar", false, "foobar"},
+		{"two-byte ESC sequence", "foo\x1b@bar", false, "foobar"},
+		{"TAB stripped", "foo\tbar", false, "foobar"},
 	}
 
 	for _, tt := range tests {
-		got := sanitizeForTmux(tt.input)
-		if got != tt.want {
-			t.Errorf("sanitizeForTmux(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := StripVT(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("StripVT(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("StripVT(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
