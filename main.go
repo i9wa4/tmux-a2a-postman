@@ -92,7 +92,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --no-tui                    # Start daemon without TUI")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive msg.md              # Archive a message by filename")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
@@ -1359,11 +1358,6 @@ func resolveInboxPath(args []string) (string, error) {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	resolvedContextID, err := config.ResolveContextID(*contextID)
-	if err != nil {
-		return "", fmt.Errorf("resolving context ID: %w", err)
-	}
-
 	nodeName := config.GetTmuxPaneName()
 	if nodeName == "" {
 		return "", fmt.Errorf("node name auto-detection failed: set tmux pane title")
@@ -1374,6 +1368,14 @@ func resolveInboxPath(args []string) (string, error) {
 		return "", fmt.Errorf("tmux session name required (run inside tmux)")
 	}
 	sessionName = filepath.Base(sessionName)
+
+	resolvedContextID, err := config.ResolveContextID(*contextID)
+	if err != nil {
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	inboxPath := filepath.Join(baseDir, resolvedContextID, sessionName, "inbox", nodeName)
 	return inboxPath, nil
@@ -1985,15 +1987,13 @@ func runHelp(args []string) {
 		fmt.Println("               ---")
 		fmt.Println("               method: message/send")
 		fmt.Println("               params:")
-		fmt.Println("                 contextId: <context ID>")
 		fmt.Println("                 from: <sender>")
 		fmt.Println("                 to: <recipient>")
 		fmt.Println("                 timestamp: <ISO 8601>")
 		fmt.Println("               ---")
-		fmt.Println("  Context    A session namespace. All paths are scoped under {baseDir}/{contextId}/.")
 		fmt.Println("")
 		fmt.Println("Directory Layout:")
-		fmt.Println("  {baseDir}/{contextId}/{sessionName}/")
+		fmt.Println("  {baseDir}/{sessionName}/")
 		fmt.Println("    draft/          Write new messages here")
 		fmt.Println("    post/           Move drafts here to send")
 		fmt.Println("    inbox/{node}/   Daemon delivers messages here")
@@ -2036,7 +2036,6 @@ func runHelp(args []string) {
 		fmt.Println("  ---")
 		fmt.Println("  method: message/send")
 		fmt.Println("  params:")
-		fmt.Println("    contextId: <context ID>")
 		fmt.Println("    taskId: <optional task ID>")
 		fmt.Println("    from: <sender node name>")
 		fmt.Println("    to: <recipient node name>")
@@ -2044,7 +2043,7 @@ func runHelp(args []string) {
 		fmt.Println("  ---")
 		fmt.Println("")
 		fmt.Println("Reply workflow:")
-		fmt.Println("  1. Run: tmux-a2a-postman create-draft --context-id <id> --to <recipient>")
+		fmt.Println("  1. Run: tmux-a2a-postman create-draft --to <recipient>")
 		fmt.Println("  2. Edit the generated file in draft/")
 		fmt.Println("  3. Send: tmux-a2a-postman send <filename>")
 		fmt.Println("")
@@ -2129,7 +2128,6 @@ func runHelp(args []string) {
 		fmt.Println("    --cross-context <contextID>:<node>")
 		fmt.Println("                         Cross-context target (mutually exclusive with --to;")
 		fmt.Println("                         requires diplomat_node set in config)")
-		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
@@ -2157,14 +2155,12 @@ func runHelp(args []string) {
 		fmt.Println("get-session-health")
 		fmt.Println("  Print session health: node count, inbox/waiting counts per node.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected from tmux session)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("resend")
 		fmt.Println("  Re-send a dead-letter message by moving it back to post/.")
 		fmt.Println("  Strips -dl-{reason} suffix from filename for redelivery.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected from tmux session)")
 		fmt.Println("    --file <path>        Path to dead-letter file (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
@@ -2172,14 +2168,12 @@ func runHelp(args []string) {
 		fmt.Println("  Print number of unread inbox messages for the current node.")
 		fmt.Println("  Node name is auto-detected from tmux pane title.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("read")
 		fmt.Println("  List inbox message file paths for the current node.")
 		fmt.Println("  Node name is auto-detected from tmux pane title.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --context-id <id>    Context ID (required)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("archive <filename> [filename...]")
