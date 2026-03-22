@@ -18,8 +18,8 @@ func TestTUI_InitialModel(t *testing.T) {
 
 	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 
-	if m.status != "Starting..." {
-		t.Errorf("initial status: got %q, want %q", m.status, "Starting...")
+	if m.generalStatus != "Starting..." {
+		t.Errorf("initial generalStatus: got %q, want %q", m.generalStatus, "Starting...")
 	}
 	if m.nodeCount != 0 {
 		t.Errorf("initial nodeCount: got %d, want 0", m.nodeCount)
@@ -98,8 +98,8 @@ func TestTUI_Update_StatusUpdate(t *testing.T) {
 	newModel, _ := m.Update(event)
 	m = newModel.(Model)
 
-	if m.status != "Running" {
-		t.Errorf("status: got %q, want %q", m.status, "Running")
+	if m.generalStatus != "Running" {
+		t.Errorf("generalStatus: got %q, want %q", m.generalStatus, "Running")
 	}
 	if m.nodeCount != 5 {
 		t.Errorf("nodeCount: got %d, want 5", m.nodeCount)
@@ -111,7 +111,7 @@ func TestTUI_View(t *testing.T) {
 	defer close(ch)
 
 	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.status = "Running"
+	m.generalStatus = "Running"
 	m.nodeCount = 3
 	m.events = []EventEntry{
 		{Message: "Message 1"},
@@ -204,6 +204,28 @@ func TestTUI_View_VerticalLayout(t *testing.T) {
 	}
 	if !strings.Contains(view, "session-b") {
 		t.Error("vertical layout missing session-b")
+	}
+}
+
+func TestTUI_View_VerticalLayout_SessionStatus(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.layoutMode = true
+	m.sessions = []SessionInfo{
+		{Name: "session-a", Enabled: true},
+		{Name: "session-b", Enabled: true},
+	}
+	m.sessionStatus["session-a"] = "Sending ping..."
+	m.sessionStatus["session-b"] = "PING: 7/7 dispatched"
+
+	view := m.View().Content
+
+	if !strings.Contains(view, "Sending ping...") {
+		t.Error("vertical layout missing sessionStatus for session-a")
+	}
+	if !strings.Contains(view, "PING: 7/7 dispatched") {
+		t.Error("vertical layout missing sessionStatus for session-b")
 	}
 }
 
@@ -488,8 +510,8 @@ func TestTUI_SpaceKey_GuardBlocks(t *testing.T) {
 	if got.sessions[0].Enabled {
 		t.Error("guard failed: session was enabled despite owning daemon in other-ctx")
 	}
-	// Expect: status contains "already active"
-	if !strings.Contains(got.status, "already active") {
-		t.Errorf("expected status with 'already active', got %q", got.status)
+	// Expect: sessionStatus for sess-name contains "already active"
+	if !strings.Contains(got.sessionStatus["sess-name"], "already active") {
+		t.Errorf("expected sessionStatus[%q] with 'already active', got %q", "sess-name", got.sessionStatus["sess-name"])
 	}
 }

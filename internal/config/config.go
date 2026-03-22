@@ -114,6 +114,8 @@ type NodeConfig struct {
 	DroppedBallNotification    string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
+	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
+	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
 }
 
 // AgentCard holds agent card information.
@@ -557,6 +559,12 @@ func mergeConfig(base, override *Config) {
 		}
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
+		}
+		if overNode.DeliveryIdleTimeoutSeconds != 0 {
+			baseNode.DeliveryIdleTimeoutSeconds = overNode.DeliveryIdleTimeoutSeconds
+		}
+		if overNode.DeliveryIdleRetryMax != 0 {
+			baseNode.DeliveryIdleRetryMax = overNode.DeliveryIdleRetryMax
 		}
 		base.Nodes[name] = baseNode
 	}
@@ -1135,6 +1143,12 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
+	}
+	if specific.DeliveryIdleTimeoutSeconds != 0 {
+		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
+	}
+	if specific.DeliveryIdleRetryMax != 0 {
+		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
 }
