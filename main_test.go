@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,5 +173,151 @@ func TestApplyWaitingOverlay(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// captureStdoutStderr redirects os.Stdout and os.Stderr for the duration of fn,
+// returning captured output as strings.
+func captureStdoutStderr(fn func()) (stdout, stderr string) {
+	oldOut, oldErr := os.Stdout, os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout, os.Stderr = wOut, wErr
+	fn()
+	wOut.Close()
+	wErr.Close()
+	os.Stdout, os.Stderr = oldOut, oldErr
+	var bufOut, bufErr bytes.Buffer
+	_, _ = bufOut.ReadFrom(rOut)
+	_, _ = bufErr.ReadFrom(rErr)
+	return bufOut.String(), bufErr.String()
+}
+
+// TestRunListDeadLetters_EmptyDir: empty dead-letter dir → exit 0, stderr message.
+func TestRunListDeadLetters_EmptyDir(t *testing.T) {
+	dlDir := t.TempDir()
+
+	var err error
+	out, errOut := captureStdoutStderr(func() {
+		err = listDeadLettersFromDir(dlDir)
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q; want empty", out)
+	}
+	if !strings.Contains(errOut, "No dead-letter messages.") {
+		t.Errorf("stderr = %q; want to contain 'No dead-letter messages.'", errOut)
+	}
+}
+
+// TestRunListDeadLetters_OneMessage: one valid message → stdout has timestamp/from/to, no filename.
+func TestRunListDeadLetters_OneMessage(t *testing.T) {
+	dlDir := t.TempDir()
+	filename := "20260322-100000-s0000-from-sender-node-to-recipient-node-dl-unknown.md"
+	if err := os.WriteFile(filepath.Join(dlDir, filename), []byte("---\nmethod: message/send\n---\n"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	var err error
+	out, _ := captureStdoutStderr(func() {
+		err = listDeadLettersFromDir(dlDir)
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "from=sender-node") {
+		t.Errorf("stdout = %q; want to contain 'from=sender-node'", out)
+	}
+	if !strings.Contains(out, "to=recipient-node") {
+		t.Errorf("stdout = %q; want to contain 'to=recipient-node'", out)
+	}
+	if strings.Contains(out, filename) {
+		t.Errorf("stdout = %q; must NOT contain filename", out)
+	}
+	if strings.Contains(out, dlDir) {
+		t.Errorf("stdout = %q; must NOT contain directory path", out)
+	}
+}
+
+// TestRunListDeadLetters_MalformedFrontmatter: unparseable filename → one line ending with [unreadable].
+func TestRunListDeadLetters_MalformedFrontmatter(t *testing.T) {
+	dlDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dlDir, "bad-filename.md"), []byte("not valid"), 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	var err error
+	out, _ := captureStdoutStderr(func() {
+		err = listDeadLettersFromDir(dlDir)
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "[unreadable]") {
+		t.Errorf("stdout = %q; want to contain '[unreadable]'", out)
+	}
+}
+
+// TestResend_OldestPicksLexFirst: lex-first file is selected from two candidates.
+func TestResend_OldestPicksLexFirst(t *testing.T) {
+	dlDir := t.TempDir()
+	postDir := t.TempDir()
+
+	first := "20260101-000000-s0000-from-worker-to-orchestrator-dl-unknown.md"
+	second := "20260201-000000-s0000-from-worker-to-orchestrator-dl-unknown.md"
+	for _, name := range []string{first, second} {
+		if err := os.WriteFile(filepath.Join(dlDir, name), []byte("body"), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	path, ok, err := findOldestDeadLetterFile(dlDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected file to be found")
+	}
+
+	baseName := filepath.Base(path)
+	dst := filepath.Join(postDir, baseName)
+	if err := os.Rename(path, dst); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(postDir, first)); err != nil {
+		t.Errorf("expected %s in post/; stat error: %v", first, err)
+	}
+	if _, err := os.Stat(filepath.Join(dlDir, second)); err != nil {
+		t.Errorf("expected %s to remain in dead-letter/; stat error: %v", second, err)
+	}
+}
+
+// TestResend_OldestEmptyDir: empty dead-letter dir → ok=false, no error.
+func TestResend_OldestEmptyDir(t *testing.T) {
+	dlDir := t.TempDir()
+
+	path, ok, err := findOldestDeadLetterFile(dlDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Errorf("expected ok=false, got path=%q", path)
+	}
+}
+
+// TestResend_OldestAndFileMutuallyExclusive: --oldest + --file → error before tmux call.
+func TestResend_OldestAndFileMutuallyExclusive(t *testing.T) {
+	err := runResend([]string{"--oldest", "--file", "some.md"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error = %q; want to contain 'mutually exclusive'", err.Error())
 	}
 }

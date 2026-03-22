@@ -138,7 +138,7 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """{inbox_path}/{filename}
-After reading: tmux-a2a-postman archive {filename}"""
+After reading: tmux-a2a-postman next"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
