@@ -166,6 +166,12 @@ func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[st
 		for _, c := range candidates[nodeKey] {
 			inboxDir := filepath.Join(baseDir, contextID, c.sessionName, "inbox")
 			if _, err := os.Stat(inboxDir); err == nil {
+				// F3 fast-path: own-session panes are always included without
+				// a per-pane show-options exec (saves O(N) sequential calls).
+				if c.sessionName == selfSession {
+					kept = append(kept, c)
+					continue
+				}
 				// Per-pane ownership check: skip panes claimed by a different
 				// daemon context. show-options -v exits non-zero when unset
 				// (unclaimed), so err != nil means the pane is available.

@@ -78,6 +78,31 @@ project-local config file will NOT override an XDG-level `true`. Bool fields
 only propagate `true` values — the Go zero-value (`false`) is indistinguishable
 from "field not set". Use the XDG config to set these fields definitively.
 
+### 5.1. Session ON Constraint
+
+Only one tmux-a2a-postman daemon may have a given tmux session turned ON at
+a time. If daemon A has session `foo` ON, daemon B will be blocked from also
+turning `foo` ON.
+
+**Multiple daemons may run** on the same tmux server — this is by design.
+Each daemon manages its own context and sessions. The constraint applies to
+the session-ON state only: two daemons cannot both be routing messages for
+the same session.
+
+If you see "session already ON" at startup, either:
+
+- Turn OFF the session in the other daemon's TUI before starting, or
+- Stop the other daemon with `tmux-a2a-postman stop`.
+
+If the blocking daemon crashed and left a stale tmux option, clear it manually:
+
+```sh
+tmux set-option -gu @a2a_session_on_<sessionName>
+```
+
+Replace `<sessionName>` with your actual tmux session name (e.g.,
+`tmux-a2a-postman`).
+
 ## 6. Environment Variables
 
 ### 6.1. Pane Title (Node Identity)

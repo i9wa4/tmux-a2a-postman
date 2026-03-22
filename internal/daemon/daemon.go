@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,6 +99,7 @@ type EdgeActivity struct {
 
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
+	contextID                     string        // This daemon's contextID (for tmux option writes)
 	startedAt                     time.Time     // Daemon start timestamp (#217)
 	drainWindow                   time.Duration // Startup drain window duration (#217)
 	edgeHistory                   map[string]EdgeActivity
@@ -122,8 +124,9 @@ type DaemonState struct {
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 // drainWindowSeconds configures the startup drain window during which
 // IsSessionEnabled returns true for all sessions (#217).
-func NewDaemonState(drainWindowSeconds float64) *DaemonState {
+func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 	return &DaemonState{
+		contextID:                     contextID,
 		startedAt:                     time.Now(),
 		drainWindow:                   time.Duration(drainWindowSeconds * float64(time.Second)),
 		edgeHistory:                   make(map[string]EdgeActivity),
@@ -335,6 +338,14 @@ func RunDaemonLoop(
 	for {
 		select {
 		case <-ctx.Done():
+			// Clear all session-ON tmux options owned by this daemon.
+			daemonState.enabledSessionsMu.RLock()
+			for sessionName, on := range daemonState.enabledSessions {
+				if on {
+					_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+sessionName).Run()
+				}
+			}
+			daemonState.enabledSessionsMu.RUnlock()
 			// Issue #57: Send channel_closed to trigger TUI exit
 			events <- tui.DaemonEvent{
 				Type:    "channel_closed",
@@ -1660,8 +1671,16 @@ func checkSwallowedMessages(
 // SetSessionEnabled sets the enabled/disabled state for a session (Issue #71).
 func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessionsMu.Lock()
-	defer ds.enabledSessionsMu.Unlock()
 	ds.enabledSessions[sessionName] = enabled
+	ds.enabledSessionsMu.Unlock()
+	// Persist cross-daemon state in tmux server option (best-effort).
+	key := "@a2a_session_on_" + sessionName
+	if enabled {
+		val := ds.contextID + ":" + strconv.Itoa(os.Getpid())
+		_ = exec.Command("tmux", "set-option", "-g", key, val).Run()
+	} else {
+		_ = exec.Command("tmux", "set-option", "-gu", key).Run()
+	}
 }
 
 // AutoEnableSessionIfNew enables a session if it has never been configured (Issue #91).

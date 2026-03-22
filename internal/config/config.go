@@ -1036,6 +1036,21 @@ func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
 	return ""
 }
 
+// GetTmuxSessionOnOwner returns the "contextID:PID" string stored in the tmux
+// server-level option @a2a_session_on_<sessionName>, or "" if unset or if
+// tmux is unavailable.
+// Example return value: "session-20260322-195023-27df:12345".
+func GetTmuxSessionOnOwner(sessionName string) string {
+	out, err := exec.Command(
+		"tmux", "show-options", "-gqv",
+		"@a2a_session_on_"+sessionName,
+	).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.

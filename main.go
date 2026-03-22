@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -286,6 +287,29 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			)
 		}
 
+		// Cross-daemon guard: reject if another daemon already has selfSession ON.
+		// Option value format: "contextID:PID" (e.g. "session-2026-...-27df:12345").
+		// Parsing PID from the option avoids file access — works cross-baseDir.
+		if ownerVal := config.GetTmuxSessionOnOwner(tmuxSessionName); ownerVal != "" {
+			parts := strings.SplitN(ownerVal, ":", 2)
+			if len(parts) == 2 && !strings.HasPrefix(ownerVal, contextID+":") {
+				ownerCtx, pidStr := parts[0], parts[1]
+				if ownerPID, err := strconv.Atoi(pidStr); err == nil && ownerPID > 0 {
+					if proc, procErr := os.FindProcess(ownerPID); procErr == nil {
+						if sigErr := proc.Signal(syscall.Signal(0)); sigErr == nil || errors.Is(sigErr, syscall.EPERM) {
+							return fmt.Errorf(
+								"session %q is already ON in daemon context %s (pid %d).\n"+
+									"Turn it OFF there first, or stop that daemon.",
+								tmuxSessionName, ownerCtx, ownerPID,
+							)
+						}
+					}
+				}
+				// Stale option from a dead daemon: clear it and proceed.
+				_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+tmuxSessionName).Run()
+			}
+		}
+
 		lockDir := filepath.Join(baseDir, "lock")
 		if err := os.MkdirAll(lockDir, 0o700); err != nil {
 			return fmt.Errorf("creating lock directory: %w", err)
@@ -393,6 +417,30 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
 	sharedNodes.Store(&nodes)
 
+	// Post-startup background re-discovery: catches panes that set their titles
+	// slightly after daemon start (agent launch scripts run after daemon starts).
+	time.AfterFunc(2*time.Second, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("🚨 startup-rediscovery panic: %v\n", r)
+			}
+		}()
+		fresh, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+		if err != nil {
+			log.Printf("⚠️  postman: startup re-discovery failed: %v\n", err)
+			return
+		}
+		edgeNodesLocal := config.GetEdgeNodeNames(cfg.Edges)
+		for nodeName := range fresh {
+			parts := strings.SplitN(nodeName, ":", 2)
+			if !edgeNodesLocal[parts[len(parts)-1]] {
+				delete(fresh, nodeName)
+			}
+		}
+		sharedNodes.Store(&fresh)
+		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
+	})
+
 	// Log collisions for edge nodes after edge filter
 	for _, collision := range startupCollisions {
 		parts := strings.SplitN(collision.NodeKey, ":", 2)
@@ -492,7 +540,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	reminderState := reminder.NewReminderState()
 
 	// Issue #71: Create state management instances
-	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds)
+	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
 	if cfg.StartupDrainWindowSeconds > 0 {
 		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
 	}
@@ -694,17 +742,29 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 						targetNodes := filterNodes(freshNodes)
 						if cachedPtr == nil || len(targetNodes) == 0 {
-							if cachedPtr == nil {
-								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
-							} else {
-								log.Printf("postman: PING skipped for session %s — 0 nodes matched in session (total discovered across all sessions: %d)\n", cmd.Target, len(freshNodes))
+							// Attempt a fresh discovery before giving up (catches panes
+							// that set titles after startup or after the last scan).
+							freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+							if discErr == nil && len(freshDiscovered) > 0 {
+								// filterNodes modifies the map in-place (removes non-edge nodes)
+								// and returns the session-filtered subset.
+								targetNodes = filterNodes(freshDiscovered)
+								sharedNodes.Store(&freshDiscovered)
+								freshNodes = freshDiscovered // update for activeNodes loop below
 							}
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "status_update",
-								Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
-								Details: map[string]interface{}{"session": cmd.Target},
+							if len(targetNodes) == 0 {
+								if cachedPtr == nil {
+									log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
+								} else {
+									log.Printf("postman: PING skipped for session %s — 0 nodes matched in session (total discovered across all sessions: %d)\n", cmd.Target, len(freshNodes))
+								}
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
+									Details: map[string]interface{}{"session": cmd.Target},
+								}
+								break
 							}
-							break
 						}
 						// Build active nodes from freshNodes (not stale startup nodes)
 						activeNodes := make([]string, 0, len(freshNodes))
