@@ -974,9 +974,9 @@ func RunDaemonLoop(
 					paneState := paneStatus[recipientInfo.PaneID]
 
 					if isSpinning {
-						// spinning → stuck: pane went stale after spinning was detected
+						// spinning → stalled: pane went stale after spinning was detected
 						if paneState == "stale" {
-							updated := replaceWaitingState(contentStr, "spinning", "stuck")
+							updated := replaceWaitingState(contentStr, "spinning", "stalled")
 							_ = os.WriteFile(filePath, []byte(updated), 0o600)
 						}
 						continue
@@ -986,9 +986,9 @@ func RunDaemonLoop(
 					if time.Since(waitingSince) <= idleThreshold {
 						continue
 					}
-					// composing → stuck: pane stale after composing window
+					// composing → stalled: pane stale after composing window
 					if paneState == "stale" {
-						updated := replaceWaitingState(contentStr, "composing", "stuck")
+						updated := replaceWaitingState(contentStr, "composing", "stalled")
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
 						continue
 					}
@@ -1003,9 +1003,10 @@ func RunDaemonLoop(
 			waitingStates := make(map[string]string)
 			worstStatePriority := map[string]int{
 				"user_input": 0,
-				"composing":  1,
+				"pending":    1,
+				"composing":  2,
 				"spinning":   3,
-				"stuck":      4,
+				"stalled":    4,
 			}
 			for _, nodeInfo := range nodes {
 				wDir := filepath.Join(nodeInfo.SessionDir, "waiting")
@@ -1024,8 +1025,8 @@ func RunDaemonLoop(
 					cs := string(wContent)
 					var fileState string
 					switch {
-					case strings.Contains(cs, "state: stuck"):
-						fileState = "stuck"
+					case strings.Contains(cs, "state: stalled"), strings.Contains(cs, "state: stuck"):
+						fileState = "stalled"
 					case strings.Contains(cs, "state: spinning"):
 						fileState = "spinning"
 					case strings.Contains(cs, "state: composing"):
@@ -1043,6 +1044,12 @@ func RunDaemonLoop(
 					if worstStatePriority[fileState] >= worstStatePriority[waitingStates[recipientKey]] {
 						waitingStates[recipientKey] = fileState
 					}
+				}
+			}
+			// Collect pending states (inbox/ messages not yet archived)
+			for k, v := range collectPendingStates(nodes, worstStatePriority) {
+				if worstStatePriority[v] >= worstStatePriority[waitingStates[k]] {
+					waitingStates[k] = v
 				}
 			}
 			events <- tui.DaemonEvent{
@@ -1083,6 +1090,34 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cf
 		"role_content": envelope.BuildRoleContent(cfg, uiNode),
 	})
 	return os.WriteFile(postPath, []byte(content), 0o600)
+}
+
+// collectPendingStates scans inbox/ directories for unarchived messages
+// and returns a map of sessionName:nodeName -> "pending" for nodes with messages
+// waiting in their inbox. Only applies when the node has no worse waiting-file state.
+func collectPendingStates(nodes map[string]discovery.NodeInfo, priority map[string]int) map[string]string {
+	result := make(map[string]string)
+	for nodeKey, nodeInfo := range nodes {
+		parts := strings.SplitN(nodeKey, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		nodeName := parts[1]
+		inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", nodeName)
+		entries, err := os.ReadDir(inboxDir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".md") {
+				if priority["pending"] >= priority[result[nodeKey]] {
+					result[nodeKey] = "pending"
+				}
+				break
+			}
+		}
+	}
+	return result
 }
 
 // checkInboxStagnation checks inbox unread count for all nodes and sends an alert to
