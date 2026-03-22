@@ -1053,7 +1053,11 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 }
 
 // FindSessionOwner scans baseDir for a context (other than ownContextID) that has
-// a live postman daemon for sessionName specifically.
+// a live postman daemon managing sessionName.
+// A daemon's PID file may be under a different session subdirectory than the
+// one being queried (cross-session management). The check verifies: (1) the
+// context has a subdirectory for sessionName, and (2) any session subdirectory
+// under the context has a live PID file.
 // Returns the first matching context ID, or "" if none found.
 // Issue #249: Used by TUI-level session-ON guard to prevent duplicate routing.
 func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
@@ -1065,7 +1069,13 @@ func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
 		if !e.IsDir() || e.Name() == ownContextID {
 			continue
 		}
-		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
+		// Check if this context has a subdirectory for the requested session
+		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
+		if _, statErr := os.Stat(sessionDir); os.IsNotExist(statErr) {
+			continue
+		}
+		// Check if any session under this context has a live daemon
+		if isContextDaemonAlive(baseDir, e.Name()) {
 			return e.Name()
 		}
 	}
