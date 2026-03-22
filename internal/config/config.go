@@ -1011,7 +1011,7 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("no active postman found: constraint violation: %d live daemons: %s", len(matches), strings.Join(matches, ", "))
+		return "", fmt.Errorf("constraint violation: %d live daemons: %s", len(matches), strings.Join(matches, ", "))
 	}
 }
 
