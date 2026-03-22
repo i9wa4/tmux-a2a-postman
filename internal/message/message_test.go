@@ -39,6 +39,14 @@ func TestParseMessageFilename(t *testing.T) {
 			wantFrom: "node-alpha",
 			wantTo:   "node-beta",
 		},
+		{
+			// 64-char from field: "a" + 63 "a" chars = 64 total (#299)
+			name:     "64-char node name (boundary accept)",
+			filename: "12345-from-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-to-b.md",
+			wantTS:   "12345",
+			wantFrom: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			wantTo:   "b",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +79,8 @@ func TestParseMessageFilename_Invalid(t *testing.T) {
 		{"empty from", "20260201-from--to-b.md"},
 		{"empty to", "20260201-from-a-to-.md"},
 		{"empty timestamp", "-from-a-to-b.md"},
+		// 65-char from field: "a" + 64 "a" chars = 65 total, exceeds 64-char cap (#299)
+		{"65-char node name (boundary reject)", "12345-from-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-to-b.md"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
