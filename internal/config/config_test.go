@@ -92,6 +92,9 @@ func TestCreateSessionDirs(t *testing.T) {
 
 func TestLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "config.toml")
 
 	content := `
@@ -459,6 +462,9 @@ func TestGetTalksTo(t *testing.T) {
 
 func TestLoadConfig_SplitNodes(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	nodesDir := filepath.Join(tmpDir, "nodes")
 
@@ -514,6 +520,9 @@ role = "orchestrator"
 
 func TestLoadConfig_SplitOverride(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	nodesDir := filepath.Join(tmpDir, "nodes")
 
@@ -561,6 +570,9 @@ role = "worker-override"
 
 func TestLoadConfig_SplitReservedSkip(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	nodesDir := filepath.Join(tmpDir, "nodes")
 
@@ -608,6 +620,9 @@ role = "worker"
 
 func TestLoadConfig_SplitInvalidFile(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	nodesDir := filepath.Join(tmpDir, "nodes")
 
@@ -657,6 +672,9 @@ role = "worker"
 
 func TestLoadConfig_NoNodesDir(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "postman.toml")
 
 	// Create postman.toml with [worker] section (no nodes/ directory)
@@ -1174,6 +1192,9 @@ func TestLoadConfig_EmptyFile(t *testing.T) {
 	// An empty config file has no nodes, which is a validation error.
 	// This test documents the expected behavior.
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)                     // Isolate from project-local config
+	t.Setenv("HOME", tmpDir)            // Isolate from ~/.config/
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	configPath := filepath.Join(tmpDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
@@ -1673,6 +1694,7 @@ role = "local-worker"
 // still be applied on top.
 func TestLoadConfig_ExplicitConfig_RespectProjectLocalNodes(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	fakeHome := filepath.Join(tmpDir, "home")
 
 	// Explicit config file (simulates --config flag).

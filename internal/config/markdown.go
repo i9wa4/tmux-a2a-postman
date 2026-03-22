@@ -109,11 +109,18 @@ func parseMermaidEdges(mermaidBlock string) []string {
 func extractNodeName(heading string) string {
 	// Strip leading ## and whitespace
 	heading = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(heading), "##"))
-	start := strings.Index(heading, "`")
+	return extractBacktickName(heading)
+}
+
+// extractBacktickName extracts the first backtick-wrapped name from text.
+// "1. `worker-alt` Node" returns "worker-alt" (lowercased).
+// Returns "" if no backtick-wrapped name is found.
+func extractBacktickName(text string) string {
+	start := strings.Index(text, "`")
 	if start == -1 {
 		return ""
 	}
-	rest := heading[start+1:]
+	rest := text[start+1:]
 	end := strings.Index(rest, "`")
 	if end == -1 {
 		return ""
@@ -121,11 +128,84 @@ func extractNodeName(heading string) string {
 	return strings.ToLower(strings.TrimSpace(rest[:end]))
 }
 
+// stripHeadingNumber strips a leading "N. " prefix from a heading string.
+// "1. Edges" returns "Edges"; "Edges" returns "Edges".
+func stripHeadingNumber(heading string) string {
+	s := strings.TrimSpace(heading)
+	return strings.TrimSpace(strings.TrimLeft(s, "0123456789. "))
+}
+
+// extractNodeFields extracts role and on_join from reserved ### `key` sections
+// within a node body. Returns the field values and the body with reserved
+// sections stripped. If no reserved sections are found, returns empty strings
+// and the original body unchanged.
+func extractNodeFields(body string) (role, onJoin, template string) {
+	lines := strings.Split(body, "\n")
+
+	type reserved struct {
+		key     string
+		heading int
+		start   int
+		end     int // exclusive
+	}
+	var sections []reserved
+
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "### ") {
+			continue
+		}
+		heading := strings.TrimSpace(line[4:]) // strip "### "
+		name := extractBacktickName(heading)
+		if name != "role" && name != "on_join" {
+			continue
+		}
+		// Find body end: next heading (## or ###) or EOF
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(lines[j], "## ") || strings.HasPrefix(lines[j], "### ") {
+				end = j
+				break
+			}
+		}
+		sections = append(sections, reserved{key: name, heading: i, start: i + 1, end: end})
+	}
+
+	if len(sections) == 0 {
+		return "", "", body
+	}
+
+	// Build exclude set and extract values
+	exclude := make(map[int]bool)
+	values := make(map[string]string)
+	for _, sec := range sections {
+		values[sec.key] = strings.TrimSpace(strings.Join(lines[sec.start:sec.end], "\n"))
+		for j := sec.heading; j < sec.end; j++ {
+			exclude[j] = true
+		}
+	}
+
+	var kept []string
+	for i, line := range lines {
+		if !exclude[i] {
+			kept = append(kept, line)
+		}
+	}
+	return values["role"], values["on_join"], strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// reservedH2Names maps backtick-wrapped h2 names to their canonical section keys.
+// These names are NOT treated as node definitions.
+var reservedH2Names = map[string]string{
+	"edges":           "edges",
+	"common_template": "common_template",
+}
+
 // extractH2Sections parses Markdown content into a map of section key → body.
 //
-// Special heading: "## Edges" (case-insensitive) → key "edges".
-// Node headings: "## `name` ..." → key is the name extracted from backticks
-// (lowercased). Headings without a backtick-wrapped name are skipped.
+// Backtick-wrapped names are extracted from h2 headings. Reserved names
+// (edges, common_template) become special sections; all others become node
+// sections. Plain-text "## Edges" (case-insensitive, with optional numbering)
+// is also accepted for backward compatibility.
 // Section body is the text from the heading line (exclusive) until the next
 // h2 heading or end of content.
 func extractH2Sections(content string) map[string]string {
@@ -143,14 +223,20 @@ func extractH2Sections(content string) map[string]string {
 			continue
 		}
 		heading := line[3:] // strip "## "
-		// Check for special "Edges" heading
-		if strings.EqualFold(strings.TrimSpace(heading), "edges") {
-			found = append(found, section{key: "edges", start: i + 1})
+		// Try backtick-wrapped name first (handles both reserved and node names)
+		name := extractBacktickName(heading)
+		if name != "" {
+			if canonical, ok := reservedH2Names[name]; ok {
+				found = append(found, section{key: canonical, start: i + 1})
+			} else {
+				found = append(found, section{key: name, start: i + 1})
+			}
 			continue
 		}
-		name := extractNodeName(line)
-		if name != "" {
-			found = append(found, section{key: name, start: i + 1})
+		// Fallback: plain-text "Edges" (supports "## 1. Edges")
+		cleaned := strings.ToLower(stripHeadingNumber(heading))
+		if cleaned == "edges" {
+			found = append(found, section{key: "edges", start: i + 1})
 		}
 	}
 
@@ -192,8 +278,10 @@ func stripFrontmatter(content string) string {
 // Returns a zero-value Config with only explicitly-set fields populated.
 // Global frontmatter keys: ui_node → Config.UINode,
 // reply_command → Config.ReplyCommand.
-// h2 sections: "## Edges" → parse Mermaid block into Config.Edges;
-// "## `name`" → node template (body) and per-node frontmatter (on_join, role).
+// Reserved h2 sections: "## `edges`" → Mermaid edges;
+// "## `common_template`" → Config.CommonTemplate.
+// Node h2 sections: "## `name`" → node template with ### `role`/### `on_join`
+// h3 fields (falls back to per-node frontmatter for backward compat).
 func loadMarkdownConfig(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -221,9 +309,14 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		cfg.Edges = parseMermaidEdges(mermaidBlock)
 	}
 
+	// Common template section
+	if commonBody, ok := sections["common_template"]; ok {
+		cfg.CommonTemplate = strings.TrimSpace(commonBody)
+	}
+
 	// Node sections
 	for key, body := range sections {
-		if key == "edges" {
+		if _, reserved := reservedH2Names[key]; reserved {
 			continue
 		}
 		// Validate against reserved names
@@ -231,27 +324,30 @@ func loadMarkdownConfig(path string) (*Config, error) {
 			log.Printf("warning: skipping reserved node name %q in %s", key, path)
 			continue
 		}
-		nodeCfg := NodeConfig{Template: strings.TrimSpace(stripFrontmatter(body))}
-		// Per-node frontmatter embedded in the section body
-		nodeFM := parseFrontmatter(body)
-		if v, ok := nodeFM["on_join"]; ok && v != "" {
-			nodeCfg.OnJoin = v
+		// Try h3 reserved sections first, fall back to frontmatter
+		role, onJoin, tmpl := extractNodeFields(body)
+		if role == "" || onJoin == "" {
+			fm := parseFrontmatter(body)
+			if role == "" {
+				role = fm["role"]
+			}
+			if onJoin == "" {
+				onJoin = fm["on_join"]
+			}
 		}
-		if v, ok := nodeFM["role"]; ok && v != "" {
-			nodeCfg.Role = v
-		}
-		cfg.Nodes[key] = nodeCfg
+		// Strip frontmatter from template (harmless if absent)
+		tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
+		cfg.Nodes[key] = NodeConfig{Template: tmpl, OnJoin: onJoin, Role: role}
 	}
 
 	return cfg, nil
 }
 
 // loadNodeMarkdownFile parses a nodes/name.md split-file format into a NodeConfig.
-// The file body (after stripping frontmatter) becomes NodeConfig.Template.
-// Frontmatter supports: on_join, role.
-// ui_node and reply_command are Config-level fields (not NodeConfig) and are
-// silently ignored.
-// Returns: nodeName (filename without .md extension), NodeConfig, error.
+// Uses ### `role`/### `on_join` h3 sections (preferred) with frontmatter fallback.
+// The remaining body (after stripping reserved sections and frontmatter) becomes
+// NodeConfig.Template. Returns: nodeName (filename without .md extension),
+// NodeConfig, error.
 func loadNodeMarkdownFile(path string) (string, NodeConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -260,16 +356,19 @@ func loadNodeMarkdownFile(path string) (string, NodeConfig, error) {
 	content := string(raw)
 	nodeName := strings.TrimSuffix(filepath.Base(path), ".md")
 
-	fm := parseFrontmatter(content)
-	body := strings.TrimSpace(stripFrontmatter(content))
-
-	nodeCfg := NodeConfig{Template: body}
-	if v, ok := fm["on_join"]; ok && v != "" {
-		nodeCfg.OnJoin = v
+	// Try h3 reserved sections first, fall back to frontmatter
+	role, onJoin, tmpl := extractNodeFields(content)
+	if role == "" || onJoin == "" {
+		fm := parseFrontmatter(content)
+		if role == "" {
+			role = fm["role"]
+		}
+		if onJoin == "" {
+			onJoin = fm["on_join"]
+		}
 	}
-	if v, ok := fm["role"]; ok && v != "" {
-		nodeCfg.Role = v
-	}
+	// Strip frontmatter from template (harmless if absent)
+	tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
 
-	return nodeName, nodeCfg, nil
+	return nodeName, NodeConfig{Template: tmpl, OnJoin: onJoin, Role: role}, nil
 }

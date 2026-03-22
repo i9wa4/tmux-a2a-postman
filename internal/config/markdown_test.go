@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -202,11 +203,19 @@ func TestExtractH2Sections(t *testing.T) {
 		}
 	})
 
-	t.Run("Edges heading", func(t *testing.T) {
+	t.Run("Edges plain text", func(t *testing.T) {
 		content := "## Edges\n\n```mermaid\ngraph LR\n    a -- b\n```"
 		sections := extractH2Sections(content)
 		if _, ok := sections["edges"]; !ok {
 			t.Error("key 'edges' missing")
+		}
+	})
+
+	t.Run("edges backtick", func(t *testing.T) {
+		content := "## 1. `edges`\n\n```mermaid\ngraph LR\n    a -- b\n```"
+		sections := extractH2Sections(content)
+		if _, ok := sections["edges"]; !ok {
+			t.Error("key 'edges' missing for backtick format")
 		}
 	})
 
@@ -222,7 +231,151 @@ func TestExtractH2Sections(t *testing.T) {
 	})
 }
 
-// TestLoadMarkdownConfig covers: global frontmatter, edges, node sections.
+// TestStripHeadingNumber covers: numbered and unnumbered headings.
+func TestStripHeadingNumber(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Edges", "Edges"},
+		{"1. Edges", "Edges"},
+		{"13. Common Template", "Common Template"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := stripHeadingNumber(tt.input)
+		if got != tt.want {
+			t.Errorf("stripHeadingNumber(%q): got %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestExtractH2Sections_Numbered covers: numbered headings like "## 1. Edges".
+func TestExtractH2Sections_Numbered(t *testing.T) {
+	t.Run("Edges with number", func(t *testing.T) {
+		content := "## 1. Edges\n\nedges body"
+		sections := extractH2Sections(content)
+		if _, ok := sections["edges"]; !ok {
+			t.Error("key 'edges' missing for numbered heading")
+		}
+	})
+
+	t.Run("common_template backtick", func(t *testing.T) {
+		content := "## `common_template`\n\nshared instructions"
+		sections := extractH2Sections(content)
+		if v, ok := sections["common_template"]; !ok {
+			t.Error("key 'common_template' missing")
+		} else if v != "shared instructions" {
+			t.Errorf("body: got %q, want %q", v, "shared instructions")
+		}
+	})
+
+	t.Run("common_template with number and suffix", func(t *testing.T) {
+		content := "## 2.1 `common_template` yay!\n\nshared\n\n## `boss`\n\nboss body"
+		sections := extractH2Sections(content)
+		if v := sections["common_template"]; v != "shared" {
+			t.Errorf("common_template: got %q, want %q", v, "shared")
+		}
+		if v := sections["boss"]; v != "boss body" {
+			t.Errorf("boss: got %q, want %q", v, "boss body")
+		}
+	})
+}
+
+// TestExtractNodeFields covers: h3 reserved sections extraction.
+func TestExtractNodeFields(t *testing.T) {
+	t.Run("both role and on_join extracted", func(t *testing.T) {
+		body := "### `role`\nexecutor\n\n### `on_join`\nYou are worker.\n\n### Tool Constraints\nCRITICAL"
+		role, onJoin, tmpl := extractNodeFields(body)
+		if role != "executor" {
+			t.Errorf("role: got %q, want %q", role, "executor")
+		}
+		if onJoin != "You are worker." {
+			t.Errorf("on_join: got %q, want %q", onJoin, "You are worker.")
+		}
+		if tmpl != "### Tool Constraints\nCRITICAL" {
+			t.Errorf("template: got %q, want %q", tmpl, "### Tool Constraints\nCRITICAL")
+		}
+	})
+
+	t.Run("no reserved sections returns body unchanged", func(t *testing.T) {
+		body := "### Tool Constraints\nCRITICAL\n\n### Rules\nDo things"
+		role, onJoin, tmpl := extractNodeFields(body)
+		if role != "" {
+			t.Errorf("role should be empty, got %q", role)
+		}
+		if onJoin != "" {
+			t.Errorf("on_join should be empty, got %q", onJoin)
+		}
+		if tmpl != body {
+			t.Errorf("template should be unchanged")
+		}
+	})
+
+	t.Run("only role present", func(t *testing.T) {
+		body := "### `role`\ncoordinator\n\n### Workflow\nStep 1"
+		role, onJoin, tmpl := extractNodeFields(body)
+		if role != "coordinator" {
+			t.Errorf("role: got %q", role)
+		}
+		if onJoin != "" {
+			t.Errorf("on_join should be empty, got %q", onJoin)
+		}
+		if tmpl != "### Workflow\nStep 1" {
+			t.Errorf("template: got %q", tmpl)
+		}
+	})
+
+	t.Run("role at end of body", func(t *testing.T) {
+		body := "### Workflow\nStep 1\n\n### `role`\nexecutor"
+		role, _, tmpl := extractNodeFields(body)
+		if role != "executor" {
+			t.Errorf("role: got %q", role)
+		}
+		if tmpl != "### Workflow\nStep 1" {
+			t.Errorf("template: got %q", tmpl)
+		}
+	})
+
+	t.Run("multiline on_join value", func(t *testing.T) {
+		body := "### `on_join`\nLine 1.\nLine 2.\n\n### Rules\nDo things"
+		_, onJoin, _ := extractNodeFields(body)
+		if onJoin != "Line 1.\nLine 2." {
+			t.Errorf("on_join: got %q, want %q", onJoin, "Line 1.\nLine 2.")
+		}
+	})
+}
+
+// TestExtractNodeFields_FallbackFrontmatter covers backward compat: frontmatter
+// still works when no h3 reserved sections present.
+func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
+	body := "---\nrole: executor\non_join: You are worker.\n---\n\nTemplate body."
+	role, onJoin, tmpl := extractNodeFields(body)
+	// extractNodeFields itself returns empty (no h3 sections)
+	if role != "" || onJoin != "" {
+		t.Fatalf("expected empty from extractNodeFields, got role=%q onJoin=%q", role, onJoin)
+	}
+	// Caller (loadMarkdownConfig) falls back to frontmatter
+	fm := parseFrontmatter(body)
+	if fm["role"] != "executor" {
+		t.Errorf("frontmatter role: got %q", fm["role"])
+	}
+	if fm["on_join"] != "You are worker." {
+		t.Errorf("frontmatter on_join: got %q", fm["on_join"])
+	}
+	// Template should be body unchanged (no h3 stripping)
+	if tmpl != body {
+		t.Error("body should be unchanged when no h3 sections found")
+	}
+	// After stripFrontmatter, template is clean
+	stripped := strings.TrimSpace(stripFrontmatter(tmpl))
+	if stripped != "Template body." {
+		t.Errorf("stripped template: got %q, want %q", stripped, "Template body.")
+	}
+}
+
+// TestLoadMarkdownConfig covers: global frontmatter, edges, common template,
+// node sections with h3 reserved fields.
 func TestLoadMarkdownConfig(t *testing.T) {
 	content := `---
 ui_node: messenger
@@ -236,16 +389,22 @@ graph LR
     boss --- orchestrator
 ` + "```" + `
 
-## ` + "`orchestrator`" + ` Node
+## ` + "`common_template`" + `
 
----
-role: coordinator
-on_join: You are coordinator.
----
+Shared instructions for all nodes.
 
+## ` + "`orchestrator`" + `
+
+### ` + "`role`" + `
+coordinator
+
+### ` + "`on_join`" + `
+You are coordinator.
+
+### Workflow
 You coordinate things.
 
-## ` + "`worker`" + ` Node
+## ` + "`worker`" + `
 
 Worker template.
 `
@@ -274,7 +433,6 @@ Worker template.
 		if len(cfg.Edges) == 0 {
 			t.Fatal("no edges parsed")
 		}
-		// Mermaid --- normalized to --
 		found := false
 		for _, e := range cfg.Edges {
 			if e == "boss -- orchestrator" {
@@ -286,7 +444,13 @@ Worker template.
 		}
 	})
 
-	t.Run("Node sections", func(t *testing.T) {
+	t.Run("CommonTemplate", func(t *testing.T) {
+		if cfg.CommonTemplate != "Shared instructions for all nodes." {
+			t.Errorf("CommonTemplate: got %q, want %q", cfg.CommonTemplate, "Shared instructions for all nodes.")
+		}
+	})
+
+	t.Run("Node h3 fields", func(t *testing.T) {
 		oc, ok := cfg.Nodes["orchestrator"]
 		if !ok {
 			t.Fatal("orchestrator node missing")
@@ -297,8 +461,8 @@ Worker template.
 		if oc.OnJoin != "You are coordinator." {
 			t.Errorf("orchestrator on_join: got %q", oc.OnJoin)
 		}
-		if oc.Template != "You coordinate things." {
-			t.Errorf("orchestrator template: got %q, want %q", oc.Template, "You coordinate things.")
+		if oc.Template != "### Workflow\nYou coordinate things." {
+			t.Errorf("orchestrator template: got %q, want %q", oc.Template, "### Workflow\nYou coordinate things.")
 		}
 		wc, ok := cfg.Nodes["worker"]
 		if !ok {
@@ -310,19 +474,62 @@ Worker template.
 	})
 }
 
-// TestLoadNodeMarkdownFile covers: body → Template, frontmatter → OnJoin/Role,
-// ui_node in frontmatter is silently ignored (IgnoresUINode).
-func TestLoadNodeMarkdownFile(t *testing.T) {
-	t.Run("basic fields", func(t *testing.T) {
-		content := `---
-role: executor
-on_join: You are executor.
+// TestLoadMarkdownConfig_NumberedHeadings covers: numbered headings like "## 1. Edges".
+func TestLoadMarkdownConfig_NumberedHeadings(t *testing.T) {
+	content := `---
+ui_node: messenger
 ---
 
-# WORKER
+## 1. Edges
 
-You are the executor.
+` + "```mermaid" + `
+graph LR
+    a --- b
+` + "```" + `
+
+## 2. ` + "`common_template`" + `
+
+Shared text.
+
+## 3. ` + "`worker`" + `
+
+### ` + "`role`" + `
+executor
+
+### Rules
+Do things.
 `
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "postman.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	if len(cfg.Edges) == 0 {
+		t.Error("edges not parsed from numbered heading")
+	}
+	if cfg.CommonTemplate != "Shared text." {
+		t.Errorf("CommonTemplate: got %q", cfg.CommonTemplate)
+	}
+	wc := cfg.Nodes["worker"]
+	if wc.Role != "executor" {
+		t.Errorf("worker role: got %q", wc.Role)
+	}
+	if wc.Template != "### Rules\nDo things." {
+		t.Errorf("worker template: got %q", wc.Template)
+	}
+}
+
+// TestLoadNodeMarkdownFile covers: h3 reserved fields and template extraction.
+func TestLoadNodeMarkdownFile(t *testing.T) {
+	t.Run("h3 fields", func(t *testing.T) {
+		content := "### `role`\nexecutor\n\n### `on_join`\nYou are executor.\n\n### Workflow\nYou are the executor.\n"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "worker.md")
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -342,19 +549,13 @@ You are the executor.
 		if nc.OnJoin != "You are executor." {
 			t.Errorf("on_join: got %q", nc.OnJoin)
 		}
-		if nc.Template == "" {
-			t.Error("template should not be empty")
+		if nc.Template != "### Workflow\nYou are the executor." {
+			t.Errorf("template: got %q", nc.Template)
 		}
 	})
 
-	t.Run("IgnoresUINode: ui_node in frontmatter does not set any field", func(t *testing.T) {
-		content := `---
-ui_node: messenger
-role: worker
----
-
-Body.
-`
+	t.Run("frontmatter fallback", func(t *testing.T) {
+		content := "---\nrole: worker\non_join: Hello.\n---\n\nBody.\n"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "worker.md")
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -365,9 +566,14 @@ Body.
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		// ui_node is silently ignored; only role and on_join set on NodeConfig
 		if nc.Role != "worker" {
 			t.Errorf("role: got %q", nc.Role)
+		}
+		if nc.OnJoin != "Hello." {
+			t.Errorf("on_join: got %q", nc.OnJoin)
+		}
+		if nc.Template != "Body." {
+			t.Errorf("template: got %q", nc.Template)
 		}
 	})
 }
@@ -386,6 +592,8 @@ func setupXDGAndHome(t *testing.T, tmpDir string) (xdgDir string, fakeHome strin
 	}
 	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(xdgDir))
 	t.Setenv("HOME", fakeHome)
+	// Isolate CWD so project-local .tmux-a2a-postman/ is not discovered.
+	t.Chdir(fakeHome)
 	return xdgDir, fakeHome
 }
 

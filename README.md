@@ -122,43 +122,77 @@ See `internal/config/postman.default.toml` for advanced variables
 
 ## 7. Configuration
 
-`$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`:
+Configuration uses two file formats: TOML for structural settings and Markdown
+for templates. Both live in `$XDG_CONFIG_HOME/tmux-a2a-postman/`.
+
+**`postman.toml`** — structural config (timing, thresholds, per-node settings):
 
 ```toml
 [postman]
-edges = [
-  "messenger -- orchestrator",
-  "orchestrator -- worker",
-]
-reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
-
-[orchestrator]
-role = "coordination"
-template = "..."
+edges = ["messenger -- orchestrator", "orchestrator -- worker"]
 
 [worker]
-role = "implementation"
-template = "..."
+dropped_ball_timeout_seconds = 900
 ```
 
-Key config options:
+**`postman.md`** — templates, edges (Mermaid), and text content:
+
+````markdown
+---
+ui_node: messenger
+reply_command: tmux-a2a-postman send-message --to <recipient> --body "<your message>"
+---
+
+## `edges`
+
+```mermaid
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+```
+
+## `common_template`
+
+Shared instructions for all nodes.
+
+## `worker`
+
+### `role`
+
+implementation
+
+### `on_join`
+
+You are worker. Await tasks.
+
+### Workflow
+
+Execute assigned tasks.
+````
+
+Key config options (TOML):
 
 | Key                          | Default | Description                                    |
 | ---------------------------- | ------- | ---------------------------------------------- |
 | `edges`                      | `[]`    | Bidirectional routing edges (`"A -- B"`)       |
-| `message_template`           | (yaml)  | Envelope written to inbox for daemon-sent messages (PING) |
-| `notification_template`      | (path)  | Pane hint sent when new message arrives (default: file path only) |
-| `ping_mode`                  | `"all"` | `"all"`, `"ui_node_only"`, `"disabled"`         |
 | `auto_enable_new_sessions`   | `false` | See Session Management                         |
 | `auto_enable_new_agents`     | `true`  | See Session Management                         |
 | `node_active_seconds`        | `300`   | Active threshold (seconds)                     |
 | `node_idle_seconds`          | `900`   | Idle threshold (seconds)                       |
-| `reminder_interval_messages` | `0`     | Reminder after N deliveries; `0` = disabled    |
 
 See `internal/config/postman.default.toml` for all available options.
 
-**NOTE:** Editing edges via TUI removes comments from `postman.toml`; manual
-editing is recommended for preserving comments.
+**Priority order (highest to lowest):**
+
+1. Project-local `postman.md`
+2. Project-local `nodes/*.md`
+3. Project-local `nodes/*.toml`
+4. Project-local `postman.toml`
+5. XDG `postman.md`
+6. XDG `nodes/*.md`
+7. XDG `nodes/*.toml`
+8. XDG `postman.toml`
+9. Embedded defaults
 
 ### 7.1. Project-Local Configuration Override
 
@@ -168,38 +202,12 @@ to override XDG config without modifying `~/.config/`:
 ```text
 your-project/
 └── .tmux-a2a-postman/
-    ├── postman.toml        # required sentinel (can be empty); also overrides [postman] settings
-    └── nodes/
-        ├── worker.toml     # overrides $XDG_CONFIG_HOME/.../nodes/worker.toml
-        └── orchestrator.toml
+    ├── postman.toml        # structural overrides
+    └── postman.md          # template overrides
 ```
 
-**Priority order (highest to lowest):**
-
-1. Project-local `nodes/*.toml`
-2. Project-local `postman.toml` node sections
-3. XDG `nodes/*.toml`
-4. XDG `postman.toml`
-5. Embedded defaults
-
-**Setup:**
-
-```sh
-mkdir -p .tmux-a2a-postman/nodes
-# postman.toml sentinel is required for the overlay to activate:
-touch .tmux-a2a-postman/postman.toml
-# Copy and edit an existing node file:
-cp ~/.config/tmux-a2a-postman/nodes/worker.toml .tmux-a2a-postman/nodes/
-# Verify the override is active:
-tmux-a2a-postman get-nodes-dir
-```
-
-NOTE: `.tmux-a2a-postman/postman.toml` must exist (even if empty) as a
-sentinel for the project-local overlay to activate. Without it, nodes in
-`.tmux-a2a-postman/nodes/` are silently ignored.
-
-**Nix/home-manager users:** if your XDG nodes are read-only Nix store
-symlinks, use project-local `nodes/` as the SSOT — editable in-place, version
+**Nix/home-manager users:** if your XDG config is read-only Nix store
+symlinks, use project-local overrides — editable in-place, version
 controlled with git, no `home-manager switch` required.
 
 ## 8. Usage
@@ -337,8 +345,8 @@ mechanism (e.g., `/a2a-role-auditor` in Claude Code).
 
 Path: `skills/a2a-role-auditor/SKILL.md`
 
-Audits `nodes/*.toml` role templates to diagnose and fix node-to-node
-interaction breakdowns.
+Audits node role templates (`postman.toml` / `postman.md` / `nodes/*`) to
+diagnose and fix node-to-node interaction breakdowns.
 
 Use when:
 

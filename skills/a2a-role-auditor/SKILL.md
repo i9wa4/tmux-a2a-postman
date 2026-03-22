@@ -2,7 +2,7 @@
 name: a2a-role-auditor
 description: |
   Role template auditor for tmux-a2a-postman multi-agent systems.
-  Audits nodes/*.toml role definitions to fix node-to-node interaction breakdowns.
+  Audits node role definitions (postman.toml / postman.md / nodes/*) to fix node-to-node interaction breakdowns.
   Use when:
   - A node behaves unexpectedly (routes wrongly, ignores messages, approves nothing)
   - Nodes can't see each other in talks_to_line (after confirming session/PING issue is ruled out)
@@ -14,8 +14,8 @@ description: |
 
 # a2a-role-auditor
 
-Audits `nodes/*.toml` role templates in a tmux-a2a-postman project to fix
-node-to-node interaction breakdowns.
+Audits node role templates (`postman.toml`, `postman.md`, and/or `nodes/*`) in a
+tmux-a2a-postman project to fix node-to-node interaction breakdowns.
 
 ## 1. Mandatory Triage Gate
 
@@ -25,8 +25,8 @@ or template-level.
 **Daemon-level indicators** (stop here — report as config issue, do NOT produce
 patches):
 
-- Wrong or missing edges in `postman.toml`
-- `nodes/{node}.toml` file does not exist
+- Wrong or missing edges in `postman.toml` or `postman.md`
+- Node not defined in `postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`
 - Session disabled in postman TUI
 
 **Template-level confirmed** (node exists, edges correct, but behavior is
@@ -38,12 +38,12 @@ wrong):
 
 ### 2.1. Pre-check: File Existence (binary)
 
-For every node referenced in `postman.toml` edges, verify `nodes/{node}.toml`
-exists.
+For every node referenced in edges, verify the node is defined in one of:
+`postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`.
 
-- PASS: file present
-- FAIL: file missing → emit BLOCKING finding; abort all further checks for that
-  node
+- PASS: node definition found
+- FAIL: node not defined → emit BLOCKING finding; abort all further checks for
+  that node
 
 ### 2.2. Check 1 — Routing Clarity
 
@@ -169,7 +169,7 @@ Every finding MUST use this exact schema:
 
 ```text
 [SEVERITY] Node: {node}
-Field: nodes/{node}.toml:[{node}].{field}
+Field: {source-file}:{field}
 Check: {check name}
 [Type: JUDGMENT-BASED]   <- optional, only when applicable
 Result: FAIL
@@ -189,17 +189,22 @@ All files are read from the user's XDG config directory:
 
 | File                             | Path                                                                          |
 | -------------------------------- | ----------------------------------------------------------------------------- |
-| Main config (edges + node sections) | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`                          |
-| Node template files              | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`                        |
+| Structural config (TOML)         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`                             |
+| Templates config (Markdown)      | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`                               |
+| Node template files (TOML)       | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`                        |
+| Node template files (Markdown)   | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md`                          |
 | Default config reference         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.default.toml`                     |
-| Project-local main config        | `.tmux-a2a-postman/postman.toml` (project root, walked up from CWD)          |
-| Project-local node templates     | `.tmux-a2a-postman/nodes/{node}.toml` (highest priority; overrides XDG)      |
+| Project-local structural config  | `.tmux-a2a-postman/postman.toml` (project root, walked up from CWD)          |
+| Project-local templates          | `.tmux-a2a-postman/postman.md` (highest priority for templates)              |
 
 - `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
-- `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections
-  (per-node config).
-- `nodes/{node}.toml` holds the role template (`template`, `on_join`,
-  `draft_template`, etc.) for each node.
+- `postman.toml` defines `[postman]` section (edges, timing) and `[node-name]`
+  sections (structural per-node config like `dropped_ball_timeout_seconds`).
+- `postman.md` defines templates, edges (Mermaid), common_template, and
+  per-node role/on_join/template. Node sections use h2 backtick headings;
+  role and on_join use h3 backtick headings within each node.
+- Load order: `postman.toml` -> `nodes/*.toml` -> `nodes/*.md` -> `postman.md`
+  (last wins for overlapping fields).
 - `postman.default.toml` is a canonical reference listing all configurable
   values with their defaults and comments. Consult it when auditing
   `dropped_ball_timeout_seconds` defaults and other per-node configurable fields
@@ -207,11 +212,10 @@ All files are read from the user's XDG config directory:
 
 ## 5. Workflow
 
-1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build
-   adjacency map
-2. Run `tmux-a2a-postman get-nodes-dir` to discover the effective node paths.
-   Read each `{nodes-dir}/{node}.toml`, checking project-local first then XDG.
-   Project-local nodes override XDG nodes of the same name.
+1. Read config — `postman.toml` for structural config, `postman.md` for
+   templates. Extract edges and build adjacency map.
+2. Read node definitions from `postman.md` (h2 backtick sections)
+   and/or `nodes/*.toml` / `nodes/*.md`. Project-local overrides XDG.
 3. For each node: run Pre-check, then Checks 1–9, B-I8, and B-I9 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
@@ -222,11 +226,11 @@ delegates to a worker node.
 
 ### 5.1. Nix Store Warning
 
-Before attempting to patch any node file, check if the deployed path is
+Before attempting to patch any config file, check if the deployed path is
 read-only:
 
 ```sh
-ls -la $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/
+ls -la $XDG_CONFIG_HOME/tmux-a2a-postman/
 ```
 
 If files are owned by root with permissions `-r--r--r--` and timestamp
@@ -235,27 +239,24 @@ If files are owned by root with permissions `-r--r--r--` and timestamp
 In this case:
 
 1. Confirm the store path:
-   `realpath $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
+   `realpath $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`
 2. Find the editable source in dotfiles (typically
-   `~/ghq/<user>/dotfiles/config/tmux-a2a-postman/nodes/<node>.toml`)
+   `~/ghq/<user>/dotfiles/config/tmux-a2a-postman/postman.md`)
 3. Apply all patches to the dotfiles source, not the deployed path
 4. After patching, rebuild: `home-manager switch` (or equivalent) to redeploy
 
 #### Alternative (preferred): use project-local override
 
-Instead of editing dotfiles, create a project-local node file that overrides
-the Nix-deployed version in place:
+Instead of editing dotfiles, create a project-local config that overrides
+the Nix-deployed version:
 
 ```sh
-mkdir -p .tmux-a2a-postman/nodes
-touch .tmux-a2a-postman/postman.toml
-cp "$(realpath $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml)" \
-   .tmux-a2a-postman/nodes/<node>.toml
-# Now edit .tmux-a2a-postman/nodes/<node>.toml directly
+mkdir -p .tmux-a2a-postman
+# Create postman.md with template overrides:
+cp "$(realpath $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md)" \
+   .tmux-a2a-postman/postman.md
+# Edit .tmux-a2a-postman/postman.md directly
 ```
-
-NOTE: `.tmux-a2a-postman/postman.toml` must exist (even if empty) for the
-overlay to activate.
 
 This file is in your project repo, editable immediately, and versioned with git.
 No `home-manager switch` required.
@@ -270,7 +271,7 @@ The following examples illustrate the finding format.
 
 ```text
 [IMPORTANT] Node: sender
-Field: nodes/sender.toml:[sender].template
+Field: postman.md:## `sender` template
 Check: Routing clarity
 Result: FAIL
 Issue: Template says "send a message via postman" without specifying a recipient.
@@ -283,7 +284,7 @@ Fix:
 
 ```text
 [IMPORTANT] Node: approver
-Field: nodes/approver.toml:[approver].template
+Field: postman.md:## `approver` template
 Check: Completion protocol
 Result: FAIL
 Issue: No machine-readable approval signal defined. Recipients cannot parse
@@ -297,7 +298,7 @@ Fix:
 
 ```text
 [IMPORTANT] Node: relay-node
-Field: nodes/relay-node.toml:[relay-node].template
+Field: postman.md:## `relay-node` template
 Check: Cross-edge consistency
 Type: JUDGMENT-BASED
 Result: FAIL
@@ -312,7 +313,7 @@ Fix:
 
 ```text
 [MINOR] Node: worker
-Field: nodes/worker.toml:[worker].on_join
+Field: postman.md:## `worker` ### `on_join`
 Check: on_join completeness
 Result: FAIL
 Issue: on_join is empty; node receives no startup context.

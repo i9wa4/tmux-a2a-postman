@@ -46,3 +46,6 @@ go.work.sum
 # AI tools
 .claude/
 .codex/
+
+# Project-local config (dev override)
+.tmux-a2a-postman/
