@@ -1329,6 +1329,25 @@ func TestResolveContextIDFromSession(t *testing.T) {
 		}
 	})
 
+	t.Run("cross-session — PID under daemon session, query from managed session", func(t *testing.T) {
+		baseDir := t.TempDir()
+		// Daemon runs in session "0", PID file is under "0"
+		writeLivePID(t, baseDir, "session-ctx", "0")
+		// Daemon manages "other-session" (directory exists, no PID there)
+		otherDir := filepath.Join(baseDir, "session-ctx", "other-session", "inbox", "worker")
+		if err := os.MkdirAll(otherDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Query from "other-session" should find the context via the live PID in "0"
+		got, err := ResolveContextIDFromSession(baseDir, "other-session")
+		if err != nil {
+			t.Fatalf("unexpected error: %v (cross-session resolution should work)", err)
+		}
+		if got != "session-ctx" {
+			t.Errorf("got %q, want %q", got, "session-ctx")
+		}
+	})
+
 	t.Run("empty baseDir", func(t *testing.T) {
 		_, err := ResolveContextIDFromSession("", "my-session")
 		if err == nil {

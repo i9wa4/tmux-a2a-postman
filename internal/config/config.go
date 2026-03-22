@@ -989,10 +989,34 @@ func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 	return sigErr == nil || errors.Is(sigErr, syscall.EPERM)
 }
 
+// isContextDaemonAlive checks if any session subdirectory under
+// baseDir/contextName contains a live postman.pid. A daemon writes its PID
+// file under its own tmux session, but may manage other sessions via
+// cross-session discovery. This helper detects liveness regardless of which
+// session the daemon started from.
+func isContextDaemonAlive(baseDir, contextName string) bool {
+	contextDir := filepath.Join(baseDir, contextName)
+	sessions, err := os.ReadDir(contextDir)
+	if err != nil {
+		return false
+	}
+	for _, s := range sessions {
+		if !s.IsDir() {
+			continue
+		}
+		if IsSessionPIDAlive(baseDir, contextName, s.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveContextIDFromSession scans baseDir for context directories that
-// contain a live postman daemon for sessionName. Stale contexts (dead or absent
-// postman.pid) are skipped. Returns error if zero live matches or multiple
-// (which indicates a constraint violation: 1 session = 1 postman).
+// contain a live postman daemon managing sessionName. A daemon writes its PID
+// file under its own tmux session but may manage other sessions via
+// cross-session discovery. The resolver checks: (1) the context has a
+// subdirectory for sessionName (daemon knows about this session), and (2) any
+// session subdirectory under the context has a live PID file.
 // Issue #229: safe auto-resolution without env vars or stale files.
 // Issue #249: liveness-aware resolution using postman.pid.
 func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
@@ -1008,7 +1032,13 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
+		// Check if this context has a subdirectory for the requested session
+		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
+		if _, statErr := os.Stat(sessionDir); os.IsNotExist(statErr) {
+			continue
+		}
+		// Check if any session under this context has a live daemon
+		if isContextDaemonAlive(baseDir, e.Name()) {
 			matches = append(matches, e.Name())
 		}
 	}
