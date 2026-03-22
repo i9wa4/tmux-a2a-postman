@@ -18,6 +18,12 @@ var (
 	paneNotifyMu       sync.Mutex
 	paneLastNotified   = map[string]time.Time{}
 	paneNotifyCooldown = 10 * time.Minute
+
+	// bufferMu serializes tmux set-buffer + paste-buffer pairs.
+	// tmux uses a single global paste buffer; concurrent SendToPane calls
+	// would race without this lock. The lock is held only for the two fast
+	// tmux commands (~1ms each); the expensive sleep + send-keys runs outside.
+	bufferMu sync.Mutex
 )
 
 // InitPaneCooldown sets the per-pane notification cooldown duration.
@@ -64,21 +70,24 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 		return err
 	}
 
-	// 1. Set buffer
+	// 1-2. Set buffer + paste buffer (serialized via bufferMu to prevent
+	// global tmux paste-buffer race when deliveries run concurrently).
+	bufferMu.Lock()
 	cmd := exec.Command("tmux", "set-buffer", sanitized)
 	if err := cmd.Run(); err != nil {
+		bufferMu.Unlock()
 		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
 		return err
 	}
-
-	// 2. Paste buffer to target pane
 	cmd = exec.Command("tmux", "paste-buffer", "-t", paneID)
 	if err := cmd.Run(); err != nil {
+		bufferMu.Unlock()
 		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
 		return err
 	}
+	bufferMu.Unlock()
 
-	// 3. Wait enter_delay
+	// 3. Wait enter_delay (runs outside bufferMu — parallel across panes)
 	time.Sleep(enterDelay)
 
 	// 4. Send C-m to submit. C-m (carriage return) submits reliably in both Codex CLI and claude-chill.

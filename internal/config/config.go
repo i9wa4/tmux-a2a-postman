@@ -313,6 +313,75 @@ func resolveProjectLocalConfig(cwd, xdgPath string) (string, error) {
 	}
 }
 
+// resolveXDGMarkdownPath returns the path to postman.md in the XDG config
+// directory, or "" if not found. Mirrors ResolveConfigPath() for Markdown.
+// Issue #324: Markdown config format support.
+func resolveXDGMarkdownPath() string {
+	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
+		path := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.md")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.md")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+// resolveProjectLocalMarkdown searches upward from cwd for
+// .tmux-a2a-postman/postman.md. Stops before the home directory.
+// Deduplicates against xdgMarkdownPath via EvalSymlinks.
+// Returns the project-local markdown path, or "" if not found.
+// Issue #324: Markdown config format support.
+func resolveProjectLocalMarkdown(cwd, xdgMarkdownPath string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", nil
+	}
+	homeResolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		homeResolved = home
+	}
+	xdgResolved := ""
+	if xdgMarkdownPath != "" {
+		r, err := filepath.EvalSymlinks(xdgMarkdownPath)
+		if err == nil {
+			xdgResolved = r
+		} else {
+			xdgResolved = xdgMarkdownPath
+		}
+	}
+	dir := cwd
+	for {
+		candidate := filepath.Join(dir, ".tmux-a2a-postman", "postman.md")
+		if _, err := os.Stat(candidate); err == nil {
+			candidateResolved, err := filepath.EvalSymlinks(candidate)
+			if err != nil {
+				candidateResolved = candidate
+			}
+			if candidateResolved != xdgResolved {
+				return candidate, nil
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil
+		}
+		parentResolved, err := filepath.EvalSymlinks(parent)
+		if err != nil {
+			parentResolved = parent
+		}
+		if parentResolved == homeResolved {
+			return "", nil
+		}
+		dir = parent
+	}
+}
+
 // loadConfigFile parses a TOML config file into a zero-value Config.
 // Unlike LoadConfig, starts from zero-value (not DefaultConfig) so only
 // explicitly-set fields are non-zero. Does not load sibling nodes/ directory.
@@ -597,16 +666,19 @@ func mergeConfig(base, override *Config) {
 func LoadConfig(path string) (*Config, error) {
 	configPath := path
 	localPath := ""
+	localMarkdownPath := ""
 
 	xdgPath := ResolveConfigPath()
+	xdgMarkdownPath := resolveXDGMarkdownPath() // Issue #324
 	// Issue #274: Resolve project-local config unconditionally so that an explicit
 	// --config flag does not bypass the project-local nodes/ overlay.
 	if cwd, err := os.Getwd(); err == nil {
 		localPath, _ = resolveProjectLocalConfig(cwd, xdgPath)
+		localMarkdownPath, _ = resolveProjectLocalMarkdown(cwd, xdgMarkdownPath) // Issue #324
 	}
 
 	if configPath == "" {
-		if xdgPath == "" && localPath == "" {
+		if xdgPath == "" && localPath == "" && xdgMarkdownPath == "" && localMarkdownPath == "" {
 			// No user config anywhere: use embedded default
 			return loadEmbeddedConfig()
 		}
@@ -721,6 +793,47 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	// Issue #324: XDG Markdown overlay — nodes/*.md then postman.md.
+	// Load order per level: postman.toml → nodes/*.toml → nodes/*.md → postman.md
+	xdgConfigDir := ""
+	if xdgMarkdownPath != "" {
+		xdgConfigDir = filepath.Dir(xdgMarkdownPath)
+	} else if xdgPath != "" {
+		xdgConfigDir = filepath.Dir(xdgPath)
+	}
+	if xdgConfigDir != "" {
+		xdgMDNodesDir := filepath.Join(xdgConfigDir, "nodes")
+		if info, err := os.Stat(xdgMDNodesDir); err == nil && info.IsDir() {
+			mdFiles, _ := filepath.Glob(filepath.Join(xdgMDNodesDir, "*.md"))
+			sort.Strings(mdFiles)
+			for _, mdFile := range mdFiles {
+				nodeName, nc, err := loadNodeMarkdownFile(mdFile)
+				if err != nil {
+					log.Printf("warning: skipping %s: %v", mdFile, err)
+					continue
+				}
+				node := cfg.Nodes[nodeName]
+				if nc.Template != "" {
+					node.Template = nc.Template
+				}
+				if nc.OnJoin != "" {
+					node.OnJoin = nc.OnJoin
+				}
+				if nc.Role != "" {
+					node.Role = nc.Role
+				}
+				cfg.Nodes[nodeName] = node
+			}
+		}
+	}
+	if xdgMarkdownPath != "" {
+		if mdCfg, err := loadMarkdownConfig(xdgMarkdownPath); err == nil {
+			mergeConfig(cfg, mdCfg)
+		} else {
+			log.Printf("warning: skipping %s: %v", xdgMarkdownPath, err)
+		}
+	}
+
 	// Issue #121: Apply project-local config on top if found.
 	if localPath != "" {
 		localCfg, err := loadConfigFile(localPath)
@@ -758,6 +871,47 @@ func LoadConfig(path string) (*Config, error) {
 					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
 				}
 			}
+		}
+	}
+
+	// Issue #324: Project-local Markdown overlay — independent of localPath (M1/I4).
+	// nodes/*.md then postman.md; same load order as XDG level.
+	localConfigDir := ""
+	if localMarkdownPath != "" {
+		localConfigDir = filepath.Dir(localMarkdownPath)
+	} else if localPath != "" {
+		localConfigDir = filepath.Dir(localPath)
+	}
+	if localConfigDir != "" {
+		localMDNodesDir := filepath.Join(localConfigDir, "nodes")
+		if info, err := os.Stat(localMDNodesDir); err == nil && info.IsDir() {
+			mdFiles, _ := filepath.Glob(filepath.Join(localMDNodesDir, "*.md"))
+			sort.Strings(mdFiles)
+			for _, mdFile := range mdFiles {
+				nodeName, nc, err := loadNodeMarkdownFile(mdFile)
+				if err != nil {
+					log.Printf("warning: skipping %s: %v", mdFile, err)
+					continue
+				}
+				node := cfg.Nodes[nodeName]
+				if nc.Template != "" {
+					node.Template = nc.Template
+				}
+				if nc.OnJoin != "" {
+					node.OnJoin = nc.OnJoin
+				}
+				if nc.Role != "" {
+					node.Role = nc.Role
+				}
+				cfg.Nodes[nodeName] = node
+			}
+		}
+	}
+	if localMarkdownPath != "" {
+		if mdCfg, err := loadMarkdownConfig(localMarkdownPath); err == nil {
+			mergeConfig(cfg, mdCfg)
+		} else {
+			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
 		}
 	}
 
