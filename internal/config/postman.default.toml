@@ -326,6 +326,8 @@ How to reply: {reply_command}
 # dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
 # dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
 # dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
+# delivery_idle_timeout_seconds = 0  # Re-deliver swallowed messages after N idle seconds (0 = disabled) (#282)
+# delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message (0 = use default 3) (#282)
 
 # =============================================================================
 # Heartbeat-LLM Configuration
