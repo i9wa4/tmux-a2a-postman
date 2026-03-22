@@ -171,6 +171,48 @@ See `internal/config/postman.default.toml` for all available options.
 **NOTE:** Editing edges via TUI removes comments from `postman.toml`; manual
 editing is recommended for preserving comments.
 
+### 7.1. Project-Local Configuration Override
+
+Place config files in `.tmux-a2a-postman/` inside your project directory
+to override XDG config without modifying `~/.config/`:
+
+```text
+your-project/
+└── .tmux-a2a-postman/
+    ├── postman.toml        # required sentinel (can be empty); also overrides [postman] settings
+    └── nodes/
+        ├── worker.toml     # overrides $XDG_CONFIG_HOME/.../nodes/worker.toml
+        └── orchestrator.toml
+```
+
+**Priority order (highest to lowest):**
+
+1. Project-local `nodes/*.toml`
+2. Project-local `postman.toml` node sections
+3. XDG `nodes/*.toml`
+4. XDG `postman.toml`
+5. Embedded defaults
+
+**Setup:**
+
+```sh
+mkdir -p .tmux-a2a-postman/nodes
+# postman.toml sentinel is required for the overlay to activate:
+touch .tmux-a2a-postman/postman.toml
+# Copy and edit an existing node file:
+cp ~/.config/tmux-a2a-postman/nodes/worker.toml .tmux-a2a-postman/nodes/
+# Verify the override is active:
+tmux-a2a-postman get-nodes-dir
+```
+
+NOTE: `.tmux-a2a-postman/postman.toml` must exist (even if empty) as a
+sentinel for the project-local overlay to activate. Without it, nodes in
+`.tmux-a2a-postman/nodes/` are silently ignored.
+
+**Nix/home-manager users:** if your XDG nodes are read-only Nix store
+symlinks, use project-local `nodes/` as the SSOT — editable in-place, version
+controlled with git, no `home-manager switch` required.
+
 ## 8. Usage
 
 ```sh

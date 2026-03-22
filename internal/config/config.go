@@ -598,14 +598,14 @@ func LoadConfig(path string) (*Config, error) {
 	configPath := path
 	localPath := ""
 
+	xdgPath := ResolveConfigPath()
+	// Issue #274: Resolve project-local config unconditionally so that an explicit
+	// --config flag does not bypass the project-local nodes/ overlay.
+	if cwd, err := os.Getwd(); err == nil {
+		localPath, _ = resolveProjectLocalConfig(cwd, xdgPath)
+	}
+
 	if configPath == "" {
-		xdgPath := ResolveConfigPath()
-
-		// Resolve project-local config before any early return (#121).
-		if cwd, err := os.Getwd(); err == nil {
-			localPath, _ = resolveProjectLocalConfig(cwd, xdgPath)
-		}
-
 		if xdgPath == "" && localPath == "" {
 			// No user config anywhere: use embedded default
 			return loadEmbeddedConfig()
@@ -951,6 +951,12 @@ func ResolveNodesDir(configPath string) string {
 		return nodesDir
 	}
 	return ""
+}
+
+// ResolveLocalConfigPath is the exported wrapper for resolveProjectLocalConfig.
+// Returns the project-local config path walked upward from cwd, or "" if not found.
+func ResolveLocalConfigPath(cwd, xdgPath string) (string, error) {
+	return resolveProjectLocalConfig(cwd, xdgPath)
 }
 
 // ResolveContextID returns the context ID from the explicit --context-id flag.

@@ -181,6 +181,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman get-context-id: %v\n", err)
 			os.Exit(1)
 		}
+	case "get-nodes-dir":
+		if err := runGetNodesDir(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman get-nodes-dir: %v\n", err)
+			os.Exit(1)
+		}
 	case "resend":
 		if err := runResend(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman resend: %v\n", err)
@@ -2120,6 +2125,30 @@ func runGetContextID(args []string) error {
 		return err
 	}
 	fmt.Println(contextID)
+	return nil
+}
+
+// runGetNodesDir prints the effective nodes directory paths (XDG and project-local).
+// NOTE: always uses auto-detection; does not accept --config.
+// If the daemon was started with an explicit --config, the project-local nodes
+// directory shown here may differ from what the running daemon uses.
+func runGetNodesDir(_ []string) error {
+	xdgPath := config.ResolveConfigPath()
+	xdgNodesDir := config.ResolveNodesDir(xdgPath)
+	localConfigPath := ""
+	if cwd, err := os.Getwd(); err == nil {
+		localConfigPath, _ = config.ResolveLocalConfigPath(cwd, xdgPath)
+	}
+	localNodesDir := config.ResolveNodesDir(localConfigPath)
+	if xdgNodesDir != "" {
+		fmt.Printf("xdg: %s\n", xdgNodesDir)
+	}
+	if localNodesDir != "" {
+		fmt.Printf("project-local: %s\n", localNodesDir)
+	}
+	if xdgNodesDir == "" && localNodesDir == "" {
+		fmt.Println("(no nodes directory found)")
+	}
 	return nil
 }
 

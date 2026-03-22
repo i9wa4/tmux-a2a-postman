@@ -175,11 +175,13 @@ Present findings in order: BLOCKING first, then IMPORTANT, then MINOR.
 
 All files are read from the user's XDG config directory:
 
-| File                             | Path                                                        |
-| -------------------------------- | ----------------------------------------------------------- |
-| Main config (edges + node sections) | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`        |
-| Node template files              | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`      |
-| Default config reference         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.default.toml`   |
+| File                             | Path                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------- |
+| Main config (edges + node sections) | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`                          |
+| Node template files              | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`                        |
+| Default config reference         | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.default.toml`                     |
+| Project-local main config        | `.tmux-a2a-postman/postman.toml` (project root, walked up from CWD)          |
+| Project-local node templates     | `.tmux-a2a-postman/nodes/{node}.toml` (highest priority; overrides XDG)      |
 
 - `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
 - `postman.toml` defines both `[[edges]]` (routing) and `[node-name]` sections
@@ -195,8 +197,9 @@ All files are read from the user's XDG config directory:
 
 1. Read `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml` — extract edges, build
    adjacency map
-2. Read each `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` (source of
-   truth; runtime session templates are NOT compared)
+2. Run `tmux-a2a-postman get-nodes-dir` to discover the effective node paths.
+   Read each `{nodes-dir}/{node}.toml`, checking project-local first then XDG.
+   Project-local nodes override XDG nodes of the same name.
 3. For each node: run Pre-check, then Checks 1–9, B-I8, and B-I9 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
@@ -220,11 +223,30 @@ If files are owned by root with permissions `-r--r--r--` and timestamp
 In this case:
 
 1. Confirm the store path:
-   `readlink -f $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
+   `realpath $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml`
 2. Find the editable source in dotfiles (typically
    `~/ghq/<user>/dotfiles/config/tmux-a2a-postman/nodes/<node>.toml`)
 3. Apply all patches to the dotfiles source, not the deployed path
 4. After patching, rebuild: `home-manager switch` (or equivalent) to redeploy
+
+#### Alternative (preferred): use project-local override
+
+Instead of editing dotfiles, create a project-local node file that overrides
+the Nix-deployed version in place:
+
+```sh
+mkdir -p .tmux-a2a-postman/nodes
+touch .tmux-a2a-postman/postman.toml
+cp "$(realpath $XDG_CONFIG_HOME/tmux-a2a-postman/nodes/<node>.toml)" \
+   .tmux-a2a-postman/nodes/<node>.toml
+# Now edit .tmux-a2a-postman/nodes/<node>.toml directly
+```
+
+NOTE: `.tmux-a2a-postman/postman.toml` must exist (even if empty) for the
+overlay to activate.
+
+This file is in your project repo, editable immediately, and versioned with git.
+No `home-manager switch` required.
 
 Report this as a constraint in findings, not as a skill failure.
 
