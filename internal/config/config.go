@@ -1002,15 +1002,8 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		subdirs, _ := os.ReadDir(filepath.Join(baseDir, e.Name()))
-		for _, sub := range subdirs {
-			if !sub.IsDir() {
-				continue
-			}
-			if IsSessionPIDAlive(baseDir, e.Name(), sub.Name()) {
-				matches = append(matches, e.Name())
-				break
-			}
+		if IsSessionPIDAlive(baseDir, e.Name(), sessionName) {
+			matches = append(matches, e.Name())
 		}
 	}
 	switch len(matches) {
