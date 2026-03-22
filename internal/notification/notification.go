@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -62,8 +63,12 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	paneNotifyMu.Unlock()
 	// Wrap with protocol sentinels so all pane output is clearly delimited.
 	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
-	// Security: Sanitize message for tmux set-buffer
-	sanitized := sanitizeForTmux(message)
+	// Security: Sanitize message for tmux set-buffer (#301)
+	sanitized, err := sanitizeForTmux(message)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
+		return err
+	}
 
 	// 1-2. Set buffer + paste buffer (serialized via bufferMu to prevent
 	// global tmux paste-buffer race when deliveries run concurrently).
@@ -124,18 +129,86 @@ func ResolveEnterCount(configured int, probeRuntime func() (string, error)) int 
 	return configured
 }
 
-// sanitizeForTmux sanitizes a string for safe use with tmux set-buffer.
-// Escapes special shell characters to prevent command injection.
-func sanitizeForTmux(s string) string {
-	// Normalize CRLF/CR line endings to LF (#225)
+// StripVT strips VT/ANSI control sequences and C0/C1 control characters from s
+// using a state-machine parser (ECMA-48). LF (U+000A) is preserved.
+// Returns an error if s contains invalid UTF-8.
+func StripVT(s string) (string, error) {
+	// Pre-pass: normalize CRLF and bare CR to LF (#225).
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
-	// NOTE: tmux set-buffer does not interpret shell metacharacters,
-	// but we sanitize as a defense-in-depth measure.
-	// Escape backslashes and quotes
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "$", "\\$")
-	s = strings.ReplaceAll(s, "`", "\\`")
-	return s
+
+	const (
+		stateNormal = iota
+		stateEsc
+		stateCSI
+		stateString
+		stateStrEsc
+	)
+
+	state := stateNormal
+	var buf []byte
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			return "", fmt.Errorf("invalid UTF-8 at byte offset %d", i)
+		}
+		i += size
+
+		switch state {
+		case stateNormal:
+			switch {
+			case r == '\n': // U+000A LF: preserve
+				buf = utf8.AppendRune(buf, r)
+			case r == 0x1B: // ESC
+				state = stateEsc
+			case r >= 0x20 && r <= 0x7E: // printable ASCII
+				buf = utf8.AppendRune(buf, r)
+			case r >= 0x00A0: // above C1 range: valid Unicode, non-control
+				buf = utf8.AppendRune(buf, r)
+			default: // NUL, C0 excl LF, TAB, DEL, C1 U+0080-U+009F: drop
+			}
+
+		case stateEsc:
+			state = stateNormal // default: drop ESC + this byte, return to Normal
+			switch r {
+			case 'P', 'X', ']', '^', '_': // string sequence introducers
+				state = stateString
+			case '[': // CSI introducer
+				state = stateCSI
+			}
+
+		case stateCSI:
+			if r >= 0x40 && r <= 0x7E { // final byte
+				state = stateNormal
+			}
+			// else: drop parameter/intermediate bytes
+
+		case stateString:
+			switch r {
+			case 0x07: // BEL: string terminator
+				state = stateNormal
+			case 0x1B: // ESC: possible ST
+				state = stateStrEsc
+			}
+			// else: drop string body
+
+		case stateStrEsc:
+			switch r {
+			case 0x07: // BEL inside stateStrEsc: string terminated
+				state = stateNormal
+			case '\\': // ST confirmed (ESC + backslash)
+				state = stateNormal
+			default: // ESC was not ST: continue consuming string
+				state = stateString
+			}
+		}
+	}
+
+	return string(buf), nil
+}
+
+// sanitizeForTmux sanitizes a string for safe use with tmux set-buffer
+// by stripping VT/ANSI sequences and invalid UTF-8 (#301).
+func sanitizeForTmux(s string) (string, error) {
+	return StripVT(s)
 }

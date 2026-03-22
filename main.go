@@ -1049,7 +1049,11 @@ func runCreateDraft(args []string) error {
 	content = template.ExpandTemplate(content, vars, timeout)
 
 	if *body != "" {
-		content = strings.ReplaceAll(content, "<!-- write here -->", *body)
+		stripped, err := notification.StripVT(*body)
+		if err != nil {
+			return fmt.Errorf("--body contains invalid UTF-8: %w", err)
+		}
+		content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
