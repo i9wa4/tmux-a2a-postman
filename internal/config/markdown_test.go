@@ -297,6 +297,9 @@ Worker template.
 		if oc.OnJoin != "You are coordinator." {
 			t.Errorf("orchestrator on_join: got %q", oc.OnJoin)
 		}
+		if oc.Template != "You coordinate things." {
+			t.Errorf("orchestrator template: got %q, want %q", oc.Template, "You coordinate things.")
+		}
 		wc, ok := cfg.Nodes["worker"]
 		if !ok {
 			t.Fatal("worker node missing")

@@ -231,7 +231,7 @@ func loadMarkdownConfig(path string) (*Config, error) {
 			log.Printf("warning: skipping reserved node name %q in %s", key, path)
 			continue
 		}
-		nodeCfg := NodeConfig{Template: body}
+		nodeCfg := NodeConfig{Template: strings.TrimSpace(stripFrontmatter(body))}
 		// Per-node frontmatter embedded in the section body
 		nodeFM := parseFrontmatter(body)
 		if v, ok := nodeFM["on_join"]; ok && v != "" {
