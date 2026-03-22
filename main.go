@@ -81,6 +81,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  stop                       Stop the running daemon for this tmux session")
 		fmt.Fprintln(os.Stderr, "  create-draft               Create message draft")
 		fmt.Fprintln(os.Stderr, "  send <filename>            Move draft to post/ to send it")
+		fmt.Fprintln(os.Stderr, "  send-message               Send a message in one step (--to and --body required)")
 		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
 		fmt.Fprintln(os.Stderr, "  resend                     Re-send a dead-letter message")
 		fmt.Fprintln(os.Stderr, "  get-session-status-oneline Show all sessions' pane status in one line")
@@ -95,6 +96,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --context-id my-session     # Start with specific context")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman create-draft --to worker    # Create draft message")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman archive msg.md              # Archive a message by filename")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send-message --to worker --body \"DONE\"  # Send in one step")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging              # Show messaging topic help")
 	}
 
@@ -164,6 +166,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman archive: %v\n", err)
 			os.Exit(1)
 		}
+	case "next":
+		if err := runNext(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman next: %v\n", err)
+			os.Exit(1)
+		}
 	case "get-session-health":
 		if err := runGetSessionHealth(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
@@ -192,6 +199,11 @@ func main() {
 	case "show-archived-message":
 		if err := runShowArchivedMessage(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman show-archived-message: %v\n", err)
+			os.Exit(1)
+		}
+	case "send-message":
+		if err := runSendMessage(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
@@ -584,6 +596,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
 									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner),
+									Details: map[string]interface{}{"session": cmd.Target},
 								}
 								continue
 							}
@@ -639,6 +652,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							Details: map[string]interface{}{
 								"node_count": len(nodes),
 								"sessions":   updatedSessionList,
+								"session":    cmd.Target,
 							},
 						}
 
@@ -689,6 +703,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
 								Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
+								Details: map[string]interface{}{"session": cmd.Target},
 							}
 							break
 						}
@@ -704,6 +719,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						if pingAdjacency == nil {
 							pingAdjacency = map[string][]string{}
 						}
+						sessionTarget := cmd.Target
 						go func() {
 							var wg sync.WaitGroup
 							var successCount, failCount atomic.Int32
@@ -734,8 +750,16 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							total := int(successCount.Load()) + int(failCount.Load())
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
-								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount.Load(), total),
+								Message: fmt.Sprintf("PING: %d/%d dispatched", successCount.Load(), total),
+								Details: map[string]interface{}{"session": sessionTarget},
 							}
+							time.AfterFunc(30*time.Second, func() {
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: "",
+									Details: map[string]interface{}{"session": sessionTarget},
+								}
+							})
 						}()
 					case "create_draft":
 						// Issue #230: TUI shortcut for create-draft
@@ -982,6 +1006,38 @@ func runCreateDraft(args []string) error {
 	}
 	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filename, filename)
 	return nil
+}
+
+func runSendMessage(args []string) error {
+	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
+	to := fs.String("to", "", "recipient node name (required)")
+	body := fs.String("body", "", "message body (required)")
+	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
+	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
+	configPath := fs.String("config", "", "config file path (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *to == "" {
+		return fmt.Errorf("--to is required")
+	}
+	if *body == "" {
+		// NOTE: runCreateDraft issues only a warning (not an error) for --send
+		// without --body (see runCreateDraft:966-968). Enforce here before
+		// delegating so send-message never sends a placeholder-body message.
+		return fmt.Errorf("--body is required")
+	}
+	newArgs := []string{"--to", *to, "--body", *body, "--send"}
+	if *contextID != "" {
+		newArgs = append(newArgs, "--context-id", *contextID)
+	}
+	if *session != "" {
+		newArgs = append(newArgs, "--session", *session)
+	}
+	if *configPath != "" {
+		newArgs = append(newArgs, "--config", *configPath)
+	}
+	return runCreateDraft(newArgs)
 }
 
 // expandReplyCommand substitutes {context_id} in the reply command template
@@ -1596,6 +1652,77 @@ func runArchive(args []string) error {
 	return nil
 }
 
+// runNext reads and optionally archives the oldest unread inbox message (#277).
+func runNext(args []string) error {
+	fs := flag.NewFlagSet("next", flag.ContinueOnError)
+	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	inboxPath, err := resolveInboxPath(fs.Args())
+	if err != nil {
+		return err
+	}
+
+	msgs := message.ScanInboxMessages(inboxPath)
+	if len(msgs) == 0 {
+		fmt.Fprintln(os.Stderr, "No unread messages.")
+		return nil
+	}
+	sort.Slice(msgs, func(i, j int) bool {
+		return msgs[i].Filename < msgs[j].Filename
+	})
+
+	abs := filepath.Join(inboxPath, msgs[0].Filename)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Race: file disappeared between listing and reading; retry once.
+			msgs = message.ScanInboxMessages(inboxPath)
+			if len(msgs) == 0 {
+				fmt.Fprintln(os.Stderr, "No unread messages.")
+				return nil
+			}
+			sort.Slice(msgs, func(i, j int) bool {
+				return msgs[i].Filename < msgs[j].Filename
+			})
+			abs = filepath.Join(inboxPath, msgs[0].Filename)
+			data, err = os.ReadFile(abs)
+			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Fprintln(os.Stderr, "No unread messages.")
+					return nil
+				}
+				return fmt.Errorf("reading message: %w", err)
+			}
+		} else {
+			return fmt.Errorf("reading message: %w", err)
+		}
+	}
+
+	fmt.Print(string(data))
+
+	if *peek {
+		return nil
+	}
+
+	// Archive: move to {base}/{contextID}/{session}/read/
+	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		return fmt.Errorf("creating read directory: %w", err)
+	}
+	dst := filepath.Join(readDir, msgs[0].Filename)
+	if err := os.Rename(abs, dst); err != nil {
+		return fmt.Errorf("archiving message: %w", err)
+	}
+	sender := extractSenderFromFile(dst)
+	if sender != "" {
+		fmt.Printf("Next steps: Reply with tmux-a2a-postman create-draft --to %s\n", sender)
+	}
+	return nil
+}
+
 // extractSenderFromFile reads the YAML front matter of a message file and returns
 // the value of the params.from field. Returns empty string on any error or if not found.
 func extractSenderFromFile(path string) string {
@@ -1976,7 +2103,7 @@ func runHelp(args []string) {
 		fmt.Println("  3. Edit draft:     $EDITOR draft/<filename>.md")
 		fmt.Println("  4. Send message:   tmux-a2a-postman send <filename>.md")
 		fmt.Println("  5. Daemon routes the file from post/ to recipient's inbox/{sender}/")
-		fmt.Println("  6. Recipient reads file and runs: tmux-a2a-postman archive <filename>")
+		fmt.Println("  6. Recipient reads and archives: tmux-a2a-postman next")
 		fmt.Println("")
 		fmt.Println("Key Concepts:")
 		fmt.Println("  Node       An AI agent identified by its tmux pane title.")
@@ -2031,6 +2158,9 @@ func runHelp(args []string) {
 		fmt.Println("  3. Daemon picks up file from post/, routes to inbox/{node}/ of recipient")
 		fmt.Println("  4. Recipient reads from inbox/{node}/, then runs: tmux-a2a-postman archive <filename>")
 		fmt.Println("  5. Unknown recipients: file moved to dead-letter/")
+		fmt.Println("")
+		fmt.Println("One-step alternative (for scripts and AI agents):")
+		fmt.Println("  tmux-a2a-postman send-message --to <node> --body \"message\"")
 		fmt.Println("")
 		fmt.Println("Envelope format (YAML frontmatter):")
 		fmt.Println("  ---")
@@ -2132,6 +2262,8 @@ func runHelp(args []string) {
 		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("    --body <text>        Inline message body (replaces <!-- write here --> placeholder)")
+		fmt.Println("    --send               Send immediately after creating draft (atomic)")
 		fmt.Println("  NOTE: There is no --from flag. Sender comes from the tmux pane title.")
 		fmt.Println("")
 		fmt.Println("send <filename> [filename...]")
@@ -2141,6 +2273,19 @@ func runHelp(args []string) {
 		fmt.Println("    1. tmux-a2a-postman create-draft --to <node>  # creates draft, prints filename")
 		fmt.Println("    2. $EDITOR draft/<filename>.md                 # edit the draft")
 		fmt.Println("    3. tmux-a2a-postman send <filename>.md         # submit for delivery")
+		fmt.Println("")
+		fmt.Println("send-message")
+		fmt.Println("  Compose and deliver a message atomically in a single command.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --to <node>          Recipient node name (required)")
+		fmt.Println("    --body <text>        Message body (required; replaces <!-- write here --> placeholder)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
+		fmt.Println("  NOTE: --cross-context is not supported; use create-draft --cross-context for cross-context delivery.")
+		fmt.Println("  NOTE: --body is required (error if absent). This is stricter than create-draft --send.")
+		fmt.Println("  Example:")
+		fmt.Println("    tmux-a2a-postman send-message --to orchestrator --body \"DONE: task complete\"")
 		fmt.Println("")
 		fmt.Println("get-session-status-oneline")
 		fmt.Println("  Print all sessions' pane status on a single line.")
@@ -2189,6 +2334,16 @@ func runHelp(args []string) {
 		fmt.Println("    1. tmux-a2a-postman read          # list inbox file paths")
 		fmt.Println("    2. cat /path/to/msg.md            # read the message")
 		fmt.Println("    3. tmux-a2a-postman archive msg.md  # mark as read (filename only)")
+		fmt.Println("")
+		fmt.Println("next")
+		fmt.Println("  Read and archive the oldest unread inbox message.")
+		fmt.Println("  Prints full message content to stdout; archives silently.")
+		fmt.Println("  Node is auto-detected from tmux pane title.")
+		fmt.Println("  Empty inbox: exits 0, prints 'No unread messages.' to stderr.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --peek               Show without archiving (non-destructive)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
