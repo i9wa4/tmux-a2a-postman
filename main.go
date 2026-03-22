@@ -164,6 +164,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman archive: %v\n", err)
 			os.Exit(1)
 		}
+	case "next":
+		if err := runNext(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman next: %v\n", err)
+			os.Exit(1)
+		}
 	case "get-session-health":
 		if err := runGetSessionHealth(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
@@ -1596,6 +1601,77 @@ func runArchive(args []string) error {
 	return nil
 }
 
+// runNext reads and optionally archives the oldest unread inbox message (#277).
+func runNext(args []string) error {
+	fs := flag.NewFlagSet("next", flag.ContinueOnError)
+	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	inboxPath, err := resolveInboxPath(fs.Args())
+	if err != nil {
+		return err
+	}
+
+	msgs := message.ScanInboxMessages(inboxPath)
+	if len(msgs) == 0 {
+		fmt.Fprintln(os.Stderr, "No unread messages.")
+		return nil
+	}
+	sort.Slice(msgs, func(i, j int) bool {
+		return msgs[i].Filename < msgs[j].Filename
+	})
+
+	abs := filepath.Join(inboxPath, msgs[0].Filename)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Race: file disappeared between listing and reading; retry once.
+			msgs = message.ScanInboxMessages(inboxPath)
+			if len(msgs) == 0 {
+				fmt.Fprintln(os.Stderr, "No unread messages.")
+				return nil
+			}
+			sort.Slice(msgs, func(i, j int) bool {
+				return msgs[i].Filename < msgs[j].Filename
+			})
+			abs = filepath.Join(inboxPath, msgs[0].Filename)
+			data, err = os.ReadFile(abs)
+			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Fprintln(os.Stderr, "No unread messages.")
+					return nil
+				}
+				return fmt.Errorf("reading message: %w", err)
+			}
+		} else {
+			return fmt.Errorf("reading message: %w", err)
+		}
+	}
+
+	fmt.Print(string(data))
+
+	if *peek {
+		return nil
+	}
+
+	// Archive: move to {base}/{contextID}/{session}/read/
+	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		return fmt.Errorf("creating read directory: %w", err)
+	}
+	dst := filepath.Join(readDir, msgs[0].Filename)
+	if err := os.Rename(abs, dst); err != nil {
+		return fmt.Errorf("archiving message: %w", err)
+	}
+	sender := extractSenderFromFile(dst)
+	if sender != "" {
+		fmt.Printf("Next steps: Reply with tmux-a2a-postman create-draft --to %s\n", sender)
+	}
+	return nil
+}
+
 // extractSenderFromFile reads the YAML front matter of a message file and returns
 // the value of the params.from field. Returns empty string on any error or if not found.
 func extractSenderFromFile(path string) string {
@@ -1976,7 +2052,7 @@ func runHelp(args []string) {
 		fmt.Println("  3. Edit draft:     $EDITOR draft/<filename>.md")
 		fmt.Println("  4. Send message:   tmux-a2a-postman send <filename>.md")
 		fmt.Println("  5. Daemon routes the file from post/ to recipient's inbox/{sender}/")
-		fmt.Println("  6. Recipient reads file and runs: tmux-a2a-postman archive <filename>")
+		fmt.Println("  6. Recipient reads and archives: tmux-a2a-postman next")
 		fmt.Println("")
 		fmt.Println("Key Concepts:")
 		fmt.Println("  Node       An AI agent identified by its tmux pane title.")
@@ -2189,6 +2265,16 @@ func runHelp(args []string) {
 		fmt.Println("    1. tmux-a2a-postman read          # list inbox file paths")
 		fmt.Println("    2. cat /path/to/msg.md            # read the message")
 		fmt.Println("    3. tmux-a2a-postman archive msg.md  # mark as read (filename only)")
+		fmt.Println("")
+		fmt.Println("next")
+		fmt.Println("  Read and archive the oldest unread inbox message.")
+		fmt.Println("  Prints full message content to stdout; archives silently.")
+		fmt.Println("  Node is auto-detected from tmux pane title.")
+		fmt.Println("  Empty inbox: exits 0, prints 'No unread messages.' to stderr.")
+		fmt.Println("  Flags:")
+		fmt.Println("    --peek               Show without archiving (non-destructive)")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
+		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("help [topic]")
 		fmt.Println("  Show help overview or detailed topic page.")
