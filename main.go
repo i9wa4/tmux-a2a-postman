@@ -1845,7 +1845,7 @@ func runArchive(args []string) error {
 		}
 		sender := extractSenderFromFile(dst)
 		if sender != "" {
-			fmt.Printf("Next steps: Reply with tmux-a2a-postman create-draft --to %s\n", sender)
+			fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 		}
 	}
 	return nil
@@ -1917,7 +1917,7 @@ func runNext(args []string) error {
 	}
 	sender := extractSenderFromFile(dst)
 	if sender != "" {
-		fmt.Printf("Next steps: Reply with tmux-a2a-postman create-draft --to %s\n", sender)
+		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil
 }

@@ -82,20 +82,31 @@ Two sub-checks:
 
 ### 2.7. Check 6 — Messaging Protocol Instructions
 
-- PASS: template contains instruction to use `create-draft` CLI command for
-  drafting messages (e.g., "tmux-a2a-postman -- create-draft")
+- PASS: template contains instruction to use `send-message` as the primary
+  messaging command (e.g., "tmux-a2a-postman send-message --to <node> --body")
+- PASS (also acceptable): template mentions `create-draft` as an advanced
+  alternative for long or cross-context messages
+- PASS (also verify): template mentions `next` for reading messages
+  (read + archive in one step) and/or `count` for inbox status
 - PASS (also verify): template does NOT instruct the agent to use
   `mv draft/ post/`; agents must use `tmux-a2a-postman send <filename>` to
   submit drafts
 - PASS (also verify): template does NOT instruct the agent to use `mv` to move
   files to `read/`; agents must use `tmux-a2a-postman archive <filename>` to
   mark messages as read
-- FAIL: template lacks create-draft protocol instruction — agents may manually
-  create files in draft/, causing malformed envelope metadata
+- PASS (also verify): template does NOT reference raw filesystem paths
+  (e.g., `~/.local/state/tmux-a2a-postman/...`); use CLI commands like
+  `get-session-health` instead (#287: filesystem internals hidden from agents)
+- FAIL: template lacks `send-message` instruction — agents use the verbose
+  3-step create-draft workflow instead of the atomic one-step command
+- FAIL: template lacks `next` or `count` — agents use the old `read` + manual
+  cat + `archive` workflow instead of the streamlined commands
 - FAIL: template instructs `mv draft/ post/` — deprecated; use
   `tmux-a2a-postman send <filename>`
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman archive <filename>`
+- FAIL: template references raw filesystem paths for monitoring (e.g.,
+  `ls ~/.local/state/.../waiting/`) — use `get-session-health` instead
 
 **Diplomat sub-check** (applies only when `diplomat_node` is set in
 `postman.toml`):
@@ -140,7 +151,8 @@ Applies to all non-observer nodes (nodes whose role does NOT contain
 ### 2.11. Check B-I8 — Protocol Reminder Presence
 
 - PASS: template references the postman protocol (e.g., contains
-  "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", or "create-draft")
+  "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", "send-message",
+  or "create-draft")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
 

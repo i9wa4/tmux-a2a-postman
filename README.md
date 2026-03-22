@@ -130,18 +130,7 @@ edges = [
   "messenger -- orchestrator",
   "orchestrator -- worker",
 ]
-reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
-notification_template = """
-Message from {from_node}
-
-File: {filename}
-Inbox: {session_dir}/inbox/{node}/
-
-Reply:
-1. {reply_command}
-2. Edit content
-3. tmux-a2a-postman send <file>
-"""
+reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
 
 [orchestrator]
 role = "coordination"
@@ -217,18 +206,22 @@ controlled with git, no `home-manager switch` required.
 
 ```sh
 # Start daemon (interactive TUI)
-tmux-a2a-postman
-
-# Start daemon (context ID auto-generated if omitted)
 tmux-a2a-postman start [--context-id <id>] [--config path/to/config.toml]
+
+# Send a message (atomic, one-step)
+tmux-a2a-postman send-message --to <recipient> --body "text"
+
+# Read and archive the oldest unread message
+tmux-a2a-postman next
+
+# Count unread inbox messages
+tmux-a2a-postman count
 
 # Print current context ID (useful for AI agents)
 tmux-a2a-postman get-context-id
 
-# Create draft message (context ID auto-detected from tmux session)
+# Advanced: create draft, edit, then send (for long or cross-context messages)
 tmux-a2a-postman create-draft --to <recipient>
-
-# Send draft (move from draft/ to post/)
 tmux-a2a-postman send <filename>
 
 # Archive inbox message (mark as read)
@@ -259,8 +252,8 @@ In headless mode:
 ### 8.2. Recommended Shell Alias
 
 ```sh
-alias a2a='tmux-a2a-postman create-draft'
-# Usage: a2a --to <recipient>
+alias a2a='tmux-a2a-postman send-message'
+# Usage: a2a --to <recipient> --body "text"
 ```
 
 ### 8.3. tmux status-right Integration
