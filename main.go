@@ -1337,6 +1337,10 @@ func runGetSessionStatusOneline(args []string) error {
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
+				// #312: Skip panes not tracked by the daemon (no running agent)
+				if _, tracked := paneActivity[paneID]; !tracked {
+					continue
+				}
 				paneStatuses += statusDot(paneActivity[paneID], isTerminal)
 			}
 
