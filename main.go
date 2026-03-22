@@ -743,9 +743,16 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							total := int(successCount.Load()) + int(failCount.Load())
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
-								Message: fmt.Sprintf("PING: %d/%d sent successfully", successCount.Load(), total),
+								Message: fmt.Sprintf("PING: %d/%d dispatched", successCount.Load(), total),
 								Details: map[string]interface{}{"session": sessionTarget},
 							}
+							time.AfterFunc(30*time.Second, func() {
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: "",
+									Details: map[string]interface{}{"session": sessionTarget},
+								}
+							})
 						}()
 					case "create_draft":
 						// Issue #230: TUI shortcut for create-draft

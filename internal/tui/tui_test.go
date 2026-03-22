@@ -217,14 +217,14 @@ func TestTUI_View_VerticalLayout_SessionStatus(t *testing.T) {
 		{Name: "session-b", Enabled: true},
 	}
 	m.sessionStatus["session-a"] = "Sending ping..."
-	m.sessionStatus["session-b"] = "PING: 7/7 sent successfully"
+	m.sessionStatus["session-b"] = "PING: 7/7 dispatched"
 
 	view := m.View().Content
 
 	if !strings.Contains(view, "Sending ping...") {
 		t.Error("vertical layout missing sessionStatus for session-a")
 	}
-	if !strings.Contains(view, "PING: 7/7 sent successfully") {
+	if !strings.Contains(view, "PING: 7/7 dispatched") {
 		t.Error("vertical layout missing sessionStatus for session-b")
 	}
 }

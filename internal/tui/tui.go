@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -506,6 +507,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.sessionStatus[sess.Name] = "Sending ping..."
+				log.Printf("[PING] keypress received for session %q\n", sess.Name)
 				if m.tuiCommands != nil {
 					m.tuiCommands <- TUICommand{
 						Type:   "send_ping",
