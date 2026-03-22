@@ -471,96 +471,105 @@ func RunDaemonLoop(
 							}
 						}
 
-						// Use eventPath directly for multi-session support
-						// Issue #53: Create wrapper channel for dead-letter notifications
-						messageEvents := make(chan message.DaemonEvent, 1)
-						if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker, selfSession); err != nil {
-							events <- tui.DaemonEvent{
-								Type:    "error",
-								Message: fmt.Sprintf("deliver %s: %v", filename, err),
-							}
-						} else {
-							// Issue #53: Check if dead-letter event was sent
-							deadLetterEventSent := false
-							select {
-							case msgEvent := <-messageEvents:
+						// Deliver concurrently: SendToPane sleeps for enter_delay per pane;
+						// parallel dispatch lets multiple panes receive simultaneously.
+						// Mutable loop vars captured via function params to avoid races.
+						go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
+							defer func() {
+								if r := recover(); r != nil {
+									log.Printf("🚨 PANIC in delivery goroutine for %s: %v\n", filename, r)
+								}
+							}()
+							// Issue #53: Create wrapper channel for dead-letter notifications
+							messageEvents := make(chan message.DaemonEvent, 1)
+							if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker, selfSession); err != nil {
 								events <- tui.DaemonEvent{
-									Type:    msgEvent.Type,
-									Message: msgEvent.Message,
-									Details: msgEvent.Details,
+									Type:    "error",
+									Message: fmt.Sprintf("deliver %s: %v", filename, err),
 								}
-								deadLetterEventSent = true
-							default:
-								// No dead-letter event, normal delivery
-							}
-
-							// Issue #211: Record delivery timestamp for rate limiting
-							if !deadLetterEventSent {
-								if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-									deliveryKey := msgInfo.From + ":" + msgInfo.To
-									daemonState.lastDeliveryMu.Lock()
-									daemonState.lastDeliveryBySenderRecipient[deliveryKey] = time.Now()
-									daemonState.lastDeliveryMu.Unlock()
-
+							} else {
+								// Issue #53: Check if dead-letter event was sent
+								deadLetterEventSent := false
+								select {
+								case msgEvent := <-messageEvents:
+									events <- tui.DaemonEvent{
+										Type:    msgEvent.Type,
+										Message: msgEvent.Message,
+										Details: msgEvent.Details,
+									}
+									deadLetterEventSent = true
+								default:
+									// No dead-letter event, normal delivery
 								}
-							}
 
-							// Send normal delivery event only if not dead-lettered
-							if !deadLetterEventSent {
-								// Remove waiting files for sender: successfully sent, no longer composing reply
-								{
-									senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
-									if senderInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-										waitingDir := filepath.Join(senderSessionDir, "waiting")
-										pattern := filepath.Join(waitingDir, "*-to-"+senderInfo.From+".md")
-										if matches, globErr := filepath.Glob(pattern); globErr == nil {
-											for _, match := range matches {
-												if removeErr := os.Remove(match); removeErr != nil {
-													log.Printf("postman: WARNING: failed to remove waiting file %s: %v\n", match, removeErr)
+								// Issue #211: Record delivery timestamp for rate limiting
+								if !deadLetterEventSent {
+									if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+										deliveryKey := msgInfo.From + ":" + msgInfo.To
+										daemonState.lastDeliveryMu.Lock()
+										daemonState.lastDeliveryBySenderRecipient[deliveryKey] = time.Now()
+										daemonState.lastDeliveryMu.Unlock()
+
+									}
+								}
+
+								// Send normal delivery event only if not dead-lettered
+								if !deadLetterEventSent {
+									// Remove waiting files for sender: successfully sent, no longer composing reply
+									{
+										senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
+										if senderInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+											waitingDir := filepath.Join(senderSessionDir, "waiting")
+											pattern := filepath.Join(waitingDir, "*-to-"+senderInfo.From+".md")
+											if matches, globErr := filepath.Glob(pattern); globErr == nil {
+												for _, match := range matches {
+													if removeErr := os.Remove(match); removeErr != nil {
+														log.Printf("postman: WARNING: failed to remove waiting file %s: %v\n", match, removeErr)
+													}
 												}
 											}
 										}
 									}
-								}
-								// Issue #59: Extract session name from eventPath
-								// eventPath format: /path/to/context-id/session-name/post/message.md
-								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-								sourceSessionName := filepath.Base(sourceSessionDir)
-								events <- tui.DaemonEvent{
-									Type:    "message_received",
-									Message: fmt.Sprintf("Delivered: %s", filename),
-									Details: map[string]interface{}{
-										"session": sourceSessionName,
-									},
-								}
-							}
-							// Send observer digest on successful delivery (only for normal delivery)
-							if !deadLetterEventSent {
-								if info, err := message.ParseMessageFilename(filename); err == nil {
-									// Normal message delivery - record edge activity, send digest, etc.
-									// Issue #37: Record edge activity
-									daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
-
-									// Issue #40: Send edge_update event to TUI
-									edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
+									// Issue #59: Extract session name from eventPath
+									// eventPath format: /path/to/context-id/session-name/post/message.md
+									sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+									sourceSessionName := filepath.Base(sourceSessionDir)
 									events <- tui.DaemonEvent{
-										Type: "edge_update",
+										Type:    "message_received",
+										Message: fmt.Sprintf("Delivered: %s", filename),
 										Details: map[string]interface{}{
-											"edges": edgeList,
-										},
-									}
-
-									// Issue #55: Emit ball state update after message delivery
-									nodeStates := idleTracker.GetNodeStates()
-									events <- tui.DaemonEvent{
-										Type: "ball_state_update",
-										Details: map[string]interface{}{
-											"node_states": nodeStates,
+											"session": sourceSessionName,
 										},
 									}
 								}
+								// Send observer digest on successful delivery (only for normal delivery)
+								if !deadLetterEventSent {
+									if info, err := message.ParseMessageFilename(filename); err == nil {
+										// Normal message delivery - record edge activity, send digest, etc.
+										// Issue #37: Record edge activity
+										daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
+
+										// Issue #40: Send edge_update event to TUI
+										edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
+										events <- tui.DaemonEvent{
+											Type: "edge_update",
+											Details: map[string]interface{}{
+												"edges": edgeList,
+											},
+										}
+
+										// Issue #55: Emit ball state update after message delivery
+										nodeStates := idleTracker.GetNodeStates()
+										events <- tui.DaemonEvent{
+											Type: "ball_state_update",
+											Details: map[string]interface{}{
+												"node_states": nodeStates,
+											},
+										}
+									}
+								}
 							}
-						}
+						}(eventPath, filename, nodes, adjacency, cfg)
 					}
 				}
 			} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {

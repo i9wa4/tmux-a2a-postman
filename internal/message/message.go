@@ -20,7 +20,8 @@ import (
 
 // validNodeNameRe validates from/to fields in message filenames (#174).
 // Allows alphanumeric characters and hyphens, must start with alphanumeric.
-var validNodeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+// Enforces a 64-char cap (1 required + 0-63 trailing) to match the binding registry loader (#299).
+var validNodeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`)
 
 // Dead-letter reason strings used in sender notifications and TUI events (Issue #161).
 const (
