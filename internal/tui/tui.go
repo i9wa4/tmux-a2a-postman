@@ -510,7 +510,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if !sess.Enabled {
-					m.sessionStatus[sess.Name] = "Session is disabled"
+					m.sessionStatus[sess.Name] = fmt.Sprintf("Session %s is OFF — press [Space] to enable", sess.Name)
 					return m, nil
 				}
 				m.sessionStatus[sess.Name] = "Sending ping..."
