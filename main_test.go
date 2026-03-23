@@ -626,3 +626,141 @@ func TestRunNext_ContextIDFlagAccepted(t *testing.T) {
 		t.Errorf("--context-id flag not recognized by runNext: %v", err)
 	}
 }
+
+// --- Issue #332: pre-flight edge check tests ---
+
+// edgeTestFixtures sets up a temporary base directory, config file with
+// optional edges, and bindings.toml for edge-violation tests.
+// It unsets TMUX and TMUX_PANE so sender auto-detection is skipped.
+func edgeTestFixtures(t *testing.T, edges []string) (baseDir, configPath, bindingsPath string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	baseDir = filepath.Join(tmpDir, "postman-home")
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
+		t.Fatalf("creating base dir: %v", err)
+	}
+
+	// Build config TOML with optional edges array.
+	// Collect all nodes referenced in edges so validation does not reject unknown nodes.
+	knownNodes := map[string]bool{"worker": true, "channel-a": true}
+	for _, edge := range edges {
+		for _, part := range strings.Split(edge, " -- ") {
+			if n := strings.TrimSpace(part); n != "" {
+				knownNodes[n] = true
+			}
+		}
+	}
+	var configContent string
+	if len(edges) > 0 {
+		quotedEdges := make([]string, len(edges))
+		for i, e := range edges {
+			quotedEdges[i] = fmt.Sprintf("%q", e)
+		}
+		edgesLine := "edges = [" + strings.Join(quotedEdges, ", ") + "]\n"
+		configContent = fmt.Sprintf("[postman]\nbase_dir = %q\n%s\n", baseDir, edgesLine)
+	} else {
+		configContent = fmt.Sprintf("[postman]\nbase_dir = %q\n\n", baseDir)
+	}
+	for node := range knownNodes {
+		configContent += fmt.Sprintf("[%s]\n\n", node)
+	}
+
+	configPath = filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("writing config.toml: %v", err)
+	}
+
+	// Write bindings.toml with one active phony node (same as fromTestFixtures).
+	bindingsPath = filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx1"
+session_name = "mysession"
+pane_title = "worker"
+pane_node_name = "worker"
+active = true
+permitted_senders = ["channel-a"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("writing bindings.toml: %v", err)
+	}
+
+	// Unset tmux env vars so runCreateDraft skips tmux auto-detection.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+
+	// Isolate from user XDG config so that postman.md/postman.toml edges do not
+	// override test edges. Create placeholder files so resolveXDGMarkdownPath and
+	// ResolveConfigPath stop before falling back to ~/.config.
+	xdgDir := filepath.Join(tmpDir, "xdg", "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgDir, 0o700); err != nil {
+		t.Fatalf("creating xdg dir: %v", err)
+	}
+	for _, name := range []string{"postman.md", "postman.toml"} {
+		if err := os.WriteFile(filepath.Join(xdgDir, name), []byte(""), 0o600); err != nil {
+			t.Fatalf("writing placeholder %s: %v", name, err)
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+
+	return baseDir, configPath, bindingsPath
+}
+
+// TestRunCreateDraft_SendEdgeViolationDisallowed: edge defined but sender->recipient pair absent -> error.
+func TestRunCreateDraft_SendEdgeViolationDisallowed(t *testing.T) {
+	_, configPath, bindingsPath := edgeTestFixtures(t, []string{"channel-a -- other-node"})
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+		"--send",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "edge violation") {
+		t.Errorf("error = %q; want 'edge violation'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_SendEdgeViolationAllowed: edge defined and sender->recipient pair present -> no error.
+func TestRunCreateDraft_SendEdgeViolationAllowed(t *testing.T) {
+	_, configPath, bindingsPath := edgeTestFixtures(t, []string{"channel-a -- worker"})
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+		"--send",
+		"--body", "hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestRunCreateDraft_SendEdgeViolationNoConfig: no edges configured -> no error (edge check skipped).
+func TestRunCreateDraft_SendEdgeViolationNoConfig(t *testing.T) {
+	_, configPath, bindingsPath := edgeTestFixtures(t, []string{})
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+		"--send",
+		"--body", "hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
