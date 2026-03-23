@@ -1293,12 +1293,24 @@ func statusDot(status string, isTerminal bool) string {
 	}
 }
 
+// isShellCommand returns true if cmd is a known interactive shell name.
+// Used by runGetSessionStatusOneline to exclude panes with no AI running (Issue #312).
+var shellCommands = map[string]bool{
+	"bash": true, "zsh": true, "sh": true, "fish": true,
+	"dash": true, "ksh": true, "csh": true, "tcsh": true, "nu": true,
+}
+
+func isShellCommand(cmd string) bool {
+	return shellCommands[cmd]
+}
+
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
 // Pane status: active=green, composing=blue, idle/spinning=yellow, stale=red
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 // Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
+// Issue #312: Filter panes by pane_current_command; fix session index stability.
 func runGetSessionStatusOneline(args []string) error {
 	// Load config to get base directory
 	cfg, err := config.LoadConfig("")
@@ -1377,17 +1389,24 @@ func runGetSessionStatusOneline(args []string) error {
 		}
 	}
 
-	// Build edge node set and pane title map for filtering
+	// Build edge node set and pane title map for filtering.
+	// Issue #312: also capture pane_current_command to detect shell-only panes.
+	// Edge node names are always single-word identifiers, so SplitN(4) safely
+	// captures all four fields: pane_id, session_name, pane_title, pane_current_command.
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").Output()
+	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title} #{pane_current_command}").Output()
 	paneTitles := make(map[string]string)           // paneID -> paneTitle (for edge filter)
 	sessionTitleToPaneID := make(map[string]string) // "sessionName:paneTitle" -> paneID (for waiting overlay, #285)
+	paneCurrentCmd := make(map[string]string)       // paneID -> current command name (for shell filter, #312)
 	for _, line := range strings.Split(strings.TrimSpace(string(paneTitleOutput)), "\n") {
-		parts := strings.SplitN(strings.TrimSpace(line), " ", 3)
-		if len(parts) == 3 && parts[0] != "" && parts[2] != "" {
+		parts := strings.SplitN(strings.TrimSpace(line), " ", 4)
+		if len(parts) >= 3 && parts[0] != "" && parts[2] != "" {
 			paneID, sessionName, title := parts[0], parts[1], parts[2]
 			paneTitles[paneID] = title
 			sessionTitleToPaneID[sessionName+":"+title] = paneID
+			if len(parts) == 4 {
+				paneCurrentCmd[paneID] = parts[3]
+			}
 		}
 	}
 
@@ -1398,8 +1417,10 @@ func runGetSessionStatusOneline(args []string) error {
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
-	// Get all tmux sessions
-	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	// Get all tmux sessions with their stable index (Issue #312: #{session_index}
+	// is assigned at creation time and does not shift when other sessions are removed,
+	// unlike a loop counter over the output slice).
+	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_index} #{session_name}").Output()
 	if err != nil {
 		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
@@ -1409,8 +1430,22 @@ func runGetSessionStatusOneline(args []string) error {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
 
-	sessions := strings.Split(strings.TrimSpace(string(sessionsOutput)), "\n")
-	if len(sessions) == 0 || sessions[0] == "" {
+	type sessionEntry struct {
+		index string
+		name  string
+	}
+	var sessions []sessionEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(sessionsOutput)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			continue
+		}
+		sessions = append(sessions, sessionEntry{index: parts[0], name: parts[1]})
+	}
+	if len(sessions) == 0 {
 		// No sessions - output nothing
 		return nil
 	}
@@ -1420,10 +1455,8 @@ func runGetSessionStatusOneline(args []string) error {
 
 	var output []string
 
-	for sessionIdx, sessionName := range sessions {
-		if sessionName == "" {
-			continue
-		}
+	for _, sess := range sessions {
+		sessionName := sess.name
 
 		// Get all windows in this session
 		windowsOutput, err := exec.Command("tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}").Output()
@@ -1457,8 +1490,13 @@ func runGetSessionStatusOneline(args []string) error {
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
-				// #312: Skip panes not tracked by the daemon (no running agent)
+				// #312: Skip panes with no running agent.
+				// (a) Pane not in paneActivity: daemon hasn't captured it yet.
+				// (b) Pane's foreground process is a shell: no AI launched there.
 				if _, tracked := paneActivity[paneID]; !tracked {
+					continue
+				}
+				if isShellCommand(paneCurrentCmd[paneID]) {
 					continue
 				}
 				paneStatuses += statusDot(paneActivity[paneID], isTerminal)
@@ -1469,9 +1507,9 @@ func runGetSessionStatusOneline(args []string) error {
 			}
 		}
 
-		// Build session status: (n)window0:window1:...
+		// Build session status: [N]window0:window1:...
 		if len(windowStatuses) > 0 {
-			sessionStatus := fmt.Sprintf("[%d]%s", sessionIdx, strings.Join(windowStatuses, ":"))
+			sessionStatus := fmt.Sprintf("[%s]%s", sess.index, strings.Join(windowStatuses, ":"))
 			output = append(output, sessionStatus)
 		}
 	}
