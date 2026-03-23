@@ -138,15 +138,13 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}!  You've got mail.
-Run `tmux-a2a-postman next` to read it.
-"""
+Run `tmux-a2a-postman next` to read it. """
 
 # Message footer (appended by `next` command after message content)
 # Variables: {sender} - sender node name extracted from message
 message_footer = """You can talk to: {can_talk_to}
 Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
-No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages.
-"""
+No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
 
 # Daemon message template (unified envelope for ping, alert, heartbeat)
 # Pass 1 variables (BuildEnvelope): {context_id}, {task_id}, {from_node}, {node},
