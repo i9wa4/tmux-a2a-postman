@@ -1018,7 +1018,27 @@ func runCreateDraft(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
-	canTalkTo := strings.Join(config.GetTalksTo(adjacency, sender), ", ")
+	talksToList := config.GetTalksTo(adjacency, sender)
+	canTalkTo := strings.Join(talksToList, ", ")
+
+	// Issue #332: Pre-flight edge enforcement for --send mode.
+	// Only reject when the sender has explicitly configured edges (empty talksToList
+	// means sender is not in the edge config and should not be blocked).
+	if *sendFlag {
+		if len(talksToList) > 0 {
+			recipientAllowed := false
+			for _, n := range talksToList {
+				if n == *to {
+					recipientAllowed = true
+					break
+				}
+			}
+			if !recipientAllowed {
+				return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
+					sender, *to, canTalkTo)
+			}
+		}
+	}
 
 	// Build variables map for template expansion
 	vars := map[string]string{
