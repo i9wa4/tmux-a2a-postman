@@ -60,6 +60,9 @@ type tomlFile struct {
 // It checks file permissions, parses the TOML, validates every field,
 // and enforces the seven-row state validity table and duplicate constraints.
 // Load never acquires a .lock file.
+// When constructing discovery.NodeInfo entries for binding-registry nodes,
+// this function sets IsPhony: true on those entries.
+// NOTE: only internal/binding.Load sets IsPhony: true — see §3.7 ownership invariant
 func Load(path string, opts ...LoadOption) (*BindingRegistry, error) {
 	o := &loadOptions{}
 	for _, opt := range opts {

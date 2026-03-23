@@ -14,6 +14,10 @@ type NodeInfo struct {
 	PaneID      string
 	SessionName string
 	SessionDir  string
+	// IsPhony marks nodes injected by the binding registry (not discovered
+	// from tmux panes). DiscoverNodesWithCollisions never sets this to true.
+	// NOTE: only internal/binding.Load sets IsPhony: true — see §3.7 ownership invariant
+	IsPhony bool
 }
 
 // CollisionReport describes a pane collision where two panes share the same nodeKey.

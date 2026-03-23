@@ -4,6 +4,39 @@ import (
 	"testing"
 )
 
+// TestReduceCollisions_NeverSetsIsPhony verifies the §3.7 ownership invariant:
+// reduceCollisions (the only NodeInfo construction path) never sets IsPhony: true.
+func TestReduceCollisions_NeverSetsIsPhony(t *testing.T) {
+	order := []string{"session:worker", "session:orchestrator", "session:boss"}
+	candidates := map[string][]paneCandidate{
+		"session:worker": {
+			{paneID: "%10", paneNum: 10, sessionName: "session", sessionDir: "/dir"},
+			{paneID: "%20", paneNum: 20, sessionName: "session", sessionDir: "/dir"},
+		},
+		"session:orchestrator": {
+			{paneID: "%5", paneNum: 5, sessionName: "session", sessionDir: "/dir"},
+		},
+		"session:boss": {
+			{paneID: "%invalid", paneNum: -1, sessionName: "session", sessionDir: "/dir"},
+		},
+	}
+	nodes, _ := reduceCollisions(order, candidates)
+
+	for key, info := range nodes {
+		if info.IsPhony {
+			t.Errorf("reduceCollisions set IsPhony: true on %q — only binding.Load may do this", key)
+		}
+	}
+}
+
+// TestDiscoverNodesWithCollisions_NeverPhony verifies the §3.7 ownership invariant
+// at the public API level. Skipped because DiscoverNodesWithCollisions requires a
+// live tmux environment; the invariant is structurally covered by
+// TestReduceCollisions_NeverSetsIsPhony (the only NodeInfo construction path).
+func TestDiscoverNodesWithCollisions_NeverPhony(t *testing.T) {
+	t.Skip("Requires tmux environment — invariant covered by TestReduceCollisions_NeverSetsIsPhony")
+}
+
 func TestDiscoverNodes_WithChildProcess(t *testing.T) {
 	// NOTE: This test requires actual tmux panes with child processes
 	// Deferred to integration testing
