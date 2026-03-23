@@ -1,10 +1,13 @@
 package message
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -617,5 +620,179 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-040000-from-postman-to-bob-dl-foreign-session.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not dead-lettered with dlSuffixForeignSession: %v", err)
+	}
+}
+
+// helper: build a minimal BindingRegistry with one active binding for nodeName.
+func makeRegistry(nodeName string, active bool, permittedSenders []string) *binding.BindingRegistry {
+	return &binding.BindingRegistry{
+		Bindings: []binding.Binding{
+			{
+				ChannelID:        "chan-01",
+				NodeName:         nodeName,
+				ContextID:        "ctx-01",
+				Active:           active,
+				PermittedSenders: permittedSenders,
+			},
+		},
+	}
+}
+
+func TestDeliverToPhonyNode_Success(t *testing.T) {
+	baseDir := t.TempDir()
+	reg := makeRegistry("worker", true, []string{"orchestrator"})
+	msg := Message{Body: "hello phony", MessageID: "msg-1", SenderID: "orchestrator"}
+
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "orchestrator", reg, msg); err != nil {
+		t.Fatalf("DeliverToPhonyNode failed: %v", err)
+	}
+
+	inboxDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "inbox")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("inbox dir missing: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 inbox file, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading inbox file: %v", err)
+	}
+	if string(data) != msg.Body {
+		t.Errorf("inbox body: got %q, want %q", string(data), msg.Body)
+	}
+}
+
+func TestDeliverToPhonyNode_RoutingDenied(t *testing.T) {
+	baseDir := t.TempDir()
+	reg := makeRegistry("worker", true, []string{"orchestrator"})
+	msg := Message{Body: "unauthorized", SenderID: "intruder"}
+
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "intruder", reg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// dead-letter must exist
+	dlDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "dead-letter")
+	entries, err := os.ReadDir(dlDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 dead-letter file, dir err=%v entries=%d", err, len(entries))
+	}
+	// inbox must be empty
+	inboxDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "inbox")
+	if _, err := os.Stat(inboxDir); !os.IsNotExist(err) {
+		t.Error("inbox should not exist when routing is denied")
+	}
+	// verify JSON reason
+	data, _ := os.ReadFile(filepath.Join(dlDir, entries[0].Name()))
+	var rec phonyDeadLetterRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("unmarshal dead-letter: %v", err)
+	}
+	if rec.Reason != "routing_denied" {
+		t.Errorf("reason: got %q, want %q", rec.Reason, "routing_denied")
+	}
+	if rec.SchemaVersion != 1 {
+		t.Errorf("schema_version: got %d, want 1", rec.SchemaVersion)
+	}
+}
+
+func TestDeliverToPhonyNode_DefaultDeny_AbsentKey(t *testing.T) {
+	baseDir := t.TempDir()
+	// Registry has no binding for "worker"
+	reg := &binding.BindingRegistry{Bindings: []binding.Binding{}}
+	msg := Message{Body: "hello", SenderID: "orchestrator"}
+
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "orchestrator", reg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dlDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "dead-letter")
+	entries, err := os.ReadDir(dlDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 dead-letter, got err=%v n=%d", err, len(entries))
+	}
+	data, _ := os.ReadFile(filepath.Join(dlDir, entries[0].Name()))
+	var rec phonyDeadLetterRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rec.Reason != "routing_denied" {
+		t.Errorf("reason: got %q, want routing_denied", rec.Reason)
+	}
+}
+
+func TestDeliverToPhonyNode_DefaultDeny_EmptyList(t *testing.T) {
+	baseDir := t.TempDir()
+	reg := makeRegistry("worker", true, []string{}) // empty permitted_senders
+	msg := Message{Body: "hello", SenderID: "orchestrator"}
+
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "orchestrator", reg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dlDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "dead-letter")
+	entries, err := os.ReadDir(dlDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 dead-letter, got err=%v n=%d", err, len(entries))
+	}
+	data, _ := os.ReadFile(filepath.Join(dlDir, entries[0].Name()))
+	var rec phonyDeadLetterRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rec.Reason != "routing_denied" {
+		t.Errorf("reason: got %q, want routing_denied", rec.Reason)
+	}
+}
+
+func TestDeliverToPhonyNode_ChannelUnbound(t *testing.T) {
+	baseDir := t.TempDir()
+	reg := makeRegistry("worker", false, []string{"orchestrator"}) // active=false
+	msg := Message{Body: "hello", SenderID: "orchestrator"}
+
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "orchestrator", reg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dlDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "dead-letter")
+	entries, err := os.ReadDir(dlDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 dead-letter, got err=%v n=%d", err, len(entries))
+	}
+	data, _ := os.ReadFile(filepath.Join(dlDir, entries[0].Name()))
+	var rec phonyDeadLetterRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if rec.Reason != "channel_unbound" {
+		t.Errorf("reason: got %q, want channel_unbound", rec.Reason)
+	}
+}
+
+func TestDeliverToPhonyNode_FilenameInvariant(t *testing.T) {
+	// sender_id with path traversal chars; filename must not contain those bytes
+	baseDir := t.TempDir()
+	reg := makeRegistry("worker", true, []string{"orchestrator"})
+	// Try to inject "/" and ".." via sender_id and channel_id (via body)
+	msg := Message{
+		Body:      "../../../etc/passwd",
+		MessageID: "msg/../traversal",
+		SenderID:  "orchestrator/../evil",
+	}
+	// routing will pass (sender param is "orchestrator")
+	if err := DeliverToPhonyNode(baseDir, "ctx-01", "worker", "orchestrator", reg, msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	inboxDir := filepath.Join(baseDir, "ctx-01", "phony", "worker", "inbox")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 inbox file, err=%v n=%d", err, len(entries))
+	}
+	name := entries[0].Name()
+	if strings.Contains(name, "/") || strings.Contains(name, "..") || strings.Contains(name, "evil") || strings.Contains(name, "passwd") {
+		t.Errorf("filename contains unsafe bytes: %q", name)
 	}
 }
