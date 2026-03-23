@@ -1908,9 +1908,11 @@ func runNext(args []string) error {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "[1/%d unread]\n", len(msgs))
 	fmt.Print(string(data))
 
 	if *peek {
+		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs))
 		return nil
 	}
 
@@ -1923,6 +1925,7 @@ func runNext(args []string) error {
 	if err := os.Rename(abs, dst); err != nil {
 		return fmt.Errorf("archiving message: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
 	sender := extractSenderFromFile(dst)
 	if sender != "" {
 		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)

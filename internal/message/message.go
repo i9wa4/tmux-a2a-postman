@@ -615,6 +615,7 @@ func ScanInboxMessages(inboxPath string) []MessageInfo {
 		if err != nil {
 			continue
 		}
+		info.Filename = entry.Name()
 		messages = append(messages, *info)
 	}
 

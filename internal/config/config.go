@@ -165,7 +165,7 @@ func DefaultConfig() *Config {
 		PaneCaptureMaxPanes:             0,
 		ActivityWindowSeconds:           300.0,
 		BaseDir:                         "",
-		NotificationTemplate:            "{inbox_path}/{filename}\nAfter reading: tmux-a2a-postman next",
+		NotificationTemplate:            "New message: {filename}\ntmux-a2a-postman next",
 		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
 		DraftTemplate:                   "",
 		ReminderMessage:                 "",

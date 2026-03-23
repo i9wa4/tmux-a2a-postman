@@ -199,8 +199,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if !strings.HasPrefix(cfg.NotificationTemplate, "{inbox_path}/{filename}") {
-		t.Errorf("default NotificationTemplate: got %q, want prefix {inbox_path}/{filename}", cfg.NotificationTemplate)
+	if !strings.HasPrefix(cfg.NotificationTemplate, "New message: {filename}") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix New message: {filename}", cfg.NotificationTemplate)
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
@@ -255,8 +255,8 @@ edges = ["worker -- orchestrator"]
 	if cfg.EnterDelay != 3.0 {
 		t.Errorf("default EnterDelay: got %v, want 3.0", cfg.EnterDelay)
 	}
-	if !strings.HasPrefix(cfg.NotificationTemplate, "{inbox_path}/{filename}") {
-		t.Errorf("default NotificationTemplate: got %q, want prefix {inbox_path}/{filename}", cfg.NotificationTemplate)
+	if !strings.HasPrefix(cfg.NotificationTemplate, "New message: {filename}") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix New message: {filename}", cfg.NotificationTemplate)
 	}
 }
 

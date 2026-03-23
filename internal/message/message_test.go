@@ -372,6 +372,9 @@ func TestScanInboxMessages(t *testing.T) {
 		if msgs[0].From != "orchestrator" || msgs[0].To != "worker" {
 			t.Errorf("unexpected message fields: %+v", msgs[0])
 		}
+		if msgs[0].Filename != filename {
+			t.Errorf("Filename: got %q, want %q", msgs[0].Filename, filename)
+		}
 	})
 
 	t.Run("non-md file skipped", func(t *testing.T) {
