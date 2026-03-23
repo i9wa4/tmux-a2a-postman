@@ -498,7 +498,7 @@ func TestRunCreateDraft_FromWrongRecipient(t *testing.T) {
 	}
 }
 
-// TestRunCreateDraft_FromHappyPath: valid --from creates a draft file.
+// TestRunCreateDraft_FromHappyPath: valid --from creates a draft file with correct sender.
 func TestRunCreateDraft_FromHappyPath(t *testing.T) {
 	baseDir, configPath, bindingsPath := fromTestFixtures(t)
 	args := fromBaseArgs(configPath, bindingsPath)
@@ -512,6 +512,13 @@ func TestRunCreateDraft_FromHappyPath(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 draft file, got %d", len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading draft: %v", err)
+	}
+	if !strings.Contains(string(content), "channel-a") {
+		t.Errorf("draft frontmatter should contain sender 'channel-a', got: %q", string(content))
 	}
 }
 

@@ -1007,7 +1007,7 @@ func runCreateDraft(args []string) error {
 	}
 
 	// Issue #304: context-id path traversal allowlist (user-supplied --context-id only)
-	if *contextID != "" && !binding.ValidateNodeName(resolvedContextID) {
+	if *contextID != "" && !binding.ValidateNodeName(*contextID) {
 		return fmt.Errorf("--context-id %q: invalid value (must match %s)", *contextID, binding.NodeNamePattern)
 	}
 

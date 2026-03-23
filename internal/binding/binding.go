@@ -22,7 +22,7 @@ var validNodeNameRe = regexp.MustCompile(NodeNamePattern)
 
 // validIDRe validates channel_id and context_id fields.
 // Same pattern as validNodeNameRe; separate var clarifies intent (ID vs node).
-var validIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`)
+var validIDRe = regexp.MustCompile(NodeNamePattern)
 
 // ValidateNodeName reports whether s is a valid node name.
 func ValidateNodeName(s string) bool {
