@@ -1147,9 +1147,9 @@ func RunDaemonLoop(
 
 // sendAlertToUINode sends an alert message to the ui_node inbox.
 // Writes directly to post/ so the daemon delivery loop routes and notifies normally.
-// When AlertMessageTemplate is configured, uses two-pass expansion (BuildEnvelope + Pass 2).
+// Uses DaemonMessageTemplate with two-pass expansion (BuildEnvelope + Pass 2).
 func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	tmpl := cfg.AlertMessageTemplate
+	tmpl := cfg.DaemonMessageTemplate
 	if tmpl == "" {
 		return nil // no template configured; silent no-op
 	}
@@ -1167,6 +1167,8 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cf
 		nil,
 	)
 	content := template.ExpandVariables(scaffolded, map[string]string{
+		"message_type": "alert",
+		"heading":      "Alert: " + alertType,
 		"alert_type":   alertType,
 		"message":      body,
 		"role_content": envelope.BuildRoleContent(cfg, uiNode),

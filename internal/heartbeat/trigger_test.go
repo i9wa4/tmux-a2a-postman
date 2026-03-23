@@ -35,7 +35,7 @@ func TestSendHeartbeatTrigger_WritesFile(t *testing.T) {
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
 	cfg := config.DefaultConfig()
-	cfg.HeartbeatMessageTemplate = "{message}"
+	cfg.DaemonMessageTemplate = "{message}"
 
 	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "check {context_id}", 1800, cfg, nil); err != nil {
 		t.Fatalf("SendHeartbeatTrigger: %v", err)
@@ -82,7 +82,7 @@ func TestSendHeartbeatTrigger_SkipsWhenUnread(t *testing.T) {
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
 	cfg := config.DefaultConfig()
-	cfg.HeartbeatMessageTemplate = "{message}"
+	cfg.DaemonMessageTemplate = "{message}"
 
 	// intervalSeconds = 1800 → TTL = 3600s; the fresh file is well within TTL
 	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1800, cfg, nil); err != nil {
@@ -122,7 +122,7 @@ func TestSendHeartbeatTrigger_RecyclesStale(t *testing.T) {
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
 	cfg := config.DefaultConfig()
-	cfg.HeartbeatMessageTemplate = "{message}"
+	cfg.DaemonMessageTemplate = "{message}"
 
 	// intervalSeconds = 1 → TTL = 2s; 2-hour-old file is stale
 	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1, cfg, nil); err != nil {
@@ -172,7 +172,7 @@ func TestSendHeartbeatTrigger_NoTemplate_NoOp(t *testing.T) {
 
 	sharedNodes := makeSharedNodes("heartbeat-llm", tmpDir)
 	cfg := config.DefaultConfig()
-	cfg.HeartbeatMessageTemplate = ""
+	cfg.DaemonMessageTemplate = ""
 
 	if err := SendHeartbeatTrigger(sharedNodes, "ctx-test", "heartbeat-llm", "prompt", 1800, cfg, nil); err != nil {
 		t.Fatalf("SendHeartbeatTrigger: %v", err)

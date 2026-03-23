@@ -148,10 +148,12 @@ Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages.
 """
 
-# Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
-# Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
-# Pass 2 injects {role_content} after BuildEnvelope.
-message_template = """---
+# Daemon message template (unified envelope for ping, alert, heartbeat)
+# Pass 1 variables (BuildEnvelope): {context_id}, {task_id}, {from_node}, {node},
+#   {iso_timestamp}, {talks_to_line}, {reply_command}, {session_name}, {session_dir}
+# Pass 2 variables (caller-injected): {message_type}, {heading}, {message},
+#   {role_content}, {alert_type} (alert only)
+daemon_message_template = """---
 method: message/send
 params:
   contextId: {context_id}
@@ -159,11 +161,11 @@ params:
   from: {from_node}
   to: {node}
   timestamp: {iso_timestamp}
-  messageType: ping
+  messageType: {message_type}
   tmuxSession: {session_name}
 ---
 
-# Ping
+# {heading}
 
 How to reply: {reply_command}
 
@@ -171,16 +173,16 @@ How to reply: {reply_command}
 
 ## Role of {node}
 
-```
 {role_content}
-```
 
 ## Message
 
-PING from postman daemon. Do NOT reply to this message.
+{message}
 """
 
-# Draft message template
+# Draft message template (user-initiated messages via send-message / create-draft)
+# Variables: {context_id}, {task_id}, {sender}, {recipient}, {timestamp},
+#   {session_name}, {template}, {can_talk_to}, {reply_command}
 draft_template = """---
 method: message/send
 params:
@@ -202,73 +204,6 @@ protocol: tmux-a2a-postman --help
 ## Content
 
 <!-- write here -->
-"""
-
-# Alert message template (unified format for daemon alerts)
-# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp}, {alert_type},
-#            {contacts_section}, {reply_command}, {session_dir}, {filename},
-#            {role_content} (Pass 2), {message} (Pass 2)
-alert_message_template = """---
-method: message/send
-params:
-  contextId: {context_id}
-  taskId: {task_id}
-  from: {from_node}
-  to: {node}
-  timestamp: {iso_timestamp}
-  alertType: {alert_type}
-  messageType: alert
-  tmuxSession: {session_name}
----
-
-# Alert: {alert_type}
-
-How to reply: {reply_command}
-
-{talks_to_line}
-
-## Role of {node}
-
-```
-{role_content}
-```
-
-## Message
-
-{message}
-"""
-
-# Heartbeat message template (unified format for heartbeat-LLM triggers)
-# Variables: {context_id}, {task_id}, {from_node}, {node}, {iso_timestamp},
-#            {contacts_section}, {reply_command}, {session_dir}, {filename},
-#            {role_content} (Pass 2), {message} (Pass 2; = expanded heartbeat prompt)
-heartbeat_message_template = """---
-method: message/send
-params:
-  contextId: {context_id}
-  taskId: {task_id}
-  from: {from_node}
-  to: {node}
-  timestamp: {iso_timestamp}
-  messageType: heartbeat
-  tmuxSession: {session_name}
----
-
-# Heartbeat
-
-How to reply: {reply_command}
-
-{talks_to_line}
-
-## Role of {node}
-
-```
-{role_content}
-```
-
-## Message
-
-{message}
 """
 
 # Edge violation warning template (Issue #92, DM-1 normalized #222)

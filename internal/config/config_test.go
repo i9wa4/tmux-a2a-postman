@@ -107,7 +107,7 @@ startup_delay_seconds = 3.0
 reminder_interval_messages = 60.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
-message_template = "Custom ping"
+daemon_message_template = "Custom daemon"
 draft_template = "Custom draft"
 reminder_message = "Custom reminder"
 reply_command = "custom-reply"
@@ -159,8 +159,8 @@ on_join = ""
 	if cfg.NotificationTemplate != "Custom notification: {{.From}}" {
 		t.Errorf("NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Custom notification: {{.From}}")
 	}
-	if cfg.MessageTemplate != "Custom ping" {
-		t.Errorf("MessageTemplate: got %q, want %q", cfg.MessageTemplate, "Custom ping")
+	if cfg.DaemonMessageTemplate != "Custom daemon" {
+		t.Errorf("DaemonMessageTemplate: got %q, want %q", cfg.DaemonMessageTemplate, "Custom daemon")
 	}
 	if cfg.DraftTemplate != "Custom draft" {
 		t.Errorf("DraftTemplate: got %q, want %q", cfg.DraftTemplate, "Custom draft")

@@ -16,8 +16,8 @@ import (
 // (session-aware, same-session priority, liveness-filtered), and reply_command building
 // (--context-id injection).
 //
-// tmpl is caller-provided: pass cfg.MessageTemplate for ping/A2A envelopes, or
-// cfg.NotificationTemplate for pane notification hints.
+// tmpl is caller-provided: pass cfg.DaemonMessageTemplate for ping/alert/heartbeat,
+// or cfg.NotificationTemplate for pane notification hints.
 //
 // NOTE: resolveNodeName is inlined here as accepted debt from #141.
 // Follow-up: consolidate into internal/discovery — see issue #148.

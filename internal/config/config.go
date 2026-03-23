@@ -60,7 +60,7 @@ type Config struct {
 
 	// Message templates
 	NotificationTemplate            string `toml:"notification_template"`
-	MessageTemplate                 string `toml:"message_template"`
+	DaemonMessageTemplate           string `toml:"daemon_message_template"` // Unified envelope for ping, alert, heartbeat
 	DraftTemplate                   string `toml:"draft_template"`
 	ReminderMessage                 string `toml:"reminder_message"`
 	CommonTemplate                  string `toml:"common_template"`                     // Issue #49: Shared template for all nodes
@@ -74,8 +74,6 @@ type Config struct {
 	NodeInactivityAlertTemplate     string `toml:"node_inactivity_alert_template"`      // Alert message body for node inactivity
 	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
 	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
-	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
-	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
 	MessageFooter                   string `toml:"message_footer"`                      // Footer appended by `next` command after message content
 
 	// Global settings
@@ -405,8 +403,8 @@ func mergeConfig(base, override *Config) {
 	if override.NotificationTemplate != "" {
 		base.NotificationTemplate = override.NotificationTemplate
 	}
-	if override.MessageTemplate != "" {
-		base.MessageTemplate = override.MessageTemplate
+	if override.DaemonMessageTemplate != "" {
+		base.DaemonMessageTemplate = override.DaemonMessageTemplate
 	}
 	if override.DraftTemplate != "" {
 		base.DraftTemplate = override.DraftTemplate
@@ -446,12 +444,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.SpinningAlertTemplate != "" {
 		base.SpinningAlertTemplate = override.SpinningAlertTemplate
-	}
-	if override.AlertMessageTemplate != "" {
-		base.AlertMessageTemplate = override.AlertMessageTemplate
-	}
-	if override.HeartbeatMessageTemplate != "" {
-		base.HeartbeatMessageTemplate = override.HeartbeatMessageTemplate
 	}
 	if override.MessageFooter != "" {
 		base.MessageFooter = override.MessageFooter

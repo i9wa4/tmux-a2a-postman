@@ -812,7 +812,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								go func(name string, info discovery.NodeInfo) {
 									defer wg.Done()
 									if err := ping.SendPingToNode(info, contextID, name,
-										cfg.MessageTemplate, cfg, activeNodes, livenessMap,
+										cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
 										pingAdjacency, freshNodes); err != nil {
 										log.Printf("❌ postman: PING to %s failed: %v\n", name, err)
 										failCount.Add(1)

@@ -44,9 +44,14 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
-	// Pass 2: inject role_content (guaranteed actual role template content).
+	// Pass 2: inject daemon message variables.
 	roleContent := envelope.BuildRoleContent(cfg, simpleName)
-	content = template.ExpandVariables(content, map[string]string{"role_content": roleContent})
+	content = template.ExpandVariables(content, map[string]string{
+		"message_type": "ping",
+		"heading":      "Ping",
+		"message":      "PING from postman daemon. Do NOT reply to this message.",
+		"role_content": roleContent,
+	})
 
 	// Ensure post directory exists for this node's session
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")

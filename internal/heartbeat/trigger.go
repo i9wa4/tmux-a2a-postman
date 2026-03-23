@@ -19,8 +19,8 @@ import (
 // SendHeartbeatTrigger writes a heartbeat trigger to post/ for the configured LLM node.
 // Single-slot semantics: checks inbox before writing; recycles stale triggers to dead-letter/.
 // Returns error on failure; caller sleeps until next interval.
-// When HeartbeatMessageTemplate is configured, uses two-pass expansion (BuildEnvelope + Pass 2).
-// Falls back to legacy hardcoded format when HeartbeatMessageTemplate is empty.
+// Uses DaemonMessageTemplate with two-pass expansion (BuildEnvelope + Pass 2).
+// No-op when DaemonMessageTemplate is empty.
 func SendHeartbeatTrigger(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	contextID, llmNode, prompt string,
@@ -85,7 +85,7 @@ func SendHeartbeatTrigger(
 
 	expandedPrompt := strings.ReplaceAll(prompt, "{context_id}", contextID)
 
-	tmpl := cfg.HeartbeatMessageTemplate
+	tmpl := cfg.DaemonMessageTemplate
 	if tmpl == "" {
 		// No template configured: heartbeat send is a no-op.
 		return nil
@@ -100,6 +100,8 @@ func SendHeartbeatTrigger(
 		nil, // livenessMap = nil → static adjacency
 	)
 	content := template.ExpandVariables(scaffolded, map[string]string{
+		"message_type": "heartbeat",
+		"heading":      "Heartbeat",
 		"role_content": envelope.BuildRoleContent(cfg, llmNode),
 		"message":      expandedPrompt,
 	})
