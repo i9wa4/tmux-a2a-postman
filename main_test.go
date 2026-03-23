@@ -9,6 +9,21 @@ import (
 	"testing"
 )
 
+func TestIsShellCommand(t *testing.T) {
+	shells := []string{"bash", "zsh", "sh", "fish", "dash", "ksh", "csh", "tcsh", "nu"}
+	for _, s := range shells {
+		if !isShellCommand(s) {
+			t.Errorf("isShellCommand(%q) = false, want true", s)
+		}
+	}
+	nonShells := []string{"claude", "python", "node", "ruby", ""}
+	for _, s := range nonShells {
+		if isShellCommand(s) {
+			t.Errorf("isShellCommand(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestStatusDot_NonTTY(t *testing.T) {
 	cases := []struct {
 		status string
