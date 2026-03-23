@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -296,29 +295,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 					"Stop it first.",
 				tmuxSessionName, contextID,
 			)
-		}
-
-		// Cross-daemon guard: reject if another daemon already has selfSession ON.
-		// Option value format: "contextID:PID" (e.g. "session-2026-...-27df:12345").
-		// Parsing PID from the option avoids file access — works cross-baseDir.
-		if ownerVal := config.GetTmuxSessionOnOwner(tmuxSessionName); ownerVal != "" {
-			parts := strings.SplitN(ownerVal, ":", 2)
-			if len(parts) == 2 && !strings.HasPrefix(ownerVal, contextID+":") {
-				ownerCtx, pidStr := parts[0], parts[1]
-				if ownerPID, err := strconv.Atoi(pidStr); err == nil && ownerPID > 0 {
-					if proc, procErr := os.FindProcess(ownerPID); procErr == nil {
-						if sigErr := proc.Signal(syscall.Signal(0)); sigErr == nil || errors.Is(sigErr, syscall.EPERM) {
-							return fmt.Errorf(
-								"session %q is already ON in daemon context %s (pid %d).\n"+
-									"Turn it OFF there first, or stop that daemon.",
-								tmuxSessionName, ownerCtx, ownerPID,
-							)
-						}
-					}
-				}
-				// Stale option from a dead daemon: clear it and proceed.
-				_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+tmuxSessionName).Run()
-			}
 		}
 
 		lockDir := filepath.Join(baseDir, "lock")
