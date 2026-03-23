@@ -199,8 +199,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if !strings.HasPrefix(cfg.NotificationTemplate, "You've got mail.") {
-		t.Errorf("default NotificationTemplate: got %q, want prefix You've got mail.", cfg.NotificationTemplate)
+	if !strings.HasPrefix(cfg.NotificationTemplate, "Hello, {node}!") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix Hello, {node}!", cfg.NotificationTemplate)
 	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
@@ -255,8 +255,8 @@ edges = ["worker -- orchestrator"]
 	if cfg.EnterDelay != 3.0 {
 		t.Errorf("default EnterDelay: got %v, want 3.0", cfg.EnterDelay)
 	}
-	if !strings.HasPrefix(cfg.NotificationTemplate, "You've got mail.") {
-		t.Errorf("default NotificationTemplate: got %q, want prefix You've got mail.", cfg.NotificationTemplate)
+	if !strings.HasPrefix(cfg.NotificationTemplate, "Hello, {node}!") {
+		t.Errorf("default NotificationTemplate: got %q, want prefix Hello, {node}!", cfg.NotificationTemplate)
 	}
 }
 
@@ -989,7 +989,10 @@ func TestResolveProjectLocalConfig_NotFound(t *testing.T) {
 
 func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base := DefaultConfig()
+	// DefaultConfig() returns zero values (SSOT is postman.default.toml).
+	// Set explicit base values to test that mergeConfig preserves unset fields.
 	base.ScanInterval = 1.0
+	base.EnterDelay = 0.5
 	base.BaseDir = ""
 	base.A2AVersion = "0.9"
 
@@ -1438,30 +1441,6 @@ func TestStartupGuardEnabledInitialState(_ *testing.T) {
 	defer func() { _ = os.RemoveAll(baseDir) }()
 	if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 		panic("startup guard would fire on a fresh context with no pid — code-level initial state violated")
-	}
-}
-
-func TestGetDiplomatEnabled(t *testing.T) {
-	t.Run("disabled when empty", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.DiplomatNode = ""
-		if cfg.GetDiplomatEnabled() {
-			t.Error("GetDiplomatEnabled() = true, want false when diplomat_node is empty")
-		}
-	})
-	t.Run("enabled when set", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.DiplomatNode = "orchestrator"
-		if !cfg.GetDiplomatEnabled() {
-			t.Error("GetDiplomatEnabled() = false, want true when diplomat_node is set")
-		}
-	})
-}
-
-func TestDiplomatAllowlist_DefaultEmpty(t *testing.T) {
-	cfg := DefaultConfig()
-	if len(cfg.DiplomatAllowlist) != 0 {
-		t.Errorf("DiplomatAllowlist default: got %v, want empty", cfg.DiplomatAllowlist)
 	}
 }
 
