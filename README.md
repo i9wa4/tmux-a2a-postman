@@ -18,12 +18,8 @@ Version format depends on build context:
 
 ## 2. How it Works
 
-Discovers agents in the same tmux session by reading pane titles, sends PING
-messages to establish communication, and routes messages between nodes based on
-configured edges.
-
-Communication works within a single tmux session by default. Cross-session
-routing is available when `diplomat_node` is configured (#164).
+Discovers agents by reading tmux pane titles, sends PING messages to establish
+communication, and routes messages between nodes based on configured edges.
 
 ## 3. Quick Start
 
@@ -47,9 +43,6 @@ tmux-a2a-postman
 
 ```text
 $XDG_STATE_HOME/tmux-a2a-postman/
-├── diplomat/
-│   └── {targetContextId}/
-│       └── post/       # Cross-session drops (diplomat, #164)
 └── session-{contextId}/
     └── {sessionName}/
         ├── inbox/{node}/   # Incoming messages per node
@@ -80,28 +73,17 @@ from "field not set". Use the XDG config to set these fields definitively.
 
 ### 5.1. Session ON Constraint
 
-Only one tmux-a2a-postman daemon may have a given tmux session turned ON at
-a time. If daemon A has session `foo` ON, daemon B will be blocked from also
-turning `foo` ON.
+Only one daemon may have a given tmux session set to ON at a time (toggled via
+TUI Space key). To transfer ownership, turn OFF in the current daemon's TUI
+before enabling in another.
 
-**Multiple daemons may run** on the same tmux server — this is by design.
-Each daemon manages its own context and sessions. The constraint applies to
-the session-ON state only: two daemons cannot both be routing messages for
-the same session.
-
-If you see "session already ON" at startup, either:
-
-- Turn OFF the session in the other daemon's TUI before starting, or
-- Stop the other daemon with `tmux-a2a-postman stop`.
-
-If the blocking daemon crashed and left a stale tmux option, clear it manually:
+If a crashed daemon left a stale lock, clear it manually:
 
 ```sh
 tmux set-option -gu @a2a_session_on_<sessionName>
 ```
 
-Replace `<sessionName>` with your actual tmux session name (e.g.,
-`tmux-a2a-postman`).
+See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
 ## 6. Environment Variables
 
@@ -277,62 +259,29 @@ dots (`●`) when run directly in a terminal.
 
 ## 9. Deployment Topology
 
-**Constraint**: 1 tmux session = 1 postman daemon. Multiple daemons may run on
-the same machine only when they are in different tmux sessions.
+| Topology                    | tmux servers | Daemons | Machines |
+| --------------------------- | ------------ | ------- | -------- |
+| Single daemon               | 1            | 1       | 1        |
+| Multi-daemon, same machine  | 1            | N       | 1        |
+| Multi-daemon, cross-machine | N            | N       | N        |
 
-Three supported configurations:
+### 9.1. Single Daemon
 
-| Topology                    | tmux servers | Daemons | Machines | Diplomat required |
-| --------------------------- | ------------ | ------- | -------- | ----------------- |
-| Single daemon               | 1            | 1       | 1        | No                |
-| Multi-daemon, same machine  | 1            | N       | 1        | No                |
-| Multi-daemon, cross-machine | N            | N       | N        | Yes               |
-
-### 9.1. Single Daemon (Primary Model)
-
-One tmux server, one daemon, N nodes — all agents on one machine.
-
-```text
-tmux server
-└── session (1 daemon)
-    ├── pane: orchestrator
-    ├── pane: worker
-    └── pane: messenger
-```
+One daemon, N nodes — all agents on one machine.
 
 ### 9.2. Multi-Daemon, Same Machine
 
-One tmux server, multiple daemons with distinct context IDs — useful for
-isolated project contexts running in parallel.
-
-```text
-tmux server
-├── session-A (daemon A)
-│   ├── pane: orchestrator
-│   └── pane: worker
-└── session-B (daemon B)
-    ├── pane: orchestrator
-    └── pane: worker
-```
-
-Each daemon maintains its own `{base_dir}/{contextId}/` state directory.
-Sessions are isolated from each other by default.
+Multiple daemons with distinct context IDs — useful for isolated project
+contexts running in parallel. Each daemon maintains its own
+`{base_dir}/{contextId}/` state directory.
 
 ### 9.3. Multi-Daemon, Cross-Machine
 
 Multiple machines each running a daemon, sharing a common `base_dir` via a
 shared filesystem (NFS, SSHFS, Syncthing, etc.).
 
-```text
-machine-A                    machine-B
-└── session (daemon A)  ←→  └── session (daemon B)
-    shared base_dir ─────────── shared base_dir
-```
-
-**Required for the diplomat feature** (`diplomat_node` config): cross-context
-messaging depends on all participating daemons writing to the same `base_dir`
-path on a common filesystem. Each machine runs its own daemon; the shared
-filesystem is the only coupling.
+See `docs/design/daemon-session-model.md` for daemon location and session
+ownership rules.
 
 ## 10. Skills
 
