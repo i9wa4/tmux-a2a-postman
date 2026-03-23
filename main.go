@@ -2015,7 +2015,12 @@ func runNext(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
 	sender := extractSenderFromFile(dst)
-	if sender != "" {
+	// Print configurable footer or hardcoded fallback
+	cfg, cfgErr := config.LoadConfig("")
+	if cfgErr == nil && cfg.MessageFooter != "" && sender != "" {
+		footer := strings.ReplaceAll(cfg.MessageFooter, "{sender}", sender)
+		fmt.Printf("\n%s\n", footer)
+	} else if sender != "" {
 		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil

@@ -139,6 +139,10 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 # Notification template (when new message arrives)
 notification_template = "You've got mail. Run `tmux-a2a-postman next` to read it."
 
+# Message footer (appended by `next` command after message content)
+# Variables: {sender} - sender node name extracted from message
+# message_footer = ""
+
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
 # Pass 2 injects {role_content} after BuildEnvelope.

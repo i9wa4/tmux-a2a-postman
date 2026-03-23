@@ -75,6 +75,7 @@ type Config struct {
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
 	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
 	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
+	MessageFooter                   string `toml:"message_footer"` // Footer appended by `next` command after message content
 
 	// Global settings
 	Edges                      []string `toml:"edges"`
@@ -501,6 +502,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.BoilerplateHowToReply != "" {
 		base.BoilerplateHowToReply = override.BoilerplateHowToReply
+	}
+	if override.MessageFooter != "" {
+		base.MessageFooter = override.MessageFooter
 	}
 	if override.ReplyCommand != "" {
 		base.ReplyCommand = override.ReplyCommand
