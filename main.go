@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
@@ -92,6 +93,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  get-session-health         Print session health per node")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
 		fmt.Fprintln(os.Stderr, "  archive <filename> [filename...]   Mark inbox messages as read (advanced)")
+		fmt.Fprintln(os.Stderr, "  validate-bindings          Validate bindings.toml file")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
@@ -217,6 +219,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
 			os.Exit(1)
 		}
+	case "validate-bindings":
+		if err := runValidateBindings(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman validate-bindings: %v\n", err)
+			os.Exit(1)
+		}
 	case "help":
 		runHelp(args)
 	default:
@@ -224,6 +231,29 @@ func main() {
 		fs.Usage()
 		os.Exit(1)
 	}
+}
+
+func runValidateBindings(args []string) error {
+	fs := flag.NewFlagSet("validate-bindings", flag.ContinueOnError)
+	baseDir := fs.String("base-dir", "", "directory containing bindings.toml (required)")
+	allowEmpty := fs.Bool("allow-empty-senders", false, "treat empty permitted_senders as WARNING instead of error")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baseDir == "" {
+		return fmt.Errorf("--base-dir is required")
+	}
+	path := filepath.Join(*baseDir, "bindings.toml")
+	var opts []binding.LoadOption
+	if *allowEmpty {
+		opts = append(opts, binding.AllowEmptySenders())
+	}
+	reg, err := binding.Load(path, opts...)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("OK: %d bindings loaded from %s\n", len(reg.Bindings), path)
+	return nil
 }
 
 func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
