@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,5 +320,270 @@ func TestResend_OldestAndFileMutuallyExclusive(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("error = %q; want to contain 'mutually exclusive'", err.Error())
+	}
+}
+
+// --- Issue #304: --from flag tests ---
+
+// fromTestFixtures sets up a temporary base directory, config file, and
+// bindings.toml for runCreateDraft --from tests.
+// It unsets TMUX and TMUX_PANE so sender auto-detection is skipped.
+// The returned configPath and bindingsPath are ready to pass as CLI flags.
+// The returned baseDir/ctx1/mysession/draft/ tree will be created by
+// runCreateDraft itself; this helper only creates the parent directories.
+func fromTestFixtures(t *testing.T) (baseDir, configPath, bindingsPath string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	baseDir = filepath.Join(tmpDir, "postman-home")
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
+		t.Fatalf("creating base dir: %v", err)
+	}
+
+	// Write a minimal config TOML pointing to our temp base dir.
+	// [worker] and [channel-a] sections satisfy the "no nodes defined" validation rule.
+	configPath = filepath.Join(tmpDir, "config.toml")
+	configContent := fmt.Sprintf("[postman]\nbase_dir = %q\n\n[worker]\n\n[channel-a]\n", baseDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("writing config.toml: %v", err)
+	}
+
+	// Write bindings.toml with one active phony node.
+	// channel-a → pane_node_name=worker (Row 4: active, session, title, node).
+	bindingsPath = filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx1"
+session_name = "mysession"
+pane_title = "worker"
+pane_node_name = "worker"
+active = true
+permitted_senders = ["channel-a"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("writing bindings.toml: %v", err)
+	}
+
+	// Unset tmux env vars so runCreateDraft skips tmux auto-detection.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+
+	return baseDir, configPath, bindingsPath
+}
+
+// baseArgs returns the common CLI arguments used by all --from tests.
+func fromBaseArgs(configPath, bindingsPath string) []string {
+	return []string{
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+	}
+}
+
+// TestRunCreateDraft_FromMissingBindings: --from without --bindings → error.
+func TestRunCreateDraft_FromMissingBindings(t *testing.T) {
+	err := runCreateDraft([]string{"--to", "worker", "--from", "channel-a"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--bindings is required") {
+		t.Errorf("error = %q; want '--bindings is required'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_FromRegexInvalid: --from with bad node name → error before registry load.
+func TestRunCreateDraft_FromRegexInvalid(t *testing.T) {
+	_, configPath, bindingsPath := fromTestFixtures(t)
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "bad node!",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid node name") {
+		t.Errorf("error = %q; want 'invalid node name'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_FromRegistryMiss: --from name not in registry → error.
+func TestRunCreateDraft_FromRegistryMiss(t *testing.T) {
+	_, configPath, bindingsPath := fromTestFixtures(t)
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-z",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no active binding found") {
+		t.Errorf("error = %q; want 'no active binding found'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_FromUnassignedBinding: binding has pane_node_name="" (Row 3) → error.
+func TestRunCreateDraft_FromUnassignedBinding(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "postman-home")
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
+		t.Fatalf("creating base dir: %v", err)
+	}
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath,
+		[]byte(fmt.Sprintf("[postman]\nbase_dir = %q\n\n[worker]\n\n[channel-b]\n", baseDir)), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	// Row 3: active, session_name, pane_title, pane_node_name="" — title-matched only.
+	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-b"
+node_name = "channel-b"
+context_id = "ctx1"
+session_name = "mysession"
+pane_title = "worker"
+pane_node_name = ""
+active = true
+permitted_senders = ["channel-b"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("writing bindings: %v", err)
+	}
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-b",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty pane_node_name") {
+		t.Errorf("error = %q; want 'empty pane_node_name'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_FromWrongRecipient: --to does not match pane_node_name → error.
+func TestRunCreateDraft_FromWrongRecipient(t *testing.T) {
+	_, configPath, bindingsPath := fromTestFixtures(t)
+	err := runCreateDraft([]string{
+		"--to", "some-other-pane",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "ctx1",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--to must be") {
+		t.Errorf("error = %q; want '--to must be'", err.Error())
+	}
+}
+
+// TestRunCreateDraft_FromHappyPath: valid --from creates a draft file with correct sender.
+func TestRunCreateDraft_FromHappyPath(t *testing.T) {
+	baseDir, configPath, bindingsPath := fromTestFixtures(t)
+	args := fromBaseArgs(configPath, bindingsPath)
+	if err := runCreateDraft(args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	draftDir := filepath.Join(baseDir, "ctx1", "mysession", "draft")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil {
+		t.Fatalf("reading draft dir %s: %v", draftDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 draft file, got %d", len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading draft: %v", err)
+	}
+	if !strings.Contains(string(content), "channel-a") {
+		t.Errorf("draft frontmatter should contain sender 'channel-a', got: %q", string(content))
+	}
+}
+
+// TestRunCreateDraft_IdempotencyKeyPresent: --idempotency-key injects field into frontmatter.
+func TestRunCreateDraft_IdempotencyKeyPresent(t *testing.T) {
+	baseDir, configPath, bindingsPath := fromTestFixtures(t)
+	args := append(fromBaseArgs(configPath, bindingsPath), "--idempotency-key", "tok-abc123")
+	if err := runCreateDraft(args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	draftDir := filepath.Join(baseDir, "ctx1", "mysession", "draft")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil {
+		t.Fatalf("reading draft dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no draft file created")
+	}
+	content, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading draft: %v", err)
+	}
+	if !strings.Contains(string(content), "idempotency_key: tok-abc123") {
+		t.Errorf("draft content = %q; want 'idempotency_key: tok-abc123'", string(content))
+	}
+}
+
+// TestRunCreateDraft_IdempotencyKeyAbsent: without --idempotency-key, no field in draft.
+func TestRunCreateDraft_IdempotencyKeyAbsent(t *testing.T) {
+	baseDir, configPath, bindingsPath := fromTestFixtures(t)
+	if err := runCreateDraft(fromBaseArgs(configPath, bindingsPath)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	draftDir := filepath.Join(baseDir, "ctx1", "mysession", "draft")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil {
+		t.Fatalf("reading draft dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no draft file created")
+	}
+	content, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("reading draft: %v", err)
+	}
+	if strings.Contains(string(content), "idempotency_key") {
+		t.Errorf("draft should NOT contain idempotency_key, but got: %q", string(content))
+	}
+}
+
+// TestRunCreateDraft_ContextIDInvalid: Gap 5 — invalid --context-id value → error.
+func TestRunCreateDraft_ContextIDInvalid(t *testing.T) {
+	_, configPath, bindingsPath := fromTestFixtures(t)
+	err := runCreateDraft([]string{
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+		"--context-id", "../traversal",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid value") {
+		t.Errorf("error = %q; want 'invalid value'", err.Error())
 	}
 }

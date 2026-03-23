@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
@@ -39,6 +41,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
+
+// idempotencyKeyPattern is the canonical regex for --idempotency-key tokens.
+// Prevents newline/YAML injection via caller-supplied token.
+const idempotencyKeyPattern = `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`
+
+var validIdempotencyKeyRe = regexp.MustCompile(idempotencyKeyPattern)
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
 func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
@@ -894,6 +902,9 @@ func runCreateDraft(args []string) error {
 	configPath := fs.String("config", "", "path to config file (optional)")
 	body := fs.String("body", "", "inline message body (replaces <!-- write here --> placeholder)")
 	sendFlag := fs.Bool("send", false, "send immediately after creating draft (atomic)")
+	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
+	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
+	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -906,6 +917,14 @@ func runCreateDraft(args []string) error {
 	if *sendFlag && *crossContext != "" {
 		return fmt.Errorf("--send cannot be combined with --cross-context")
 	}
+	// Issue #304: --from requires --bindings
+	if *from != "" && *bindingsPath == "" {
+		return fmt.Errorf("--bindings is required with --from")
+	}
+	// Issue #304: --from cannot be combined with --cross-context
+	if *from != "" && *crossContext != "" {
+		return fmt.Errorf("cannot combine --from with --cross-context")
+	}
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -914,9 +933,33 @@ func runCreateDraft(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	sender := config.GetTmuxPaneName()
-	if sender == "" {
-		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
+	var sender string
+	if *from != "" {
+		// Issue #304: sidecar caller — validate identity, load registry, enforce inbound auth.
+		if !binding.ValidateNodeName(*from) {
+			return fmt.Errorf("--from %q: invalid node name (must match %s)", *from, binding.NodeNamePattern)
+		}
+		sender = *from
+		reg, err := binding.Load(*bindingsPath)
+		if err != nil {
+			return fmt.Errorf("loading bindings: %w", err)
+		}
+		entry := reg.FindByNodeName(*from)
+		if entry == nil {
+			return fmt.Errorf("--from %q: no active binding found in registry", *from)
+		}
+		if entry.PaneNodeName == "" {
+			return fmt.Errorf("--from %q: binding has empty pane_node_name (unassigned)", *from)
+		}
+		if *to != entry.PaneNodeName {
+			return fmt.Errorf("--from %q: --to must be %q (binding's pane_node_name), got %q",
+				*from, entry.PaneNodeName, *to)
+		}
+	} else {
+		sender = config.GetTmuxPaneName()
+		if sender == "" {
+			return fmt.Errorf("sender auto-detection failed: set tmux pane title")
+		}
 	}
 
 	sessionName := *session
@@ -934,7 +977,8 @@ func runCreateDraft(args []string) error {
 	}
 
 	// Issue #76: Verify session exists in tmux (if we're in tmux)
-	if config.GetTmuxSessionName() != "" {
+	// Issue #304 6c: skip guard for phony-node callers (--from present)
+	if *from == "" && config.GetTmuxSessionName() != "" {
 		// We're in tmux, so verify the session exists
 		cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 		output, err := cmd.Output()
@@ -960,6 +1004,11 @@ func runCreateDraft(args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Issue #304: context-id path traversal allowlist (user-supplied --context-id only)
+	if *contextID != "" && !binding.ValidateNodeName(*contextID) {
+		return fmt.Errorf("--context-id %q: invalid value (must match %s)", *contextID, binding.NodeNamePattern)
 	}
 
 	// Issue #164: Handle --cross-context flag (cross-daemon delivery via diplomat drop dir)
@@ -1070,6 +1119,19 @@ func runCreateDraft(args []string) error {
 		content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	}
 
+	// Issue #304: inject idempotency_key into YAML frontmatter
+	if *idempotencyKey != "" {
+		if !validIdempotencyKeyRe.MatchString(*idempotencyKey) {
+			return fmt.Errorf("--idempotency-key %q: invalid token (must match %s)", *idempotencyKey, idempotencyKeyPattern)
+		}
+		const delim = "\n---\n"
+		idx := strings.Index(content, delim)
+		if idx == -1 {
+			return fmt.Errorf("draft content has no YAML frontmatter closing delimiter (---)")
+		}
+		content = content[:idx] + "\nidempotency_key: " + *idempotencyKey + content[idx:]
+	}
+
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing draft: %w", err)
 	}
@@ -1103,6 +1165,9 @@ func runSendMessage(args []string) error {
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
+	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
+	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
+	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1124,6 +1189,15 @@ func runSendMessage(args []string) error {
 	}
 	if *configPath != "" {
 		newArgs = append(newArgs, "--config", *configPath)
+	}
+	if *from != "" {
+		newArgs = append(newArgs, "--from", *from)
+	}
+	if *bindingsPath != "" {
+		newArgs = append(newArgs, "--bindings", *bindingsPath)
+	}
+	if *idempotencyKey != "" {
+		newArgs = append(newArgs, "--idempotency-key", *idempotencyKey)
 	}
 	return runCreateDraft(newArgs)
 }

@@ -11,14 +11,23 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// NodeNamePattern is the canonical regex for node names and IDs.
+// Used both for validation and for error messages.
+const NodeNamePattern = `^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`
+
 // validNodeNameRe validates node_name and pane_node_name fields.
 // Identical bound to internal/message.validNodeNameRe (A-1 / #299).
 // Duplicated here to avoid an import cycle with internal/message.
-var validNodeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`)
+var validNodeNameRe = regexp.MustCompile(NodeNamePattern)
 
 // validIDRe validates channel_id and context_id fields.
 // Same pattern as validNodeNameRe; separate var clarifies intent (ID vs node).
-var validIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`)
+var validIDRe = regexp.MustCompile(NodeNamePattern)
+
+// ValidateNodeName reports whether s is a valid node name.
+func ValidateNodeName(s string) bool {
+	return validNodeNameRe.MatchString(s)
+}
 
 // LoadOption is a functional option for Load.
 type LoadOption func(*loadOptions)
@@ -48,6 +57,17 @@ type Binding struct {
 // BindingRegistry holds all Binding records loaded from a TOML file.
 type BindingRegistry struct {
 	Bindings []Binding
+}
+
+// FindByNodeName returns the first active Binding with the given NodeName.
+// Returns nil if no active entry is found.
+func (r *BindingRegistry) FindByNodeName(name string) *Binding {
+	for i := range r.Bindings {
+		if r.Bindings[i].NodeName == name && r.Bindings[i].Active {
+			return &r.Bindings[i]
+		}
+	}
+	return nil
 }
 
 // tomlFile is the top-level TOML structure for bindings.toml.
