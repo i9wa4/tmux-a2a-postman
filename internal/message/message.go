@@ -1,7 +1,9 @@
 package message
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -44,6 +47,11 @@ const (
 	dlSuffixForeignSession   = "-dl-foreign-session"
 )
 
+const (
+	phonyDeadLetterReasonRoutingDenied  = "routing_denied"
+	phonyDeadLetterReasonChannelUnbound = "channel_unbound"
+)
+
 // deadLetterDst builds the dead-letter destination path with reason suffix.
 // Transforms "msg.md" → "msg-dl-{reason}.md" in dead-letter/ directory.
 func deadLetterDst(sessionDir, filename, suffix string) string {
@@ -75,6 +83,15 @@ type MessageInfo struct {
 	To          string
 	SessionHash string // Optional 4-char hex hash extracted from filename (#198)
 	Filename    string // Original filename (set by ScanInboxMessages)
+}
+
+// Message carries the payload and metadata for phony-node delivery (#305).
+type Message struct {
+	Body           string
+	MessageID      string
+	SenderID       string
+	IdempotencyKey string
+	OriginalAt     time.Time
 }
 
 // SessionHash returns a 4-character hex hash of the tmux session name (#198).
@@ -596,6 +613,116 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		}
 	}
 	return count
+}
+
+// generatePhonyFilename produces a dead-letter/inbox filename from the current
+// time and 2 CSPRNG bytes. Format: YYYYMMDDTHHMMSS-<4hex>.json.
+// MUST NOT derive from channel_id, sender_id, node_name, or message body (#305).
+func generatePhonyFilename() (string, error) {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	ts := time.Now().Format("20060102T150405")
+	return fmt.Sprintf("%s-%04x.json", ts, b), nil
+}
+
+// phonyDeadLetterRecord is the JSON schema v1 for phony-node dead-letters (#305).
+type phonyDeadLetterRecord struct {
+	SchemaVersion  int    `json:"schema_version"`
+	Reason         string `json:"reason"`
+	Direction      string `json:"direction"`
+	ChannelID      string `json:"channel_id"`
+	NodeName       string `json:"node_name"`
+	Body           string `json:"body"`
+	WrittenAt      string `json:"written_at"`
+	OriginalAt     string `json:"original_at"`
+	MessageID      string `json:"message_id"`
+	SenderID       string `json:"sender_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// writePhonyDeadLetter writes a JSON dead-letter record to the phony node's
+// dead-letter directory. File mode 0600, directory mode 0700 (#305).
+func writePhonyDeadLetter(baseDir, contextID, nodeName, channelID, reason string, msg Message) error {
+	dir := filepath.Join(baseDir, contextID, "phony", nodeName, "dead-letter")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating phony dead-letter dir: %w", err)
+	}
+	filename, err := generatePhonyFilename()
+	if err != nil {
+		return fmt.Errorf("generating phony dead-letter filename: %w", err)
+	}
+	rec := phonyDeadLetterRecord{
+		SchemaVersion:  1,
+		Reason:         reason,
+		Direction:      "inbound",
+		ChannelID:      channelID,
+		NodeName:       nodeName,
+		Body:           msg.Body,
+		WrittenAt:      time.Now().Format(time.RFC3339),
+		OriginalAt:     msg.OriginalAt.Format(time.RFC3339),
+		MessageID:      msg.MessageID,
+		SenderID:       msg.SenderID,
+		IdempotencyKey: msg.IdempotencyKey,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshaling phony dead-letter: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, filename), data, 0o600)
+}
+
+// DeliverToPhonyNode delivers an outbound message from a session pane to a phony
+// node inbox at <baseDir>/<contextID>/phony/<nodeName>/inbox/.
+// Routing rules (DEFAULT DENY):
+//   - Binding absent for nodeName: dead-letter routing_denied
+//   - Binding active=false: dead-letter channel_unbound
+//   - sender not in permitted_senders (including empty list): dead-letter routing_denied
+//
+// On success, msg.Body is written as a new file in the inbox directory.
+// Dead-letter filenames are generated from timestamp + CSPRNG; they MUST NOT
+// derive from channel_id, sender_id, node_name, or message body (#305).
+func DeliverToPhonyNode(baseDir, contextID, nodeName, sender string, registry *binding.BindingRegistry, msg Message) error {
+	// 1. Find binding by node name (DEFAULT DENY: absent = routing_denied)
+	var found *binding.Binding
+	for i := range registry.Bindings {
+		if registry.Bindings[i].NodeName == nodeName {
+			found = &registry.Bindings[i]
+			break
+		}
+	}
+	if found == nil {
+		return writePhonyDeadLetter(baseDir, contextID, nodeName, "", phonyDeadLetterReasonRoutingDenied, msg)
+	}
+
+	// 2. Active check (channel_unbound if inactive)
+	if !found.Active {
+		return writePhonyDeadLetter(baseDir, contextID, nodeName, found.ChannelID, phonyDeadLetterReasonChannelUnbound, msg)
+	}
+
+	// 3. permitted_senders check (DEFAULT DENY: empty list = deny all)
+	allowed := false
+	for _, s := range found.PermittedSenders {
+		if s == sender {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return writePhonyDeadLetter(baseDir, contextID, nodeName, found.ChannelID, phonyDeadLetterReasonRoutingDenied, msg)
+	}
+
+	// 4. Deliver to phony inbox
+	inboxDir := filepath.Join(baseDir, contextID, "phony", nodeName, "inbox")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		return fmt.Errorf("creating phony inbox: %w", err)
+	}
+	filename, err := generatePhonyFilename()
+	if err != nil {
+		return fmt.Errorf("generating phony inbox filename: %w", err)
+	}
+	return os.WriteFile(filepath.Join(inboxDir, filename), []byte(msg.Body), 0o600)
 }
 
 // ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.
