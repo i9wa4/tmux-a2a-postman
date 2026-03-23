@@ -132,7 +132,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 				if nodeEnterDelay := cfg.GetNodeConfig(nodeName).EnterDelay; nodeEnterDelay != 0 {
 					enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
 				}
-				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount, false)
+				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount, false, 0, 0)
 			}
 			// Reset counter after sending reminder
 			r.counters[key] = 0

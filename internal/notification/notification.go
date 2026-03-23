@@ -12,6 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
 
 var (
@@ -49,7 +50,9 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 // bypassCooldown skips the per-pane rate limit; pass true for direct message delivery,
 // false for periodic reminders/alerts where the cooldown should apply.
-func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool) error {
+// verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
+// captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
+func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
 	// Rate limit: skip if pane was notified within cooldown window (#273).
 	// paneNotifyCooldown <= 0 disables the limiter (used in tests).
 	paneNotifyMu.Lock()
@@ -104,6 +107,29 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 		cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to send C-m %d to pane %s: %w", i+1, paneID, err)
+		}
+	}
+
+	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter
+	if verifyDelay > 0 && maxRetries > 0 {
+		for retry := 0; retry < maxRetries; retry++ {
+			time.Sleep(verifyDelay)
+			snapA, errA := paneutil.CaptureContent(paneID)
+			if errA != nil {
+				break // cannot verify; skip
+			}
+			time.Sleep(verifyDelay)
+			snapB, errB := paneutil.CaptureContent(paneID)
+			if errB != nil {
+				break
+			}
+			if snapA != snapB {
+				break // pane content changed; Enter was accepted
+			}
+			// Pane unchanged — retry C-m
+			fmt.Fprintf(os.Stderr, "⚠️  postman: enter verify: pane %s unchanged, retrying C-m (attempt %d/%d)\n", paneID, retry+1, maxRetries)
+			cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
+			_ = cmd.Run()
 		}
 	}
 

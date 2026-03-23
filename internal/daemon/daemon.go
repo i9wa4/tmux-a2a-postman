@@ -1692,7 +1692,8 @@ func checkSwallowedMessages(
 				enterCount = 1
 			}
 
-			_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true)
+			verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+			_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
 
 			daemonState.swallowedRetryCountMu.Lock()
 			daemonState.swallowedRetryCount[inboxPath]++

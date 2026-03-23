@@ -32,6 +32,8 @@ type Config struct {
 	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
 	StartupDelay     float64 `toml:"startup_delay_seconds"`
 	ReminderInterval float64 `toml:"reminder_interval_messages"`
+	EnterVerifyDelay float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
+	EnterRetryMax    int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
 	// TUI settings (Issue #37)
 	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
@@ -157,6 +159,8 @@ func DefaultConfig() *Config {
 		TmuxTimeout:                     5.0,
 		StartupDelay:                    2.0,
 		ReminderInterval:                0.0,
+		EnterVerifyDelay:                3.0,
+		EnterRetryMax:                   2,
 		EdgeActivitySeconds:             300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
 		NodeActiveSeconds:               300.0, // 0-5min: active (green)
 		NodeIdleSeconds:                 900.0, // 5-15min: idle (orange)
@@ -536,6 +540,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.ReminderInterval != 0 {
 		base.ReminderInterval = override.ReminderInterval
+	}
+	if override.EnterVerifyDelay != 0 {
+		base.EnterVerifyDelay = override.EnterVerifyDelay
+	}
+	if override.EnterRetryMax != 0 {
+		base.EnterRetryMax = override.EnterRetryMax
 	}
 	if override.EdgeActivitySeconds != 0 {
 		base.EdgeActivitySeconds = override.EdgeActivitySeconds

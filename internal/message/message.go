@@ -516,7 +516,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		},
 	)
 
-	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true)
+	verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 

@@ -58,6 +58,8 @@ a2a_version = "1.0"
 scan_interval_seconds = 1.0        # Pane rescan interval
 tmux_timeout_seconds = 30.0        # Timeout for tmux commands
 enter_delay_seconds = 3.0          # Delay before sending Enter key
+enter_verify_delay_seconds = 3.0   # Delay for post-Enter capture comparison (0 = disabled)
+enter_retry_max = 2                # Max C-m retries on unchanged pane capture (0 = disabled)
 startup_delay_seconds = 10.0       # Initial startup delay
 reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
 inbox_unread_threshold = 3         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
