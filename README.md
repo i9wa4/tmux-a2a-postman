@@ -23,19 +23,19 @@ nix run github:i9wa4/tmux-a2a-postman
 tmux-a2a-postman is a **daemon** that discovers AI agents running in tmux
 panes and routes messages between them via filesystem-based inboxes.
 
-```text
-tmux session "my-project"
-+-------------------+     +-------------------+     +-------------------+
-| messenger         |     | orchestrator      |     | worker            |
-| (Claude Code)     |     | (Claude Code)     |     | (Claude Code)     |
-+--------+----------+     +--------+----------+     +--------+----------+
-         |                         |                          |
-         +------------+------------+--------------------------+
-                      |
-              postman daemon (TUI)
-              - discovers panes by title
-              - routes messages via edges
-              - delivers to inbox/{node}/
+```mermaid
+graph TD
+    subgraph "tmux session: my-project"
+        messenger["messenger\n(Claude Code)"]
+        orchestrator["orchestrator\n(Codex CLI)"]
+        worker["worker\n(Claude Code)"]
+        worker-alt["worker-alt\n(Codex CLI)"]
+    end
+    daemon["postman daemon (TUI)\n- discovers panes by title\n- routes messages via edges\n- delivers to inbox/{node}/"]
+    messenger --- daemon
+    orchestrator --- daemon
+    worker --- daemon
+    worker-alt --- daemon
 ```
 
 ### 3.1. Message Flow
