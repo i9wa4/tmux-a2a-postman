@@ -65,10 +65,7 @@ for templates. Both live in `$XDG_CONFIG_HOME/tmux-a2a-postman/`.
 
 ### 4.1. Edges and Node Topology
 
-Define which nodes can communicate using edges. In `postman.md`:
-
-````markdown
-## `edges`
+Define which nodes can communicate using edges:
 
 ```mermaid
 graph LR
@@ -78,9 +75,9 @@ graph LR
     orchestrator --- critic
     guardian --- critic
 ```
-````
 
-Or in `postman.toml`:
+In `postman.md`, define edges with the same Mermaid syntax inside an
+`` ## `edges` `` section. Or in `postman.toml`:
 
 ```toml
 [postman]
