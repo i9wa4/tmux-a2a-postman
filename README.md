@@ -41,12 +41,11 @@ graph TD
 ### 3.1. Message Flow
 
 1. Agent sends: `tmux-a2a-postman send-message --to worker --body "implement X"`
-2. Daemon picks up the message from `post/`
-3. Daemon checks edge rules (is sender allowed to talk to recipient?)
-4. Message delivered to `inbox/worker/`
-5. Daemon injects notification into worker's pane via `tmux send-keys`
-6. Worker reads with `tmux-a2a-postman next`
-7. Footer is appended with reply command and `can_talk_to` list
+2. Daemon routes the message (edge rules enforced)
+3. Recipient is notified in their pane
+4. Recipient reads: `tmux-a2a-postman next`
+5. Recipient replies:
+   `tmux-a2a-postman send-message --to orchestrator --body "DONE: ..."`
 
 ### 3.2. Node Discovery
 
