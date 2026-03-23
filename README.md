@@ -18,8 +18,9 @@ Version format depends on build context:
 
 ## 2. How it Works
 
-Discovers agents by reading tmux pane titles, sends PING messages to establish
-communication, and routes messages between nodes based on configured edges.
+Discovers agents by reading tmux pane titles across all tmux sessions, sends
+PING messages to establish communication, and routes messages between nodes
+based on configured edges.
 
 ## 3. Quick Start
 
