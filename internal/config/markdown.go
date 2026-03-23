@@ -198,6 +198,7 @@ func extractNodeFields(body string) (role, onJoin, template string) {
 var reservedH2Names = map[string]string{
 	"edges":           "edges",
 	"common_template": "common_template",
+	"message_footer":  "message_footer",
 }
 
 // extractH2Sections parses Markdown content into a map of section key → body.
@@ -312,6 +313,11 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	// Common template section
 	if commonBody, ok := sections["common_template"]; ok {
 		cfg.CommonTemplate = strings.TrimSpace(commonBody)
+	}
+
+	// Message footer section
+	if footerBody, ok := sections["message_footer"]; ok {
+		cfg.MessageFooter = strings.TrimSpace(footerBody)
 	}
 
 	// Node sections

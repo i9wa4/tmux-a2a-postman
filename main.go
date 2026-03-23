@@ -1119,6 +1119,12 @@ func runCreateDraft(args []string) error {
 		content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	}
 
+	// Append message footer (separated by ---)
+	if cfg.MessageFooter != "" {
+		footer := strings.ReplaceAll(cfg.MessageFooter, "{sender}", sender)
+		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
+	}
+
 	// Issue #304: inject idempotency_key into YAML frontmatter
 	if *idempotencyKey != "" {
 		if !validIdempotencyKeyRe.MatchString(*idempotencyKey) {
