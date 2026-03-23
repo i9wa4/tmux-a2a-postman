@@ -136,6 +136,15 @@ func main() {
 		args = args[1:]
 	}
 
+	// Issue #315: forward global --context-id to subcommands that accept it.
+	// Prepending ensures subcommand-level --context-id takes precedence (last-wins).
+	prependContextID := func(a []string) []string {
+		if *contextID == "" {
+			return a
+		}
+		return append([]string{"--context-id", *contextID}, a...)
+	}
+
 	switch command {
 	case "start":
 		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
@@ -148,7 +157,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "create-draft":
-		if err := runCreateDraft(args); err != nil {
+		if err := runCreateDraft(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman create-draft: %v\n", err)
 			os.Exit(1)
 		}
@@ -163,12 +172,12 @@ func main() {
 			os.Exit(1)
 		}
 	case "count":
-		if err := runCount(args); err != nil {
+		if err := runCount(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman count: %v\n", err)
 			os.Exit(1)
 		}
 	case "read":
-		if err := runRead(args); err != nil {
+		if err := runRead(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman read: %v\n", err)
 			os.Exit(1)
 		}
@@ -178,12 +187,12 @@ func main() {
 			os.Exit(1)
 		}
 	case "next":
-		if err := runNext(args); err != nil {
+		if err := runNext(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman next: %v\n", err)
 			os.Exit(1)
 		}
 	case "get-session-health":
-		if err := runGetSessionHealth(args); err != nil {
+		if err := runGetSessionHealth(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
 			os.Exit(1)
 		}
@@ -198,17 +207,17 @@ func main() {
 			os.Exit(1)
 		}
 	case "resend":
-		if err := runResend(args); err != nil {
+		if err := runResend(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman resend: %v\n", err)
 			os.Exit(1)
 		}
 	case "list-dead-letters":
-		if err := runListDeadLetters(args); err != nil {
+		if err := runListDeadLetters(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman list-dead-letters: %v\n", err)
 			os.Exit(1)
 		}
 	case "supervisor-drain":
-		if err := runSupervisorDrain(args); err != nil {
+		if err := runSupervisorDrain(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman supervisor-drain: %v\n", err)
 			os.Exit(1)
 		}
@@ -218,7 +227,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "list-archived-messages":
-		if err := runListArchivedMessages(args); err != nil {
+		if err := runListArchivedMessages(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman list-archived-messages: %v\n", err)
 			os.Exit(1)
 		}
@@ -228,7 +237,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "send-message":
-		if err := runSendMessage(args); err != nil {
+		if err := runSendMessage(prependContextID(args)); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
 			os.Exit(1)
 		}
@@ -2130,11 +2139,16 @@ func runArchive(args []string) error {
 func runNext(args []string) error {
 	fs := flag.NewFlagSet("next", flag.ContinueOnError)
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
+	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	inboxPath, err := resolveInboxPath(fs.Args())
+	inboxArgs := fs.Args()
+	if *contextID != "" {
+		inboxArgs = append([]string{"--context-id", *contextID}, inboxArgs...)
+	}
+	inboxPath, err := resolveInboxPath(inboxArgs)
 	if err != nil {
 		return err
 	}

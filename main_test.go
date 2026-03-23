@@ -588,6 +588,45 @@ func TestRunCreateDraft_ContextIDInvalid(t *testing.T) {
 	}
 }
 
+// TestRunCreateDraft_ContextIDAtFront: Issue #315 — --context-id at the front of args
+// (simulating the prependContextID path) must be accepted and write draft to the
+// correct context directory.
+func TestRunCreateDraft_ContextIDAtFront(t *testing.T) {
+	baseDir, configPath, bindingsPath := fromTestFixtures(t)
+	// Put --context-id first, mimicking what prependContextID does in main().
+	args := append(
+		[]string{"--context-id", "ctx1"},
+		"--to", "worker",
+		"--from", "channel-a",
+		"--bindings", bindingsPath,
+		"--config", configPath,
+		"--session", "mysession",
+	)
+	if err := runCreateDraft(args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	draftDir := filepath.Join(baseDir, "ctx1", "mysession", "draft")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil {
+		t.Fatalf("reading draft dir %s: %v", draftDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 draft file, got %d", len(entries))
+	}
+}
+
+// TestRunNext_ContextIDFlagAccepted: Issue #315 — --context-id must be accepted by
+// runNext without "flag provided but not defined" error. Any other outcome (nil or
+// a tmux/inbox error) confirms the flag itself is recognized.
+func TestRunNext_ContextIDFlagAccepted(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	err := runNext([]string{"--context-id", "ctx1"})
+	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("--context-id flag not recognized by runNext: %v", err)
+	}
+}
+
 // --- Issue #332: pre-flight edge check tests ---
 
 // edgeTestFixtures sets up a temporary base directory, config file with
