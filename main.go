@@ -668,6 +668,9 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								}
 								continue
 							}
+							// Owner "" means no live daemon holds this session;
+							// clear any stale @a2a_session_on_ option left by a crashed daemon.
+							_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+cmd.Target).Run()
 						}
 
 						daemonState.SetSessionEnabled(cmd.Target, newState)
