@@ -1219,8 +1219,9 @@ func expandReplyCommand(replyCmd string, contextID string) string {
 	return strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 }
 
-// getNodeTemplate retrieves the template for a given node from config
-// Returns empty string if node or template is not found (nil-safe)
+// getNodeTemplate retrieves the template for a given node from config,
+// prepending common_template if present (mirrors BuildEnvelope/BuildRoleContent).
+// Returns empty string if node or template is not found (nil-safe).
 func getNodeTemplate(cfg *config.Config, nodeName string) string {
 	if cfg == nil || cfg.Nodes == nil {
 		return ""
@@ -1229,7 +1230,14 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 	if !exists {
 		return ""
 	}
-	return nodeConfig.Template
+	tmpl := nodeConfig.Template
+	if cfg.CommonTemplate != "" && tmpl != "" {
+		return cfg.CommonTemplate + "\n\n" + tmpl
+	}
+	if cfg.CommonTemplate != "" {
+		return cfg.CommonTemplate
+	}
+	return tmpl
 }
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
