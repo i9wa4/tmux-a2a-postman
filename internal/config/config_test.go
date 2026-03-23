@@ -1441,30 +1441,6 @@ func TestStartupGuardEnabledInitialState(_ *testing.T) {
 	}
 }
 
-func TestGetDiplomatEnabled(t *testing.T) {
-	t.Run("disabled when empty", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.DiplomatNode = ""
-		if cfg.GetDiplomatEnabled() {
-			t.Error("GetDiplomatEnabled() = true, want false when diplomat_node is empty")
-		}
-	})
-	t.Run("enabled when set", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.DiplomatNode = "orchestrator"
-		if !cfg.GetDiplomatEnabled() {
-			t.Error("GetDiplomatEnabled() = false, want true when diplomat_node is set")
-		}
-	})
-}
-
-func TestDiplomatAllowlist_DefaultEmpty(t *testing.T) {
-	cfg := DefaultConfig()
-	if len(cfg.DiplomatAllowlist) != 0 {
-		t.Errorf("DiplomatAllowlist default: got %v, want empty", cfg.DiplomatAllowlist)
-	}
-}
-
 // Issue #274: Project-local nodes/ override tests.
 
 func TestLoadConfig_ProjectLocal_Nodes_Override(t *testing.T) {

@@ -344,7 +344,7 @@ daemon moves the file to `dead-letter/` and writes a notification directly to
 the sender's inbox, bypassing `post/` routing. The edge violation warning uses
 `edge_violation_warning_template`.
 
-**Source:** `internal/daemon/daemon.go`, `internal/diplomat/deliver.go`
+**Source:** `internal/daemon/daemon.go`
 
 ### 3.3. Liveness Tracking (PING / Liveness Confirmed)
 

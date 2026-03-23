@@ -91,10 +91,6 @@ type Config struct {
 	AutoEnableNewSessions      *bool    `toml:"auto_enable_new_sessions"`      // nil = use default (false) (#219)
 	AutoEnableNewAgents        *bool    `toml:"auto_enable_new_agents"`        // nil = use default (true) (#219)
 
-	// Diplomat settings (Issue #164, #165)
-	DiplomatNode      string   `toml:"diplomat_node"`      // Cross-context node name; empty = disabled
-	DiplomatAllowlist []string `toml:"diplomat_allowlist"` // Accepted source diplomat_node names; empty = allow all
-
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
 
@@ -1379,9 +1375,4 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
-}
-
-// GetDiplomatEnabled returns true if diplomat_node is non-empty (Issue #164).
-func (cfg *Config) GetDiplomatEnabled() bool {
-	return cfg.DiplomatNode != ""
 }

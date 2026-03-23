@@ -29,7 +29,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
-	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
@@ -569,16 +568,6 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
 	})
 
-	// Issue #165: Start diplomat stale-registration cleanup goroutine
-	if cfg.GetDiplomatEnabled() {
-		diplomat.StartDiplomatCleanup(ctx, baseDir, 30.0, func(contextID string) {
-			daemonEvents <- tui.DaemonEvent{
-				Type:    "diplomat_stale_removed",
-				Details: map[string]interface{}{"context_id": contextID},
-			}
-		})
-	}
-
 	// Issue #117: Discover all tmux sessions
 	allSessions, _ := discovery.DiscoverAllSessions()
 	if allSessions == nil {
@@ -909,8 +898,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
-	to := fs.String("to", "", "recipient node name (required unless --cross-context is set)")
-	crossContext := fs.String("cross-context", "", "cross-context target as <contextID>:<node> (mutually exclusive with --to)")
+	to := fs.String("to", "", "recipient node name (required)")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detect if not specified)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
@@ -922,22 +910,12 @@ func runCreateDraft(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *crossContext != "" && *to != "" {
-		return fmt.Errorf("cannot combine --cross-context with --to")
-	}
-	if *crossContext == "" && *to == "" {
+	if *to == "" {
 		return fmt.Errorf("--to is required")
-	}
-	if *sendFlag && *crossContext != "" {
-		return fmt.Errorf("--send cannot be combined with --cross-context")
 	}
 	// Issue #304: --from requires --bindings
 	if *from != "" && *bindingsPath == "" {
 		return fmt.Errorf("--bindings is required with --from")
-	}
-	// Issue #304: --from cannot be combined with --cross-context
-	if *from != "" && *crossContext != "" {
-		return fmt.Errorf("cannot combine --from with --cross-context")
 	}
 
 	cfg, err := config.LoadConfig(*configPath)
@@ -1023,36 +1001,6 @@ func runCreateDraft(args []string) error {
 	// Issue #304: context-id path traversal allowlist (user-supplied --context-id only)
 	if *contextID != "" && !binding.ValidateNodeName(*contextID) {
 		return fmt.Errorf("--context-id %q: invalid value (must match %s)", *contextID, binding.NodeNamePattern)
-	}
-
-	// Issue #164: Handle --cross-context flag (cross-daemon delivery via diplomat drop dir)
-	if *crossContext != "" {
-		if cfg.DiplomatNode == "" {
-			return fmt.Errorf("diplomat_node is not set in config; cannot use --cross-context")
-		}
-		targetContextID, targetNode, err := diplomat.ParseCrossContextTarget(*crossContext)
-		if err != nil {
-			return err
-		}
-		traceID, err := diplomat.GenerateTraceID()
-		if err != nil {
-			return fmt.Errorf("generating trace ID: %w", err)
-		}
-		dropDir := diplomat.DropDirPath(baseDir, targetContextID)
-		if err := os.MkdirAll(dropDir, 0o700); err != nil {
-			return fmt.Errorf("creating diplomat drop dir: %w", err)
-		}
-		now := time.Now()
-		ts := now.Format("20060102-150405")
-		filename := message.GenerateFilename(ts, sender, targetNode, sessionName)
-		dropPath := filepath.Join(dropDir, filename)
-		content := fmt.Sprintf("---\nmethod: message/send\nparams:\n  contextId: %s\n  sourceContextId: %s\n  sourceNode: %s\n  to: %s\n  crossContext: true\n  hop_count: 0\n  trace_id: %s\n---\n",
-			targetContextID, resolvedContextID, cfg.DiplomatNode, targetNode, traceID)
-		if err := os.WriteFile(dropPath, []byte(content), 0o600); err != nil {
-			return fmt.Errorf("writing diplomat draft: %w", err)
-		}
-		fmt.Printf("Drop created: diplomat/%s/post/%s\n\nNote:\n  This file has been placed directly in the cross-context drop path.\n  No send step required.\n", targetContextID, filepath.Base(dropPath))
-		return nil
 	}
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
@@ -2786,7 +2734,6 @@ func runHelp(args []string) {
 		fmt.Println("    --context-id <id>    Context ID (optional, auto-detected)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
-		fmt.Println("  NOTE: --cross-context is not supported; use create-draft --cross-context for cross-context delivery.")
 		fmt.Println("  NOTE: --body is required (error if absent). This is stricter than create-draft --send.")
 		fmt.Println("  Example:")
 		fmt.Println("    tmux-a2a-postman send-message --to orchestrator --body \"DONE: task complete\"")
@@ -2831,10 +2778,7 @@ func runHelp(args []string) {
 		fmt.Println("  Create a new message draft file in the session draft/ directory.")
 		fmt.Println("  Sender is auto-detected from the tmux pane title.")
 		fmt.Println("  Flags:")
-		fmt.Println("    --to <node>          Recipient node name (required unless --cross-context is set)")
-		fmt.Println("    --cross-context <contextID>:<node>")
-		fmt.Println("                         Cross-context target (mutually exclusive with --to;")
-		fmt.Println("                         requires diplomat_node set in config)")
+		fmt.Println("    --to <node>          Recipient node name (required)")
 		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("    --body <text>        Inline message body (replaces <!-- write here --> placeholder)")
