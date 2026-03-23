@@ -52,6 +52,15 @@ const (
 	phonyDeadLetterReasonChannelUnbound = "channel_unbound"
 )
 
+// inboxQueueCap is the maximum number of messages allowed in a recipient inbox
+// before overflow messages are sent to dead-letter (agent-session queue guard).
+const inboxQueueCap = 20
+
+const (
+	deadLetterReasonQueueFull = "inbox queue full"
+	dlSuffixQueueFull         = "-dl-queue-full"
+)
+
 // deadLetterDst builds the dead-letter destination path with reason suffix.
 // Transforms "msg.md" → "msg-dl-{reason}.md" in dead-letter/ directory.
 func deadLetterDst(sessionDir, filename, suffix string) string {
@@ -491,6 +500,21 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return fmt.Errorf("creating recipient inbox: %w", err)
 	}
 
+	// Enforce inbox queue cap: dead-letter overflow beyond inboxQueueCap.
+	// Protects agent-session nodes from unbounded queue growth (#agent-session).
+	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixQueueFull)
+		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonQueueFull, filename)
+		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, count, filename)
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (inbox queue full)", info.From, info.To),
+			}
+		}
+		return os.Rename(postPath, dst)
+	}
+
 	dst := filepath.Join(recipientInbox, filename)
 	if err := os.Rename(postPath, dst); err != nil {
 		return fmt.Errorf("moving to inbox: %w", err)
@@ -552,6 +576,25 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	}
 	return nil
+}
+
+// countInboxMessages returns the number of .md files in an inbox directory.
+// Returns 0, nil if the directory does not exist (empty inbox is not an error).
+func countInboxMessages(inboxDir string) (int, error) {
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // sendDeadLetterNotification writes a dead-letter notification directly to the
