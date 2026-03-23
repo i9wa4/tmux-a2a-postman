@@ -2,174 +2,150 @@
 
 tmux agent-to-agent message delivery daemon.
 
-## Prerequisites
+## 1. Prerequisites
 
 - tmux >= 3.0
 
-## 1. Installation
+## 2. Installation
 
 ```sh
 go install github.com/i9wa4/tmux-a2a-postman@latest
 ```
 
-Version format depends on build context:
-
-| Build Type     | Version Format   | Example     |
-| -------------- | ---------------- | ----------- |
-| GitHub release | Semantic version | v0.2.0      |
-| Local clean    | Commit hash      | git-cb6db3c |
-| Local dirty    | Generic dev      | dev         |
-
-## 2. How it Works
-
-Discovers agents by reading tmux pane titles across all tmux sessions, sends
-PING messages to establish communication, and routes messages between nodes
-based on configured edges.
-
-## 3. Quick Start
-
-Set pane titles to identify nodes:
+Or with Nix:
 
 ```sh
-tmux rename-pane orchestrator
-tmux rename-pane worker
+nix run github:i9wa4/tmux-a2a-postman
 ```
 
-Start the daemon (interactive TUI):
+## 3. Concept
 
-```sh
-tmux-a2a-postman
-```
-
-## 4. Directory Structure (XDG Base Directory)
-
-- **Config**: `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`
-- **State**: `$XDG_STATE_HOME/tmux-a2a-postman/`
+tmux-a2a-postman is a **daemon** that discovers AI agents running in tmux
+panes and routes messages between them via filesystem-based inboxes.
 
 ```text
-$XDG_STATE_HOME/tmux-a2a-postman/
-└── session-{contextId}/
-    └── {sessionName}/
-        ├── inbox/{node}/   # Incoming messages per node
-        ├── post/           # Outgoing messages
-        ├── draft/          # Message drafts
-        ├── read/           # Processed messages
-        └── dead-letter/    # Undeliverable messages
+tmux session "my-project"
++-------------------+     +-------------------+     +-------------------+
+| messenger         |     | orchestrator      |     | worker            |
+| (Claude Code)     |     | (Claude Code)     |     | (Claude Code)     |
++--------+----------+     +--------+----------+     +--------+----------+
+         |                         |                          |
+         +------------+------------+--------------------------+
+                      |
+              postman daemon (TUI)
+              - discovers panes by title
+              - routes messages via edges
+              - delivers to inbox/{node}/
 ```
 
-## 5. Session Management
+### 3.1. Message Flow
 
-Sessions are toggled enabled/disabled in the TUI, controlling automatic PING
-delivery. Two config fields govern auto-enable behavior:
-`auto_enable_new_sessions` (default `false`) controls whether newly discovered
-sessions are automatically enabled; `auto_enable_new_agents` (default `true`)
-controls whether new agents in an already-enabled session are auto-pinged.
-Manual PING (press `p` in TUI) always works regardless of session state.
+1. Agent sends: `tmux-a2a-postman send-message --to worker --body "implement X"`
+2. Daemon picks up the message from `post/`
+3. Daemon checks edge rules (is sender allowed to talk to recipient?)
+4. Message delivered to `inbox/worker/`
+5. Daemon injects notification into worker's pane via `tmux send-keys`
+6. Worker reads with `tmux-a2a-postman next`
+7. Footer is appended with reply command and `can_talk_to` list
 
-| Field                      | Default | Behavior                                               |
-| -------------------------- | ------- | ------------------------------------------------------ |
-| `auto_enable_new_sessions` | `false` | Auto-enable newly discovered sessions                  |
-| `auto_enable_new_agents`   | `true`  | Auto-ping new agents in already-enabled sessions       |
+### 3.2. Node Discovery
 
-**Bool merge limitation**: Setting `auto_enable_new_sessions = false` in a
-project-local config file will NOT override an XDG-level `true`. Bool fields
-only propagate `true` values — the Go zero-value (`false`) is indistinguishable
-from "field not set". Use the XDG config to set these fields definitively.
-
-### 5.1. Session ON Constraint
-
-Only one daemon may have a given tmux session set to ON at a time (toggled via
-TUI Space key). To transfer ownership, turn OFF in the current daemon's TUI
-before enabling in another.
-
-If a crashed daemon left a stale lock, clear it manually:
-
-```sh
-tmux set-option -gu @a2a_session_on_<sessionName>
-```
-
-See `docs/design/daemon-session-model.md` for the full daemon/session model.
-
-## 6. Environment Variables
-
-### 6.1. Pane Title (Node Identity)
-
-**Required** for agent nodes to be discovered by postman. Set the tmux pane
-title to identify a pane as an agent node:
+Agents are discovered by their **tmux pane title**. Set titles to match node
+names defined in the configuration:
 
 ```sh
 tmux rename-pane orchestrator
 tmux rename-pane worker
 ```
 
-### 6.2. Other Variables
-
-See `internal/config/postman.default.toml` for advanced variables
-(`POSTMAN_HOME`, etc.).
-
-## 7. Configuration
+## 4. Configuration
 
 Configuration uses two file formats: TOML for structural settings and Markdown
 for templates. Both live in `$XDG_CONFIG_HOME/tmux-a2a-postman/`.
 
-**`postman.toml`** — structural config (timing, thresholds, per-node settings):
+### 4.1. Edges and Node Topology
 
-```toml
-[postman]
-edges = ["messenger -- orchestrator", "orchestrator -- worker"]
-
-[worker]
-dropped_ball_timeout_seconds = 900
-```
-
-**`postman.md`** — templates, edges (Mermaid), and text content:
+Define which nodes can communicate using edges. In `postman.md`:
 
 ````markdown
----
-ui_node: messenger
-reply_command: tmux-a2a-postman send-message --to <recipient> --body "<your message>"
----
-
 ## `edges`
 
 ```mermaid
 graph LR
     messenger --- orchestrator
     orchestrator --- worker
+    orchestrator --- worker-alt
+    orchestrator --- critic
+    guardian --- critic
+```
+````
+
+Or in `postman.toml`:
+
+```toml
+[postman]
+edges = [
+  "messenger -- orchestrator",
+  "orchestrator -- worker",
+  "orchestrator -- worker-alt",
+  "orchestrator -- critic",
+  "guardian -- critic",
+]
 ```
 
-## `common_template`
+Messages sent to nodes without a valid edge are moved to `dead-letter/`.
 
-Shared instructions for all nodes.
+### 4.2. Node Role Templates
 
+Define each node's role, on_join message, and template in `postman.md`:
+
+````markdown
 ## `worker`
 
 ### `role`
 
-implementation
+Primary task executor.
 
 ### `on_join`
 
-You are worker. Await tasks.
+You are worker. Execute assigned tasks.
 
 ### Workflow
 
-Execute assigned tasks.
+Execute tasks from orchestrator. Report DONE or BLOCKED.
 ````
 
-Key config options (TOML):
+Or as separate files in `nodes/worker.md`.
 
-| Key                          | Default | Description                                    |
-| ---------------------------- | ------- | ---------------------------------------------- |
-| `edges`                      | `[]`    | Bidirectional routing edges (`"A -- B"`)       |
-| `auto_enable_new_sessions`   | `false` | See Session Management                         |
-| `auto_enable_new_agents`     | `true`  | See Session Management                         |
-| `node_active_seconds`        | `300`   | Active threshold (seconds)                     |
-| `node_idle_seconds`          | `900`   | Idle threshold (seconds)                       |
+### 4.3. File Layout
 
-See `internal/config/postman.default.toml` for all available options.
+```text
+$XDG_CONFIG_HOME/tmux-a2a-postman/
+  postman.toml          # structural config (timing, thresholds)
+  postman.md            # templates, edges (Mermaid), node definitions
+  nodes/
+    worker.md           # per-node template (optional, overrides postman.md)
+    orchestrator.md
+```
 
-**Priority order (highest to lowest):**
+### 4.4. Project-Local Override
+
+Place config files in `.tmux-a2a-postman/` inside your project directory
+to override XDG config:
+
+```text
+your-project/
+  .tmux-a2a-postman/
+    postman.toml        # structural overrides
+    postman.md          # template overrides
+    nodes/
+      worker.md
+```
+
+**Nix/home-manager users:** if your XDG config is read-only Nix store
+symlinks, use project-local overrides.
+
+### 4.5. Priority Order (highest to lowest)
 
 1. Project-local `postman.md`
 2. Project-local `nodes/*.md`
@@ -179,90 +155,37 @@ See `internal/config/postman.default.toml` for all available options.
 6. XDG `nodes/*.md`
 7. XDG `nodes/*.toml`
 8. XDG `postman.toml`
-9. Embedded defaults
+9. Embedded defaults (`internal/config/postman.default.toml`)
 
-### 7.1. Project-Local Configuration Override
+All default values are defined in `postman.default.toml` (SSOT).
 
-Place config files in `.tmux-a2a-postman/` inside your project directory
-to override XDG config without modifying `~/.config/`:
-
-```text
-your-project/
-└── .tmux-a2a-postman/
-    ├── postman.toml        # structural overrides
-    └── postman.md          # template overrides
-```
-
-**Nix/home-manager users:** if your XDG config is read-only Nix store
-symlinks, use project-local overrides — editable in-place, version
-controlled with git, no `home-manager switch` required.
-
-## 8. Usage
+## 5. Running the Daemon
 
 ```sh
 # Start daemon (interactive TUI)
-tmux-a2a-postman start [--context-id <id>] [--config path/to/config.toml]
+tmux-a2a-postman start
 
-# Send a message (atomic, one-step)
-tmux-a2a-postman send-message --to <recipient> --body "text"
+# Headless mode (no TUI; for CI or automated environments)
+tmux-a2a-postman start --no-tui
 
-# Read and archive the oldest unread message
-tmux-a2a-postman next
-
-# Count unread inbox messages
-tmux-a2a-postman count
-
-# Print current context ID (useful for AI agents)
-tmux-a2a-postman get-context-id
-
-# Advanced: create draft, edit, then send (for long messages)
-tmux-a2a-postman create-draft --to <recipient>
-tmux-a2a-postman send <filename>
-
-# Archive inbox message (mark as read)
-tmux-a2a-postman archive <filename>
-
-# Show pane status summary (plain emoji when piped, ANSI colored dots in a terminal)
-tmux-a2a-postman get-session-status-oneline
-
-# Show version
-tmux-a2a-postman --version
+# Stop daemon
+tmux-a2a-postman stop
 ```
 
-### 8.1. Headless / CI Usage
+## 6. Directory Structure
 
-Run the daemon without the interactive TUI (non-interactive mode):
-
-```sh
-tmux-a2a-postman --no-tui [--context-id <id>]
+```text
+$XDG_STATE_HOME/tmux-a2a-postman/
+  session-{contextId}/
+    {sessionName}/
+      inbox/{node}/     # incoming messages per node
+      post/             # outgoing messages (daemon picks up)
+      draft/            # message drafts
+      read/             # archived messages
+      dead-letter/      # undeliverable messages
 ```
 
-In headless mode:
-
-- Message routing and delivery work normally
-- No interactive dashboard is displayed
-- Logs are written to stderr (redirect with `--log-file`)
-- Useful for CI pipelines and automated testing environments
-
-### 8.2. Recommended Shell Alias
-
-```sh
-alias a2a='tmux-a2a-postman send-message'
-# Usage: a2a --to <recipient> --body "text"
-```
-
-### 8.3. tmux status-right Integration
-
-To show agent pane status in the tmux status bar, add to your `~/.tmux.conf`:
-
-```tmux
-set -g status-right '#(tmux-a2a-postman get-session-status-oneline)'
-```
-
-Output is plain emoji (`🟢🔵🟡🔴`) when called from `#()`, and ANSI colored
-dots (`●`) when run directly in a terminal.
-
-## 9. Deployment Topology
+## 7. Deployment Topology
 
 | Topology                    | tmux servers | Daemons | Machines |
 | --------------------------- | ------------ | ------- | -------- |
@@ -270,47 +193,20 @@ dots (`●`) when run directly in a terminal.
 | Multi-daemon, same machine  | 1            | N       | 1        |
 | Multi-daemon, cross-machine | N            | N       | N        |
 
-### 9.1. Single Daemon
+Each daemon maintains its own `{base_dir}/{contextId}/` state directory.
+Only one daemon may have a given tmux session set to ON at a time.
 
-One daemon, N nodes — all agents on one machine.
+See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
-### 9.2. Multi-Daemon, Same Machine
+## 8. CLI Reference
 
-Multiple daemons with distinct context IDs — useful for isolated project
-contexts running in parallel. Each daemon maintains its own
-`{base_dir}/{contextId}/` state directory.
+Run `tmux-a2a-postman --help` for the full command list.
 
-### 9.3. Multi-Daemon, Cross-Machine
+## 9. Skills
 
-Multiple machines each running a daemon, sharing a common `base_dir` via a
-shared filesystem (NFS, SSHFS, Syncthing, etc.).
+The `skills/` directory contains reusable agent skill files for AI coding
+assistants (Claude Code, Codex CLI, etc.). Each skill lives at
+`skills/{skill-name}/SKILL.md`.
 
-See `docs/design/daemon-session-model.md` for daemon location and session
-ownership rules.
-
-## 10. Skills
-
-The `skills/` directory contains reusable agent skill files for use with AI
-coding assistants (Claude Code, Codex CLI, etc.). Each skill lives at
-`skills/{skill-name}/SKILL.md` and is invoked via the assistant's skill
-mechanism (e.g., `/a2a-role-auditor` in Claude Code).
-
-### 10.1. a2a-role-auditor
-
-Path: `skills/a2a-role-auditor/SKILL.md`
-
-Audits node role templates (`postman.toml` / `postman.md` / `nodes/*`) to
-diagnose and fix node-to-node interaction breakdowns.
-
-Use when:
-
-- A node behaves unexpectedly (routes wrongly, ignores messages, approves
-  nothing)
-- Nodes cannot see each other in `talks_to_line` (after ruling out session/PING
-  issues)
-- Adding a new node and need to verify its template is complete and consistent
-- Reviewing or improving role definitions for any node
-
-Do NOT use for daemon-level failures (dead-letter from routing/edge
-misconfiguration); run triage first to determine whether the issue is
-template-level.
+- **a2a-role-auditor**: Audits node role templates to diagnose and fix
+  node-to-node interaction breakdowns.

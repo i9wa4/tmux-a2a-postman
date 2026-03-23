@@ -54,7 +54,7 @@ prevents notification floods.
 **What it does:** When a message is successfully delivered to a node's
 `inbox/{node}/` directory, the daemon immediately injects a notification hint
 into that node's tmux pane. The hint is rendered from `notification_template`
-and typically shows the inbox path and an archive command.
+and greets the node with a prompt to run `next`.
 
 **When it fires:** On every successful message delivery. The per-pane cooldown
 is bypassed (`bypassCooldown=true`) so every incoming message triggers a
@@ -68,7 +68,7 @@ notification regardless of how recently the pane was last notified.
 
 | Field                        | Default | Description                                      |
 | ---------------------------- | ------- | ------------------------------------------------ |
-| `notification_template`      | `"{inbox_path}/{filename}\n\nAfter reading: tmux-a2a-postman archive {filename}"` | Template for the pane hint text |
+| `notification_template`      | `"Hello, {node}! You've got mail.\nRun tmux-a2a-postman next to read it."` | Template for the pane hint text |
 | `enter_delay_seconds`        | `3.0`   | Delay before sending `C-m`                       |
 | `pane_notify_cooldown_seconds` | `600` | Cooldown for reminder/alert pane sends (NOT applied here; bypassed for direct delivery) |
 
@@ -465,7 +465,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 
 | Field                              | Default  | Scope   | Used by                   |
 | ---------------------------------- | -------- | ------- | ------------------------- |
-| `notification_template`            | (inbox path + archive cmd) | Global | §2.1 |
+| `notification_template`            | (greeting + next cmd)      | Global | §2.1 |
 | `enter_delay_seconds`              | `3.0`    | Global  | §2.1, §2.2                |
 | `pane_notify_cooldown_seconds`     | `600`    | Global  | §2.2                      |
 | `reminder_interval_messages`       | `20`     | Global + per-node | §2.2             |
