@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- com.example.tmux-a2a-sidecar.plist — launchd user agent template.
+     Phase 1 (Issue #308): supervisory observation only; no autonomous action.
+
+     Install:
+       cp com.example.tmux-a2a-sidecar.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.example.tmux-a2a-sidecar.plist
+
+     Replace NODE_NAME with the node_name from bindings.toml.
+     Replace /usr/local/bin/tmux-a2a-sidecar with the actual sidecar binary path.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.tmux-a2a-sidecar</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/tmux-a2a-sidecar</string>
+    <string>--node-name</string>
+    <string>NODE_NAME</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>XDG_CONFIG_HOME</key>
+    <string>/Users/USER/.config</string>
+    <key>XDG_STATE_HOME</key>
+    <string>/Users/USER/.local/state</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/USER/.local/state/tmux-a2a-postman/sidecar-NODE_NAME.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/USER/.local/state/tmux-a2a-postman/sidecar-NODE_NAME.log</string>
+</dict>
+</plist>

@@ -1,0 +1,24 @@
+#!/bin/sh
+# verify-sidecar — check that the named sidecar process is running.
+# Uses pgrep -x for exact-name match (POSIX-compatible; works on Linux + macOS).
+#
+# Usage: SIDECAR_NAME=<binary-name> verify-sidecar
+#        verify-sidecar <binary-name>
+#
+# Exits 0 if running, 1 if not found, 2 if argument missing.
+
+set -eu
+
+name="${1:-${SIDECAR_NAME:-}}"
+if [ -z "$name" ]; then
+  echo "usage: verify-sidecar <sidecar-name>" >&2
+  exit 2
+fi
+
+if pgrep -x "$name" > /dev/null 2>&1; then
+  echo "sidecar '$name' is running"
+  exit 0
+else
+  echo "sidecar '$name' is NOT running" >&2
+  exit 1
+fi

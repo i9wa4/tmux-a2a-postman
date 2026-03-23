@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
+	"github.com/i9wa4/tmux-a2a-postman/internal/bindcmd"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
@@ -222,6 +223,11 @@ func main() {
 	case "send-message":
 		if err := runSendMessage(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
+			os.Exit(1)
+		}
+	case "bind":
+		if err := bindcmd.Run(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman bind: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
