@@ -76,8 +76,22 @@ graph LR
     guardian --- critic
 ```
 
-In `postman.md`, define edges with the same Mermaid syntax inside an
-`` ## `edges` `` section. Or in `postman.toml`:
+In `postman.md`:
+
+````markdown
+## `edges`
+
+```mermaid
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- worker-alt
+    orchestrator --- critic
+    guardian --- critic
+```
+````
+
+Or in `postman.toml`:
 
 ```toml
 [postman]
