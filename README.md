@@ -54,8 +54,8 @@ Agents are discovered by their **tmux pane title**. Set titles to match node
 names defined in the configuration:
 
 ```sh
-tmux rename-pane orchestrator
-tmux rename-pane worker
+tmux select-pane -T orchestrator
+tmux select-pane -T worker
 ```
 
 ## 4. Configuration
