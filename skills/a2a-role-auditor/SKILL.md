@@ -200,7 +200,36 @@ All files are read from the user's XDG config directory:
   `dropped_ball_timeout_seconds` defaults and other per-node configurable fields
   (#249 policy: all values must appear explicitly here).
 
-## 5. Workflow
+## 5. System-Provided Context (Do Not Duplicate in Role Templates)
+
+Before auditing role templates, read `postman.default.toml` to understand what
+information the system already provides to agents at message delivery time.
+Role templates should NOT repeat information that the system injects
+automatically — doing so creates maintenance burden and drift risk.
+
+**How to check**: read the embedded default config at
+`internal/config/postman.default.toml` in the tmux-a2a-postman repository.
+The Template Variables Reference comment block at the top of the file lists
+all available variables per template type.
+
+Key templates that inject context automatically:
+
+| Template            | Injected at                  | Key variables provided                        |
+| ------------------- | ---------------------------- | --------------------------------------------- |
+| `draft_template`    | draft/send-message creation  | `{template}` (recipient role), frontmatter    |
+| `message_footer`    | appended to delivered message | `{can_talk_to}`, `{sender}`, `{reply_command}`|
+| `notification_template` | sendkeys to pane on arrival | `{node}`, `{from_node}`                      |
+| `message_template`  | daemon ping delivery         | `{role_content}`, `{talks_to_line}`           |
+
+**Audit implication**: if a role template repeats any of the following, flag it
+as MINOR (unnecessary duplication, not a bug):
+
+- Reply command instructions (provided by `message_footer`)
+- "You can talk to" lists (provided by `message_footer` `{can_talk_to}`)
+- Recipient role content (provided by `draft_template` `{template}`)
+- Edge violation warnings (handled by daemon `edge_violation_warning_template`)
+
+## 6. Workflow
 
 1. Read config — `postman.toml` for structural config, `postman.md` for
    templates. Extract edges and build adjacency map.
@@ -214,7 +243,7 @@ All files are read from the user's XDG config directory:
 NOTE: Do NOT auto-apply patches. Propose only; the user applies manually or
 delegates to a worker node.
 
-### 5.1. Nix Store Warning
+### 6.1. Nix Store Warning
 
 Before attempting to patch any config file, check if the deployed path is
 read-only:
@@ -253,11 +282,11 @@ No `home-manager switch` required.
 
 Report this as a constraint in findings, not as a skill failure.
 
-## 6. Baseline Examples
+## 7. Baseline Examples
 
 The following examples illustrate the finding format.
 
-### 6.1. Example 1 — Routing clarity (IMPORTANT)
+### 7.1. Example 1 — Routing clarity (IMPORTANT)
 
 ```text
 [IMPORTANT] Node: sender
@@ -270,7 +299,7 @@ Fix:
   talks_to_line, send to relay-node who will forward."
 ```
 
-### 6.2. Example 2 — Completion protocol (IMPORTANT)
+### 7.2. Example 2 — Completion protocol (IMPORTANT)
 
 ```text
 [IMPORTANT] Node: approver
@@ -284,7 +313,7 @@ Fix:
   or 'REJECTED: <reason>' when rejecting."
 ```
 
-### 6.3. Example 3 — Cross-edge consistency (IMPORTANT, JUDGMENT-BASED)
+### 7.3. Example 3 — Cross-edge consistency (IMPORTANT, JUDGMENT-BASED)
 
 ```text
 [IMPORTANT] Node: relay-node
@@ -299,7 +328,7 @@ Fix:
   If rejected, return to reviewer with specific revision request."
 ```
 
-### 6.4. Example 4 — on_join completeness (MINOR)
+### 7.4. Example 4 — on_join completeness (MINOR)
 
 ```text
 [MINOR] Node: worker
@@ -312,7 +341,7 @@ Fix:
   then await task assignment."
 ```
 
-## 7. Constraints
+## 8. Constraints
 
 - Propose patches only; do NOT auto-apply
 - When an issue is daemon-level (wrong edges, missing file, disabled session),
