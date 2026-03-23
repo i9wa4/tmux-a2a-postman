@@ -215,7 +215,7 @@ tmux-a2a-postman count
 # Print current context ID (useful for AI agents)
 tmux-a2a-postman get-context-id
 
-# Advanced: create draft, edit, then send (for long or cross-context messages)
+# Advanced: create draft, edit, then send (for long messages)
 tmux-a2a-postman create-draft --to <recipient>
 tmux-a2a-postman send <filename>
 

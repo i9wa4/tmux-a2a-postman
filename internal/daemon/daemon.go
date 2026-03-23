@@ -811,6 +811,10 @@ func RunDaemonLoop(
 				if !knownNodes[nodeName] {
 					knownNodes[nodeName] = true
 
+					// Issue #320: auto-enable session on first node discovery so the
+					// session stays enabled after the startup drain window expires.
+					daemonState.AutoEnableSessionIfNew(nodeInfo.SessionName)
+
 					// Ensure session directories exist for new node
 					if err := config.CreateSessionDirs(nodeInfo.SessionDir); err != nil {
 						events <- tui.DaemonEvent{
@@ -1753,6 +1757,8 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessionsMu.Lock()
 	ds.enabledSessions[sessionName] = enabled
 	ds.enabledSessionsMu.Unlock()
+	log.Printf("postman: session state change: session=%s enabled=%v source=toggle ts=%s\n",
+		sessionName, enabled, time.Now().UTC().Format(time.RFC3339Nano))
 	// Persist cross-daemon state in tmux server option (best-effort).
 	key := "@a2a_session_on_" + sessionName
 	if enabled {
@@ -1771,6 +1777,8 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	defer ds.enabledSessionsMu.Unlock()
 	if _, exists := ds.enabledSessions[sessionName]; !exists {
 		ds.enabledSessions[sessionName] = true
+		log.Printf("postman: session state change: session=%s enabled=true source=auto-enable ts=%s\n",
+			sessionName, time.Now().UTC().Format(time.RFC3339Nano))
 	}
 }
 

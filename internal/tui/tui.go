@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
-	"github.com/i9wa4/tmux-a2a-postman/internal/diplomat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
@@ -117,7 +116,6 @@ type ViewType int
 const (
 	ViewEvents ViewType = iota
 	ViewRouting
-	ViewDiplomat // Issue #164: Cross-context diplomat status tab
 )
 
 // Edge represents a routing edge definition.
@@ -207,10 +205,7 @@ type Model struct {
 	// Config reference (for node state thresholds)
 	config *config.Config
 
-	// Diplomat state (Issue #164)
-	diplomatEnabled bool
-	activeContexts  []diplomat.ContextRegistration
-	ownContextID    string
+	ownContextID string
 }
 
 // Quitting returns true if the TUI is in quitting state (Issue #57).
@@ -381,10 +376,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		quitting:            false,
 		layoutMode:          false, // Issue #127: default horizontal layout
 		startupGuardEnabled: false, // Issue #249: hard-disabled at code level; user enables with 'g'
-		// Issue #164: Diplomat state
-		diplomatEnabled: cfg.GetDiplomatEnabled(),
-		activeContexts:  nil,
-		ownContextID:    ownContextID,
+		ownContextID:        ownContextID,
 	}
 }
 
@@ -421,13 +413,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		// Right pane tab switching (Issue #45, Issue #164)
+		// Right pane tab switching (Issue #45)
 		case "tab":
 			switch m.currentView {
 			case ViewEvents:
 				m.currentView = ViewRouting
-			case ViewRouting:
-				m.currentView = ViewDiplomat
 			default:
 				m.currentView = ViewEvents
 			}
@@ -437,9 +427,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "2":
 			m.currentView = ViewRouting
-			return m, nil
-		case "3":
-			m.currentView = ViewDiplomat
 			return m, nil
 
 		// Left pane (Sessions) navigation (Issue #45)
@@ -686,9 +673,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if counts, ok := msg.Details["counts"].(map[string]int); ok {
 				m.readCounts = counts
 			}
-		case diplomat.CrossContextDelivered, "diplomat_stale_removed":
-			// Issue #164: Refresh active context registrations on diplomat events.
-			m.activeContexts, _ = diplomat.LoadActiveContexts(config.ResolveBaseDir(m.config.BaseDir))
 		case "error":
 			m.events = append(m.events, EventEntry{
 				Message:     fmt.Sprintf("ERROR: %s", msg.Message),
@@ -993,11 +977,7 @@ func (m Model) renderRightPane(width, height int) string {
 	if m.currentView == ViewRouting {
 		routingMarker = "*"
 	}
-	diplomatMarker := " "
-	if m.currentView == ViewDiplomat {
-		diplomatMarker = "*"
-	}
-	b.WriteString("[1:Events" + eventsMarker + " | 2:Routing" + routingMarker + " | 3:Diplomat" + diplomatMarker + "]\n")
+	b.WriteString("[1:Events" + eventsMarker + " | 2:Routing" + routingMarker + "]\n")
 
 	// Content based on current view
 	switch m.currentView {
@@ -1014,9 +994,6 @@ func (m Model) renderRightPane(width, height int) string {
 			userInputNodeStyle.Render("User Input")
 		b.WriteString(legend + "\n\n")
 		b.WriteString(m.renderRoutingView(width, height-7))
-	case ViewDiplomat:
-		b.WriteString("\n")
-		b.WriteString(m.renderDiplomatView(width, height-7))
 	}
 
 	return b.String()
@@ -1330,33 +1307,6 @@ func (m Model) renderRoutingView(width, height int) string {
 
 			// Issue #45: Simplified display (no selection indicator in right pane)
 			b.WriteString(fmt.Sprintf("  %s\n", line))
-		}
-	}
-	return b.String()
-}
-
-// renderDiplomatView renders the diplomat cross-context status tab (Issue #164).
-func (m Model) renderDiplomatView(_, _ int) string {
-	var b strings.Builder
-
-	enabled := "no"
-	if m.diplomatEnabled {
-		enabled = "yes"
-	}
-	b.WriteString(fmt.Sprintf("Diplomat enabled: %s\n", enabled))
-	b.WriteString(fmt.Sprintf("Own context ID:   %s\n", m.ownContextID))
-	b.WriteString(fmt.Sprintf("Own node:         %s\n", m.config.DiplomatNode))
-
-	b.WriteString("\nRemote contexts:\n")
-	if len(m.activeContexts) == 0 {
-		b.WriteString("  (none registered)\n")
-	} else {
-		for _, reg := range m.activeContexts {
-			alive := "alive"
-			if !diplomat.IsContextAlive(reg) {
-				alive = "stale"
-			}
-			b.WriteString(fmt.Sprintf("  %s  node=%s  [%s]\n", reg.ContextID, reg.DiplomatNode, alive))
 		}
 	}
 	return b.String()
