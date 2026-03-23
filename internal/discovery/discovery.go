@@ -187,12 +187,11 @@ func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[st
 						continue // pane claimed by a different daemon context
 					}
 				} else {
-					// F3: Unclaimed pane (show-options returned non-zero: option not set).
-					// Only allow unclaimed panes in the daemon's own session.
-					// Foreign unclaimed panes are excluded even if their inbox dir exists.
-					if c.sessionName != selfSession {
-						continue
-					}
+					// F3: Unclaimed pane — included if inbox dir exists (already checked above).
+					// Inbox dir path is baseDir/contextID/sessionName/inbox: it is contextID-scoped,
+					// so its existence proves this daemon context controls the session.
+					// Removing the selfSession guard enables cross-session topologies where the
+					// daemon runs in a different tmux session than the agent panes.
 				}
 				kept = append(kept, c)
 			}
