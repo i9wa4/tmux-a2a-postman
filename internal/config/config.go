@@ -1236,6 +1236,26 @@ func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
 	return ""
 }
 
+// FindContextSessionName returns the tmux session name where the given context's
+// daemon is currently running (the session subdir that has a live postman.pid).
+// Returns "" if not found.
+func FindContextSessionName(baseDir, contextID string) string {
+	contextDir := filepath.Join(baseDir, contextID)
+	sessions, err := os.ReadDir(contextDir)
+	if err != nil {
+		return ""
+	}
+	for _, s := range sessions {
+		if !s.IsDir() {
+			continue
+		}
+		if IsSessionPIDAlive(baseDir, contextID, s.Name()) {
+			return s.Name()
+		}
+	}
+	return ""
+}
+
 // GetTmuxSessionOnOwner returns the "contextID:PID" string stored in the tmux
 // server-level option @a2a_session_on_<sessionName>, or "" if unset or if
 // tmux is unavailable.

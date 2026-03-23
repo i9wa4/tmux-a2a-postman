@@ -658,9 +658,14 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 									blockedNodes = *cached
 								}
 								blockedSessionList := session.BuildSessionList(blockedNodes, blockedSessions, daemonState.GetConfiguredSessionEnabled)
+								ownerSession := config.FindContextSessionName(baseDir, owner)
+								blockMsg := fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner)
+								if ownerSession != "" {
+									blockMsg = fmt.Sprintf("BLOCKED: session %q owned by daemon in tmux session %q (%s)", cmd.Target, ownerSession, owner)
+								}
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
-									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner),
+									Message: blockMsg,
 									Details: map[string]interface{}{
 										"session":  cmd.Target,
 										"sessions": blockedSessionList,
