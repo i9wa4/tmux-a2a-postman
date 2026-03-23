@@ -327,6 +327,11 @@ func RunDaemonLoop(
 	// Track watched directories to avoid duplicates
 	watchedDirs := make(map[string]bool)
 
+	// Issue #321: Track claimed panes to avoid redundant set-option execs.
+	// Keyed on PaneID (e.g., "%31"). Phony nodes and empty PaneIDs are never
+	// added. Pruned on every scan tick to remove stale entries.
+	claimedPanes := make(map[string]bool)
+
 	// Issue #94: Track previous pane states to avoid spam
 	var prevPaneStatesJSON string
 
@@ -393,8 +398,14 @@ func RunDaemonLoop(
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
 							mergePhonyNodes(freshNodes, registry) // #306: inject phony nodes after edge filter
-							// Claim discovered panes with this daemon's context ID.
+							// Issue #321: Claim only new, real panes (skip already-claimed).
 							for _, nodeInfo := range freshNodes {
+								if nodeInfo.IsPhony || nodeInfo.PaneID == "" {
+									continue
+								}
+								if claimedPanes[nodeInfo.PaneID] {
+									continue
+								}
 								claimCmd := exec.Command(
 									"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
 									"@a2a_context_id", contextID,
@@ -404,6 +415,8 @@ func RunDaemonLoop(
 										"postman: WARNING: failed to claim pane %s: %v\n",
 										nodeInfo.PaneID, err,
 									)
+								} else {
+									claimedPanes[nodeInfo.PaneID] = true
 								}
 							}
 							// Detect new nodes
@@ -750,8 +763,26 @@ func RunDaemonLoop(
 			}
 			filterNodesByEdges(freshNodes, cfg.Edges)
 			mergePhonyNodes(freshNodes, registry) // #306: inject phony nodes after edge filter
-			// Claim discovered panes with this daemon's context ID.
+			// Issue #321: Prune stale claimedPanes entries (panes no longer in freshNodes).
+			livePaneIDs := make(map[string]bool, len(freshNodes))
+			for _, ni := range freshNodes {
+				if !ni.IsPhony && ni.PaneID != "" {
+					livePaneIDs[ni.PaneID] = true
+				}
+			}
+			for pid := range claimedPanes {
+				if !livePaneIDs[pid] {
+					delete(claimedPanes, pid)
+				}
+			}
+			// Claim only new, real panes with this daemon's context ID.
 			for _, nodeInfo := range freshNodes {
+				if nodeInfo.IsPhony || nodeInfo.PaneID == "" {
+					continue
+				}
+				if claimedPanes[nodeInfo.PaneID] {
+					continue
+				}
 				claimCmd := exec.Command(
 					"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
 					"@a2a_context_id", contextID,
@@ -761,6 +792,8 @@ func RunDaemonLoop(
 						"postman: WARNING: failed to claim pane %s: %v\n",
 						nodeInfo.PaneID, err,
 					)
+				} else {
+					claimedPanes[nodeInfo.PaneID] = true
 				}
 			}
 			for _, collision := range scanCollisions {

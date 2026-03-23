@@ -36,10 +36,11 @@ type CollisionReport struct {
 // described "%0 vs parse-failure" as requiring tie-breaking; the -1 sentinel resolves
 // this cleanly without special-casing.
 type paneCandidate struct {
-	paneID      string
-	paneNum     int
-	sessionName string
-	sessionDir  string
+	paneID         string
+	paneNum        int
+	sessionName    string
+	sessionDir     string
+	claimedContext string // value of @a2a_context_id option (empty = unclaimed)
 }
 
 // reduceCollisions selects the winner for each nodeKey and returns collision reports.
@@ -99,6 +100,16 @@ func reduceCollisions(nodeKeyOrder []string, candidates map[string][]paneCandida
 	return nodes, collisions
 }
 
+// tmuxRunner runs a tmux subcommand with the given arguments and returns the
+// combined output. Abstracted so unit tests can inject mock output without
+// requiring a live tmux process.
+type tmuxRunner func(args ...string) ([]byte, error)
+
+// defaultTmuxRunner executes tmux with the given arguments.
+func defaultTmuxRunner(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
 // DiscoverNodesWithCollisions scans tmux panes and returns nodes, collision reports, and any error.
 // For panes sharing the same sessionName:paneTitle key, the winner is the pane with the
 // highest numeric pane ID (e.g., %31 beats %26). N-1 CollisionReports are emitted per collision group.
@@ -107,8 +118,17 @@ func reduceCollisions(nodeKeyOrder []string, candidates map[string][]paneCandida
 // selfSession is the daemon's own tmux session name. Unclaimed panes in foreign sessions
 // are excluded (F3: unclaimed-pane guard).
 func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
-	// Format: pane_id session_name pane_title (title last to allow spaces)
-	out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").CombinedOutput()
+	return discoverNodesWithCollisionsUsing(defaultTmuxRunner, baseDir, contextID, selfSession)
+}
+
+// discoverNodesWithCollisionsUsing is the testable implementation of DiscoverNodesWithCollisions.
+// runner is called for both list-panes and show-options invocations, dispatched by args[0].
+func discoverNodesWithCollisionsUsing(runner tmuxRunner, baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
+	// Format: tab-delimited pane_id, @a2a_context_id, session_name, pane_title.
+	// Tab delimiter avoids ambiguity with pane titles that contain spaces.
+	// #{@a2a_context_id} is empty when unset (unclaimed); non-empty means claimed.
+	// Batching the context_id here eliminates O(N) sequential show-options execs.
+	out, err := runner("list-panes", "-a", "-F", "#{pane_id}\t#{@a2a_context_id}\t#{session_name}\t#{pane_title}")
 	if err != nil {
 		return nil, nil, fmt.Errorf("tmux list-panes: %w: %s", err, out)
 	}
@@ -123,11 +143,11 @@ func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[st
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, " ", 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) != 4 {
 			continue
 		}
-		paneID, sessionName, paneTitle := parts[0], parts[1], parts[2]
+		paneID, claimedContext, sessionName, paneTitle := parts[0], parts[1], parts[2], parts[3]
 
 		// Skip panes with no title
 		if paneTitle == "" {
@@ -153,10 +173,11 @@ func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[st
 			nodeKeyOrder = append(nodeKeyOrder, nodeKey)
 		}
 		candidates[nodeKey] = append(candidates[nodeKey], paneCandidate{
-			paneID:      paneID,
-			paneNum:     paneNum,
-			sessionName: sessionName,
-			sessionDir:  sessionDir,
+			paneID:         paneID,
+			paneNum:        paneNum,
+			sessionName:    sessionName,
+			sessionDir:     sessionDir,
+			claimedContext: claimedContext,
 		})
 	}
 
@@ -171,27 +192,16 @@ func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[st
 			inboxDir := filepath.Join(baseDir, contextID, c.sessionName, "inbox")
 			if _, err := os.Stat(inboxDir); err == nil {
 				// F3 fast-path: own-session panes are always included without
-				// a per-pane show-options exec (saves O(N) sequential calls).
+				// an ownership check (selfSession fast-path).
 				if c.sessionName == selfSession {
 					kept = append(kept, c)
 					continue
 				}
-				// Per-pane ownership check: skip panes claimed by a different
-				// daemon context. show-options -v exits non-zero when unset
-				// (unclaimed), so err != nil means the pane is available.
-				if out, err := exec.Command(
-					"tmux", "show-options", "-p", "-v", "-t", c.paneID, "@a2a_context_id",
-				).Output(); err == nil {
-					claimedContext := strings.TrimSpace(string(out))
-					if claimedContext != "" && claimedContext != contextID {
-						continue // pane claimed by a different daemon context
-					}
-				} else {
-					// F3: Unclaimed pane — included if inbox dir exists (already checked above).
-					// Inbox dir path is baseDir/contextID/sessionName/inbox: it is contextID-scoped,
-					// so its existence proves this daemon context controls the session.
-					// Removing the selfSession guard enables cross-session topologies where the
-					// daemon runs in a different tmux session than the agent panes.
+				// Per-pane ownership check using the batched context_id field.
+				// Empty claimedContext = unclaimed (available); non-empty and
+				// not matching = claimed by a different daemon context (exclude).
+				if c.claimedContext != "" && c.claimedContext != contextID {
+					continue // pane claimed by a different daemon context
 				}
 				kept = append(kept, c)
 			}

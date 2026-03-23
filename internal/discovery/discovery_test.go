@@ -1,6 +1,9 @@
 package discovery
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -229,6 +232,124 @@ func TestReduceCollisions_NoCollision(t *testing.T) {
 	if len(collisions) != 0 {
 		t.Errorf("collisions: got %d, want 0", len(collisions))
 	}
+}
+
+// mockTmuxRunner creates a tmuxRunner for unit testing.
+// listPanesOut is returned verbatim for "list-panes" calls.
+// Since M2 batches @a2a_context_id into the list-panes format string,
+// show-options is no longer called; any call to it causes the test to fail.
+func mockTmuxRunner(listPanesOut string) tmuxRunner {
+	return func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			return nil, fmt.Errorf("mockTmuxRunner: no args")
+		}
+		switch args[0] {
+		case "list-panes":
+			return []byte(listPanesOut), nil
+		default:
+			return nil, fmt.Errorf("mockTmuxRunner: unexpected subcommand %q (show-options should not be called after M2)", args[0])
+		}
+	}
+}
+
+// tabLine builds a tab-delimited list-panes output line for tests.
+// Fields: paneID, claimedContext (empty = unclaimed), sessionName, paneTitle.
+func tabLine(paneID, claimedContext, sessionName, paneTitle string) string {
+	return paneID + "\t" + claimedContext + "\t" + sessionName + "\t" + paneTitle
+}
+
+// mustMkdirAll creates dir and all parents; fails the test on error.
+func mustMkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", dir, err)
+	}
+}
+
+// TestFilterLoop_ForeignMatchingContext verifies that a foreign-session pane whose
+// @a2a_context_id matches the daemon's contextID is included in discovery results.
+func TestFilterLoop_ForeignMatchingContext(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-a2a"
+	selfSession := "sess-daemon"
+	sessionName := "sess-other"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, sessionName, "inbox"))
+
+	runner := mockTmuxRunner(tabLine("%10", contextID, sessionName, "worker"))
+	nodes, _, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, selfSession)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := nodes[sessionName+":worker"]; !ok {
+		t.Errorf("expected %q in nodes (matching context), got keys: %v", sessionName+":worker", nodeKeys(nodes))
+	}
+}
+
+// TestFilterLoop_ForeignDifferentContext verifies that a foreign-session pane owned
+// by a different daemon context is excluded from discovery results (F3 guard).
+func TestFilterLoop_ForeignDifferentContext(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-a2a"
+	selfSession := "sess-daemon"
+	sessionName := "sess-other"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, sessionName, "inbox"))
+
+	runner := mockTmuxRunner(tabLine("%11", "ctx-other", sessionName, "orchestrator"))
+	nodes, _, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, selfSession)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := nodes[sessionName+":orchestrator"]; ok {
+		t.Errorf("expected %q to be excluded (different context), but it was included", sessionName+":orchestrator")
+	}
+}
+
+// TestFilterLoop_UnclaimedPane verifies that a foreign-session pane with an empty
+// @a2a_context_id field (unclaimed) is included in discovery results.
+func TestFilterLoop_UnclaimedPane(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-a2a"
+	selfSession := "sess-daemon"
+	sessionName := "sess-other"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, sessionName, "inbox"))
+
+	// Empty claimedContext field → unclaimed pane, must be included.
+	runner := mockTmuxRunner(tabLine("%12", "", sessionName, "critic"))
+	nodes, _, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, selfSession)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := nodes[sessionName+":critic"]; !ok {
+		t.Errorf("expected %q in nodes (unclaimed pane), got keys: %v", sessionName+":critic", nodeKeys(nodes))
+	}
+}
+
+// TestFilterLoop_OwnSessionFastPath verifies that own-session panes are always
+// included without an ownership check (selfSession fast-path).
+func TestFilterLoop_OwnSessionFastPath(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-a2a"
+	selfSession := "sess-daemon"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, selfSession, "inbox"))
+
+	// Own-session pane with empty claimedContext — fast-path bypasses the check.
+	runner := mockTmuxRunner(tabLine("%13", "", selfSession, "boss"))
+	nodes, _, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, selfSession)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := nodes[selfSession+":boss"]; !ok {
+		t.Errorf("expected %q in nodes (own-session fast-path), got keys: %v", selfSession+":boss", nodeKeys(nodes))
+	}
+}
+
+// nodeKeys returns a slice of keys from a NodeInfo map for test error messages.
+func nodeKeys(nodes map[string]NodeInfo) []string {
+	keys := make([]string, 0, len(nodes))
+	for k := range nodes {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // TestReduceCollisions_OrderPreserved verifies that CollisionReports across different

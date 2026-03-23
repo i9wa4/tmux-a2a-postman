@@ -2,6 +2,10 @@
 
 tmux agent-to-agent message delivery daemon.
 
+## Prerequisites
+
+- tmux >= 3.0
+
 ## 1. Installation
 
 ```sh
