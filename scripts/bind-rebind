@@ -1,0 +1,37 @@
+#!/bin/sh
+# bind-rebind — §6.3: full re-bind of an existing entry.
+# Updates session_name, pane_title, pane_node_name, active, and
+# permitted_senders on an existing binding.
+#
+# Usage:
+#   BINDINGS_FILE=<path> \
+#   NODE_NAME=<name> \
+#   SESSION_NAME=<session> \
+#   PANE_TITLE=<title> \
+#   PANE_NODE_NAME=<node> \
+#   ACTIVE=true|false \
+#   PERMITTED_SENDERS=<sender1,sender2> \
+#   bind-rebind
+#
+# BINDINGS_FILE, NODE_NAME are required.
+# Omitted optional vars default to empty string / true.
+
+set -eu
+
+: "${BINDINGS_FILE:?BINDINGS_FILE is required}"
+: "${NODE_NAME:?NODE_NAME is required}"
+
+SESSION_NAME="${SESSION_NAME:-}"
+PANE_TITLE="${PANE_TITLE:-}"
+PANE_NODE_NAME="${PANE_NODE_NAME:-}"
+ACTIVE="${ACTIVE:-true}"
+PERMITTED_SENDERS="${PERMITTED_SENDERS:-}"
+
+exec tmux-a2a-postman bind rebind \
+  --file "$BINDINGS_FILE" \
+  --node-name "$NODE_NAME" \
+  --session-name "$SESSION_NAME" \
+  --pane-title "$PANE_TITLE" \
+  --pane-node-name "$PANE_NODE_NAME" \
+  --active="$ACTIVE" \
+  --permitted-senders "$PERMITTED_SENDERS"

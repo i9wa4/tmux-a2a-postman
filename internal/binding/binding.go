@@ -3,6 +3,7 @@
 package binding
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -74,6 +75,29 @@ func (r *BindingRegistry) FindByNodeName(name string) *Binding {
 // Uses [[binding]] array-of-tables.
 type tomlFile struct {
 	Binding []Binding `toml:"binding"`
+}
+
+// Save writes the registry back to the TOML file at path using an atomic
+// rename (write to path+".tmp", then os.Rename) to avoid partial writes.
+// File mode is set to 0600 (owner read/write only).
+//
+// NOTE: TOML comments in the original file are NOT preserved — the TOML
+// encoder serialises only structured data. See docs/design/bindings-toml-schema.md.
+func (r *BindingRegistry) Save(path string) error {
+	f := tomlFile{Binding: r.Bindings}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return fmt.Errorf("encoding bindings.toml: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return fmt.Errorf("writing bindings.toml.tmp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("renaming bindings.toml.tmp -> bindings.toml: %w", err)
+	}
+	return nil
 }
 
 // Load reads a binding registry from the TOML file at path.
