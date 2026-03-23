@@ -989,7 +989,10 @@ func TestResolveProjectLocalConfig_NotFound(t *testing.T) {
 
 func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base := DefaultConfig()
+	// DefaultConfig() returns zero values (SSOT is postman.default.toml).
+	// Set explicit base values to test that mergeConfig preserves unset fields.
 	base.ScanInterval = 1.0
+	base.EnterDelay = 0.5
 	base.BaseDir = ""
 	base.A2AVersion = "0.9"
 
