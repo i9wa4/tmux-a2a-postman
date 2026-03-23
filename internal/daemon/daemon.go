@@ -18,6 +18,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -281,6 +282,18 @@ func filterNodesByEdges(nodes map[string]discovery.NodeInfo, edges []string) {
 	}
 }
 
+// mergePhonyNodes inserts phony NodeInfo entries from registry into nodes.
+// Keys are bare node names (no session prefix) so dispatchPhonyNode can match
+// the raw to: value before ResolveNodeName is called (#306).
+func mergePhonyNodes(nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry) {
+	if registry == nil {
+		return
+	}
+	for _, b := range registry.Bindings {
+		nodes[b.NodeName] = discovery.NodeInfo{IsPhony: true}
+	}
+}
+
 // RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).
 func RunDaemonLoop(
 	ctx context.Context,
@@ -335,6 +348,17 @@ func RunDaemonLoop(
 		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg, adjacency)
 	}
 
+	// #306: Load binding registry for phony node dispatch; nil = disabled.
+	var registry *binding.BindingRegistry
+	if cfg.BindingsPath != "" {
+		if reg, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
+			log.Printf("postman: WARNING: failed to load bindings registry %s: %v\n", cfg.BindingsPath, loadErr)
+		} else {
+			registry = reg
+		}
+	}
+	mergePhonyNodes(nodes, registry)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -368,6 +392,7 @@ func RunDaemonLoop(
 						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
+							mergePhonyNodes(freshNodes, registry) // #306: inject phony nodes after edge filter
 							// Claim discovered panes with this daemon's context ID.
 							for _, nodeInfo := range freshNodes {
 								claimCmd := exec.Command(
@@ -474,7 +499,7 @@ func RunDaemonLoop(
 						// Deliver concurrently: SendToPane sleeps for enter_delay per pane;
 						// parallel dispatch lets multiple panes receive simultaneously.
 						// Mutable loop vars captured via function params to avoid races.
-						go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
+						go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config) {
 							defer func() {
 								if r := recover(); r != nil {
 									log.Printf("🚨 PANIC in delivery goroutine for %s: %v\n", filename, r)
@@ -482,7 +507,7 @@ func RunDaemonLoop(
 							}()
 							// Issue #53: Create wrapper channel for dead-letter notifications
 							messageEvents := make(chan message.DaemonEvent, 1)
-							if err := message.DeliverMessage(eventPath, contextID, nodes, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker, selfSession); err != nil {
+							if err := message.DeliverMessage(eventPath, contextID, nodes, registry, adjacency, cfg, daemonState.IsSessionEnabled, messageEvents, idleTracker, selfSession); err != nil {
 								events <- tui.DaemonEvent{
 									Type:    "error",
 									Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -569,7 +594,7 @@ func RunDaemonLoop(
 									}
 								}
 							}
-						}(eventPath, filename, nodes, adjacency, cfg)
+						}(eventPath, filename, nodes, registry, adjacency, cfg)
 					}
 				}
 			} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {
@@ -656,6 +681,17 @@ func RunDaemonLoop(
 						cfg = newCfg
 						adjacency = newAdjacency
 
+						// #306: Reload binding registry on config change.
+						if newCfg.BindingsPath != "" {
+							if reg, loadErr := binding.Load(newCfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
+								log.Printf("postman: WARNING: failed to reload bindings registry %s: %v\n", newCfg.BindingsPath, loadErr)
+							} else {
+								registry = reg
+							}
+						} else {
+							registry = nil
+						}
+
 						if err := config.GenerateBoilerplateFiles(sessionDir, contextID, newCfg); err != nil {
 							log.Printf("postman: WARNING: failed to generate boilerplate files on reload: %v\n", err)
 						}
@@ -713,6 +749,7 @@ func RunDaemonLoop(
 				continue
 			}
 			filterNodesByEdges(freshNodes, cfg.Edges)
+			mergePhonyNodes(freshNodes, registry) // #306: inject phony nodes after edge filter
 			// Claim discovered panes with this daemon's context ID.
 			for _, nodeInfo := range freshNodes {
 				claimCmd := exec.Command(

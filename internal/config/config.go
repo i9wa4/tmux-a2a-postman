@@ -53,7 +53,8 @@ type Config struct {
 	ActivityWindowSeconds      float64 `toml:"activity_window_seconds"`
 
 	// Paths
-	BaseDir string `toml:"base_dir"`
+	BaseDir      string `toml:"base_dir"`
+	BindingsPath string `toml:"bindings_path"` // #306: path to bindings.toml; empty = phony dispatch disabled
 
 	// Message templates
 	NotificationTemplate            string `toml:"notification_template"`
