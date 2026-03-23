@@ -1,6 +1,7 @@
 package memory_test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -122,6 +123,134 @@ func TestUpdateOutcome(t *testing.T) {
 	}
 	if records[0].Status != memory.StatusActive {
 		t.Errorf("status should be active after validation, got %s", records[0].Status)
+	}
+}
+
+func TestOverruleRate_Basic(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	// 8 validated + 2 overruled Phase 2 non-threshold records.
+	for i := range 8 {
+		r, err := s.Append(memory.Record{SourcePhase: 2, SituationClass: "escalation", Context: fmt.Sprintf("ctx %d", i)})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		if err := s.UpdateOutcome(r.Seq, memory.OutcomeValidated, "", ""); err != nil {
+			t.Fatalf("UpdateOutcome: %v", err)
+		}
+	}
+	for i := range 2 {
+		r, err := s.Append(memory.Record{SourcePhase: 2, SituationClass: "escalation", Context: fmt.Sprintf("bad %d", i)})
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		if err := s.UpdateOutcome(r.Seq, memory.OutcomeOverruled, "wrong", ""); err != nil {
+			t.Fatalf("UpdateOutcome: %v", err)
+		}
+	}
+
+	rate, err := s.OverruleRate(10)
+	if err != nil {
+		t.Fatalf("OverruleRate: %v", err)
+	}
+	if rate != 0.20 {
+		t.Errorf("expected 0.20, got %v", rate)
+	}
+}
+
+func TestOverruleRate_EmptyWindow(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	rate, err := s.OverruleRate(10)
+	if err != nil {
+		t.Fatalf("OverruleRate: %v", err)
+	}
+	if rate != 0.0 {
+		t.Errorf("expected 0.0 for empty store, got %v", rate)
+	}
+}
+
+func TestRestoreThreshold_NoRecord(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	val, found, err := s.RestoreThreshold()
+	if err != nil {
+		t.Fatalf("RestoreThreshold: %v", err)
+	}
+	if found {
+		t.Errorf("expected not found, got val=%v", val)
+	}
+}
+
+func TestRestoreThreshold_PicksLatest(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	// Write two threshold_change records; last one should be returned.
+	if _, err := s.Append(memory.Record{
+		SourcePhase:    3,
+		SituationClass: "threshold_change",
+		Confidence:     0.85,
+	}); err != nil {
+		t.Fatalf("Append first: %v", err)
+	}
+	if _, err := s.Append(memory.Record{
+		SourcePhase:    3,
+		SituationClass: "threshold_change",
+		Confidence:     0.80,
+	}); err != nil {
+		t.Fatalf("Append second: %v", err)
+	}
+
+	val, found, err := s.RestoreThreshold()
+	if err != nil {
+		t.Fatalf("RestoreThreshold: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+	if val != 0.80 {
+		t.Errorf("expected 0.80 (latest), got %v", val)
+	}
+}
+
+func TestAnnotatePendingRollback(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	// One pending record, one validated record.
+	pending, err := s.Append(memory.Record{SourcePhase: 2, SituationClass: "escalation", Context: "pending"})
+	if err != nil {
+		t.Fatalf("Append pending: %v", err)
+	}
+	validated, err := s.Append(memory.Record{SourcePhase: 2, SituationClass: "escalation", Context: "done"})
+	if err != nil {
+		t.Fatalf("Append validated: %v", err)
+	}
+	if err := s.UpdateOutcome(validated.Seq, memory.OutcomeValidated, "", ""); err != nil {
+		t.Fatalf("UpdateOutcome: %v", err)
+	}
+
+	if err := s.AnnotatePendingRollback(); err != nil {
+		t.Fatalf("AnnotatePendingRollback: %v", err)
+	}
+
+	records, err := s.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll after annotate: %v", err)
+	}
+	for _, r := range records {
+		if r.Seq == pending.Seq {
+			if r.FailureMode != "phase3_rollback" {
+				t.Errorf("pending record: expected failure_mode=phase3_rollback, got %q", r.FailureMode)
+			}
+			if r.Outcome != memory.OutcomePending {
+				t.Errorf("pending record: outcome should remain pending, got %q", r.Outcome)
+			}
+		}
+		if r.Seq == validated.Seq {
+			if r.FailureMode == "phase3_rollback" {
+				t.Errorf("validated record should not be annotated")
+			}
+		}
 	}
 }
 

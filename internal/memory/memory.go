@@ -57,6 +57,7 @@ type Record struct {
 	Outcome        Outcome  `yaml:"outcome"`
 	HumanFeedback  string   `yaml:"human_feedback"`
 	FailureMode    string   `yaml:"failure_mode"`
+	StakesLow      bool     `yaml:"stakes_low"`
 }
 
 // Store manages the on-disk supervisor memory for a single context.
@@ -299,6 +300,93 @@ func (s *Store) PilotGateReady() (bool, error) {
 		}
 	}
 	return count >= PilotGateThreshold, nil
+}
+
+// CountResolvedPhase2Plus returns the count of all resolved (outcome != pending)
+// Phase 2+ non-threshold records. Used by ConfidenceManager to detect batch
+// boundaries (Issue #309).
+func (s *Store) CountResolvedPhase2Plus() (int, error) {
+	records, err := s.LoadAll()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, r := range records {
+		if r.SourcePhase >= 2 &&
+			r.Outcome != OutcomePending &&
+			!strings.HasPrefix(r.SituationClass, "threshold_") {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// OverruleRate computes the overrule rate for the most recent n resolved Phase 2+
+// non-threshold records. Returns 0.0 if fewer than n qualifying records exist.
+// overrule_rate = overruled_count / n (Issue #309).
+func (s *Store) OverruleRate(n int) (float64, error) {
+	records, err := s.LoadAll()
+	if err != nil {
+		return 0, err
+	}
+
+	var resolved []Record
+	for _, r := range records {
+		if r.SourcePhase >= 2 &&
+			r.Outcome != OutcomePending &&
+			!strings.HasPrefix(r.SituationClass, "threshold_") {
+			resolved = append(resolved, r)
+		}
+	}
+	if len(resolved) < n {
+		return 0.0, nil
+	}
+
+	window := resolved[len(resolved)-n:]
+	overruled := 0
+	for _, r := range window {
+		if r.Outcome == OutcomeOverruled {
+			overruled++
+		}
+	}
+	return float64(overruled) / float64(n), nil
+}
+
+// RestoreThreshold scans records in reverse seq order and returns the Confidence
+// field of the most recent threshold_change or threshold_reset record with
+// status active. Returns (0, false, nil) if no such record exists (Issue #309).
+func (s *Store) RestoreThreshold() (float64, bool, error) {
+	records, err := s.LoadAll()
+	if err != nil {
+		return 0, false, err
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		r := records[i]
+		if (r.SituationClass == "threshold_change" || r.SituationClass == "threshold_reset") &&
+			r.Status == StatusActive {
+			return r.Confidence, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+// AnnotatePendingRollback writes failure_mode="phase3_rollback" on all records
+// with outcome==pending without changing their status or outcome. Used during
+// Phase 3 → Phase 2 rollback drain procedure (Issue #309).
+func (s *Store) AnnotatePendingRollback() error {
+	records, err := s.LoadAll()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		if r.Outcome == OutcomePending {
+			r.FailureMode = "phase3_rollback"
+			if writeErr := atomicWriteYAML(s.recordPath(r.Seq), r); writeErr != nil {
+				return fmt.Errorf("memory: annotate pending rollback seq %d: %w", r.Seq, writeErr)
+			}
+		}
+	}
+	return nil
 }
 
 // tokenize splits text into lowercase words for term-overlap scoring.
