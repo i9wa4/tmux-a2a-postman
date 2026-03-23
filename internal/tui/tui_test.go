@@ -449,33 +449,15 @@ func TestTruncateString(t *testing.T) {
 	}
 }
 
-func TestDiplomatTabEnabled(t *testing.T) {
+func TestInitialModel_OwnContextID(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
-	t.Run("disabled when diplomat_node empty", func(t *testing.T) {
-		cfg := config.DefaultConfig()
-		cfg.DiplomatNode = ""
-		m := InitialModel(ch, nil, cfg, "test-ctx")
-		if m.diplomatEnabled {
-			t.Error("diplomatEnabled = true, want false when diplomat_node is empty")
-		}
-	})
-	t.Run("enabled when diplomat_node set", func(t *testing.T) {
-		cfg := config.DefaultConfig()
-		cfg.DiplomatNode = "orchestrator"
-		m := InitialModel(ch, nil, cfg, "test-ctx")
-		if !m.diplomatEnabled {
-			t.Error("diplomatEnabled = false, want true when diplomat_node is set")
-		}
-	})
-	t.Run("ownContextID stored", func(t *testing.T) {
-		cfg := config.DefaultConfig()
-		m := InitialModel(ch, nil, cfg, "session-abc")
-		if m.ownContextID != "session-abc" {
-			t.Errorf("ownContextID = %q, want %q", m.ownContextID, "session-abc")
-		}
-	})
+	cfg := config.DefaultConfig()
+	m := InitialModel(ch, nil, cfg, "session-abc")
+	if m.ownContextID != "session-abc" {
+		t.Errorf("ownContextID = %q, want %q", m.ownContextID, "session-abc")
+	}
 }
 
 func TestTUI_SpaceKey_GuardBlocks(t *testing.T) {

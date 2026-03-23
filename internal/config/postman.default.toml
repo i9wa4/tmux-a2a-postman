@@ -101,8 +101,6 @@ edges = []
 # Global settings
 reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
 # ui_node = "messenger"            # TUI target node for daemon alerts
-# diplomat_node = ""               # Cross-context (cross-daemon) node name; empty = disabled (Issue #164)
-# diplomat_allowlist = []          # Accepted source diplomat_node names; empty = allow all (Issue #165)
 auto_enable_new_sessions = false   # Auto-enable newly discovered sessions (default: false)
 auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
