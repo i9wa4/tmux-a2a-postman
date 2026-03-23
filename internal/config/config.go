@@ -91,10 +91,6 @@ type Config struct {
 	AutoEnableNewSessions      *bool    `toml:"auto_enable_new_sessions"`      // nil = use default (false) (#219)
 	AutoEnableNewAgents        *bool    `toml:"auto_enable_new_agents"`        // nil = use default (true) (#219)
 
-	// Diplomat settings (Issue #164, #165)
-	DiplomatNode      string   `toml:"diplomat_node"`      // Cross-context node name; empty = disabled
-	DiplomatAllowlist []string `toml:"diplomat_allowlist"` // Accepted source diplomat_node names; empty = allow all
-
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
 
@@ -151,56 +147,13 @@ func BoolVal(p *bool, defaultVal bool) bool {
 	return *p
 }
 
-// DefaultConfig returns a Config with sane default values.
+// DefaultConfig returns a Config with zero values.
+// All non-zero defaults are defined in postman.default.toml (SSOT).
+// Only structural fields (Nodes map, Edges slice) are initialized here.
 func DefaultConfig() *Config {
 	return &Config{
-		ScanInterval:                    1.0,
-		EnterDelay:                      0.5,
-		TmuxTimeout:                     5.0,
-		StartupDelay:                    2.0,
-		ReminderInterval:                0.0,
-		EnterVerifyDelay:                3.0,
-		EnterRetryMax:                   2,
-		EdgeActivitySeconds:             300.0, // Issue #37: Default 300 seconds (5 min, matches active state duration)
-		NodeActiveSeconds:               300.0, // 0-5min: active (green)
-		NodeIdleSeconds:                 900.0, // 5-15min: idle (orange)
-		NodeStaleSeconds:                900.0, // 15min+: stale (red)
-		NodeSpinningSeconds:             0.0,   // disabled by default; set positive to enable spinning detection
-		PaneCaptureEnabled:              boolPtr(true),
-		PaneCaptureIntervalSeconds:      60.0,
-		PaneCaptureMaxPanes:             0,
-		ActivityWindowSeconds:           300.0,
-		BaseDir:                         "",
-		NotificationTemplate:            "You've got mail. Run `tmux-a2a-postman next` to read it.",
-		MessageTemplate:                 "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n---\n\n{talks_to_line}\n\n## Message Details\n\nMessage from {from_node}\n\nAfter reading, move from inbox/ to read/\n\n- Inbox: {inbox_path}\n- read path: {session_dir}/read/\n",
-		DraftTemplate:                   "",
-		ReminderMessage:                 "",
-		ReplyCommand:                    "",
-		UINode:                          "", // Issue #46: Default UI target node (empty = no default)
-		InboxUnreadThreshold:            3,  // Default threshold for inbox unread summary notification
-		AlertCooldownSeconds:            600,
-		AlertDeliveryWindowSeconds:      60,
-		PaneNotifyCooldownSeconds:       600,
-		AutoEnableNewSessions:           boolPtr(false), // Issue #135: default false; set true to opt in (#219)
-		AutoEnableNewAgents:             boolPtr(true),  // Issue #135: auto-enable agents in already-enabled sessions (#219)
-		Edges:                           []string{},
-		Nodes:                           make(map[string]NodeConfig),
-		EdgeViolationWarningTemplate:    "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  timestamp: {iso_timestamp}\n  messageType: edge_violation_warning\n---\n\n## Edge Violation Warning\n\nyou can't talk to \"{attempted_recipient}\". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.\n",
-		EdgeViolationWarningMode:        "compact", // Issue #92: Default to compact mode
-		DroppedBallEventTemplate:        "Dropped ball: {node} (holding for {duration})",
-		AlertActionReachableTemplate:    "",
-		AlertActionUnreachableTemplate:  "",
-		InboxStagnationAlertTemplate:    "",
-		InboxUnreadSummaryAlertTemplate: "",
-		NodeInactivityAlertTemplate:     "",
-		UnrepliedMessageAlertTemplate:   "",
-		AlertMessageTemplate:            "",
-		HeartbeatMessageTemplate:        "",
-		BoilerplateHeartbeatOk:          "HEARTBEAT_OK",
-		BoilerplateHowToReply:           "1. {reply_command}\n   Replace `<recipient>` with target node name\n2. Edit the draft content\n3. Send: tmux-a2a-postman send <file>",
-		MessageTTLSeconds:               600,  // Stale post/ drain TTL (10 minutes); 0 = disabled
-		MinDeliveryGapSeconds:           1.0,  // Duplicate delivery rate limit (1 second)
-		StartupDrainWindowSeconds:       10.0, // Session-enabled bypass window (10 seconds) (#217)
+		Edges: []string{},
+		Nodes: make(map[string]NodeConfig),
 	}
 }
 
@@ -1379,9 +1332,4 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
-}
-
-// GetDiplomatEnabled returns true if diplomat_node is non-empty (Issue #164).
-func (cfg *Config) GetDiplomatEnabled() bool {
-	return cfg.DiplomatNode != ""
 }

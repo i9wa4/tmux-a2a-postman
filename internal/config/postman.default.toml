@@ -63,13 +63,13 @@ enter_retry_max = 2                # Max C-m retries on unchanged pane capture (
 startup_delay_seconds = 10.0       # Initial startup delay
 reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
 inbox_unread_threshold = 3         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
-# message_ttl_seconds = 600            # Stale post/ drain TTL in seconds (0 = disabled)
-# min_delivery_gap_seconds = 1.0       # Duplicate delivery rate limit in seconds (0 = disabled)
-# startup_drain_window_seconds = 10.0  # Session-enabled bypass window after daemon start (0 = disabled)
+message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
+min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
+startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
 # message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)
 alert_cooldown_seconds = 600          # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
-# pane_notify_cooldown_seconds = 600   # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
-# alert_delivery_window_seconds = 60   # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
+pane_notify_cooldown_seconds = 600    # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
+alert_delivery_window_seconds = 60    # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
@@ -99,12 +99,10 @@ activity_window_seconds = 300.0
 edges = []
 
 # Global settings
-# reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
+reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
 # ui_node = "messenger"            # TUI target node for daemon alerts
-# diplomat_node = ""               # Cross-context (cross-daemon) node name; empty = disabled (Issue #164)
-# diplomat_allowlist = []          # Accepted source diplomat_node names; empty = allow all (Issue #165)
-# auto_enable_new_sessions = false # Auto-enable newly discovered sessions (default: false)
-# auto_enable_new_agents = true    # Auto-enable agents in already-enabled sessions (default: true)
+auto_enable_new_sessions = false   # Auto-enable newly discovered sessions (default: false)
+auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
 
@@ -139,11 +137,16 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "You've got mail. Run `tmux-a2a-postman next` to read it."
+notification_template = """Hello, {node}!  You've got mail.
+Run `tmux-a2a-postman next` to read it.
+"""
 
 # Message footer (appended by `next` command after message content)
 # Variables: {sender} - sender node name extracted from message
-# message_footer = ""
+message_footer = """You can talk to: {can_talk_to}
+Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
+No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages.
+"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
@@ -192,20 +195,11 @@ protocol: tmux-a2a-postman --help
 
 # Message
 
-How to reply: {reply_command}
-Direct reply: tmux send-keys -t {sender_pane_id} 'your message here' Enter
-
-You can only talk to: {can_talk_to}
-
 ## Role of {recipient}
 
-```
 {template}
-```
 
 ## Content
-
-I'm {sender} from pane {sender_pane_id}
 
 <!-- write here -->
 """
@@ -281,34 +275,34 @@ How to reply: {reply_command}
 # Full envelope template with messageType discriminator in frontmatter.
 # Variables: {context_id}, {node}, {iso_timestamp}, {attempted_recipient},
 #            {allowed_edges}, {reply_command}, {session_dir}, {filename}
-# edge_violation_warning_mode = "compact"  # "compact" or "verbose" (default: compact)
-# edge_violation_warning_template = """---
-# method: message/send
-# params:
-#   contextId: {context_id}
-#   from: postman
-#   to: {node}
-#   timestamp: {iso_timestamp}
-#   messageType: edge_violation_warning
-# ---
-#
-# ## Edge Violation Warning
-#
-# you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
-# """
+edge_violation_warning_mode = "compact"  # "compact" or "verbose" (default: compact)
+edge_violation_warning_template = """---
+method: message/send
+params:
+  contextId: {context_id}
+  from: postman
+  to: {node}
+  timestamp: {iso_timestamp}
+  messageType: edge_violation_warning
+---
+
+## Edge Violation Warning
+
+you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
+"""
 
 # Boilerplate response files (auto-generated per session in {session_dir}/boilerplate/)
-# boilerplate_heartbeat_ok = "HEARTBEAT_OK"
-# boilerplate_how_to_reply = """
-# 1. {reply_command}
-#    Replace `<recipient>` with target node name
-# 2. Edit the draft content
-# 3. Send: tmux-a2a-postman send <file>
-# """
+boilerplate_heartbeat_ok = "HEARTBEAT_OK"
+boilerplate_how_to_reply = """
+1. {reply_command}
+   Replace `<recipient>` with target node name
+2. Edit the draft content
+3. Send: tmux-a2a-postman send <file>
+"""
 
 # Dropped ball event message template (Issue #82)
 # Variables: {node}, {duration}
-# dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
+dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
 
 # =============================================================================
 # Node-Specific Configuration
@@ -355,3 +349,4 @@ If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
+dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
