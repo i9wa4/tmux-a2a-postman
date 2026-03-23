@@ -67,7 +67,7 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-fVtb/nMLiu3vnlm3EEh8aoYguXGP1FoCsIfKxeiO+/k=";
+            vendorHash = "sha256-ReTCPB615xto7iwOqQPhdi3l5rTlwQSpTywEMGMUd9g=";
             ldflags = [
               "-s"
               "-w"
