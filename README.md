@@ -200,7 +200,7 @@ tmux-a2a-postman stop
 
 ```text
 $XDG_STATE_HOME/tmux-a2a-postman/
-  session-{contextId}/
+  {contextId}/
     {sessionName}/
       inbox/{node}/     # incoming messages per node
       post/             # outgoing messages (daemon picks up)

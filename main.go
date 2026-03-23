@@ -258,7 +258,7 @@ func main() {
 func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {
-		contextID = fmt.Sprintf("session-%s-%04x",
+		contextID = fmt.Sprintf("%s-%04x",
 			time.Now().Format("20060102-150405"),
 			time.Now().UnixNano()&0xffff)
 	}
@@ -1278,12 +1278,12 @@ func runGetSessionStatusOneline(args []string) error {
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
 	// Find the most recently started live context for the current tmux session.
-	// Context directories are named session-YYYYMMDD-HHMMSS-XXXX; lexicographic
+	// Context directories are named YYYYMMDD-HHMMSS-XXXX; lexicographic
 	// descending sort gives newest first.
 	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
 	paneActivity := make(map[string]string)
 
-	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "session-*"))
+	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "[0-9]*"))
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
 	var liveStateFiles []string
