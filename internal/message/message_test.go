@@ -128,7 +128,7 @@ func TestDeliverMessage(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		EnterDelay:  0.1,
 		TmuxTimeout: 1.0,
 	}
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestRouting_Allowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -260,7 +260,7 @@ func TestRouting_Denied(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -305,7 +305,7 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -345,7 +345,7 @@ func TestPONG_Handling(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -437,7 +437,7 @@ func TestDeliverMessage_ParseError(t *testing.T) {
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -477,7 +477,7 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 	// sess-a (sender) is enabled; sess-b (recipient's recorded session) is disabled.
 	isSessionEnabled := func(s string) bool { return s == "sess-a" }
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), ""); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -500,7 +500,7 @@ func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
 	if err != nil {
 		t.Fatalf("expected nil for already-gone file, got: %v", err)
 	}
@@ -561,7 +561,7 @@ PING from postman
 	idleTracker := idle.NewIdleTracker()
 
 	// Deliver message
-	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker, "")
+	err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker, "")
 	if err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 
 	// foreign-session is not enabled; daemonSession = "own-session"
 	isSessionEnabled := func(s string) bool { return s == "own-session" }
-	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "own-session"); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "own-session"); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
@@ -794,5 +794,50 @@ func TestDeliverToPhonyNode_FilenameInvariant(t *testing.T) {
 	name := entries[0].Name()
 	if strings.Contains(name, "/") || strings.Contains(name, "..") || strings.Contains(name, "evil") || strings.Contains(name, "passwd") {
 		t.Errorf("filename contains unsafe bytes: %q", name)
+	}
+}
+
+// TestDeliverMessage_PhonyDispatch verifies that DeliverMessage routes messages
+// to phony nodes via dispatchPhonyNode, before ResolveNodeName is called (#306).
+func TestDeliverMessage_PhonyDispatch(t *testing.T) {
+	baseDir := t.TempDir()
+	// sessionDir provides the post/ directory; basename is used as source session name.
+	sessionDir := filepath.Join(t.TempDir(), "own-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260201-030000-from-orchestrator-to-channel-a.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nmethod: message/send\nparams:\n  contextId: ctx-01\n  from: orchestrator\n  to: channel-a\n  timestamp: 2026-02-01T03:00:00Z\n---\n\nphony message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Phony nodes use bare keys (no session: prefix) so dispatchPhonyNode can match
+	// info.To before ResolveNodeName is called.
+	nodes := map[string]discovery.NodeInfo{
+		"channel-a": {IsPhony: true},
+	}
+	reg := makeRegistry("channel-a", true, []string{"orchestrator"})
+	cfg := &config.Config{
+		BaseDir:     baseDir,
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+
+	if err := DeliverMessage(postPath, "ctx-01", nodes, reg, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	// Verify phony inbox received the message.
+	inboxDir := filepath.Join(baseDir, "ctx-01", "phony", "channel-a", "inbox")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 phony inbox file, got err=%v n=%d", err, len(entries))
+	}
+	// Verify post/ file was removed by dispatchPhonyNode.
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("post/ file should be removed after phony dispatch")
 	}
 }

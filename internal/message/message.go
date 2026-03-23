@@ -174,6 +174,56 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}, nil
 }
 
+// dispatchPhonyNode checks if rawRecipient is a phony node (IsPhony == true
+// in knownNodes) and, if so, delivers the message via DeliverToPhonyNode and
+// removes the post/ file.
+// NOTE: Must be called with the raw to: value, before ResolveNodeName —
+// phony nodes use bare keys in knownNodes; session-prefixed keys produced by
+// ResolveNodeName would miss them.
+// Returns true when the message was handled; the caller should return nil.
+func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID string, cfg *config.Config, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, events chan<- DaemonEvent) bool {
+	nodeInfo, ok := knownNodes[rawRecipient]
+	if !ok || !nodeInfo.IsPhony {
+		return false
+	}
+	if registry == nil {
+		log.Printf("postman: WARNING: phony node %q matched but registry is nil; dropping\n", rawRecipient)
+		_ = os.Remove(postPath)
+		return true
+	}
+	body, err := os.ReadFile(postPath)
+	if err != nil {
+		log.Printf("postman: WARNING: phony dispatch: failed to read %s: %v\n", filepath.Base(postPath), err)
+		_ = os.Remove(postPath)
+		return true
+	}
+	var originalAt time.Time
+	if t, parseErr := time.Parse("20060102-150405", timestamp); parseErr == nil {
+		originalAt = t
+	} else {
+		originalAt = time.Now()
+	}
+	msg := Message{
+		Body:       string(body),
+		MessageID:  filepath.Base(postPath),
+		SenderID:   sender,
+		OriginalAt: originalAt,
+	}
+	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, rawRecipient, sender, registry, msg); delErr != nil {
+		log.Printf("postman: WARNING: phony dispatch failed %s -> %s: %v\n", sender, rawRecipient, delErr)
+	} else {
+		log.Printf("postman: phony-delivered %s -> %s\n", sender, rawRecipient)
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Phony delivery: %s -> %s", sender, rawRecipient),
+			}
+		}
+	}
+	_ = os.Remove(postPath)
+	return true
+}
+
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
 // Multi-session support: postPath is the full path to the message file in post/ directory.
 // The message will be delivered to the recipient's session directory based on NodeInfo.SessionDir.
@@ -183,7 +233,7 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // Session check: both sender and recipient sessions must be enabled (unless sender is postman)
 // Issue #53: Added events channel parameter for dead-letter notifications
 // Issue #71: Added idleTracker parameter for activity tracking
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -243,6 +293,11 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				return os.Rename(postPath, dst)
 			}
 		}
+	}
+
+	// NOTE: IsPhony check must precede this call — see dispatchPhonyNode.
+	if dispatchPhonyNode(info.To, info.From, info.Timestamp, postPath, contextID, cfg, knownNodes, registry, events) {
+		return nil
 	}
 
 	// Resolve recipient name (Issue #33: session-aware adjacency)
