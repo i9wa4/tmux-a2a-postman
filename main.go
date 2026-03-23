@@ -2090,6 +2090,25 @@ func runShowArchivedMessage(args []string) error {
 // globbing inbox/ directories under baseDir. Full paths are accepted for
 // backward compatibility.
 func runArchive(args []string) error {
+	fs := flag.NewFlagSet("archive", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman archive <filename> [filename...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  Move inbox message files to read/ to mark them as read.")
+		fmt.Fprintln(os.Stderr, "  Accepts plain filenames (located by glob) or full paths (backward compat).")
+		fmt.Fprintln(os.Stderr, "  Typical workflow:")
+		fmt.Fprintln(os.Stderr, "    1. tmux-a2a-postman read          # list inbox file paths")
+		fmt.Fprintln(os.Stderr, "    2. cat /path/to/msg.md            # read the message")
+		fmt.Fprintln(os.Stderr, "    3. tmux-a2a-postman archive msg.md  # mark as read (filename only)")
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	args = fs.Args()
+
 	if len(args) == 0 {
 		return fmt.Errorf("usage: archive <filename> [filename...]")
 	}
@@ -2264,6 +2283,25 @@ func extractSenderFromFile(path string) string {
 // runSend moves a draft file to post/ to submit it for delivery.
 // The argument is a bare filename (no path); the file is located by globbing draft/ directories.
 func runSend(args []string) error {
+	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman send <filename> [filename...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  Move a draft file to post/ to submit it for delivery.")
+		fmt.Fprintln(os.Stderr, "  The filename is matched by glob across all draft/ directories; no path needed.")
+		fmt.Fprintln(os.Stderr, "  Typical workflow:")
+		fmt.Fprintln(os.Stderr, "    1. tmux-a2a-postman create-draft --to <node>  # creates draft, prints filename")
+		fmt.Fprintln(os.Stderr, "    2. $EDITOR draft/<filename>.md                 # edit the draft")
+		fmt.Fprintln(os.Stderr, "    3. tmux-a2a-postman send <filename>.md         # submit for delivery")
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	args = fs.Args()
+
 	if len(args) == 0 {
 		return fmt.Errorf("usage: send <filename> [filename...]")
 	}
