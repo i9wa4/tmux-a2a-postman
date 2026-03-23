@@ -1,0 +1,28 @@
+#!/bin/sh
+# bind-phase-a — §6.1 Phase A: register an unassigned phony-node binding.
+# Creates a Row 1 entry (active=false, no session) in bindings.toml.
+#
+# Usage:
+#   BINDINGS_FILE=<path> \
+#   CHANNEL_ID=<id> \
+#   NODE_NAME=<name> \
+#   CONTEXT_ID=<ctx> \
+#   PERMITTED_SENDERS=<sender1,sender2> \
+#   bind-phase-a
+#
+# All variables are required. BINDINGS_FILE is created if it does not exist.
+
+set -eu
+
+: "${BINDINGS_FILE:?BINDINGS_FILE is required}"
+: "${CHANNEL_ID:?CHANNEL_ID is required}"
+: "${NODE_NAME:?NODE_NAME is required}"
+: "${CONTEXT_ID:?CONTEXT_ID is required}"
+: "${PERMITTED_SENDERS:?PERMITTED_SENDERS is required}"
+
+exec tmux-a2a-postman bind register \
+  --file "$BINDINGS_FILE" \
+  --channel-id "$CHANNEL_ID" \
+  --node-name "$NODE_NAME" \
+  --context-id "$CONTEXT_ID" \
+  --permitted-senders "$PERMITTED_SENDERS"

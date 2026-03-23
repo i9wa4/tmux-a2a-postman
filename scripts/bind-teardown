@@ -1,0 +1,15 @@
+#!/bin/sh
+# bind-teardown — §6.2: deactivate a binding (set active=false).
+# Transitions Rows 2-4 to Rows 5-7; messages are dead-lettered after this.
+#
+# Usage:
+#   BINDINGS_FILE=<path> NODE_NAME=<name> bind-teardown
+
+set -eu
+
+: "${BINDINGS_FILE:?BINDINGS_FILE is required}"
+: "${NODE_NAME:?NODE_NAME is required}"
+
+exec tmux-a2a-postman bind deactivate \
+  --file "$BINDINGS_FILE" \
+  --node-name "$NODE_NAME"

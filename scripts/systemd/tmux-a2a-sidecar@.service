@@ -1,0 +1,25 @@
+# tmux-a2a-sidecar@.service — systemd user unit template for a phony-node sidecar.
+# Phase 1 (Issue #308): supervisory observation only; no autonomous action.
+#
+# Install:
+#   cp tmux-a2a-sidecar@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tmux-a2a-sidecar@<node-name>.service
+#
+# The instance name (%i) is the node_name from bindings.toml.
+# The sidecar binary must be on PATH or set ExecStart to an absolute path.
+
+[Unit]
+Description=tmux-a2a sidecar for phony node %i
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tmux-a2a-sidecar --node-name %i
+Restart=on-failure
+RestartSec=5s
+Environment=XDG_CONFIG_HOME=%h/.config
+Environment=XDG_STATE_HOME=%h/.local/state
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,30 @@
+#!/bin/sh
+# bind-phase-b — §6.1 Phase B: assign a registered binding to a session pane.
+# Transitions an existing Row 1 entry to Rows 2-4 (active=true + session/pane).
+#
+# Usage:
+#   BINDINGS_FILE=<path> \
+#   NODE_NAME=<name> \
+#   SESSION_NAME=<session> \
+#   PANE_TITLE=<title>      (set if matching by pane title)
+#   PANE_NODE_NAME=<node>   (set if matching by pane node name)
+#   bind-phase-b
+#
+# BINDINGS_FILE, NODE_NAME, SESSION_NAME are required.
+# At least one of PANE_TITLE or PANE_NODE_NAME must be non-empty.
+
+set -eu
+
+: "${BINDINGS_FILE:?BINDINGS_FILE is required}"
+: "${NODE_NAME:?NODE_NAME is required}"
+: "${SESSION_NAME:?SESSION_NAME is required}"
+
+PANE_TITLE="${PANE_TITLE:-}"
+PANE_NODE_NAME="${PANE_NODE_NAME:-}"
+
+exec tmux-a2a-postman bind assign \
+  --file "$BINDINGS_FILE" \
+  --node-name "$NODE_NAME" \
+  --session-name "$SESSION_NAME" \
+  --pane-title "$PANE_TITLE" \
+  --pane-node-name "$PANE_NODE_NAME"
