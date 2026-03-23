@@ -5,6 +5,11 @@
 // TODO(Phase 2): implement runtime e2e verification and real sidecar dispatch.
 package plugin
 
+import (
+	"fmt"
+	"regexp"
+)
+
 // PluginEnvelope is the cross-boundary message type passed between the
 // postman core and external-channel sidecar plugins.
 // NOTE: intentionally NOT named Message to avoid collision with
@@ -26,6 +31,24 @@ type Plugin interface {
 	Ack(id string) error
 	// Send delivers an envelope to the external channel.
 	Send(env PluginEnvelope) error
+}
+
+// sendBodyPattern defines the allowed character set for Plugin.Send() payloads.
+// Single-line printable ASCII subset; newlines are excluded by the character class.
+var sendBodyPattern = regexp.MustCompile(`^[A-Za-z0-9 .,\-:_/]+$`)
+
+// ValidateSendBody checks that body is safe to pass to Plugin.Send().
+// Returns a non-nil error (dead-letter reason: body_invalid_pattern) if:
+//   - body exceeds 280 characters (Telegram hard cap)
+//   - body contains characters outside [A-Za-z0-9 .,\-:_/] (includes newlines)
+func ValidateSendBody(body string) error {
+	if len(body) > 280 {
+		return fmt.Errorf("body_invalid_pattern: length %d exceeds 280-char cap", len(body))
+	}
+	if !sendBodyPattern.MatchString(body) {
+		return fmt.Errorf("body_invalid_pattern: body contains disallowed characters or newlines")
+	}
+	return nil
 }
 
 // NoOpPlugin is the Phase 1 stub implementation of Plugin.
