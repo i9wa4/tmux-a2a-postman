@@ -651,10 +651,20 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						if newState {
 							if owner := config.FindSessionOwner(baseDir, cmd.Target, contextID); owner != "" {
 								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, owner)
+								// Fetch fresh sessions list so the TUI reverses the optimistic flip.
+								blockedSessions, _ := discovery.DiscoverAllSessions()
+								blockedNodes := nodes
+								if cached := sharedNodes.Load(); cached != nil {
+									blockedNodes = *cached
+								}
+								blockedSessionList := session.BuildSessionList(blockedNodes, blockedSessions, daemonState.GetConfiguredSessionEnabled)
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
 									Message: fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner),
-									Details: map[string]interface{}{"session": cmd.Target},
+									Details: map[string]interface{}{
+										"session":  cmd.Target,
+										"sessions": blockedSessionList,
+									},
 								}
 								continue
 							}
