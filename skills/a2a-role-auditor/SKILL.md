@@ -85,7 +85,7 @@ Two sub-checks:
 - PASS: template contains instruction to use `send-message` as the primary
   messaging command (e.g., "tmux-a2a-postman send-message --to <node> --body")
 - PASS (also acceptable): template mentions `create-draft` as an advanced
-  alternative for long or cross-context messages
+  alternative for long messages
 - PASS (also verify): template mentions `next` for reading messages
   (read + archive in one step) and/or `count` for inbox status
 - PASS (also verify): template does NOT instruct the agent to use
@@ -107,16 +107,6 @@ Two sub-checks:
   `tmux-a2a-postman archive <filename>`
 - FAIL: template references raw filesystem paths for monitoring (e.g.,
   `ls ~/.local/state/.../waiting/`) — use `get-session-health` instead
-
-**Diplomat sub-check** (applies only when `diplomat_node` is set in
-`postman.toml`):
-
-- PASS: template for the diplomat node documents
-  `--cross-context <contextID>:<node>` syntax when cross-context messaging is
-  part of its responsibilities
-- FAIL: diplomat node template has no mention of `--cross-context` — agents
-  cannot discover the cross-context delivery path from the template alone (#164:
-  `create-draft --cross-context` is the canonical cross-context primitive)
 
 ### 2.8. Check 7 — Pre-Approval Verification
 
