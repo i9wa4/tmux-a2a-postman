@@ -136,24 +136,18 @@ unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has mess
 spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_duration} (threshold: {threshold}). Pane is active — possible infinite loop or runaway computation."
 
 # Common template (prepended to all node templates)
-common_template = """Run 'tmux-a2a-postman --help' for command reference.
-You can ONLY talk to nodes listed in your 'You can talk to:' line.
-
-You MUST reply to every message, no exceptions. If content is large, ACK
-immediately: "ACK: received, reviewing." Then send verdict/result as follow-up.
-Never go silent.
-
-Discard messages where params.tmuxSession != your tmux session name.
-"""
+# common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = "You've got mail. Run `tmux-a2a-postman next` to read it."
+notification_template = """Hello, {node}!  You've got mail.
+Run `tmux-a2a-postman next` to read it.
+"""
 
 # Message footer (appended by `next` command after message content)
 # Variables: {sender} - sender node name extracted from message
-message_footer = """Reply if you have action items, questions, or deliverables.
+message_footer = """You can talk to: {can_talk_to}
+Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages.
-  tmux-a2a-postman send-message --to {sender} --body "<your message>"
 """
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
@@ -203,20 +197,11 @@ protocol: tmux-a2a-postman --help
 
 # Message
 
-How to reply: {reply_command}
-Direct reply: tmux send-keys -t {sender_pane_id} 'your message here' Enter
-
-You can only talk to: {can_talk_to}
-
 ## Role of {recipient}
 
-```
 {template}
-```
 
 ## Content
-
-I'm {sender} from pane {sender_pane_id}
 
 <!-- write here -->
 """

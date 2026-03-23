@@ -1135,7 +1135,7 @@ func runCreateDraft(args []string) error {
 
 	// Append message footer (separated by ---)
 	if cfg.MessageFooter != "" {
-		footer := strings.ReplaceAll(cfg.MessageFooter, "{sender}", sender)
+		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout)
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
 
