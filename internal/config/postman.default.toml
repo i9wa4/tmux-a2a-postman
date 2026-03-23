@@ -99,7 +99,7 @@ activity_window_seconds = 300.0
 edges = []
 
 # Global settings
-# reply_command = "tmux-a2a-postman create-draft --context-id {context_id} --to <recipient>"
+reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
 # ui_node = "messenger"            # TUI target node for daemon alerts
 # diplomat_node = ""               # Cross-context (cross-daemon) node name; empty = disabled (Issue #164)
 # diplomat_allowlist = []          # Accepted source diplomat_node names; empty = allow all (Issue #165)
@@ -136,14 +136,25 @@ unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has mess
 spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_duration} (threshold: {threshold}). Pane is active — possible infinite loop or runaway computation."
 
 # Common template (prepended to all node templates)
-# common_template = ""
+common_template = """Run 'tmux-a2a-postman --help' for command reference.
+You can ONLY talk to nodes listed in your 'You can talk to:' line.
+
+You MUST reply to every message, no exceptions. If content is large, ACK
+immediately: "ACK: received, reviewing." Then send verdict/result as follow-up.
+Never go silent.
+
+Discard messages where params.tmuxSession != your tmux session name.
+"""
 
 # Notification template (when new message arrives)
 notification_template = "You've got mail. Run `tmux-a2a-postman next` to read it."
 
 # Message footer (appended by `next` command after message content)
 # Variables: {sender} - sender node name extracted from message
-# message_footer = ""
+message_footer = """Reply if you have action items, questions, or deliverables.
+No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages.
+  tmux-a2a-postman send-message --to {sender} --body "<your message>"
+"""
 
 # Envelope template for daemon-initiated A2A inbox files (replaces ping_template).
 # Used by: ping (SendPingToNode). NOT used by pane notification hints (see notification_template).
@@ -355,3 +366,4 @@ If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
+dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
