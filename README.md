@@ -40,14 +40,28 @@ graph TD
 
 ### 3.1. Message Flow
 
-1. Agent sends: `tmux-a2a-postman send-message --to worker --body "implement X"`
+Example: orchestrator delegates a task to worker.
+
+1. orchestrator sends:
+   `tmux-a2a-postman send-message --to worker --body "implement X"`
 2. Daemon routes the message (edge rules enforced)
-3. Recipient is notified in their pane
-4. Recipient reads: `tmux-a2a-postman next`
-5. Recipient replies:
+3. worker is notified in their pane
+4. worker reads: `tmux-a2a-postman next`
+5. worker replies:
    `tmux-a2a-postman send-message --to orchestrator --body "DONE: ..."`
 
-### 3.2. Node Discovery
+### 3.2. ui_node
+
+Set `ui_node` to designate a node as the human-facing interface.
+The daemon sends alerts (inbox stagnation, node inactivity, etc.)
+to this node automatically.
+
+```toml
+[postman]
+ui_node = "messenger"
+```
+
+### 3.3. Node Discovery
 
 Agents are discovered by their **tmux pane title**. Set titles to match node
 names defined in the configuration:
