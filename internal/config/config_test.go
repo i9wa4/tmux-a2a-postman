@@ -76,7 +76,7 @@ func TestCreateSessionDirs(t *testing.T) {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
-	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "capture", "waiting"}
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(sessionDir, d)
 		info, err := os.Stat(path)
@@ -207,12 +207,6 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
-	}
-	if cfg.BoilerplateHeartbeatOk != "HEARTBEAT_OK" {
-		t.Errorf("default BoilerplateHeartbeatOk: got %q, want %q", cfg.BoilerplateHeartbeatOk, "HEARTBEAT_OK")
-	}
-	if !strings.Contains(cfg.BoilerplateHowToReply, "{reply_command}") {
-		t.Errorf("default BoilerplateHowToReply: got %q, want string containing {reply_command}", cfg.BoilerplateHowToReply)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)

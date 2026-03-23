@@ -433,10 +433,6 @@ func RunDaemonLoop(
 										continue
 									}
 
-									if err := config.GenerateBoilerplateFiles(nodeInfo.SessionDir, contextID, cfg); err != nil {
-										log.Printf("postman: WARNING: failed to generate boilerplate files for %s: %v\n", nodeName, err)
-									}
-
 									// Add new node's directories to watch
 									nodePostDir := filepath.Join(nodeInfo.SessionDir, "post")
 									nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
@@ -705,10 +701,6 @@ func RunDaemonLoop(
 							registry = nil
 						}
 
-						if err := config.GenerateBoilerplateFiles(sessionDir, contextID, newCfg); err != nil {
-							log.Printf("postman: WARNING: failed to generate boilerplate files on reload: %v\n", err)
-						}
-
 						// Send config update event
 						// Issue #37: Build edge list with activity data
 						edgeList := daemonState.BuildEdgeList(newCfg.Edges, newCfg)
@@ -822,10 +814,6 @@ func RunDaemonLoop(
 							Message: fmt.Sprintf("failed to create session dirs for %s: %v", nodeName, err),
 						}
 						continue
-					}
-
-					if err := config.GenerateBoilerplateFiles(nodeInfo.SessionDir, contextID, cfg); err != nil {
-						log.Printf("postman: WARNING: failed to generate boilerplate files for %s: %v\n", nodeName, err)
 					}
 
 					// Add new node's directories to watch

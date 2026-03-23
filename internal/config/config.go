@@ -76,9 +76,7 @@ type Config struct {
 	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
 	AlertMessageTemplate            string `toml:"alert_message_template"`              // Unified alert message format
 	HeartbeatMessageTemplate        string `toml:"heartbeat_message_template"`          // Unified heartbeat message format
-	BoilerplateHeartbeatOk          string `toml:"boilerplate_heartbeat_ok"`
-	BoilerplateHowToReply           string `toml:"boilerplate_how_to_reply"`
-	MessageFooter                   string `toml:"message_footer"` // Footer appended by `next` command after message content
+	MessageFooter                   string `toml:"message_footer"`                      // Footer appended by `next` command after message content
 
 	// Global settings
 	Edges                      []string `toml:"edges"`
@@ -454,12 +452,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.HeartbeatMessageTemplate != "" {
 		base.HeartbeatMessageTemplate = override.HeartbeatMessageTemplate
-	}
-	if override.BoilerplateHeartbeatOk != "" {
-		base.BoilerplateHeartbeatOk = override.BoilerplateHeartbeatOk
-	}
-	if override.BoilerplateHowToReply != "" {
-		base.BoilerplateHowToReply = override.BoilerplateHowToReply
 	}
 	if override.MessageFooter != "" {
 		base.MessageFooter = override.MessageFooter
@@ -1035,7 +1027,7 @@ func ResolveBaseDir(configBaseDir string) string {
 
 // CreateSessionDirs creates the session directory structure.
 // Legacy signature for backward compatibility with tests.
-// Creates: sessionDir/{inbox,post,draft,read,dead-letter,capture,waiting}
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -1043,7 +1035,6 @@ func CreateSessionDirs(sessionDir string) error {
 		filepath.Join(sessionDir, "draft"),
 		filepath.Join(sessionDir, "read"),
 		filepath.Join(sessionDir, "dead-letter"),
-		filepath.Join(sessionDir, "capture"),
 		filepath.Join(sessionDir, "waiting"),
 	}
 	for _, d := range dirs {

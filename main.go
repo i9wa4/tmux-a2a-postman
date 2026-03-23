@@ -2783,9 +2783,7 @@ func runHelp(args []string) {
 		fmt.Println("          │   └── {node}/     # daemon delivers messages here")
 		fmt.Println("          ├── read/           # agent moves messages here after reading")
 		fmt.Println("          ├── dead-letter/    # unroutable messages land here")
-		fmt.Println("          ├── capture/        # pane capture snapshots")
-		fmt.Println("          ├── waiting/        # per-node waiting state files")
-		fmt.Println("          └── boilerplate/    # auto-generated response templates")
+		fmt.Println("          └── waiting/        # per-node waiting state files")
 	case "config":
 		fmt.Println("Config — key configuration fields")
 		fmt.Println("")

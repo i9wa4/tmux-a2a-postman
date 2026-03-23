@@ -291,15 +291,6 @@ params:
 you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
 """
 
-# Boilerplate response files (auto-generated per session in {session_dir}/boilerplate/)
-boilerplate_heartbeat_ok = "HEARTBEAT_OK"
-boilerplate_how_to_reply = """
-1. {reply_command}
-   Replace `<recipient>` with target node name
-2. Edit the draft content
-3. Send: tmux-a2a-postman send <file>
-"""
-
 # Dropped ball event message template (Issue #82)
 # Variables: {node}, {duration}
 dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
