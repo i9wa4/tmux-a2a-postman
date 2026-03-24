@@ -28,7 +28,7 @@ func TestE2E_MessageFileFormat(t *testing.T) {
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	filename := ts + "-from-worker-to-orchestrator.md"
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: worker\n  to: orchestrator\n  timestamp: " + now.Format("2006-01-02T15:04:05.000000") + "\n---\n\nTest message body\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: worker\n  to: orchestrator\n  timestamp: " + now.Format("2006-01-02T15:04:05.000000") + "\n---\n\nTest message body\n"
 
 	draftPath := filepath.Join(draftDir, filename)
 	if err := os.WriteFile(draftPath, []byte(content), 0o644); err != nil {
@@ -42,9 +42,6 @@ func TestE2E_MessageFileFormat(t *testing.T) {
 	}
 
 	contentStr := string(readContent)
-	if !strings.Contains(contentStr, "method: message/send") {
-		t.Error("missing method field")
-	}
 	if !strings.Contains(contentStr, "from: worker") {
 		t.Error("missing from field")
 	}
@@ -81,7 +78,7 @@ func TestE2E_BasicRouting(t *testing.T) {
 	// Create test message in post/
 	postDir := filepath.Join(sessionDir, "post")
 	filename := "20260201-120000-from-orchestrator-to-worker.md"
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T12:00:00.000000\n---\n\nTest routing message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T12:00:00.000000\n---\n\nTest routing message\n"
 
 	postPath := filepath.Join(postDir, filename)
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {

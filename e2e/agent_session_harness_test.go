@@ -93,7 +93,7 @@ func (h *agentSessionHarness) postAndDeliver(t *testing.T, from, to string, seq 
 	ts := fmt.Sprintf("20260101-%06d", seq)
 	filename := ts + "-from-" + from + "-to-" + to + ".md"
 	content := fmt.Sprintf(
-		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  timestamp: %s\n---\n\ntest body %d\n",
+		"---\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  timestamp: %s\n---\n\ntest body %d\n",
 		h.contextID, from, to,
 		time.Now().Format("2006-01-02T15:04:05"),
 		seq,

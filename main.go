@@ -1023,14 +1023,11 @@ func runCreateDraft(args []string) error {
 	filename := message.GenerateFilename(ts, sender, *to, sessionName)
 	draftPath := filepath.Join(draftDir, filename)
 
-	// Generate unique task ID
-	taskID := fmt.Sprintf("%s-%04x", ts, now.UnixNano()%0xFFFF)
-
 	// Use draft_template from config if available
 	content := cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  taskId: {task_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\nprotocol: tmux-a2a-postman --help\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
 
 	// Build can_talk_to from adjacency
@@ -1063,7 +1060,6 @@ func runCreateDraft(args []string) error {
 	// Build variables map for template expansion
 	vars := map[string]string{
 		"context_id":     resolvedContextID,
-		"task_id":        taskID,
 		"sender":         sender,
 		"recipient":      *to,
 		"timestamp":      now.Format(time.RFC3339),
@@ -2697,7 +2693,6 @@ func runHelp(args []string) {
 		fmt.Println("  Edge       A bidirectional routing rule between two nodes (configured in edges).")
 		fmt.Println("  Envelope   YAML frontmatter at the top of each message file:")
 		fmt.Println("               ---")
-		fmt.Println("               method: message/send")
 		fmt.Println("               params:")
 		fmt.Println("                 from: <sender>")
 		fmt.Println("                 to: <recipient>")
@@ -2750,9 +2745,7 @@ func runHelp(args []string) {
 		fmt.Println("")
 		fmt.Println("Envelope format (YAML frontmatter):")
 		fmt.Println("  ---")
-		fmt.Println("  method: message/send")
 		fmt.Println("  params:")
-		fmt.Println("    taskId: <optional task ID>")
 		fmt.Println("    from: <sender node name>")
 		fmt.Println("    to: <recipient node name>")
 		fmt.Println("    timestamp: <ISO 8601 timestamp>")

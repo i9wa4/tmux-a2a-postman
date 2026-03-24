@@ -147,15 +147,13 @@ Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
 
 # Daemon message template (unified envelope for ping, alert, heartbeat)
-# Pass 1 variables (BuildEnvelope): {context_id}, {task_id}, {from_node}, {node},
+# Pass 1 variables (BuildEnvelope): {context_id}, {from_node}, {node},
 #   {iso_timestamp}, {talks_to_line}, {reply_command}, {session_name}, {session_dir}
 # Pass 2 variables (caller-injected): {message_type}, {heading}, {message},
 #   {role_content}, {alert_type} (alert only)
 daemon_message_template = """---
-method: message/send
 params:
   contextId: {context_id}
-  taskId: {task_id}
   from: {from_node}
   to: {node}
   timestamp: {iso_timestamp}
@@ -182,15 +180,12 @@ How to reply: {reply_command}
 # Variables: {context_id}, {task_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command}
 draft_template = """---
-method: message/send
 params:
   contextId: {context_id}
-  taskId: {task_id}
   from: {sender}
   to: {recipient}
   timestamp: {timestamp}
   tmuxSession: {session_name}
-protocol: tmux-a2a-postman --help
 ---
 
 # Message
@@ -210,7 +205,6 @@ protocol: tmux-a2a-postman --help
 #            {allowed_edges}, {reply_command}, {session_dir}, {filename}
 edge_violation_warning_mode = "compact"  # "compact" or "verbose" (default: compact)
 edge_violation_warning_template = """---
-method: message/send
 params:
   contextId: {context_id}
   from: postman

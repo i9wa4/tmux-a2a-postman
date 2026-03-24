@@ -36,13 +36,12 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	taskID := ts + "-ping"
 
 	// Use simple name in filename (Issue #33: keep filenames simple)
 	filename := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
-	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, taskID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
+	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
 	// Pass 2: inject daemon message variables.
 	roleContent := envelope.BuildRoleContent(cfg, simpleName)

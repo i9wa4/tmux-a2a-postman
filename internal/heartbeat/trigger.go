@@ -78,7 +78,6 @@ func SendHeartbeatTrigger(
 
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
-	taskID := ts + "-hb01"
 	filename := message.GenerateFilename(ts, "postman", llmNode, nodeInfo.SessionName)
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
 	filePath := filepath.Join(postDir, filename)
@@ -95,7 +94,7 @@ func SendHeartbeatTrigger(
 	sourceSessionName := nodeInfo.SessionName
 	scaffolded := envelope.BuildEnvelope(
 		cfg, tmpl, llmNode, "postman",
-		contextID, taskID, filePath,
+		contextID, filePath,
 		nil, adjacency, activeNodes, sourceSessionName,
 		nil, // livenessMap = nil → static adjacency
 	)

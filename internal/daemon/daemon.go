@@ -1158,11 +1158,9 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cf
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
 	postPath := filepath.Join(sessionDir, "post", filename)
-	taskID := ts + "-alert"
-
 	scaffolded := envelope.BuildEnvelope(
 		cfg, tmpl, uiNode, "daemon",
-		contextID, taskID, postPath,
+		contextID, postPath,
 		nil, adjacency, nodes, sourceSessionName,
 		nil,
 	)

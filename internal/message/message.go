@@ -615,7 +615,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", originalFilename)
 
 	content := fmt.Sprintf(
-		"---\nmethod: message/send\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send with corrected recipient: tmux-a2a-postman resend --context-id <id> --file <dead-letter-path>\n",
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send with corrected recipient: tmux-a2a-postman resend --context-id <id> --file <dead-letter-path>\n",
 		contextID,
 		senderNode,
 		now.Format(time.RFC3339),

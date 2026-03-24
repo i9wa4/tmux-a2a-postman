@@ -207,20 +207,16 @@ func (m *DraftModel) submitDraft() error {
 	filename := message.GenerateFilename(ts, m.senderNode, m.selectedNode, sessionName)
 	draftPath := filepath.Join(draftDir, filename)
 
-	// Generate unique task ID
-	taskID := fmt.Sprintf("%s-%04x", ts, now.UnixNano()%0xFFFF)
-
 	// Use draft_template from config if available
 	content := m.cfg.DraftTemplate
 	if content == "" {
 		// Fallback to minimal template
-		content = "---\nmethod: message/send\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n{message}\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {from}\n  to: {to}\n  timestamp: {timestamp}\n---\n\n{message}\n"
 	}
 
 	// Build variables map for template expansion (Issue #38)
 	vars := map[string]string{
 		"context_id":   m.contextID,
-		"task_id":      taskID,
 		"sender":       m.senderNode,
 		"recipient":    m.selectedNode,
 		"timestamp":    now.Format(time.RFC3339),

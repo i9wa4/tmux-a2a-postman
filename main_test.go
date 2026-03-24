@@ -233,7 +233,7 @@ func TestRunListDeadLetters_EmptyDir(t *testing.T) {
 func TestRunListDeadLetters_OneMessage(t *testing.T) {
 	dlDir := t.TempDir()
 	filename := "20260322-100000-s0000-from-sender-node-to-recipient-node-dl-unknown.md"
-	if err := os.WriteFile(filepath.Join(dlDir, filename), []byte("---\nmethod: message/send\n---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dlDir, filename), []byte("---\nparams:\n  from: sender-node\n  to: recipient-node\n---\n"), 0o644); err != nil {
 		t.Fatalf("writing file: %v", err)
 	}
 

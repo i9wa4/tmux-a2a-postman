@@ -110,7 +110,7 @@ func TestDeliverMessage(t *testing.T) {
 	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-030000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	// Place a message for unknown recipient (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-030000-from-orchestrator-to-unknown-node.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: unknown-node\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: unknown-node\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestRouting_Allowed(t *testing.T) {
 	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-040000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestRouting_Denied(t *testing.T) {
 	// Place a message in post/ (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-040000-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestPONG_Handling(t *testing.T) {
 	// Place a PONG message (to postman) — with valid frontmatter for envelope validation (Issue #161)
 	filename := "20260201-050000-from-worker-to-postman.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: worker\n  to: postman\n  timestamp: 2026-02-01T05:00:00Z\n---\n\nPONG\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: worker\n  to: postman\n  timestamp: 2026-02-01T05:00:00Z\n---\n\nPONG\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 
 	filename := "20260201-030000-from-alice-to-bob.md"
 	postPath := filepath.Join(senderDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: alice\n  to: bob\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ncontent\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: alice\n  to: bob\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ncontent\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -531,10 +531,8 @@ func TestPostmanMessage_NoHoldingState(t *testing.T) {
 	// Create postman → worker message in post/
 	filename := "20260209-120000-from-postman-to-worker.md"
 	content := `---
-method: message/send
 params:
   contextId: test-ctx
-  taskId: 12345
   from: postman
   to: worker
   timestamp: 2026-02-09T12:00:00+09:00
@@ -598,7 +596,7 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	filename := "20260201-040000-from-postman-to-bob.md"
 	postPath := filepath.Join(senderDir, "post", filename)
 	// postman sender bypasses adjacency and envelope checks
-	content := "---\nmethod: message/send\nparams:\n  contextId: test-ctx\n  from: postman\n  to: bob\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ncontent\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: postman\n  to: bob\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ncontent\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -809,7 +807,7 @@ func TestDeliverMessage_PhonyDispatch(t *testing.T) {
 
 	filename := "20260201-030000-from-orchestrator-to-channel-a.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nmethod: message/send\nparams:\n  contextId: ctx-01\n  from: orchestrator\n  to: channel-a\n  timestamp: 2026-02-01T03:00:00Z\n---\n\nphony message\n"
+	content := "---\nparams:\n  contextId: ctx-01\n  from: orchestrator\n  to: channel-a\n  timestamp: 2026-02-01T03:00:00Z\n---\n\nphony message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
