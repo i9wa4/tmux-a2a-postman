@@ -79,6 +79,8 @@ func main() {
 	contextID := fs.String("context-id", "", "context ID (auto-generated if not specified)")
 	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
 	logFilePath := fs.String("log-file", "", "log file path (defaults to $XDG_STATE_HOME/tmux-a2a-postman/{contextID}/postman.log)")
+	globalBaseDir := fs.String("base-dir", "", "override state directory (sets POSTMAN_HOME)")
+	globalStateHome := fs.String("state-home", "", "override XDG_STATE_HOME")
 
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman [options] [command]")
@@ -102,12 +104,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  get-session-health         Print session health per node")
 		fmt.Fprintln(os.Stderr, "  read                       List inbox message paths")
 		fmt.Fprintln(os.Stderr, "  archive <filename> [filename...]   Mark inbox messages as read (advanced)")
+		fmt.Fprintln(os.Stderr, "  schema [command]           Print JSON Schema for config or command options")
 		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Global Flags:")
+		fmt.Fprintln(os.Stderr, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
+		fmt.Fprintln(os.Stderr, "  --state-home <path>        Override XDG_STATE_HOME")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman start                               # Start daemon")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send-message --to worker --body \"DONE\"  # Send message")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman next                                # Read next message")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman next --json                         # Read next message as JSON")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman schema send-message                 # Show send-message JSON Schema")
+		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --base-dir /tmp/test count          # Override state directory")
 		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging                      # Messaging guide")
 	}
 
@@ -116,6 +125,15 @@ func main() {
 			return
 		}
 		os.Exit(1)
+	}
+
+	// Sub-feature (d): inject flag values into env before subcommand dispatch
+	// so all config.ResolveBaseDir / config.ResolveXDGStateHome call sites pick them up.
+	if *globalBaseDir != "" {
+		os.Setenv("POSTMAN_HOME", *globalBaseDir)
+	}
+	if *globalStateHome != "" {
+		os.Setenv("XDG_STATE_HOME", *globalStateHome)
 	}
 
 	if *showVersion {
@@ -244,6 +262,11 @@ func main() {
 	case "bind":
 		if err := bindcmd.Run(args); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ postman bind: %v\n", err)
+			os.Exit(1)
+		}
+	case "schema":
+		if err := runSchema(args); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ postman schema: %v\n", err)
 			os.Exit(1)
 		}
 	case "help":
@@ -916,6 +939,7 @@ func runCreateDraft(args []string) error {
 	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
 	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1121,11 +1145,26 @@ func runCreateDraft(args []string) error {
 		if err := os.Rename(draftPath, dst); err != nil {
 			return fmt.Errorf("sending draft: %w", err)
 		}
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Sent string `json:"sent"`
+			}{Sent: filename})
+		}
 		fmt.Printf("Sent: %s\n", filename)
 		return nil
 	} else if *body != "" {
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Draft string `json:"draft"`
+			}{Draft: filename})
+		}
 		fmt.Printf("Draft created: %s\n\nNext steps:\n  1. tmux-a2a-postman send %s\n", filename, filename)
 		return nil
+	}
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Draft string `json:"draft"`
+		}{Draft: filename})
 	}
 	fmt.Printf("Draft created: %s\n\nNext steps:\n  1. Edit ## Content section in the draft file\n  2. tmux-a2a-postman send %s\n", filename, filename)
 	return nil
@@ -1141,6 +1180,7 @@ func runSendMessage(args []string) error {
 	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
 	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1171,6 +1211,9 @@ func runSendMessage(args []string) error {
 	}
 	if *idempotencyKey != "" {
 		newArgs = append(newArgs, "--idempotency-key", *idempotencyKey)
+	}
+	if *jsonOut {
+		newArgs = append(newArgs, "--json")
 	}
 	return runCreateDraft(newArgs)
 }
@@ -1265,6 +1308,12 @@ func isShellCommand(cmd string) bool {
 // Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
 // Issue #312: Filter panes by pane_current_command; fix session index stability.
 func runGetSessionStatusOneline(args []string) error {
+	fs := flag.NewFlagSet("get-session-status-oneline", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	// Load config to get base directory
 	cfg, err := config.LoadConfig("")
 	if err != nil {
@@ -1469,7 +1518,13 @@ func runGetSessionStatusOneline(args []string) error {
 	}
 
 	if len(output) > 0 {
-		fmt.Println(strings.Join(output, " "))
+		statusStr := strings.Join(output, " ")
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Status string `json:"status"`
+			}{Status: statusStr})
+		}
+		fmt.Println(statusStr)
 	}
 	return nil
 }
@@ -1682,22 +1737,46 @@ func resolveInboxPath(args []string) (string, error) {
 
 // runCount prints the number of unread inbox messages for the current node (#196).
 func runCount(args []string) error {
-	inboxPath, err := resolveInboxPath(args)
+	fs := flag.NewFlagSet("count", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
 		return err
 	}
 	msgs := message.ScanInboxMessages(inboxPath)
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Count int `json:"count"`
+		}{Count: len(msgs)})
+	}
 	fmt.Println(len(msgs))
 	return nil
 }
 
 // runRead lists inbox message file paths for the current node (#196).
 func runRead(args []string) error {
-	inboxPath, err := resolveInboxPath(args)
+	fs := flag.NewFlagSet("read", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
 		return err
 	}
 	msgs := message.ScanInboxMessages(inboxPath)
+	if *jsonOut {
+		files := make([]string, len(msgs))
+		for i, msg := range msgs {
+			files[i] = msg.Filename
+		}
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Files []string `json:"files"`
+		}{Files: files})
+	}
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -1755,7 +1834,12 @@ func runListArchivedMessages(args []string) error {
 	// Derive read/ path from resolveInboxPath result
 	// inboxPath = {base}/{contextID}/{session}/inbox/{node}
 	// readPath  = {base}/{contextID}/{session}/read/
-	inboxPath, err := resolveInboxPath(args)
+	fs := flag.NewFlagSet("list-archived-messages", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
 		return err
 	}
@@ -1764,6 +1848,11 @@ func runListArchivedMessages(args []string) error {
 	entries, err := os.ReadDir(readPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if *jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(struct {
+					Messages []archivedMessageJSON `json:"messages"`
+				}{Messages: []archivedMessageJSON{}})
+			}
 			return nil // no read/ dir yet — empty output is valid
 		}
 		return fmt.Errorf("reading archived messages: %w", err)
@@ -1775,10 +1864,31 @@ func runListArchivedMessages(args []string) error {
 		}
 	}
 	sort.Strings(names)
+	if *jsonOut {
+		msgs := make([]archivedMessageJSON, 0, len(names))
+		for _, name := range names {
+			info, err := message.ParseMessageFilename(name)
+			if err != nil {
+				msgs = append(msgs, archivedMessageJSON{File: name})
+			} else {
+				msgs = append(msgs, archivedMessageJSON{File: name, From: info.From, To: info.To})
+			}
+		}
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Messages []archivedMessageJSON `json:"messages"`
+		}{Messages: msgs})
+	}
 	for _, name := range names {
 		fmt.Println(name)
 	}
 	return nil
+}
+
+// archivedMessageJSON holds JSON-serializable fields for an archived message.
+type archivedMessageJSON struct {
+	File string `json:"file"`
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 // listDeadLettersFromDir prints dead-letter messages from a directory path (Issue #287).
@@ -1843,12 +1953,43 @@ func findOldestDeadLetterFile(deadLetterDir string) (string, bool, error) {
 
 // runListDeadLetters prints dead-letter messages without exposing filenames (Issue #287).
 func runListDeadLetters(args []string) error {
-	inboxPath, err := resolveInboxPath(args)
+	fs := flag.NewFlagSet("list-dead-letters", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
 		return err
 	}
 	deadLetterPath := filepath.Join(filepath.Dir(filepath.Dir(inboxPath)), "dead-letter")
+	if *jsonOut {
+		return listDeadLettersJSON(deadLetterPath)
+	}
 	return listDeadLettersFromDir(deadLetterPath)
+}
+
+// listDeadLettersJSON outputs dead-letter filenames as JSON ({"files": [...]}).
+func listDeadLettersJSON(deadLetterPath string) error {
+	entries, err := os.ReadDir(deadLetterPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Files []string `json:"files"`
+			}{Files: []string{}})
+		}
+		return fmt.Errorf("reading dead-letter messages: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Files []string `json:"files"`
+	}{Files: names})
 }
 
 // runSupervisorDrain implements the Phase 3 → Phase 2 rollback drain procedure
@@ -2175,6 +2316,7 @@ func runNext(args []string) error {
 	fs := flag.NewFlagSet("next", flag.ContinueOnError)
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2224,6 +2366,22 @@ func runNext(args []string) error {
 		}
 	}
 
+	if *jsonOut {
+		parsed := parseMessageContent(string(data), msgs[0].Filename)
+		if !*peek {
+			// Archive before returning JSON
+			readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
+			if err := os.MkdirAll(readDir, 0o700); err != nil {
+				return fmt.Errorf("creating read directory: %w", err)
+			}
+			dst := filepath.Join(readDir, msgs[0].Filename)
+			if err := os.Rename(abs, dst); err != nil {
+				return fmt.Errorf("archiving message: %w", err)
+			}
+		}
+		return json.NewEncoder(os.Stdout).Encode(parsed)
+	}
+
 	fmt.Fprintf(os.Stderr, "[1/%d unread]\n", len(msgs))
 	fmt.Print(string(data))
 
@@ -2247,6 +2405,48 @@ func runNext(args []string) error {
 		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil
+}
+
+// messageJSON holds JSON-serializable fields for a message (used by next --json).
+type messageJSON struct {
+	ID        string `json:"id"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Timestamp string `json:"timestamp"`
+	Body      string `json:"body"`
+}
+
+// parseMessageContent extracts JSON-friendly fields from raw message file content.
+// Parses YAML frontmatter for from/to/timestamp; body is content after frontmatter.
+func parseMessageContent(content, filename string) messageJSON {
+	result := messageJSON{ID: filename}
+	lines := strings.Split(content, "\n")
+	inFrontMatter := false
+	fmEnd := -1
+	for i, line := range lines {
+		if line == "---" {
+			if !inFrontMatter {
+				inFrontMatter = true
+				continue
+			}
+			fmEnd = i
+			break
+		}
+		if !inFrontMatter {
+			continue
+		}
+		if strings.HasPrefix(line, "  from: ") {
+			result.From = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
+		} else if strings.HasPrefix(line, "  to: ") {
+			result.To = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
+		} else if strings.HasPrefix(line, "  timestamp: ") {
+			result.Timestamp = strings.TrimSpace(strings.TrimPrefix(line, "  timestamp: "))
+		}
+	}
+	if fmEnd >= 0 && fmEnd+1 < len(lines) {
+		result.Body = strings.TrimSpace(strings.Join(lines[fmEnd+1:], "\n"))
+	}
+	return result
 }
 
 // extractSenderFromFile reads the YAML front matter of a message file and returns
@@ -2459,6 +2659,7 @@ func runResend(args []string) error {
 	file := fs.String("file", "", "path to dead-letter file")
 	oldest := fs.Bool("oldest", false, "resend the oldest dead-letter (no path required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2529,6 +2730,11 @@ func runResend(args []string) error {
 		return fmt.Errorf("moving to post/: %w", err)
 	}
 
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Resent string `json:"resent"`
+		}{Resent: baseName})
+	}
 	fmt.Printf("Resent: %s\n", baseName)
 	return nil
 }
@@ -2539,6 +2745,7 @@ func runGetContextID(args []string) error {
 	fs := flag.NewFlagSet("get-context-id", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2563,6 +2770,11 @@ func runGetContextID(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			ContextID string `json:"context_id"`
+		}{ContextID: contextID})
+	}
 	fmt.Println(contextID)
 	return nil
 }
@@ -2571,7 +2783,13 @@ func runGetContextID(args []string) error {
 // NOTE: always uses auto-detection; does not accept --config.
 // If the daemon was started with an explicit --config, the project-local nodes
 // directory shown here may differ from what the running daemon uses.
-func runGetNodesDir(_ []string) error {
+func runGetNodesDir(args []string) error {
+	fs := flag.NewFlagSet("get-nodes-dir", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	xdgPath := config.ResolveConfigPath()
 	xdgNodesDir := config.ResolveNodesDir(xdgPath)
 	localConfigPath := ""
@@ -2579,6 +2797,12 @@ func runGetNodesDir(_ []string) error {
 		localConfigPath, _ = config.ResolveLocalConfigPath(cwd, xdgPath)
 	}
 	localNodesDir := config.ResolveNodesDir(localConfigPath)
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			XDG          string `json:"xdg"`
+			ProjectLocal string `json:"project_local"`
+		}{XDG: xdgNodesDir, ProjectLocal: localNodesDir})
+	}
 	if xdgNodesDir != "" {
 		fmt.Printf("xdg: %s\n", xdgNodesDir)
 	}
@@ -2666,6 +2890,193 @@ func runStop(args []string) error {
 		"daemon (pid %d) did not stop within %ds; try: kill -9 %d",
 		pid, *timeoutSecs, pid,
 	)
+}
+
+// runSchema prints JSON Schema for the postman config or a specific command's options.
+//
+//	tmux-a2a-postman schema              # postman.toml config schema
+//	tmux-a2a-postman schema send-message # send-message options schema
+func runSchema(args []string) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+
+	target := ""
+	if len(args) > 0 {
+		target = args[0]
+	}
+
+	type schemaProperty struct {
+		Type        string `json:"type"`
+		Description string `json:"description"`
+	}
+	type jsonSchema struct {
+		Schema     string                    `json:"$schema"`
+		Title      string                    `json:"title"`
+		Type       string                    `json:"type"`
+		Properties map[string]schemaProperty `json:"properties"`
+		Required   []string                  `json:"required,omitempty"`
+	}
+
+	switch target {
+	case "":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "postman.toml config",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"scan_interval_seconds":     {Type: "integer", Description: "Inbox scan interval in seconds"},
+				"enter_delay_milliseconds":  {Type: "integer", Description: "Delay before entering a pane in milliseconds"},
+				"tmux_timeout_seconds":      {Type: "integer", Description: "Timeout for tmux commands in seconds"},
+				"startup_delay_seconds":     {Type: "integer", Description: "Delay before starting the daemon in seconds"},
+				"reminder_interval_seconds": {Type: "integer", Description: "Interval between dropped-ball reminders in seconds"},
+				"edges":                     {Type: "array", Description: "List of 'node-a,node-b' routing edges"},
+				"ui_node":                   {Type: "string", Description: "Node name for the postman TUI pane"},
+				"base_dir":                  {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
+			},
+		})
+	case "send-message", "send":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "send-message options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"to":              {Type: "string", Description: "Recipient node name (required)"},
+				"body":            {Type: "string", Description: "Message body (required)"},
+				"context-id":      {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":         {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":          {Type: "string", Description: "Config file path (optional)"},
+				"from":            {Type: "string", Description: "Phony sender node name (sidecar use only)"},
+				"bindings":        {Type: "string", Description: "Path to bindings.toml (required with --from)"},
+				"idempotency-key": {Type: "string", Description: "Idempotency token for deduplication"},
+				"json":            {Type: "boolean", Description: "Output JSON: {\"sent\": \"filename.md\"}"},
+			},
+			Required: []string{"to", "body"},
+		})
+	case "next":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "next options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"peek":       {Type: "boolean", Description: "Read without archiving"},
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"id\",\"from\",\"to\",\"body\",\"timestamp\"}"},
+			},
+		})
+	case "count":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "count options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"count\": N}"},
+			},
+		})
+	case "create-draft":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "create-draft options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"to":              {Type: "string", Description: "Recipient node name (required)"},
+				"body":            {Type: "string", Description: "Message body"},
+				"send":            {Type: "boolean", Description: "Send immediately after creating draft"},
+				"context-id":      {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":         {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":          {Type: "string", Description: "Config file path (optional)"},
+				"from":            {Type: "string", Description: "Phony sender node name (sidecar use only)"},
+				"bindings":        {Type: "string", Description: "Path to bindings.toml (required with --from)"},
+				"idempotency-key": {Type: "string", Description: "Idempotency token for deduplication"},
+				"json":            {Type: "boolean", Description: "Output JSON: {\"draft\":\"filename.md\"} or {\"sent\":\"filename.md\"}"},
+			},
+			Required: []string{"to"},
+		})
+	case "read":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "read options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
+			},
+		})
+	case "list-dead-letters":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "list-dead-letters options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
+			},
+		})
+	case "list-archived-messages":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "list-archived-messages options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"file\",\"from\",\"to\"},...]}"},
+			},
+		})
+	case "resend":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "resend options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"file":       {Type: "string", Description: "Path to dead-letter file"},
+				"oldest":     {Type: "boolean", Description: "Resend the oldest dead-letter"},
+				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
+				"config":     {Type: "string", Description: "Config file path (optional)"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"resent\": \"filename.md\"}"},
+			},
+		})
+	case "get-context-id":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "get-context-id options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"session": {Type: "string", Description: "tmux session name (optional, auto-detected)"},
+				"config":  {Type: "string", Description: "Config file path (optional)"},
+				"json":    {Type: "boolean", Description: "Output JSON: {\"context_id\": \"...\"}"},
+			},
+		})
+	case "get-nodes-dir":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "get-nodes-dir options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"json": {Type: "boolean", Description: "Output JSON: {\"xdg\": \"...\", \"project_local\": \"...\"}"},
+			},
+		})
+	case "get-session-status-oneline":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "get-session-status-oneline options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[1]●●●●\"}"},
+			},
+		})
+	default:
+		return fmt.Errorf("unknown command %q; run 'tmux-a2a-postman schema' for config schema", target)
+	}
 }
 
 func runHelp(args []string) {
