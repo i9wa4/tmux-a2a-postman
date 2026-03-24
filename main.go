@@ -1358,6 +1358,11 @@ func runGetSessionStatusOneline(args []string) error {
 	}
 
 	if len(liveStateFiles) == 0 {
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Status string `json:"status"`
+			}{Status: ""})
+		}
 		return nil // no live context found
 	}
 
@@ -1427,7 +1432,11 @@ func runGetSessionStatusOneline(args []string) error {
 	if err != nil {
 		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
-			// No tmux sessions - output nothing
+			if *jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(struct {
+					Status string `json:"status"`
+				}{Status: ""})
+			}
 			return nil
 		}
 		return fmt.Errorf("listing sessions: %w", err)
@@ -1449,7 +1458,11 @@ func runGetSessionStatusOneline(args []string) error {
 		sessions = append(sessions, sessionEntry{index: strings.TrimPrefix(parts[0], "$"), name: parts[1]})
 	}
 	if len(sessions) == 0 {
-		// No sessions - output nothing
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Status string `json:"status"`
+			}{Status: ""})
+		}
 		return nil
 	}
 
@@ -1891,6 +1904,14 @@ type archivedMessageJSON struct {
 	To   string `json:"to,omitempty"`
 }
 
+// deadLetterMessageJSON holds JSON-serializable metadata for a dead-letter message.
+// Does not expose raw filenames (#287 opacity).
+type deadLetterMessageJSON struct {
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
 // listDeadLettersFromDir prints dead-letter messages from a directory path (Issue #287).
 // Exported for testing. Output goes to stdout; empty-dir message goes to stderr.
 func listDeadLettersFromDir(deadLetterPath string) error {
@@ -1969,27 +1990,40 @@ func runListDeadLetters(args []string) error {
 	return listDeadLettersFromDir(deadLetterPath)
 }
 
-// listDeadLettersJSON outputs dead-letter filenames as JSON ({"files": [...]}).
+// listDeadLettersJSON outputs dead-letter message metadata as JSON.
+// Emits {"messages": [{"from","to","timestamp"},...]} — never exposes raw filenames (#287).
 func listDeadLettersJSON(deadLetterPath string) error {
+	emptyResult := func() error {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Messages []deadLetterMessageJSON `json:"messages"`
+		}{Messages: []deadLetterMessageJSON{}})
+	}
 	entries, err := os.ReadDir(deadLetterPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return json.NewEncoder(os.Stdout).Encode(struct {
-				Files []string `json:"files"`
-			}{Files: []string{}})
+			return emptyResult()
 		}
 		return fmt.Errorf("reading dead-letter messages: %w", err)
 	}
-	var names []string
+	names := make([]string, 0)
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
 			names = append(names, e.Name())
 		}
 	}
 	sort.Strings(names)
+	msgs := make([]deadLetterMessageJSON, 0, len(names))
+	for _, name := range names {
+		info, err := message.ParseMessageFilename(name)
+		if err != nil {
+			msgs = append(msgs, deadLetterMessageJSON{})
+		} else {
+			msgs = append(msgs, deadLetterMessageJSON{From: info.From, To: info.To, Timestamp: info.Timestamp})
+		}
+	}
 	return json.NewEncoder(os.Stdout).Encode(struct {
-		Files []string `json:"files"`
-	}{Files: names})
+		Messages []deadLetterMessageJSON `json:"messages"`
+	}{Messages: msgs})
 }
 
 // runSupervisorDrain implements the Phase 3 → Phase 2 rollback drain procedure
@@ -2332,6 +2366,9 @@ func runNext(args []string) error {
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct{}{})
+		}
 		fmt.Fprintln(os.Stderr, "No unread messages.")
 		return nil
 	}
@@ -2707,6 +2744,9 @@ func runResend(args []string) error {
 			return err
 		}
 		if !ok {
+			if *jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(struct{}{})
+			}
 			fmt.Fprintln(os.Stderr, "No dead-letter messages.")
 			return nil
 		}
@@ -2960,7 +3000,6 @@ func runSchema(args []string) error {
 			Properties: map[string]schemaProperty{
 				"peek":       {Type: "boolean", Description: "Read without archiving"},
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
 				"json":       {Type: "boolean", Description: "Output JSON: {\"id\",\"from\",\"to\",\"body\",\"timestamp\"}"},
 			},
@@ -2972,7 +3011,6 @@ func runSchema(args []string) error {
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
 				"json":       {Type: "boolean", Description: "Output JSON: {\"count\": N}"},
 			},
@@ -3003,7 +3041,6 @@ func runSchema(args []string) error {
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
 				"json":       {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
 			},
@@ -3015,9 +3052,8 @@ func runSchema(args []string) error {
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"from\",\"to\",\"timestamp\"},...]}"},
 			},
 		})
 	case "list-archived-messages":
@@ -3027,7 +3063,6 @@ func runSchema(args []string) error {
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":    {Type: "string", Description: "tmux session name (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
 				"json":       {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"file\",\"from\",\"to\"},...]}"},
 			},
