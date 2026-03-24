@@ -1538,6 +1538,12 @@ func runGetSessionStatusOneline(args []string) error {
 			}{Status: statusStr})
 		}
 		fmt.Println(statusStr)
+		return nil
+	}
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Status string `json:"status"`
+		}{Status: ""})
 	}
 	return nil
 }
@@ -2014,7 +2020,8 @@ func listDeadLettersJSON(deadLetterPath string) error {
 	sort.Strings(names)
 	msgs := make([]deadLetterMessageJSON, 0, len(names))
 	for _, name := range names {
-		info, err := message.ParseMessageFilename(name)
+		cleanName := message.StripDeadLetterSuffix(name)
+		info, err := message.ParseMessageFilename(cleanName)
 		if err != nil {
 			msgs = append(msgs, deadLetterMessageJSON{})
 		} else {
@@ -2383,6 +2390,9 @@ func runNext(args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
+				if *jsonOut {
+					return json.NewEncoder(os.Stdout).Encode(struct{}{})
+				}
 				fmt.Fprintln(os.Stderr, "No unread messages.")
 				return nil
 			}
@@ -2771,9 +2781,12 @@ func runResend(args []string) error {
 	}
 
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(struct {
-			Resent string `json:"resent"`
-		}{Resent: baseName})
+		cleanForParse := message.StripDeadLetterSuffix(baseName)
+		info, err := message.ParseMessageFilename(cleanForParse)
+		if err != nil {
+			return json.NewEncoder(os.Stdout).Encode(deadLetterMessageJSON{})
+		}
+		return json.NewEncoder(os.Stdout).Encode(deadLetterMessageJSON{From: info.From, To: info.To, Timestamp: info.Timestamp})
 	}
 	fmt.Printf("Resent: %s\n", baseName)
 	return nil
