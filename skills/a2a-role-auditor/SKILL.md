@@ -32,9 +32,9 @@ patches):
 **Template-level confirmed** (node exists, edges correct, but behavior is
 wrong):
 
-- Proceed to the 11-check audit below.
+- Proceed to the 10-check audit below.
 
-## 2. 11-Check Audit
+## 2. 10-Check Audit
 
 ### 2.1. Pre-check: File Existence (binary)
 
@@ -223,7 +223,7 @@ as MINOR (unnecessary duplication, not a bug):
    templates. Extract edges and build adjacency map.
 2. Read node definitions from `postman.md` (h2 backtick sections)
    and/or `nodes/*.toml` / `nodes/*.md`. Project-local overrides XDG.
-3. For each node: run Pre-check, then Checks 1–9, B-I8, and B-I9 in order
+3. For each node: run Pre-check, then Checks 1–8 and B-I8 in order
 4. Produce findings report sorted by severity
 5. Propose concrete patch text for every finding
 6. Present to user for feedback; iterate until approved
