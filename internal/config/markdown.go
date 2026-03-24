@@ -135,11 +135,11 @@ func stripHeadingNumber(heading string) string {
 	return strings.TrimSpace(strings.TrimLeft(s, "0123456789. "))
 }
 
-// extractNodeFields extracts role and on_join from reserved ### `key` sections
-// within a node body. Returns the field values and the body with reserved
-// sections stripped. If no reserved sections are found, returns empty strings
-// and the original body unchanged.
-func extractNodeFields(body string) (role, onJoin, template string) {
+// extractNodeFields extracts role from reserved ### `key` sections within a
+// node body. Returns the field value and the body with reserved sections
+// stripped. If no reserved sections are found, returns an empty string and the
+// original body unchanged.
+func extractNodeFields(body string) (role, template string) {
 	lines := strings.Split(body, "\n")
 
 	type reserved struct {
@@ -156,7 +156,7 @@ func extractNodeFields(body string) (role, onJoin, template string) {
 		}
 		heading := strings.TrimSpace(line[4:]) // strip "### "
 		name := extractBacktickName(heading)
-		if name != "role" && name != "on_join" {
+		if name != "role" {
 			continue
 		}
 		// Find body end: next heading (## or ###) or EOF
@@ -171,7 +171,7 @@ func extractNodeFields(body string) (role, onJoin, template string) {
 	}
 
 	if len(sections) == 0 {
-		return "", "", body
+		return "", body
 	}
 
 	// Build exclude set and extract values
@@ -190,7 +190,7 @@ func extractNodeFields(body string) (role, onJoin, template string) {
 			kept = append(kept, line)
 		}
 	}
-	return values["role"], values["on_join"], strings.TrimSpace(strings.Join(kept, "\n"))
+	return values["role"], strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // reservedH2Names maps backtick-wrapped h2 names to their canonical section keys.
@@ -281,8 +281,8 @@ func stripFrontmatter(content string) string {
 // reply_command → Config.ReplyCommand.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
-// Node h2 sections: "## `name`" → node template with ### `role`/### `on_join`
-// h3 fields (falls back to per-node frontmatter for backward compat).
+// Node h2 sections: "## `name`" → node template with ### `role` h3 field
+// (falls back to per-node frontmatter for backward compat).
 func loadMarkdownConfig(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -331,26 +331,21 @@ func loadMarkdownConfig(path string) (*Config, error) {
 			continue
 		}
 		// Try h3 reserved sections first, fall back to frontmatter
-		role, onJoin, tmpl := extractNodeFields(body)
-		if role == "" || onJoin == "" {
+		role, tmpl := extractNodeFields(body)
+		if role == "" {
 			fm := parseFrontmatter(body)
-			if role == "" {
-				role = fm["role"]
-			}
-			if onJoin == "" {
-				onJoin = fm["on_join"]
-			}
+			role = fm["role"]
 		}
 		// Strip frontmatter from template (harmless if absent)
 		tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
-		cfg.Nodes[key] = NodeConfig{Template: tmpl, OnJoin: onJoin, Role: role}
+		cfg.Nodes[key] = NodeConfig{Template: tmpl, Role: role}
 	}
 
 	return cfg, nil
 }
 
 // loadNodeMarkdownFile parses a nodes/name.md split-file format into a NodeConfig.
-// Uses ### `role`/### `on_join` h3 sections (preferred) with frontmatter fallback.
+// Uses ### `role` h3 section (preferred) with frontmatter fallback.
 // The remaining body (after stripping reserved sections and frontmatter) becomes
 // NodeConfig.Template. Returns: nodeName (filename without .md extension),
 // NodeConfig, error.
@@ -363,18 +358,13 @@ func loadNodeMarkdownFile(path string) (string, NodeConfig, error) {
 	nodeName := strings.TrimSuffix(filepath.Base(path), ".md")
 
 	// Try h3 reserved sections first, fall back to frontmatter
-	role, onJoin, tmpl := extractNodeFields(content)
-	if role == "" || onJoin == "" {
+	role, tmpl := extractNodeFields(content)
+	if role == "" {
 		fm := parseFrontmatter(content)
-		if role == "" {
-			role = fm["role"]
-		}
-		if onJoin == "" {
-			onJoin = fm["on_join"]
-		}
+		role = fm["role"]
 	}
 	// Strip frontmatter from template (harmless if absent)
 	tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
 
-	return nodeName, NodeConfig{Template: tmpl, OnJoin: onJoin, Role: role}, nil
+	return nodeName, NodeConfig{Template: tmpl, Role: role}, nil
 }

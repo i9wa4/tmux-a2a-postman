@@ -1370,10 +1370,11 @@ func runGetSessionStatusOneline(args []string) error {
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
-	// Get all tmux sessions with their stable index (Issue #312: #{session_index}
+	// Get all tmux sessions with their stable index (Issue #312, #349: #{session_id}
 	// is assigned at creation time and does not shift when other sessions are removed,
-	// unlike a loop counter over the output slice).
-	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_index} #{session_name}").Output()
+	// unlike a loop counter over the output slice. #{session_index} is unsupported on
+	// tmux 3.6a; #{session_id} (e.g. $0, $70) works on 3.6a and newer versions.
+	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_id} #{session_name}").Output()
 	if err != nil {
 		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
@@ -1396,7 +1397,7 @@ func runGetSessionStatusOneline(args []string) error {
 		if len(parts) != 2 || parts[1] == "" {
 			continue
 		}
-		sessions = append(sessions, sessionEntry{index: parts[0], name: parts[1]})
+		sessions = append(sessions, sessionEntry{index: strings.TrimPrefix(parts[0], "$"), name: parts[1]})
 	}
 	if len(sessions) == 0 {
 		// No sessions - output nothing
@@ -2803,7 +2804,6 @@ func runHelp(args []string) {
 		fmt.Println("  [node-name]")
 		fmt.Println("  role = \"description of node role\"")
 		fmt.Println("  template = \"role template content\"")
-		fmt.Println("  on_join = \"message sent when node joins\"")
 	case "commands":
 		fmt.Println("Commands — detailed command reference")
 		fmt.Println("")

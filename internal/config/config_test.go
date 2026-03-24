@@ -116,17 +116,14 @@ edges = ["orchestrator --> worker", "worker --> observer"]
 [orchestrator]
 template = "orchestrator template"
 role = "coordinator"
-on_join = ""
 
 [worker]
 template = "worker template"
 role = "worker"
-on_join = ""
 
 [observer]
 template = "observer template"
 role = "observer"
-on_join = ""
 `
 
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -1227,7 +1224,6 @@ func TestHeartbeatNodesExclusion(t *testing.T) {
 	configContent := `
 [worker]
 role = "test"
-on_join = ""
 template = ""
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {

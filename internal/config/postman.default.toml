@@ -230,7 +230,6 @@ dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
 #
 # [example-node]
 # role = "coordination, delegation"
-# on_join = "Welcome message sent when node joins"
 # template = """
 # # EXAMPLE-NODE
 #

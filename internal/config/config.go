@@ -100,7 +100,6 @@ type Config struct {
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
 	Template                   string  `toml:"template"`
-	OnJoin                     string  `toml:"on_join"`
 	Role                       string  `toml:"role"`
 	ReminderInterval           float64 `toml:"reminder_interval_messages"`
 	ReminderMessage            string  `toml:"reminder_message"`
@@ -551,9 +550,6 @@ func mergeConfig(base, override *Config) {
 		if overNode.Template != "" {
 			baseNode.Template = overNode.Template
 		}
-		if overNode.OnJoin != "" {
-			baseNode.OnJoin = overNode.OnJoin
-		}
 		if overNode.Role != "" {
 			baseNode.Role = overNode.Role
 		}
@@ -768,9 +764,6 @@ func LoadConfig(path string) (*Config, error) {
 				if nc.Template != "" {
 					node.Template = nc.Template
 				}
-				if nc.OnJoin != "" {
-					node.OnJoin = nc.OnJoin
-				}
 				if nc.Role != "" {
 					node.Role = nc.Role
 				}
@@ -848,9 +841,6 @@ func LoadConfig(path string) (*Config, error) {
 				node := cfg.Nodes[nodeName]
 				if nc.Template != "" {
 					node.Template = nc.Template
-				}
-				if nc.OnJoin != "" {
-					node.OnJoin = nc.OnJoin
 				}
 				if nc.Role != "" {
 					node.Role = nc.Role
@@ -1277,9 +1267,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.Template != "" {
 		result.Template = specific.Template
-	}
-	if specific.OnJoin != "" {
-		result.OnJoin = specific.OnJoin
 	}
 	if specific.Role != "" {
 		result.Role = specific.Role

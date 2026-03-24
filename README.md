@@ -121,7 +121,7 @@ Messages sent to nodes without a valid edge are moved to `dead-letter/`.
 
 ### 4.2. Node Role Templates
 
-Define each node's role, on_join message, and template in `postman.md`:
+Define each node's role and template in `postman.md`:
 
 ````markdown
 ## `worker`
@@ -129,10 +129,6 @@ Define each node's role, on_join message, and template in `postman.md`:
 ### `role`
 
 Primary task executor.
-
-### `on_join`
-
-You are worker. Execute assigned tasks.
 
 ### Workflow
 

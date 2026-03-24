@@ -41,10 +41,10 @@ body`,
 		{
 			name: "FirstColonSplit: value contains colon",
 			content: `---
-on_join: You are: worker
+custom_key: You are: worker
 ---`,
 			want: map[string]string{
-				"on_join": "You are: worker",
+				"custom_key": "You are: worker",
 			},
 		},
 		{
@@ -60,10 +60,10 @@ role: assistant
 		{
 			name: "QuotesLiteral: quotes preserved in value",
 			content: `---
-on_join: "You are worker"
+custom_key: "You are worker"
 ---`,
 			want: map[string]string{
-				"on_join": `"You are worker"`,
+				"custom_key": `"You are worker"`,
 			},
 		},
 		{
@@ -284,14 +284,11 @@ func TestExtractH2Sections_Numbered(t *testing.T) {
 
 // TestExtractNodeFields covers: h3 reserved sections extraction.
 func TestExtractNodeFields(t *testing.T) {
-	t.Run("both role and on_join extracted", func(t *testing.T) {
-		body := "### `role`\nexecutor\n\n### `on_join`\nYou are worker.\n\n### Tool Constraints\nCRITICAL"
-		role, onJoin, tmpl := extractNodeFields(body)
+	t.Run("role extracted; non-reserved sections left in template", func(t *testing.T) {
+		body := "### `role`\nexecutor\n\n### Tool Constraints\nCRITICAL"
+		role, tmpl := extractNodeFields(body)
 		if role != "executor" {
 			t.Errorf("role: got %q, want %q", role, "executor")
-		}
-		if onJoin != "You are worker." {
-			t.Errorf("on_join: got %q, want %q", onJoin, "You are worker.")
 		}
 		if tmpl != "### Tool Constraints\nCRITICAL" {
 			t.Errorf("template: got %q, want %q", tmpl, "### Tool Constraints\nCRITICAL")
@@ -300,12 +297,9 @@ func TestExtractNodeFields(t *testing.T) {
 
 	t.Run("no reserved sections returns body unchanged", func(t *testing.T) {
 		body := "### Tool Constraints\nCRITICAL\n\n### Rules\nDo things"
-		role, onJoin, tmpl := extractNodeFields(body)
+		role, tmpl := extractNodeFields(body)
 		if role != "" {
 			t.Errorf("role should be empty, got %q", role)
-		}
-		if onJoin != "" {
-			t.Errorf("on_join should be empty, got %q", onJoin)
 		}
 		if tmpl != body {
 			t.Errorf("template should be unchanged")
@@ -314,12 +308,9 @@ func TestExtractNodeFields(t *testing.T) {
 
 	t.Run("only role present", func(t *testing.T) {
 		body := "### `role`\ncoordinator\n\n### Workflow\nStep 1"
-		role, onJoin, tmpl := extractNodeFields(body)
+		role, tmpl := extractNodeFields(body)
 		if role != "coordinator" {
 			t.Errorf("role: got %q", role)
-		}
-		if onJoin != "" {
-			t.Errorf("on_join should be empty, got %q", onJoin)
 		}
 		if tmpl != "### Workflow\nStep 1" {
 			t.Errorf("template: got %q", tmpl)
@@ -328,7 +319,7 @@ func TestExtractNodeFields(t *testing.T) {
 
 	t.Run("role at end of body", func(t *testing.T) {
 		body := "### Workflow\nStep 1\n\n### `role`\nexecutor"
-		role, _, tmpl := extractNodeFields(body)
+		role, tmpl := extractNodeFields(body)
 		if role != "executor" {
 			t.Errorf("role: got %q", role)
 		}
@@ -336,32 +327,21 @@ func TestExtractNodeFields(t *testing.T) {
 			t.Errorf("template: got %q", tmpl)
 		}
 	})
-
-	t.Run("multiline on_join value", func(t *testing.T) {
-		body := "### `on_join`\nLine 1.\nLine 2.\n\n### Rules\nDo things"
-		_, onJoin, _ := extractNodeFields(body)
-		if onJoin != "Line 1.\nLine 2." {
-			t.Errorf("on_join: got %q, want %q", onJoin, "Line 1.\nLine 2.")
-		}
-	})
 }
 
 // TestExtractNodeFields_FallbackFrontmatter covers backward compat: frontmatter
 // still works when no h3 reserved sections present.
 func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
-	body := "---\nrole: executor\non_join: You are worker.\n---\n\nTemplate body."
-	role, onJoin, tmpl := extractNodeFields(body)
+	body := "---\nrole: executor\n---\n\nTemplate body."
+	role, tmpl := extractNodeFields(body)
 	// extractNodeFields itself returns empty (no h3 sections)
-	if role != "" || onJoin != "" {
-		t.Fatalf("expected empty from extractNodeFields, got role=%q onJoin=%q", role, onJoin)
+	if role != "" {
+		t.Fatalf("expected empty from extractNodeFields, got role=%q", role)
 	}
 	// Caller (loadMarkdownConfig) falls back to frontmatter
 	fm := parseFrontmatter(body)
 	if fm["role"] != "executor" {
 		t.Errorf("frontmatter role: got %q", fm["role"])
-	}
-	if fm["on_join"] != "You are worker." {
-		t.Errorf("frontmatter on_join: got %q", fm["on_join"])
 	}
 	// Template should be body unchanged (no h3 stripping)
 	if tmpl != body {
@@ -397,9 +377,6 @@ Shared instructions for all nodes.
 
 ### ` + "`role`" + `
 coordinator
-
-### ` + "`on_join`" + `
-You are coordinator.
 
 ### Workflow
 You coordinate things.
@@ -457,9 +434,6 @@ Worker template.
 		}
 		if oc.Role != "coordinator" {
 			t.Errorf("orchestrator role: got %q", oc.Role)
-		}
-		if oc.OnJoin != "You are coordinator." {
-			t.Errorf("orchestrator on_join: got %q", oc.OnJoin)
 		}
 		if oc.Template != "### Workflow\nYou coordinate things." {
 			t.Errorf("orchestrator template: got %q, want %q", oc.Template, "### Workflow\nYou coordinate things.")
@@ -529,7 +503,7 @@ Do things.
 // TestLoadNodeMarkdownFile covers: h3 reserved fields and template extraction.
 func TestLoadNodeMarkdownFile(t *testing.T) {
 	t.Run("h3 fields", func(t *testing.T) {
-		content := "### `role`\nexecutor\n\n### `on_join`\nYou are executor.\n\n### Workflow\nYou are the executor.\n"
+		content := "### `role`\nexecutor\n\n### Workflow\nYou are the executor.\n"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "worker.md")
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -546,16 +520,13 @@ func TestLoadNodeMarkdownFile(t *testing.T) {
 		if nc.Role != "executor" {
 			t.Errorf("role: got %q", nc.Role)
 		}
-		if nc.OnJoin != "You are executor." {
-			t.Errorf("on_join: got %q", nc.OnJoin)
-		}
 		if nc.Template != "### Workflow\nYou are the executor." {
 			t.Errorf("template: got %q", nc.Template)
 		}
 	})
 
 	t.Run("frontmatter fallback", func(t *testing.T) {
-		content := "---\nrole: worker\non_join: Hello.\n---\n\nBody.\n"
+		content := "---\nrole: worker\n---\n\nBody.\n"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "worker.md")
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -568,9 +539,6 @@ func TestLoadNodeMarkdownFile(t *testing.T) {
 		}
 		if nc.Role != "worker" {
 			t.Errorf("role: got %q", nc.Role)
-		}
-		if nc.OnJoin != "Hello." {
-			t.Errorf("on_join: got %q", nc.OnJoin)
 		}
 		if nc.Template != "Body." {
 			t.Errorf("template: got %q", nc.Template)

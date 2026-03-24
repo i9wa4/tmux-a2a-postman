@@ -75,12 +75,7 @@ Two sub-checks:
 - **Judgment**: are the described routing semantics consistent with edge
   direction? (LLM assessment — label findings with `Type: JUDGMENT-BASED`)
 
-### 2.6. Check 5 — on_join Completeness
-
-- PASS: `on_join` field is non-empty
-- FAIL: `on_join = ""`
-
-### 2.7. Check 6 — Messaging Protocol Instructions
+### 2.6. Check 5 — Messaging Protocol Instructions
 
 - PASS: template contains instruction to use `send-message` as the primary
   messaging command (e.g., "tmux-a2a-postman send-message --to <node> --body")
@@ -108,7 +103,7 @@ Two sub-checks:
 - FAIL: template references raw filesystem paths for monitoring (e.g.,
   `ls ~/.local/state/.../waiting/`) — use `get-session-health` instead
 
-### 2.8. Check 7 — Pre-Approval Verification
+### 2.7. Check 6 — Pre-Approval Verification
 
 Applies only to nodes whose template contains APPROVED or REJECTED signal words
 (typically reviewer or approver nodes).
@@ -118,7 +113,7 @@ Applies only to nodes whose template contains APPROVED or REJECTED signal words
 - FAIL: template issues APPROVED/REJECTED without requiring artifact
   verification — approvals based on plan text alone are unreliable
 
-### 2.9. Check 8 — draft_template Disclaimer
+### 2.8. Check 7 — draft_template Disclaimer
 
 Applies only to nodes that define a `draft_template` field.
 
@@ -128,7 +123,7 @@ Applies only to nodes that define a `draft_template` field.
   may assume all nodes listed in the template are contactable, leading to
   dead-lettered messages
 
-### 2.10. Check 9 — Dropped Ball Timeout Configured
+### 2.9. Check 8 — Dropped Ball Timeout Configured
 
 Applies to all non-observer nodes (nodes whose role does NOT contain
 "observer").
@@ -138,20 +133,13 @@ Applies to all non-observer nodes (nodes whose role does NOT contain
   ball indefinitely without triggering a dropped-ball alert, causing silent
   stalls
 
-### 2.11. Check B-I8 — Protocol Reminder Presence
+### 2.10. Check B-I8 — Protocol Reminder Presence
 
 - PASS: template references the postman protocol (e.g., contains
   "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", "send-message",
   or "create-draft")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
-
-### 2.12. Check B-I9 — on_join Help Reference
-
-- PASS: `on_join` field references the help command (e.g., contains
-  "tmux-a2a-postman -- help")
-- FAIL: `on_join` does not reference the help command — agents miss the
-  self-service protocol docs and command reference available via CLI
 
 ## 3. Findings Format
 
@@ -191,8 +179,8 @@ All files are read from the user's XDG config directory:
 - `postman.toml` defines `[postman]` section (edges, timing) and `[node-name]`
   sections (structural per-node config like `dropped_ball_timeout_seconds`).
 - `postman.md` defines templates, edges (Mermaid), common_template, and
-  per-node role/on_join/template. Node sections use h2 backtick headings;
-  role and on_join use h3 backtick headings within each node.
+  per-node role/template. Node sections use h2 backtick headings;
+  role uses an h3 backtick heading within each node.
 - Load order: `postman.toml` -> `nodes/*.toml` -> `nodes/*.md` -> `postman.md`
   (last wins for overlapping fields).
 - `postman.default.toml` is a canonical reference listing all configurable
@@ -326,19 +314,6 @@ Issue: relay-node acts as a routing relay between reviewer and coordinator,
 Fix:
   "After receiving reviewer findings: if approved, forward to approver.
   If rejected, return to reviewer with specific revision request."
-```
-
-### 7.4. Example 4 — on_join completeness (MINOR)
-
-```text
-[MINOR] Node: worker
-Field: postman.md:## `worker` ### `on_join`
-Check: on_join completeness
-Result: FAIL
-Issue: on_join is empty; node receives no startup context.
-Fix:
-  on_join = "You are worker. Run 'tmux-a2a-postman -- help' on startup,
-  then await task assignment."
 ```
 
 ## 8. Constraints
