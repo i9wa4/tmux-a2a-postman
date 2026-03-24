@@ -2403,6 +2403,9 @@ func runNext(args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
+					if *jsonOut {
+						return json.NewEncoder(os.Stdout).Encode(struct{}{})
+					}
 					fmt.Fprintln(os.Stderr, "No unread messages.")
 					return nil
 				}
@@ -2781,8 +2784,7 @@ func runResend(args []string) error {
 	}
 
 	if *jsonOut {
-		cleanForParse := message.StripDeadLetterSuffix(baseName)
-		info, err := message.ParseMessageFilename(cleanForParse)
+		info, err := message.ParseMessageFilename(cleanName)
 		if err != nil {
 			return json.NewEncoder(os.Stdout).Encode(deadLetterMessageJSON{})
 		}
@@ -3090,7 +3092,7 @@ func runSchema(args []string) error {
 				"oldest":     {Type: "boolean", Description: "Resend the oldest dead-letter"},
 				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
 				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"resent\": \"filename.md\"}"},
+				"json":       {Type: "boolean", Description: "Output JSON: {\"from\",\"to\",\"timestamp\"}"},
 			},
 		})
 	case "get-context-id":
