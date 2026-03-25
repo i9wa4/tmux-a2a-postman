@@ -28,25 +28,35 @@ JSON Schema for a command's `--params`-settable options.
 | `get-context-id`           | Print the active context ID                          |
 | `get-nodes-dir`            | Print XDG and project-local node template dirs       |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
+| `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
 | `schema`                   | Print JSON Schema for a command or config            |
 | `help`                     | Print help topics                                    |
 
 ## 2. Daemon Management
 
-### 2.1. start
+### 2.1. Global Flags
+
+The following flags are defined at the root level and apply to all commands:
+
+| Flag            | Type   | Default | Description                                            |
+| --------------- | ------ | ------- | ------------------------------------------------------ |
+| `--no-tui`      | bool   | false   | Run headless (no TUI; for CI or automated environments)|
+| `--context-id`  | string | ""      | Override context ID (auto-detected from tmux session)  |
+| `--config`      | string | ""      | Path to config file (auto-detected from XDG_CONFIG_HOME)|
+| `--log-file`    | string | ""      | Path to log file (defaults to state dir log)           |
+| `--base-dir`    | string | ""      | Override state directory (sets POSTMAN_HOME)           |
+| `--state-home`  | string | ""      | Override XDG_STATE_HOME                                |
+
+### 2.2. start
 
 ```text
-tmux-a2a-postman start [--no-tui] [--context-id ID] [--config PATH] [--log FILE]
+tmux-a2a-postman start [global flags]
 ```
 
-| Flag           | Type   | Default | Description                               |
-| -------------- | ------ | ------- | ----------------------------------------- |
-| `--no-tui`     | bool   | false   | Run headless (no TUI; for CI)             |
-| `--context-id` | string | ""      | Override context ID (auto-detected)       |
-| `--config`     | string | ""      | Path to config file                       |
-| `--log`        | string | ""      | Path to log file                          |
+Starts the postman daemon. Accepts all global flags (Section 2.1). No
+start-specific flags beyond the globals.
 
-### 2.2. stop
+### 2.3. stop
 
 ```text
 tmux-a2a-postman stop [--session NAME] [--config PATH] [--timeout N]
@@ -77,7 +87,7 @@ a message atomically (create-draft + send in one step).
 | `--body`            | string | ""      | Yes       | Message body (required)                       |
 | `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication           |
 | `--json`            | bool   | false   | Yes       | Output JSON (see below)                       |
-| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 6)  |
+| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)  |
 | `--context-id`      | string | ""      | No        | Context ID (auto-detected; excluded)          |
 | `--session`         | string | ""      | No        | tmux session name (auto-detected; excluded)   |
 | `--config`          | string | ""      | No        | Path to config file (excluded)                |
@@ -104,7 +114,7 @@ Creates a draft message file. Use `--send` to deliver atomically, or run
 | `--to`              | string | ""      | Yes       | Recipient node name (required)                        |
 | `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication                   |
 | `--json`            | bool   | false   | Yes       | Output JSON (see below)                               |
-| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 6)          |
+| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)          |
 | `--body`            | string | ""      | No        | Message body; excluded: contains `{{PLACEHOLDER}}`    |
 | `--send`            | bool   | false   | No        | Send immediately after creating draft; excluded       |
 | `--context-id`      | string | ""      | No        | Context ID (excluded)                                 |
@@ -147,7 +157,7 @@ Reads the next unread inbox message. Archives it after reading unless
 | -------------- | ------ | ------- | --------- | -------------------------------------------------- |
 | `--peek`       | bool   | false   | Yes       | Read without archiving (non-destructive)           |
 | `--json`       | bool   | false   | Yes       | Output JSON (two-shape; see below)                 |
-| `--params`     | string | ""      | N/A       | Shorthand or JSON parameters (see Section 6)       |
+| `--params`     | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)       |
 | `--context-id` | string | ""      | No        | Context ID (excluded from --params)                |
 
 **`--json` output shapes (two-shape contract):**
@@ -213,7 +223,7 @@ tmux-a2a-postman list-archived-messages [--json] [--params ...]
 
 | Flag       | Type   | Default | --params? | Description                                                    |
 | ---------- | ------ | ------- | --------- | -------------------------------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"messages": [{"file","from","to","timestamp"}]}`|
+| `--json`   | bool   | false   | Yes       | Output JSON: `{"messages": [{"file","from","to"}]}`            |
 | `--params` | string | ""      | N/A       | Shorthand or JSON parameters                                   |
 
 ### 4.6. show-archived-message
@@ -283,7 +293,85 @@ and quarantines ineligible ones.
 
 Does not accept `--params`.
 
-## 6. Session Inspection Commands
+## 6. bind Subcommand
+
+```text
+tmux-a2a-postman bind <subcommand> [flags]
+```
+
+Manages sidecar bindings in a `bindings.toml` file. Used when a node sends
+messages on behalf of another node via `--from`. Does not accept `--params`.
+
+### 6.1. bind register
+
+Appends an unassigned binding (active=false, no session).
+
+```text
+tmux-a2a-postman bind register --file PATH --channel-id ID --node-name NAME \
+  --context-id ID --permitted-senders sender1,sender2
+```
+
+| Flag                  | Required | Description                              |
+| --------------------- | -------- | ---------------------------------------- |
+| `--file`              | Yes      | Path to bindings.toml                    |
+| `--channel-id`        | Yes      | Channel ID for the binding               |
+| `--node-name`         | Yes      | Node name to register                    |
+| `--context-id`        | Yes      | Context ID for the binding               |
+| `--permitted-senders` | Yes      | Comma-separated list of permitted senders|
+
+### 6.2. bind assign
+
+Activates a registered binding and sets session/pane matching fields.
+
+```text
+tmux-a2a-postman bind assign --file PATH --node-name NAME --session-name NAME \
+  [--pane-title TITLE] [--pane-node-name NAME]
+```
+
+| Flag               | Required | Description                              |
+| ------------------ | -------- | ---------------------------------------- |
+| `--file`           | Yes      | Path to bindings.toml                    |
+| `--node-name`      | Yes      | Node name to activate                    |
+| `--session-name`   | Yes      | tmux session name                        |
+| `--pane-title`     | No*      | Pane title for matching                  |
+| `--pane-node-name` | No*      | Pane node name for matching              |
+
+*At least one of `--pane-title` or `--pane-node-name` is required.
+
+### 6.3. bind deactivate
+
+Sets active=false for the named node binding.
+
+```text
+tmux-a2a-postman bind deactivate --file PATH --node-name NAME
+```
+
+| Flag          | Required | Description           |
+| ------------- | -------- | --------------------- |
+| `--file`      | Yes      | Path to bindings.toml |
+| `--node-name` | Yes      | Node name to deactivate|
+
+### 6.4. bind rebind
+
+Full field update on an existing binding.
+
+```text
+tmux-a2a-postman bind rebind --file PATH --node-name NAME [--session-name NAME]
+  [--pane-title TITLE] [--pane-node-name NAME] [--active BOOL]
+  [--permitted-senders LIST]
+```
+
+| Flag                  | Required | Description                                    |
+| --------------------- | -------- | ---------------------------------------------- |
+| `--file`              | Yes      | Path to bindings.toml                          |
+| `--node-name`         | Yes      | Node name to rebind                            |
+| `--session-name`      | No       | New session name                               |
+| `--pane-title`        | No       | New pane title                                 |
+| `--pane-node-name`    | No       | New pane node name                             |
+| `--active`            | No       | Active state (default true)                    |
+| `--permitted-senders` | No       | Comma-separated senders (replaces existing)    |
+
+## 7. Session Inspection Commands
 
 ### 6.1. get-session-health
 
@@ -350,7 +438,7 @@ tmux-a2a-postman get-nodes-dir [--json] [--params ...]
 | `--json`   | bool   | false   | Yes       | Output JSON: `{"xdg": "...", "project_local": "..."}`      |
 | `--params` | string | ""      | N/A       | Shorthand or JSON parameters                               |
 
-## 7. schema Subcommand
+## 8. schema Subcommand
 
 ```text
 tmux-a2a-postman schema [COMMAND]
@@ -365,7 +453,7 @@ Do not hardcode flag lists in agent role templates — query `schema` instead.
 | Argument                   | Describes                                |
 | -------------------------- | ---------------------------------------- |
 | (none)                     | `postman.toml` config properties         |
-| `send-message` or `send`   | `send-message` `--params` scope          |
+| `send-message` or `send`   | `send-message` `--params` scope (note: `send` is also a subcommand; `schema send` refers to `send-message` schema, not the `send` subcommand) |
 | `create-draft`             | `create-draft` `--params` scope          |
 | `next`                     | `next` `--params` scope                  |
 | `count`                    | `count` `--params` scope                 |
@@ -382,12 +470,12 @@ Do not hardcode flag lists in agent role templates — query `schema` instead.
 Always-excluded flags (`context-id`, `config`, `session`, `from`, `bindings`,
 `send`, `file`) are intentionally absent from schema output.
 
-## 8. --params Flag
+## 9. --params Flag
 
 The `--params` flag is available on all messaging and inbox commands. It lets
 callers set command options via a single argument instead of multiple flags.
 
-### 8.1. Forms
+### 9.1. Forms
 
 **Shorthand (k=v,k=v):**
 
@@ -407,7 +495,7 @@ tmux-a2a-postman send-message --params '{"to":"worker","body":"hello"}'
 Detection: if the trimmed value starts with `{`, it is parsed as JSON;
 otherwise shorthand is assumed.
 
-### 8.2. Precedence
+### 9.2. Precedence
 
 Explicit CLI flags override `--params` values. Use this to override a param:
 
@@ -416,7 +504,7 @@ tmux-a2a-postman send-message --params 'to=worker,body=hello' --body override
 # sends body="override", to="worker"
 ```
 
-### 8.3. JSON Number Preservation
+### 9.3. JSON Number Preservation
 
 JSON numeric values are preserved as-is using `json.Decoder.UseNumber()`.
 Large integers are not converted to scientific notation:
@@ -427,7 +515,7 @@ Large integers are not converted to scientific notation:
 
 Floats are also preserved: `3.14` → `"3.14"`.
 
-### 8.4. Always-Excluded Flags
+### 9.4. Always-Excluded Flags
 
 The following flags are never settable via `--params` across all commands.
 Attempting to set them returns a hard error.
@@ -439,27 +527,39 @@ Attempting to set them returns a hard error.
 | `session`      | Security: session hijack risk               |
 | `from`         | Security: sender identity spoofing          |
 | `bindings`     | Security: binding injection                 |
-| `send`         | Semantics: triggers irreversible send       |
+| `send`         | Semantics: triggers irreversible send (relevant to `create-draft`; other commands do not have `--send`) |
 | `file`         | Security: arbitrary filesystem path         |
 
-### 8.5. Per-Command Exclusions
+### 9.5. Per-Command Exclusions
 
 | Command        | Additional Excluded Flags | Reason                          |
 | -------------- | ------------------------- | ------------------------------- |
 | `create-draft` | `body`                    | Body may contain placeholders   |
 
-### 8.6. Error Messages
+### 9.6. Error Messages
 
 | Scenario                         | Error                                                    |
 | -------------------------------- | -------------------------------------------------------- |
 | Excluded flag in `--params`      | `--params: field "X" is not settable via --params`       |
-| Non-scalar value (array/object)  | `--params: field "X" must be scalar, got []interface {}` |
+| Non-scalar value (array)         | `--params: field "X" must be scalar, got []interface {}`           |
+| Non-scalar value (object)        | `--params: field "X" must be scalar, got map[string]interface {}`  |
 | Null JSON value                  | `--params: field "X" must be a scalar value, not null`   |
 | Missing `=` in shorthand         | `--params: invalid shorthand pair "X": missing = separator (values containing commas require JSON form: --params '{"key":"val,with,commas"}')` |
 | Invalid JSON                     | `--params JSON parse error: <decode error>`              |
-| Unknown flag name                | `--params: invalid value for "X": no such flag`          |
+| Unknown flag name                | `--params: invalid value for "X": no such flag -X`       |
 
-### 8.7. --params Scope Discovery
+### 9.7. Key Case Sensitivity
+
+`--params` keys are matched case-sensitively against flag names. Flag names
+use hyphen-lowercase form (e.g., `idempotency-key`, `no-tui`). Uppercase or
+mixed-case keys will not match and produce an "unknown flag" error:
+
+```text
+--params 'To=worker'   # ERROR: no such flag -To (use "to")
+--params 'to=worker'   # OK
+```
+
+### 9.8. --params Scope Discovery
 
 To see exactly which flags are settable via `--params` for any command:
 
@@ -472,7 +572,7 @@ tmux-a2a-postman schema               # postman.toml config schema
 The `required` array in schema output lists flags that must be provided
 (via explicit flag or `--params`).
 
-## 9. --json Flag
+## 10. --json Flag
 
 All messaging and inbox commands accept `--json` as a `--params`-settable
 flag. Output goes to stdout; errors go to stderr.
@@ -485,7 +585,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read`                     | `{"files":[]}`          | `{"files":["...","..."]}`                    |
 | `count`                    | `{"count":0}`           | `{"count": N}`                               |
 | `list-dead-letters`        | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`   |
-| `list-archived-messages`   | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}` |
+| `list-archived-messages`   | `{"messages":[]}`       | `{"messages":[{"file","from","to"}]}`             |
 | `resend`                   | `{}`                    | `{"from","to","timestamp"}`                  |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                       |
 | `get-nodes-dir`            | N/A                     | `{"xdg":"...","project_local":"..."}`        |
@@ -496,7 +596,7 @@ flag. Output goes to stdout; errors go to stderr.
 Always test for the presence of the `id` (next) or `from` (resend) key before
 treating the result as a message.
 
-## 10. help Subcommand
+## 11. help Subcommand
 
 ```text
 tmux-a2a-postman help [TOPIC]
