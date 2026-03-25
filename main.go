@@ -50,6 +50,116 @@ const idempotencyKeyPattern = `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`
 
 var validIdempotencyKeyRe = regexp.MustCompile(idempotencyKeyPattern)
 
+// alwaysExcludedParams is the set of flag names excluded from --params scope
+// for ALL commands. These are security/semantics guards.
+var alwaysExcludedParams = map[string]bool{
+	"context-id": true, // Security: context redirect risk
+	"config":     true, // Security: config path injection
+	"session":    true, // Security: session hijack risk
+	"from":       true, // Security: sender identity spoofing
+	"bindings":   true, // Security: binding injection
+	"send":       true, // Semantics: triggers irreversible atomic send
+	"file":       true, // Security: arbitrary filesystem path (same class as config)
+}
+
+// perCommandExcludedParams maps command name to additional excluded flag names.
+var perCommandExcludedParams = map[string]map[string]bool{
+	// body excluded for create-draft: body contains {{PLACEHOLDER}} tokens.
+	// NOT excluded for send-message where body is a plain required string field.
+	"create-draft": {"body": true},
+}
+
+// isExcludedParam returns true if key is excluded from --params scope for the
+// given command. Checks always-excluded list first, then per-command table.
+func isExcludedParam(key, command string) bool {
+	if alwaysExcludedParams[key] {
+		return true
+	}
+	if perMap, ok := perCommandExcludedParams[command]; ok {
+		return perMap[key]
+	}
+	return false
+}
+
+// looksLikeJSON reports whether s (trimmed) begins with '{'.
+func looksLikeJSON(s string) bool {
+	t := strings.TrimSpace(s)
+	return len(t) > 0 && t[0] == '{'
+}
+
+// parseShorthand parses "key=value,key=value" shorthand into map[string]string.
+// Splits on first '=' only; values may contain additional '=' characters.
+func parseShorthand(raw string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid shorthand pair %q: missing = separator", pair)
+		}
+		result[parts[0]] = parts[1]
+	}
+	return result, nil
+}
+
+// parseParams parses a --params value (shorthand or JSON) into map[string]string.
+// JSON path uses dec.UseNumber() to preserve integer literals (e.g., "1000000"
+// not "1e+06"). Type-switch rejects non-scalar values (arrays, objects, null).
+func parseParams(raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("--params: value must not be empty")
+	}
+	var result map[string]interface{}
+	if looksLikeJSON(raw) {
+		dec := json.NewDecoder(strings.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&result); err != nil {
+			return nil, fmt.Errorf("--params JSON parse error: %w", err)
+		}
+	} else {
+		kv, err := parseShorthand(raw)
+		if err != nil {
+			return nil, err
+		}
+		result = make(map[string]interface{}, len(kv))
+		for k, v := range kv {
+			result[k] = v
+		}
+	}
+	out := make(map[string]string, len(result))
+	for k, v := range result {
+		switch val := v.(type) {
+		case json.Number:
+			out[k] = val.String()
+		case string:
+			out[k] = val
+		case bool:
+			out[k] = fmt.Sprint(val)
+		case nil:
+			return nil, fmt.Errorf("--params: field %q must be a scalar value, not null", k)
+		default:
+			return nil, fmt.Errorf("--params: field %q must be scalar, got %T", k, v)
+		}
+	}
+	return out, nil
+}
+
+// applyParams applies resolvedParams to fs for flags not in explicitlySet.
+// commandName is passed to isExcludedParam to enforce per-command exclusions.
+// Returns a hard error if any key is on the excluded list.
+func applyParams(fs *flag.FlagSet, resolvedParams map[string]string, explicitlySet map[string]bool, commandName string) error {
+	for key, strVal := range resolvedParams {
+		if isExcludedParam(key, commandName) {
+			return fmt.Errorf("--params: field %q is not settable via --params", key)
+		}
+		if !explicitlySet[key] {
+			if err := fs.Set(key, strVal); err != nil {
+				return fmt.Errorf("--params: invalid value for %q: %w", key, err)
+			}
+		}
+	}
+	return nil
+}
+
 // safeGo starts a goroutine with panic recovery (Issue #57).
 func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 	go func() {
@@ -930,21 +1040,45 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 func runCreateDraft(args []string) error {
 	fs := flag.NewFlagSet("create-draft", flag.ContinueOnError)
+	// Options struct fields (--params scope): to, idempotency-key, json
+	// SYNC: schema create-draft properties; alwaysExcludedParams + perCommandExcludedParams maps
 	to := fs.String("to", "", "recipient node name (required)")
+	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
+	jsonOut := fs.Bool("json", false, `output json: {"sent":"filename.md"} or {"draft":"filename.md"}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detect if not specified)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
+	// NOTE: body excluded for create-draft (SYNC: perCommandExcludedParams["create-draft"])
 	body := fs.String("body", "", "inline message body (replaces <!-- write here --> placeholder)")
+	// NOTE: send excluded from --params scope (SYNC: alwaysExcludedParams map)
 	sendFlag := fs.Bool("send", false, "send immediately after creating draft (atomic)")
 	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
 	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
-	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
-	jsonOut := fs.Bool("json", false, "output JSON")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
+	}
+	// Step 5: validate required fields AFTER --params merge
 	if *to == "" {
-		return fmt.Errorf("--to is required")
+		return fmt.Errorf("--to is required (provide via flag or --params)")
 	}
 	// Issue #304: --from requires --bindings
 	if *from != "" && *bindingsPath == "" {
@@ -1172,26 +1306,54 @@ func runCreateDraft(args []string) error {
 
 func runSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
+	// Options struct fields (--params scope): to, body, idempotency-key, json
+	// SYNC: schema send-message properties; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
+	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
+	jsonOut := fs.Bool("json", false, `output json: {"sent":"filename.md"}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
 	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
-	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
-	jsonOut := fs.Bool("json", false, "output JSON")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *to == "" {
-		return fmt.Errorf("--to is required")
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
+	// Step 5: validate required fields AFTER --params merge
+	if *to == "" {
+		return fmt.Errorf("--to is required (provide via flag or --params)")
+	}
+	// NOTE: runCreateDraft issues only a warning (not an error) for --send
+	// without --body (see runCreateDraft:966-968). Enforce here before
+	// delegating so send-message never sends a placeholder-body message.
 	if *body == "" {
-		// NOTE: runCreateDraft issues only a warning (not an error) for --send
-		// without --body (see runCreateDraft:966-968). Enforce here before
-		// delegating so send-message never sends a placeholder-body message.
-		return fmt.Errorf("--body is required")
+		return fmt.Errorf("--body is required (provide via flag or --params)")
+	}
+	// Step 5b: post-merge re-validation for constrained fields
+	if *idempotencyKey != "" {
+		if !validIdempotencyKeyRe.MatchString(*idempotencyKey) {
+			return fmt.Errorf("--idempotency-key %q: invalid token (must match %s)", *idempotencyKey, idempotencyKeyPattern)
+		}
 	}
 	newArgs := []string{"--to", *to, "--body", *body, "--send"}
 	if *contextID != "" {
@@ -1309,9 +1471,29 @@ func isShellCommand(cmd string) bool {
 // Issue #312: Filter panes by pane_current_command; fix session index stability.
 func runGetSessionStatusOneline(args []string) error {
 	fs := flag.NewFlagSet("get-session-status-oneline", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema get-session-status-oneline properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"status":"..."}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 
 	// Load config to get base directory
@@ -1757,9 +1939,29 @@ func resolveInboxPath(args []string) (string, error) {
 // runCount prints the number of unread inbox messages for the current node (#196).
 func runCount(args []string) error {
 	fs := flag.NewFlagSet("count", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema count properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"count":N}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
@@ -1778,9 +1980,29 @@ func runCount(args []string) error {
 // runRead lists inbox message file paths for the current node (#196).
 func runRead(args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema read properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"files":[...]}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
@@ -1854,9 +2076,29 @@ func runListArchivedMessages(args []string) error {
 	// inboxPath = {base}/{contextID}/{session}/inbox/{node}
 	// readPath  = {base}/{contextID}/{session}/read/
 	fs := flag.NewFlagSet("list-archived-messages", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema list-archived-messages properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"messages":[{"file":"...","from":"...","to":"...","timestamp":"..."},...]}}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
@@ -1981,9 +2223,29 @@ func findOldestDeadLetterFile(deadLetterDir string) (string, bool, error) {
 // runListDeadLetters prints dead-letter messages without exposing filenames (Issue #287).
 func runListDeadLetters(args []string) error {
 	fs := flag.NewFlagSet("list-dead-letters", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema list-dead-letters properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"messages":[{"from":"...","to":"...","timestamp":"..."},...]}}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 	inboxPath, err := resolveInboxPath(fs.Args())
 	if err != nil {
@@ -2355,11 +2617,32 @@ func runArchive(args []string) error {
 // runNext reads and optionally archives the oldest unread inbox message (#277).
 func runNext(args []string) error {
 	fs := flag.NewFlagSet("next", flag.ContinueOnError)
+	// Options struct fields (--params scope): peek, json
+	// SYNC: schema next properties; alwaysExcludedParams map
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
+	jsonOut := fs.Bool("json", false, `output json: {} (empty inbox) or {"id":"...","from":"...","to":"...","body":"...","timestamp":"..."} (message present); test id field to distinguish`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
-	jsonOut := fs.Bool("json", false, "output JSON")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 
 	inboxArgs := fs.Args()
@@ -2705,14 +2988,36 @@ func runGetSessionHealth(args []string) error {
 
 func runResend(args []string) error {
 	fs := flag.NewFlagSet("resend", flag.ContinueOnError)
+	// Options struct fields (--params scope): oldest, json
+	// SYNC: schema resend properties; alwaysExcludedParams map
+	oldest := fs.Bool("oldest", false, "resend the oldest dead-letter (no path required)")
+	jsonOut := fs.Bool("json", false, `output json: {} (empty queue) or {"from":"...","to":"...","timestamp":"..."}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-resolved from tmux session)")
 	file := fs.String("file", "", "path to dead-letter file")
-	oldest := fs.Bool("oldest", false, "resend the oldest dead-letter (no path required)")
 	configPath := fs.String("config", "", "path to config file (optional)")
-	jsonOut := fs.Bool("json", false, "output JSON")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
+	}
+	// Step 5: validate mutual exclusion AFTER --params merge
 	if *oldest && *file != "" {
 		return fmt.Errorf("--oldest and --file are mutually exclusive")
 	}
@@ -2798,11 +3103,32 @@ func runResend(args []string) error {
 // Issue #249: zero-argument discovery primitive for AI agents.
 func runGetContextID(args []string) error {
 	fs := flag.NewFlagSet("get-context-id", flag.ContinueOnError)
+	// Options struct fields (--params scope): json
+	// SYNC: schema get-context-id properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"context_id":"..."}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file (optional)")
-	jsonOut := fs.Bool("json", false, "output JSON")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 
 	cfg, err := config.LoadConfig(*configPath)
@@ -2840,9 +3166,29 @@ func runGetContextID(args []string) error {
 // directory shown here may differ from what the running daemon uses.
 func runGetNodesDir(args []string) error {
 	fs := flag.NewFlagSet("get-nodes-dir", flag.ContinueOnError)
-	jsonOut := fs.Bool("json", false, "output JSON")
+	// Options struct fields (--params scope): json
+	// SYNC: schema get-nodes-dir properties; alwaysExcludedParams map
+	jsonOut := fs.Bool("json", false, `output json: {"xdg":"...","project_local":"..."}`)
+	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
+	commandName := fs.Name()
+	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// Step 2: record explicitly-set flags (for --params precedence)
+	explicitlySet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		explicitlySet[f.Name] = true
+	})
+	// Steps 3+4: parse and apply --params to non-explicit flags
+	if explicitlySet["params"] {
+		resolvedParams, err := parseParams(*paramsFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+			return err
+		}
 	}
 
 	xdgPath := config.ResolveConfigPath()
@@ -2989,6 +3335,8 @@ func runSchema(args []string) error {
 				"base_dir":                  {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
 			},
 		})
+	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)
+	// SYNC: options struct fields; alwaysExcludedParams + perCommandExcludedParams maps
 	case "send-message", "send":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
@@ -2997,11 +3345,6 @@ func runSchema(args []string) error {
 			Properties: map[string]schemaProperty{
 				"to":              {Type: "string", Description: "Recipient node name (required)"},
 				"body":            {Type: "string", Description: "Message body (required)"},
-				"context-id":      {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":         {Type: "string", Description: "tmux session name (optional, auto-detected)"},
-				"config":          {Type: "string", Description: "Config file path (optional)"},
-				"from":            {Type: "string", Description: "Phony sender node name (sidecar use only)"},
-				"bindings":        {Type: "string", Description: "Path to bindings.toml (required with --from)"},
 				"idempotency-key": {Type: "string", Description: "Idempotency token for deduplication"},
 				"json":            {Type: "boolean", Description: "Output JSON: {\"sent\": \"filename.md\"}"},
 			},
@@ -3013,10 +3356,8 @@ func runSchema(args []string) error {
 			Title:  "next options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"peek":       {Type: "boolean", Description: "Read without archiving"},
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"id\",\"from\",\"to\",\"body\",\"timestamp\"}"},
+				"peek": {Type: "boolean", Description: "Read without archiving (non-destructive)"},
+				"json": {Type: "boolean", Description: "Output JSON: {} (empty inbox) or {\"id\",\"from\",\"to\",\"body\",\"timestamp\"} (message present); test id field to distinguish"},
 			},
 		})
 	case "count":
@@ -3025,25 +3366,17 @@ func runSchema(args []string) error {
 			Title:  "count options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"count\": N}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"count\": N}"},
 			},
 		})
 	case "create-draft":
+		// body, send, context-id, session, config, from, bindings are excluded from --params
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
 			Title:  "create-draft options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"to":              {Type: "string", Description: "Recipient node name (required)"},
-				"body":            {Type: "string", Description: "Message body"},
-				"send":            {Type: "boolean", Description: "Send immediately after creating draft"},
-				"context-id":      {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"session":         {Type: "string", Description: "tmux session name (optional, auto-detected)"},
-				"config":          {Type: "string", Description: "Config file path (optional)"},
-				"from":            {Type: "string", Description: "Phony sender node name (sidecar use only)"},
-				"bindings":        {Type: "string", Description: "Path to bindings.toml (required with --from)"},
 				"idempotency-key": {Type: "string", Description: "Idempotency token for deduplication"},
 				"json":            {Type: "boolean", Description: "Output JSON: {\"draft\":\"filename.md\"} or {\"sent\":\"filename.md\"}"},
 			},
@@ -3055,9 +3388,7 @@ func runSchema(args []string) error {
 			Title:  "read options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"files\": [...]}"},
 			},
 		})
 	case "list-dead-letters":
@@ -3066,9 +3397,7 @@ func runSchema(args []string) error {
 			Title:  "list-dead-letters options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"from\",\"to\",\"timestamp\"},...]}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"from\",\"to\",\"timestamp\"},...]}"},
 			},
 		})
 	case "list-archived-messages":
@@ -3077,33 +3406,28 @@ func runSchema(args []string) error {
 			Title:  "list-archived-messages options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"file\",\"from\",\"to\"},...]}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"messages\": [{\"file\",\"from\",\"to\",\"timestamp\"},...]}"},
 			},
 		})
 	case "resend":
+		// file, context-id, config are excluded from --params
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
 			Title:  "resend options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"file":       {Type: "string", Description: "Path to dead-letter file"},
-				"oldest":     {Type: "boolean", Description: "Resend the oldest dead-letter"},
-				"context-id": {Type: "string", Description: "Context ID (optional, auto-detected)"},
-				"config":     {Type: "string", Description: "Config file path (optional)"},
-				"json":       {Type: "boolean", Description: "Output JSON: {\"from\",\"to\",\"timestamp\"}"},
+				"oldest": {Type: "boolean", Description: "Resend the oldest dead-letter (no path required)"},
+				"json":   {Type: "boolean", Description: "Output JSON: {} (empty queue) or {\"from\",\"to\",\"timestamp\"} (resent)"},
 			},
 		})
 	case "get-context-id":
+		// session, config are excluded from --params
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
 			Title:  "get-context-id options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"session": {Type: "string", Description: "tmux session name (optional, auto-detected)"},
-				"config":  {Type: "string", Description: "Config file path (optional)"},
-				"json":    {Type: "boolean", Description: "Output JSON: {\"context_id\": \"...\"}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"context_id\": \"...\"}"},
 			},
 		})
 	case "get-nodes-dir":
@@ -3122,6 +3446,44 @@ func runSchema(args []string) error {
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[1]●●●●\"}"},
+			},
+		})
+	case "get-session-health":
+		// Always-JSON command; no --json flag. Schema has no json property.
+		type arrayItems struct {
+			Type       string                    `json:"type"`
+			Properties map[string]schemaProperty `json:"properties"`
+		}
+		type schemaPropertyWithItems struct {
+			Type        string      `json:"type"`
+			Description string      `json:"description"`
+			Items       *arrayItems `json:"items,omitempty"`
+		}
+		type healthSchema struct {
+			Schema     string                             `json:"$schema"`
+			Title      string                             `json:"title"`
+			Type       string                             `json:"type"`
+			Properties map[string]schemaPropertyWithItems `json:"properties"`
+		}
+		return enc.Encode(healthSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "get-session-health output",
+			Type:   "object",
+			Properties: map[string]schemaPropertyWithItems{
+				"context_id": {Type: "string", Description: "Active context ID for the current tmux session"},
+				"node_count": {Type: "integer", Description: "Number of known nodes"},
+				"nodes": {
+					Type:        "array",
+					Description: "Per-node health status",
+					Items: &arrayItems{
+						Type: "object",
+						Properties: map[string]schemaProperty{
+							"name":          {Type: "string", Description: "Node name"},
+							"inbox_count":   {Type: "integer", Description: "Unread messages in inbox"},
+							"waiting_count": {Type: "integer", Description: "Messages waiting to be delivered"},
+						},
+					},
+				},
 			},
 		})
 	default:
