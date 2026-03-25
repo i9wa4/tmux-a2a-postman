@@ -1611,11 +1611,11 @@ func runGetSessionStatusOneline(args []string) error {
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
-	// Get all tmux sessions with their stable index (Issue #312, #349: #{session_id}
-	// is assigned at creation time and does not shift when other sessions are removed,
-	// unlike a loop counter over the output slice. #{session_index} is unsupported on
-	// tmux 3.6a; #{session_id} (e.g. $0, $70) works on 3.6a and newer versions.
-	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_id} #{session_name}").Output()
+	// Get all tmux sessions sorted by creation time to match prefix-s order;
+	// #{session_index} is unsupported on tmux 3.6a; #{session_created} (Unix
+	// timestamp) is used to derive a stable sequential index independent of
+	// session deletions.
+	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_id} #{session_created} #{session_name}").Output()
 	if err != nil {
 		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
@@ -1630,20 +1630,27 @@ func runGetSessionStatusOneline(args []string) error {
 	}
 
 	type sessionEntry struct {
-		index string
-		name  string
+		created int64
+		name    string
 	}
 	var sessions []sessionEntry
 	for _, line := range strings.Split(strings.TrimSpace(string(sessionsOutput)), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 || parts[1] == "" {
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) != 3 || parts[2] == "" {
 			continue
 		}
-		sessions = append(sessions, sessionEntry{index: strings.TrimPrefix(parts[0], "$"), name: parts[1]})
+		created, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		sessions = append(sessions, sessionEntry{created: created, name: parts[2]})
 	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].created < sessions[j].created
+	})
 	if len(sessions) == 0 {
 		if *jsonOut {
 			return json.NewEncoder(os.Stdout).Encode(struct {
@@ -1658,7 +1665,7 @@ func runGetSessionStatusOneline(args []string) error {
 
 	var output []string
 
-	for _, sess := range sessions {
+	for i, sess := range sessions {
 		sessionName := sess.name
 
 		// Get all windows in this session
@@ -1712,7 +1719,7 @@ func runGetSessionStatusOneline(args []string) error {
 
 		// Build session status: [N]window0:window1:...
 		if len(windowStatuses) > 0 {
-			sessionStatus := fmt.Sprintf("[%s]%s", sess.index, strings.Join(windowStatuses, ":"))
+			sessionStatus := fmt.Sprintf("[%d]%s", i, strings.Join(windowStatuses, ":"))
 			output = append(output, sessionStatus)
 		}
 	}
