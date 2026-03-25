@@ -1611,10 +1611,13 @@ func runGetSessionStatusOneline(args []string) error {
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
-	// Get all tmux sessions sorted by creation time to match prefix-s order;
-	// #{session_index} is unsupported on tmux 3.6a; #{session_created} (Unix
-	// timestamp) is used to derive a stable sequential index independent of
-	// session deletions.
+	// Get all tmux sessions sorted alphabetically by name to match the tmux
+	// choose-tree default sort order (prefix-s uses choose-tree -Zs without -O,
+	// so it defaults to name sort). The displayed index is the sequential
+	// position in this sorted list INCLUDING hidden sessions (those with no
+	// active panes produce no output), so gaps like [1][3] are expected and
+	// reflect the full chooser position. Index shifts when earlier sessions are
+	// removed (Issue #312, #349). #{session_index} is unsupported on tmux 3.6a.
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_id} #{session_created} #{session_name}").Output()
 	if err != nil {
 		// Check if no server running
@@ -1630,6 +1633,7 @@ func runGetSessionStatusOneline(args []string) error {
 	}
 
 	type sessionEntry struct {
+		id      int64
 		created int64
 		name    string
 	}
@@ -1642,14 +1646,18 @@ func runGetSessionStatusOneline(args []string) error {
 		if len(parts) != 3 || parts[2] == "" {
 			continue
 		}
+		id, err := strconv.ParseInt(strings.TrimPrefix(parts[0], "$"), 10, 64)
+		if err != nil {
+			continue
+		}
 		created, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
 			continue
 		}
-		sessions = append(sessions, sessionEntry{created: created, name: parts[2]})
+		sessions = append(sessions, sessionEntry{id: id, created: created, name: parts[2]})
 	}
 	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].created < sessions[j].created
+		return sessions[i].name < sessions[j].name
 	})
 	if len(sessions) == 0 {
 		if *jsonOut {
