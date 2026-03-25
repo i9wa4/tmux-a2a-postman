@@ -1615,10 +1615,10 @@ func runGetSessionStatusOneline(args []string) error {
 	// choose-tree default sort order (prefix-s uses choose-tree -Zs without -O,
 	// so it defaults to name sort). The displayed index is the sequential
 	// position in this sorted list INCLUDING hidden sessions (those with no
-	// active panes produce no output), so gaps like [1][3] are expected and
-	// reflect the full chooser position. Index shifts when earlier sessions are
-	// removed (Issue #312, #349). #{session_index} is unsupported on tmux 3.6a.
-	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_id} #{session_created} #{session_name}").Output()
+	// agent-tracked panes produce no output), so gaps like [1][3] are expected
+	// and reflect the full chooser position. Index shifts when earlier sessions
+	// are removed (Issue #312, #349). #{session_index} is unsupported on tmux 3.6a.
+	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
@@ -1633,28 +1633,14 @@ func runGetSessionStatusOneline(args []string) error {
 	}
 
 	type sessionEntry struct {
-		id      int64
-		created int64
-		name    string
+		name string
 	}
 	var sessions []sessionEntry
 	for _, line := range strings.Split(strings.TrimSpace(string(sessionsOutput)), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, " ", 3)
-		if len(parts) != 3 || parts[2] == "" {
-			continue
-		}
-		id, err := strconv.ParseInt(strings.TrimPrefix(parts[0], "$"), 10, 64)
-		if err != nil {
-			continue
-		}
-		created, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		sessions = append(sessions, sessionEntry{id: id, created: created, name: parts[2]})
+		sessions = append(sessions, sessionEntry{name: line})
 	}
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].name < sessions[j].name
