@@ -141,9 +141,9 @@ notification_template = """Hello, {node}!  You've got mail.
 Run `tmux-a2a-postman next` to read it. """
 
 # Message footer (appended by `next` command after message content)
-# Variables: {sender} - sender node name extracted from message
+# Variables: {can_talk_to} - comma-separated list of reachable nodes
 message_footer = """You can talk to: {can_talk_to}
-Reply: tmux-a2a-postman send-message --to {sender} --body "<your message>"
+Reply: tmux-a2a-postman send-message --to <receiver> --body "<your message>"
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
 
 # Daemon message template (unified envelope for ping, alert, heartbeat)

@@ -205,7 +205,7 @@ Key templates that inject context automatically:
 | Template            | Injected at                  | Key variables provided                        |
 | ------------------- | ---------------------------- | --------------------------------------------- |
 | `draft_template`    | draft/send-message creation  | `{template}` (recipient role), frontmatter    |
-| `message_footer`    | appended to delivered message | `{can_talk_to}`, `{sender}`, `{reply_command}`|
+| `message_footer`    | appended to delivered message | `{can_talk_to}`, `{reply_command}`            |
 | `notification_template` | sendkeys to pane on arrival | `{node}`, `{from_node}`                      |
 | `message_template`  | daemon ping delivery         | `{role_content}`, `{talks_to_line}`           |
 
