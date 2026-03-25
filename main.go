@@ -94,7 +94,12 @@ func parseShorthand(raw string) (map[string]string, error) {
 	for _, pair := range strings.Split(raw, ",") {
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid shorthand pair %q: missing = separator", pair)
+			return nil, fmt.Errorf(
+				"invalid shorthand pair %q: missing = separator"+
+					" (values containing commas require JSON form:"+
+					` --params '{"key":"val,with,commas"}')`,
+				pair,
+			)
 		}
 		result[parts[0]] = parts[1]
 	}
@@ -106,7 +111,7 @@ func parseShorthand(raw string) (map[string]string, error) {
 // not "1e+06"). Type-switch rejects non-scalar values (arrays, objects, null).
 func parseParams(raw string) (map[string]string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("--params: value must not be empty")
+		return nil, nil
 	}
 	var result map[string]interface{}
 	if looksLikeJSON(raw) {
@@ -118,7 +123,7 @@ func parseParams(raw string) (map[string]string, error) {
 	} else {
 		kv, err := parseShorthand(raw)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("--params: %w", err)
 		}
 		result = make(map[string]interface{}, len(kv))
 		for k, v := range kv {

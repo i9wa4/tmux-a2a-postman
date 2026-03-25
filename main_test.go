@@ -779,3 +779,93 @@ func TestRunCreateDraft_SendEdgeViolationNoConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// --- Issue #351: parseParams / parseShorthand unit tests ---
+
+// TestParseParams verifies parseParams behavior across JSON, shorthand, and edge-case inputs.
+func TestParseParams(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantKey string // if non-empty, result must contain this key
+		wantVal string // expected value for wantKey
+		wantErr string // if non-empty, error must contain this substring
+		wantNil bool   // true if result map should be nil (empty/no-op)
+	}{
+		{
+			name:    "json integer preserved",
+			input:   `{"n":1000000}`,
+			wantKey: "n",
+			wantVal: "1000000",
+		},
+		{
+			name:    "json float preserved",
+			input:   `{"n":3.14}`,
+			wantKey: "n",
+			wantVal: "3.14",
+		},
+		{
+			name:    "json null returns error",
+			input:   `{"to":null}`,
+			wantErr: "must be a scalar value, not null",
+		},
+		{
+			name:    "json array returns error",
+			input:   `{"to":["a","b"]}`,
+			wantErr: "must be scalar",
+		},
+		{
+			name:    "shorthand happy path",
+			input:   "to=worker",
+			wantKey: "to",
+			wantVal: "worker",
+		},
+		{
+			name:    "shorthand no-equals returns error with prefix",
+			input:   "invalid-no-equals-no-brace",
+			wantErr: "--params: invalid shorthand pair",
+		},
+		{
+			name:    "shorthand no-equals returns error with separator hint",
+			input:   "invalid-no-equals-no-brace",
+			wantErr: "missing = separator",
+		},
+		{
+			name:    "empty string is no-op",
+			input:   "",
+			wantNil: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parseParams(tc.input)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q; want to contain %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantNil {
+				if result != nil {
+					t.Errorf("result = %v; want nil", result)
+				}
+				return
+			}
+			if tc.wantKey != "" {
+				got, ok := result[tc.wantKey]
+				if !ok {
+					t.Errorf("result missing key %q; got %v", tc.wantKey, result)
+				} else if got != tc.wantVal {
+					t.Errorf("result[%q] = %q; want %q", tc.wantKey, got, tc.wantVal)
+				}
+			}
+		})
+	}
+}
