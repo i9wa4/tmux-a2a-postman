@@ -220,7 +220,15 @@ See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
 ## 8. CLI Reference
 
-Run `tmux-a2a-postman --help` for the full command list.
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference,
+including flag tables, `--json` output shapes, and `--params` usage.
+
+Quick reference:
+
+```text
+tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
+tmux-a2a-postman schema [COMMAND]   # JSON Schema for a command's --params-settable options
+```
 
 ## 9. Skills
 
