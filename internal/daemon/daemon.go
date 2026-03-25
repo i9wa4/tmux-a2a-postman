@@ -1210,23 +1210,27 @@ func collectPendingStates(nodes map[string]discovery.NodeInfo, priority map[stri
 // This is observability-only: no behavior is changed. Issue #352.
 func warnAlertConfig(cfg *config.Config, events chan<- tui.DaemonEvent) {
 	if cfg.UINode == "" {
-		msg := "⚠️  alert system disabled: ui_node is not set. " +
+		msg := "postman: WARNING: alert system disabled: ui_node is not set. " +
 			"Set ui_node in postman.toml or postman.md to enable inbox-stagnation, " +
 			"node-inactivity, and unreplied-message alerts."
 		log.Print(msg)
 		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
 		return
 	}
-	hasActiveTimeout := false
-	for _, node := range cfg.Nodes {
-		if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
-			hasActiveTimeout = true
-			break
+	// cfg.NodeDefaults applies to all nodes; treat non-zero defaults as active.
+	hasActiveTimeout := cfg.NodeDefaults.IdleTimeoutSeconds > 0 ||
+		cfg.NodeDefaults.DroppedBallTimeoutSeconds > 0
+	if !hasActiveTimeout {
+		for _, node := range cfg.Nodes {
+			if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
+				hasActiveTimeout = true
+				break
+			}
 		}
 	}
 	if !hasActiveTimeout {
-		msg := "⚠️  alert system partially disabled: no nodes have idle_timeout_seconds " +
-			"or dropped_ball_timeout_seconds set. " +
+		msg := "postman: WARNING: alert system partially disabled: no nodes have " +
+			"idle_timeout_seconds or dropped_ball_timeout_seconds set. " +
 			"Node-inactivity and unreplied-message alerts will not fire."
 		log.Print(msg)
 		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}

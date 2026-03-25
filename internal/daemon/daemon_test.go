@@ -1,9 +1,81 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+// TestWarnAlertConfig verifies the three warning branches of warnAlertConfig.
+// Issue #352: daemon must emit a visible warning when the alert system is
+// effectively disabled due to missing ui_node or all-zero timeout values.
+func TestWarnAlertConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *config.Config
+		wantWarning bool
+		wantContain string
+	}{
+		{
+			name:        "UINodeUnset",
+			cfg:         &config.Config{UINode: ""},
+			wantWarning: true,
+			wantContain: "ui_node is not set",
+		},
+		{
+			name: "UINodeSetAllZeroTimeouts",
+			cfg: &config.Config{
+				UINode: "messenger",
+				Nodes:  map[string]config.NodeConfig{"worker": {}},
+			},
+			wantWarning: true,
+			wantContain: "partially disabled",
+		},
+		{
+			name: "UINodeSetWithActivePerNodeTimeout",
+			cfg: &config.Config{
+				UINode: "messenger",
+				Nodes:  map[string]config.NodeConfig{"worker": {IdleTimeoutSeconds: 900}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "UINodeSetWithActiveNodeDefaults",
+			cfg: &config.Config{
+				UINode:       "messenger",
+				NodeDefaults: config.NodeConfig{DroppedBallTimeoutSeconds: 900},
+				Nodes:        map[string]config.NodeConfig{"worker": {}},
+			},
+			wantWarning: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			events := make(chan tui.DaemonEvent, 5)
+			warnAlertConfig(tc.cfg, events)
+			if tc.wantWarning {
+				if len(events) == 0 {
+					t.Fatal("expected a warning event but channel is empty")
+				}
+				ev := <-events
+				if ev.Type != "alert_config_warning" {
+					t.Errorf("event type: got %q, want %q", ev.Type, "alert_config_warning")
+				}
+				if tc.wantContain != "" && !strings.Contains(ev.Message, tc.wantContain) {
+					t.Errorf("event message %q does not contain %q", ev.Message, tc.wantContain)
+				}
+			} else {
+				if len(events) != 0 {
+					ev := <-events
+					t.Errorf("expected no warning but got event: %q", ev.Message)
+				}
+			}
+		})
+	}
+}
 
 // TestShouldSendAlert_CooldownBoundary verifies that ShouldSendAlert returns true
 // on first call, false immediately after MarkAlertSent, and true again after the
