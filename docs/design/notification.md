@@ -186,6 +186,9 @@ its `idle_timeout_seconds`, an alert is sent to `ui_node`.
 | `node_inactivity_alert_template` | (see default config) | Global |
 | `idle_timeout_seconds`          | (none)  | Per-node |
 
+See `docs/guides/alert-config.md` for the minimal working config required to
+activate this alert.
+
 **Source:** `internal/daemon/daemon.go` — `checkNodeInactivity`
 
 **Template variables for `node_inactivity_alert_template`:** `{node}`,
@@ -219,6 +222,9 @@ repeat alerts for the same message.
 | `alert_delivery_window_seconds` | `60`    | Global   |
 | `unreplied_message_alert_template` | (see default config) | Global |
 | `dropped_ball_timeout_seconds`  | `0` (disabled) | Per-node |
+
+See `docs/guides/alert-config.md` for the minimal working config required to
+activate this alert.
 
 **Source:** `internal/daemon/daemon.go` — `checkUnrepliedMessages`
 

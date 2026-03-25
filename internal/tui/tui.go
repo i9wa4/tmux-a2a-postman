@@ -770,7 +770,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = m.events[len(m.events)-10:]
 			}
 		case "alert_config_warning": // Issue #352: misconfigured alert system warning
-			m.lastEvent = msg.Message
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
 				SessionName: "",
