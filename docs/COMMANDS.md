@@ -373,7 +373,7 @@ tmux-a2a-postman bind rebind --file PATH --node-name NAME [--session-name NAME]
 
 ## 7. Session Inspection Commands
 
-### 6.1. get-session-health
+### 7.1. get-session-health
 
 ```text
 tmux-a2a-postman get-session-health [--context-id ID] [--config PATH]
@@ -401,7 +401,7 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 
 Use `nodes[*].waiting_count > 0` to detect delivery stalls.
 
-### 6.2. get-session-status-oneline
+### 7.2. get-session-status-oneline
 
 ```text
 tmux-a2a-postman get-session-status-oneline [--json] [--params ...]
@@ -414,7 +414,7 @@ One-line status string suitable for embedding in a tmux status-bar.
 | `--json`   | bool   | false   | Yes       | Output JSON: `{"status": "[1]●●●●"}`                |
 | `--params` | string | ""      | N/A       | Shorthand or JSON parameters                        |
 
-### 6.3. get-context-id
+### 7.3. get-context-id
 
 ```text
 tmux-a2a-postman get-context-id [--json] [--params ...] [--session NAME] [--config PATH]
@@ -427,7 +427,7 @@ tmux-a2a-postman get-context-id [--json] [--params ...] [--session NAME] [--conf
 | `--session` | string | ""      | No        | tmux session name (excluded from --params)        |
 | `--config`  | string | ""      | No        | Path to config file (excluded from --params)      |
 
-### 6.4. get-nodes-dir
+### 7.4. get-nodes-dir
 
 ```text
 tmux-a2a-postman get-nodes-dir [--json] [--params ...]
