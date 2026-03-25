@@ -353,6 +353,9 @@ func RunDaemonLoop(
 		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg, adjacency)
 	}
 
+	// Issue #352: Warn if alert system is effectively disabled at startup.
+	warnAlertConfig(cfg, events)
+
 	// #306: Load binding registry for phony node dispatch; nil = disabled.
 	var registry *binding.BindingRegistry
 	if cfg.BindingsPath != "" {
@@ -1200,6 +1203,34 @@ func collectPendingStates(nodes map[string]discovery.NodeInfo, priority map[stri
 		}
 	}
 	return result
+}
+
+// warnAlertConfig emits a log warning and TUI event when the alert system is
+// effectively disabled due to missing ui_node or zero timeout values.
+// This is observability-only: no behavior is changed. Issue #352.
+func warnAlertConfig(cfg *config.Config, events chan<- tui.DaemonEvent) {
+	if cfg.UINode == "" {
+		msg := "⚠️  alert system disabled: ui_node is not set. " +
+			"Set ui_node in postman.toml or postman.md to enable inbox-stagnation, " +
+			"node-inactivity, and unreplied-message alerts."
+		log.Print(msg)
+		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
+		return
+	}
+	hasActiveTimeout := false
+	for _, node := range cfg.Nodes {
+		if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
+			hasActiveTimeout = true
+			break
+		}
+	}
+	if !hasActiveTimeout {
+		msg := "⚠️  alert system partially disabled: no nodes have idle_timeout_seconds " +
+			"or dropped_ball_timeout_seconds set. " +
+			"Node-inactivity and unreplied-message alerts will not fire."
+		log.Print(msg)
+		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
+	}
 }
 
 // checkInboxStagnation checks inbox unread count for all nodes and sends an alert to
