@@ -82,10 +82,10 @@ func BuildEnvelope(
 		contactsSection = "- none"
 	}
 
-	// reply_command: inject --context-id if missing from create-draft commands,
+	// reply_command: inject --context-id if missing from send-message commands,
 	// then expand {context_id} literal. Uses notification-path logic.
 	replyCmd := cfg.ReplyCommand
-	if strings.Contains(replyCmd, "create-draft") && !strings.Contains(replyCmd, "--context-id") {
+	if strings.Contains(replyCmd, "send-message") && !strings.Contains(replyCmd, "--context-id") {
 		if strings.Contains(replyCmd, "--to") {
 			replyCmd = strings.Replace(replyCmd, "--to", fmt.Sprintf("--context-id %s --to", contextID), 1)
 		} else {

@@ -12,21 +12,11 @@ JSON Schema for a command's `--params`-settable options.
 | `start`                    | Start the postman daemon (interactive TUI)           |
 | `stop`                     | Stop the running daemon                              |
 | `send-message`             | Compose and send a message in one step               |
-| `create-draft`             | Create a draft message (optionally send immediately) |
-| `send`                     | Move a draft to the post queue for delivery          |
-| `next`                     | Read and archive the next inbox message              |
-| `read`                     | List inbox message file paths                        |
-| `count`                    | Count unread inbox messages                          |
-| `archive`                  | Move inbox messages to the read archive              |
-| `resend`                   | Move a dead-letter back to the post queue            |
-| `list-dead-letters`        | List undeliverable messages                          |
-| `list-archived-messages`   | List archived (read) messages                        |
-| `show-inbox-message`       | Print a specific inbox message                       |
-| `show-archived-message`    | Print a specific archived message                    |
+| `pop`                      | Read and archive the next inbox message              |
+| `read`                     | List inbox messages, archived messages, or dead-letters |
 | `get-session-health`       | JSON health report for all nodes in the session      |
 | `get-session-status-oneline` | One-line status string for tmux status-bar         |
 | `get-context-id`           | Print the active context ID                          |
-| `get-nodes-dir`            | Print XDG and project-local node template dirs       |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
 | `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
 | `schema`                   | Print JSON Schema for a command or config            |
@@ -79,7 +69,7 @@ tmux-a2a-postman send-message --to NODE --body TEXT [options]
 ```
 
 The primary command for agent-to-agent messaging. Composes and delivers
-a message atomically (create-draft + send in one step).
+a message atomically in one step.
 
 | Flag                | Type   | Default | --params? | Description                                   |
 | ------------------- | ------ | ------- | --------- | --------------------------------------------- |
@@ -100,58 +90,15 @@ a message atomically (create-draft + send in one step).
 {"sent": "20240101-120000-xxxx-from-worker.md"}
 ```
 
-### 3.2. create-draft
+### 3.2. pop
 
 ```text
-tmux-a2a-postman create-draft --to NODE [--body TEXT] [options]
-```
-
-Creates a draft message file. Use `--send` to deliver atomically, or run
-`send` separately.
-
-| Flag                | Type   | Default | --params? | Description                                           |
-| ------------------- | ------ | ------- | --------- | ----------------------------------------------------- |
-| `--to`              | string | ""      | Yes       | Recipient node name (required)                        |
-| `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication                   |
-| `--json`            | bool   | false   | Yes       | Output JSON (see below)                               |
-| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)          |
-| `--body`            | string | ""      | No        | Message body; excluded: contains `{{PLACEHOLDER}}`    |
-| `--send`            | bool   | false   | No        | Send immediately after creating draft; excluded       |
-| `--context-id`      | string | ""      | No        | Context ID (excluded)                                 |
-| `--session`         | string | ""      | No        | tmux session name (excluded)                          |
-| `--config`          | string | ""      | No        | Path to config file (excluded)                        |
-| `--from`            | string | ""      | No        | Phony sender node (sidecar only; excluded)            |
-| `--bindings`        | string | ""      | No        | Path to bindings.toml (required with --from)          |
-
-**`--json` output shapes:**
-
-```text
-{"draft": "20240101-120000-xxxx-from-worker.md"}   # draft only
-{"sent":  "20240101-120000-xxxx-from-worker.md"}   # --send used
-```
-
-**Note on `--body` exclusion:** `--body` is excluded from `--params` for
-`create-draft` because the body template may contain `{{PLACEHOLDER}}`
-tokens. Pass `--body` as an explicit flag instead.
-
-### 3.3. send
-
-```text
-tmux-a2a-postman send FILENAME [FILENAME ...]
-```
-
-Positional arguments only. Moves one or more draft files to the post queue
-for daemon delivery. Plain filenames are globbed as
-`{base}/*/*/draft/{filename}`. Does not accept `--params`.
-
-### 3.4. next
-
-```text
-tmux-a2a-postman next [--peek] [--json] [--params ...] [--context-id ID]
+tmux-a2a-postman pop [--peek] [--json] [--params ...] [--context-id ID] [--file FILENAME]
 ```
 
 Reads the next unread inbox message. Archives it after reading unless
-`--peek` is used.
+`--peek` is used. `--file` performs a non-destructive cross-context read
+without archiving.
 
 | Flag           | Type   | Default | --params? | Description                                        |
 | -------------- | ------ | ------- | --------- | -------------------------------------------------- |
@@ -159,6 +106,7 @@ Reads the next unread inbox message. Archives it after reading unless
 | `--json`       | bool   | false   | Yes       | Output JSON (two-shape; see below)                 |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)       |
 | `--context-id` | string | ""      | No        | Context ID (excluded from --params)                |
+| `--file`       | string | ""      | No        | Print specific inbox message by filename; cross-context, non-destructive (excluded from --params) |
 
 **`--json` output shapes (two-shape contract):**
 
@@ -175,109 +123,41 @@ response means a message was present.
 ### 4.1. read
 
 ```text
-tmux-a2a-postman read [--json] [--params ...]
+tmux-a2a-postman read [--json] [--archived [--file F]] [--dead-letters [--resend-oldest | --file F]] [--params ...]
 ```
 
-Lists inbox message file paths for the current node.
+Lists inbox messages (default), archived messages, or dead-letter messages
+depending on the flags provided.
 
-| Flag       | Type | Default | --params? | Description                             |
-| ---------- | ---- | ------- | --------- | --------------------------------------- |
-| `--json`   | bool | false   | Yes       | Output JSON: `{"files": [...]}`         |
-| `--params` | string | ""    | N/A       | Shorthand or JSON parameters            |
+| Flag              | Type   | Default | --params? | Description                                                                       |
+| ----------------- | ------ | ------- | --------- | --------------------------------------------------------------------------------- |
+| `--json`          | bool   | false   | Yes       | Output JSON (shape depends on mode; see below)                                    |
+| `--archived`      | bool   | false   | Yes       | List archived messages in read/ (self-filtered to calling node)                   |
+| `--dead-letters`  | bool   | false   | Yes       | List dead-letter messages (metadata only, filenames hidden)                       |
+| `--resend-oldest` | bool   | false   | Yes       | Resend the oldest dead-letter; requires `--dead-letters`                          |
+| `--file`          | string | ""      | No        | With `--archived`: print specific archived message; with `--dead-letters`: resend specific named dead-letter (excluded from --params) |
+| `--params`        | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)                                      |
 
-### 4.2. count
+**Mutual exclusions:**
+
+- `--archived` and `--dead-letters` together → error
+- `--resend-oldest` without `--dead-letters` → error
+
+**`--json` output shapes by mode:**
 
 ```text
-tmux-a2a-postman count [--json] [--params ...]
+(default)           {"files": [...]}
+--archived          {"messages": [{"file","from","to","timestamp"}]}
+--dead-letters      {"messages": [{"from","to","timestamp"}]}
 ```
 
-| Flag       | Type   | Default | --params? | Description                             |
-| ---------- | ------ | ------- | --------- | --------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"count": N}`             |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters            |
-
-### 4.3. archive
-
-```text
-tmux-a2a-postman archive FILENAME [FILENAME ...]
-```
-
-Positional arguments only. Moves inbox message files to the `read/`
-archive directory. Plain filenames are globbed as
-`{base}/*/*/inbox/*/{filename}`. Does not accept `--params`.
-
-### 4.4. show-inbox-message
-
-```text
-tmux-a2a-postman show-inbox-message FILENAME
-```
-
-Positional argument only. Prints the contents of a specific inbox message.
-Filename must not contain path separators. Does not accept `--params`.
-
-### 4.5. list-archived-messages
-
-```text
-tmux-a2a-postman list-archived-messages [--json] [--params ...]
-```
-
-| Flag       | Type   | Default | --params? | Description                                                    |
-| ---------- | ------ | ------- | --------- | -------------------------------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"messages": [{"file","from","to"}]}`            |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters                                   |
-
-### 4.6. show-archived-message
-
-```text
-tmux-a2a-postman show-archived-message FILENAME
-```
-
-Positional argument only. Prints the contents of a specific archived message.
-Filename must not contain path separators. Does not accept `--params`.
+**Note:** `--archived` self-filters to messages addressed to the calling node
+(the node whose pane title matches the current tmux pane). Raw filenames for
+dead-letter messages are never exposed (`--dead-letters` metadata only).
 
 ## 5. Dead-Letter Commands
 
-### 5.1. list-dead-letters
-
-```text
-tmux-a2a-postman list-dead-letters [--json] [--params ...]
-```
-
-| Flag       | Type   | Default | --params? | Description                                                     |
-| ---------- | ------ | ------- | --------- | --------------------------------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"messages": [{"from","to","timestamp"}]}`        |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters                                    |
-
-**Note:** Raw filenames are never exposed in the JSON output. Metadata only.
-
-### 5.2. resend
-
-```text
-tmux-a2a-postman resend [--oldest | --file PATH] [--json] [--params ...]
-```
-
-Moves a dead-letter file back to the post queue for redelivery.
-`--oldest` and `--file` are mutually exclusive.
-
-| Flag           | Type   | Default | --params? | Description                                                     |
-| -------------- | ------ | ------- | --------- | --------------------------------------------------------------- |
-| `--oldest`     | bool   | false   | Yes       | Resend the lexicographically oldest dead-letter                 |
-| `--json`       | bool   | false   | Yes       | Output JSON (two-shape; see below)                              |
-| `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                                    |
-| `--file`       | string | ""      | No        | Path to dead-letter file (excluded from --params)               |
-| `--context-id` | string | ""      | No        | Context ID (excluded from --params)                             |
-| `--config`     | string | ""      | No        | Path to config file (excluded from --params)                    |
-
-**`--json` output shapes (two-shape contract):**
-
-```text
-{}                                              # empty dead-letter queue
-{"from":"...","to":"...","timestamp":"..."}     # resent message metadata
-```
-
-Test for an empty object to detect an empty queue.
-
-### 5.3. supervisor-drain
+### 5.1. supervisor-drain
 
 ```text
 tmux-a2a-postman supervisor-drain [--context-id ID] [--config PATH]
@@ -427,48 +307,41 @@ tmux-a2a-postman get-context-id [--json] [--params ...] [--session NAME] [--conf
 | `--session` | string | ""      | No        | tmux session name (excluded from --params)        |
 | `--config`  | string | ""      | No        | Path to config file (excluded from --params)      |
 
-### 7.4. get-nodes-dir
-
-```text
-tmux-a2a-postman get-nodes-dir [--json] [--params ...]
-```
-
-| Flag       | Type   | Default | --params? | Description                                                |
-| ---------- | ------ | ------- | --------- | ---------------------------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"xdg": "...", "project_local": "..."}`      |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters                               |
-
 ## 8. schema Subcommand
 
 ```text
-tmux-a2a-postman schema [COMMAND]
+tmux-a2a-postman schema [COMMAND] [--nodes-dir]
 ```
 
 Prints a JSON Schema describing the options or output shape of a command.
 Use this to discover `--params`-settable flags and their types at runtime.
 Do not hardcode flag lists in agent role templates — query `schema` instead.
 
+**`--nodes-dir` flag:**
+
+```text
+tmux-a2a-postman schema --nodes-dir
+# {"xdg":"...","project_local":"..."}
+```
+
+Outputs the XDG and project-local node template directories as JSON.
+Can be combined with a command argument or used alone.
+
 **Commands with schema support:**
 
-| Argument                   | Describes                                |
-| -------------------------- | ---------------------------------------- |
-| (none)                     | `postman.toml` config properties         |
-| `send-message` or `send`   | `send-message` `--params` scope (note: `send` is also a subcommand; `schema send` refers to `send-message` schema, not the `send` subcommand) |
-| `create-draft`             | `create-draft` `--params` scope          |
-| `next`                     | `next` `--params` scope                  |
-| `count`                    | `count` `--params` scope                 |
-| `read`                     | `read` `--params` scope                  |
-| `resend`                   | `resend` `--params` scope                |
-| `list-dead-letters`        | `list-dead-letters` `--params` scope     |
-| `list-archived-messages`   | `list-archived-messages` `--params` scope|
-| `get-context-id`           | `get-context-id` `--params` scope        |
-| `get-nodes-dir`            | `get-nodes-dir` `--params` scope         |
+| Argument                   | Describes                                     |
+| -------------------------- | --------------------------------------------- |
+| (none)                     | `postman.toml` config properties              |
+| `send-message`             | `send-message` `--params` scope               |
+| `pop`                      | `pop` `--params` scope                        |
+| `read`                     | `read` `--params` scope                       |
+| `get-context-id`           | `get-context-id` `--params` scope             |
 | `get-session-status-oneline` | `get-session-status-oneline` `--params` scope |
-| `get-session-health`       | `get-session-health` output shape        |
+| `get-session-health`       | `get-session-health` output shape             |
 
 **Important:** Schema properties show only `--params`-settable flags.
 Always-excluded flags (`context-id`, `config`, `session`, `from`, `bindings`,
-`send`, `file`) are intentionally absent from schema output.
+`file`) are intentionally absent from schema output.
 
 ## 9. --params Flag
 
@@ -527,16 +400,9 @@ Attempting to set them returns a hard error.
 | `session`      | Security: session hijack risk               |
 | `from`         | Security: sender identity spoofing          |
 | `bindings`     | Security: binding injection                 |
-| `send`         | Semantics: triggers irreversible send (relevant to `create-draft`; other commands do not have `--send`) |
 | `file`         | Security: arbitrary filesystem path         |
 
-### 9.5. Per-Command Exclusions
-
-| Command        | Additional Excluded Flags | Reason                          |
-| -------------- | ------------------------- | ------------------------------- |
-| `create-draft` | `body`                    | Body may contain placeholders   |
-
-### 9.6. Error Messages
+### 9.5. Error Messages
 
 | Scenario                         | Error                                                    |
 | -------------------------------- | -------------------------------------------------------- |
@@ -565,7 +431,7 @@ To see exactly which flags are settable via `--params` for any command:
 
 ```text
 tmux-a2a-postman schema send-message   # required: ["to","body"]
-tmux-a2a-postman schema next           # no required fields
+tmux-a2a-postman schema pop            # no required fields
 tmux-a2a-postman schema               # postman.toml config schema
 ```
 
@@ -577,24 +443,21 @@ The `required` array in schema output lists flags that must be provided
 All messaging and inbox commands accept `--json` as a `--params`-settable
 flag. Output goes to stdout; errors go to stderr.
 
-| Command                    | Empty / no-result shape | Populated shape (keys)                       |
-| -------------------------- | ----------------------- | -------------------------------------------- |
-| `send-message`             | N/A                     | `{"sent": "filename.md"}`                    |
-| `create-draft`             | N/A                     | `{"draft":"..."}` or `{"sent":"..."}`        |
-| `next`                     | `{}`                    | `{"id","from","to","body","timestamp"}`      |
-| `read`                     | `{"files":[]}`          | `{"files":["...","..."]}`                    |
-| `count`                    | `{"count":0}`           | `{"count": N}`                               |
-| `list-dead-letters`        | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`   |
-| `list-archived-messages`   | `{"messages":[]}`       | `{"messages":[{"file","from","to"}]}`             |
-| `resend`                   | `{}`                    | `{"from","to","timestamp"}`                  |
-| `get-context-id`           | N/A                     | `{"context_id":"..."}`                       |
-| `get-nodes-dir`            | N/A                     | `{"xdg":"...","project_local":"..."}`        |
-| `get-session-status-oneline` | N/A                   | `{"status":"[1]●●●●"}`                       |
-| `get-session-health`       | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`  |
+| Command                    | Empty / no-result shape | Populated shape (keys)                                       |
+| -------------------------- | ----------------------- | ------------------------------------------------------------ |
+| `send-message`             | N/A                     | `{"sent": "filename.md"}`                                    |
+| `pop`                      | `{}`                    | `{"id","from","to","body","timestamp"}`                      |
+| `read` (default)           | `{"files":[]}`          | `{"files":["...","..."]}`                                    |
+| `read --archived`          | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}`            |
+| `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
+| `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
+| `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
+| `get-session-status-oneline` | N/A                   | `{"status":"[1]●●●●"}`                                       |
+| `get-session-health`       | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`                  |
 
-**Two-shape contract:** `next` and `resend` return `{}` for the empty case.
-Always test for the presence of the `id` (next) or `from` (resend) key before
-treating the result as a message.
+**Two-shape contract:** `pop` returns `{}` for the empty case.
+Always test for the presence of the `id` key before treating the result as a
+message.
 
 ## 11. help Subcommand
 

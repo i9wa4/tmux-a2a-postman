@@ -67,7 +67,7 @@ To discover any command's options and required fields at point of use:
 
 ```text
 tmux-a2a-postman schema send-message   # required: ["to","body"]
-tmux-a2a-postman schema next           # output shape
+tmux-a2a-postman schema pop            # output shape
 tmux-a2a-postman schema               # postman.toml config schema
 ```
 

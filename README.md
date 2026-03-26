@@ -46,7 +46,7 @@ Example: orchestrator delegates a task to worker.
    `tmux-a2a-postman send-message --to worker --body "implement X"`
 2. Daemon routes the message (edge rules enforced)
 3. worker is notified in their pane
-4. worker reads: `tmux-a2a-postman next`
+4. worker reads: `tmux-a2a-postman pop`
 5. worker replies:
    `tmux-a2a-postman send-message --to orchestrator --body "DONE: ..."`
 

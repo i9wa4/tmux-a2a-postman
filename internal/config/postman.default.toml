@@ -138,9 +138,9 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}!  You've got mail.
-Run `tmux-a2a-postman next` to read it. """
+Run `tmux-a2a-postman pop` to read it. """
 
-# Message footer (appended by `next` command after message content)
+# Message footer (appended by `pop` command after message content)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 message_footer = """You can talk to: {can_talk_to}
 Reply: tmux-a2a-postman send-message --to <receiver> --body "<your message>"
@@ -176,7 +176,7 @@ How to reply: {reply_command}
 {message}
 """
 
-# Draft message template (user-initiated messages via send-message / create-draft)
+# Draft message template (user-initiated messages via send-message)
 # Variables: {context_id}, {task_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command}
 draft_template = """---
@@ -256,13 +256,13 @@ llm_node = ""
 prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tasks from prior history.
 
 If nothing needs attention:
-  nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
-    --context-id {context_id} --to postman --body "HEARTBEAT_OK" --send
+  nix run github:i9wa4/tmux-a2a-postman -- send-message \\
+    --context-id {context_id} --to postman --body "HEARTBEAT_OK"
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
-  nix run github:i9wa4/tmux-a2a-postman -- create-draft \\
+  nix run github:i9wa4/tmux-a2a-postman -- send-message \\
     --context-id {context_id} --to messenger \\
-    --body "[HEARTBEAT ALERT] <your message>" --send"""
+    --body "[HEARTBEAT ALERT] <your message>""""
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes

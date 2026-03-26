@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/BurntSushi/toml"
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
 //go:embed postman.default.toml
@@ -1066,6 +1067,9 @@ func ResolveLocalConfigPath(cwd, xdgPath string) (string, error) {
 // Returns error if explicitID is empty.
 func ResolveContextID(explicitID string) (string, error) {
 	if explicitID != "" {
+		if !binding.ValidateNodeName(explicitID) {
+			return "", fmt.Errorf("--context-id %q: invalid value", explicitID)
+		}
 		return explicitID, nil
 	}
 	return "", fmt.Errorf("--context-id is required")
