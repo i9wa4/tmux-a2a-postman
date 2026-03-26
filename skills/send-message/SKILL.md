@@ -26,7 +26,7 @@ tmux-a2a-postman send-message --to <node> --body "message text"
 Only flags in the `--params` scope can be set this way. Use
 `schema send-message` to discover the exact scope.
 
-### Shorthand form (k=v,k=v)
+### 2.1. Shorthand form (k=v,k=v)
 
 ```text
 tmux-a2a-postman send-message --params 'to=worker,body=hello'
@@ -35,13 +35,13 @@ tmux-a2a-postman send-message --params 'to=worker,body=hello'
 Limitation: values containing commas require JSON form (shorthand splits on ALL
 commas).
 
-### JSON form
+### 2.2. JSON form
 
 ```text
 tmux-a2a-postman send-message --params '{"to":"worker","body":"hello"}'
 ```
 
-### Precedence
+### 2.3. Precedence
 
 Explicit CLI flags override `--params` values. To override a param:
 
@@ -50,7 +50,7 @@ tmux-a2a-postman send-message --params 'to=worker,body=hello' --body override
 # sends body="override", to="worker"
 ```
 
-### --params scope for send-message
+### 2.4. --params scope for send-message
 
 Run `tmux-a2a-postman schema send-message` to get the current schema. The scope
 includes: `to`, `body`, `idempotency-key`, `json`. Always-excluded flags
