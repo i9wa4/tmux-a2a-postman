@@ -335,9 +335,10 @@ func RunDaemonLoop(
 	// Issue #94: Track previous pane states to avoid spam
 	var prevPaneStatesJSON string
 
-	// Issue #117: Track previous node and session counts to avoid spam
+	// Issue #117: Track previous node and session state to avoid spam
 	prevNodeCount := 0
-	prevSessionCount := 0
+	prevSessionNames := []string{}            // detects session renames (replaces prevSessionCount)
+	prevSessionNodes := map[string][]string{} // detects node joins/leaves within sessions
 
 	// Issue #41: Periodic node discovery
 	scanInterval := time.Duration(cfg.ScanInterval * float64(time.Second))
@@ -872,7 +873,50 @@ func RunDaemonLoop(
 			sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 
 			// Issue #117: Send event only on state change (avoid spam)
-			if len(nodes) != prevNodeCount || len(sessionList) != prevSessionCount {
+			// Build sorted name slice for rename detection.
+			currentNames := make([]string, len(sessionList))
+			for i, s := range sessionList {
+				currentNames[i] = s.Name
+			}
+			sort.Strings(currentNames)
+			// Build normalized session_nodes snapshot (per-session sorted node lists).
+			// Sorting neutralizes non-deterministic map/append iteration order.
+			currentNodes := make(map[string][]string, len(sessionNodes))
+			for sess, ns := range sessionNodes {
+				sorted := make([]string, len(ns))
+				copy(sorted, ns)
+				sort.Strings(sorted)
+				currentNodes[sess] = sorted
+			}
+			namesChanged := len(currentNames) != len(prevSessionNames)
+			if !namesChanged {
+				for i := range currentNames {
+					if currentNames[i] != prevSessionNames[i] {
+						namesChanged = true
+						break
+					}
+				}
+			}
+			nodesChanged := len(currentNodes) != len(prevSessionNodes)
+			if !nodesChanged {
+				for sess, ns := range currentNodes {
+					prev, ok := prevSessionNodes[sess]
+					if !ok || len(ns) != len(prev) {
+						nodesChanged = true
+						break
+					}
+					for i := range ns {
+						if ns[i] != prev[i] {
+							nodesChanged = true
+							break
+						}
+					}
+					if nodesChanged {
+						break
+					}
+				}
+			}
+			if len(nodes) != prevNodeCount || namesChanged || nodesChanged {
 				events <- tui.DaemonEvent{
 					Type:    "status_update",
 					Message: "Running",
@@ -883,7 +927,8 @@ func RunDaemonLoop(
 					},
 				}
 				prevNodeCount = len(nodes)
-				prevSessionCount = len(sessionList)
+				prevSessionNames = currentNames
+				prevSessionNodes = currentNodes
 			}
 
 			// Issue #56: Check dropped balls
