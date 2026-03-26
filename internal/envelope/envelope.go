@@ -131,7 +131,7 @@ func BuildEnvelope(
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	return template.ExpandTemplate(tmpl, vars, timeout)
+	return template.ExpandTemplate(tmpl, vars, timeout, cfg.AllowShellTemplates)
 }
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.

@@ -38,7 +38,10 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	ts := now.Format("20060102-150405")
 
 	// Use simple name in filename (Issue #33: keep filenames simple)
-	filename := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
+	filename, err := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
+	if err != nil {
+		return fmt.Errorf("generating filename: %w", err)
+	}
 	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)

@@ -59,12 +59,13 @@ func expandShellCommands(template string, timeout time.Duration) string {
 }
 
 // ExpandTemplate performs full template expansion:
-// 1. Execute shell commands $(...)
+// 1. Execute shell commands $(...) — only when allowShell is true
 // 2. Expand variables {variable}
-func ExpandTemplate(template string, vars map[string]string, timeout time.Duration) string {
-	// First expand shell commands (from config-defined templates only)
-	expanded := expandShellCommands(template, timeout)
-	// Then expand variables with sanitized values to prevent injection
+func ExpandTemplate(tmpl string, vars map[string]string, timeout time.Duration, allowShell bool) string {
+	expanded := tmpl
+	if allowShell {
+		expanded = expandShellCommands(tmpl, timeout)
+	}
 	sanitizedVars := make(map[string]string, len(vars))
 	for k, v := range vars {
 		sanitizedVars[k] = shellCommandPattern.ReplaceAllString(v, "")

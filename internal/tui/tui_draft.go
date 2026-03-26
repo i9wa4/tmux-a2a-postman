@@ -204,7 +204,10 @@ func (m *DraftModel) submitDraft() error {
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	sessionName := filepath.Base(m.sessionDir)
-	filename := message.GenerateFilename(ts, m.senderNode, m.selectedNode, sessionName)
+	filename, err := message.GenerateFilename(ts, m.senderNode, m.selectedNode, sessionName)
+	if err != nil {
+		return fmt.Errorf("generating filename: %w", err)
+	}
 	draftPath := filepath.Join(draftDir, filename)
 
 	// Use draft_template from config if available
@@ -230,7 +233,7 @@ func (m *DraftModel) submitDraft() error {
 
 	// Expand template with variables and shell commands
 	timeout := time.Duration(m.cfg.TmuxTimeout * float64(time.Second))
-	content = template.ExpandTemplate(content, vars, timeout)
+	content = template.ExpandTemplate(content, vars, timeout, m.cfg.AllowShellTemplates)
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing draft: %w", err)

@@ -95,6 +95,9 @@ type Config struct {
 
 	// Heartbeat
 	Heartbeat HeartbeatConfig
+
+	// Shell template execution opt-in (#security)
+	AllowShellTemplates bool `toml:"allow_shell_templates"`
 }
 
 // NodeConfig holds per-node configuration.
@@ -785,6 +788,9 @@ func LoadConfig(path string) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Snapshot AllowShellTemplates from XDG config before applying project-local
+		// overlay. Project-local config must NOT be able to self-elevate this flag.
+		xdgAllowShell := cfg.AllowShellTemplates
 		mergeConfig(cfg, localCfg)
 		// Issue #274: Apply project-local nodes/ directory on top of merged config.
 		localNodesDir := filepath.Join(filepath.Dir(localPath), "nodes")
@@ -817,6 +823,8 @@ func LoadConfig(path string) (*Config, error) {
 				}
 			}
 		}
+		// Restore: only XDG config is authoritative for shell privilege.
+		cfg.AllowShellTemplates = xdgAllowShell
 	}
 
 	// Issue #324: Project-local Markdown overlay — independent of localPath (M1/I4).

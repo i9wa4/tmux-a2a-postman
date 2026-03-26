@@ -37,14 +37,16 @@ const (
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
 const (
-	dlSuffixParseError       = "-dl-parse-error"
-	dlSuffixEnvelopeMismatch = "-dl-envelope-mismatch"
-	dlSuffixUnknownRecipient = "-dl-unknown-recipient"
-	dlSuffixUnknownSender    = "-dl-unknown-sender"
-	dlSuffixRoutingDenied    = "-dl-routing-denied"
-	dlSuffixSessionDisabled  = "-dl-session-disabled"
-	DlSuffixTTLExpired       = "-dl-ttl-expired"
-	dlSuffixForeignSession   = "-dl-foreign-session"
+	dlSuffixParseError          = "-dl-parse-error"
+	dlSuffixEnvelopeMismatch    = "-dl-envelope-mismatch"
+	dlSuffixUnknownRecipient    = "-dl-unknown-recipient"
+	dlSuffixUnknownSender       = "-dl-unknown-sender"
+	dlSuffixRoutingDenied       = "-dl-routing-denied"
+	dlSuffixSessionDisabled     = "-dl-session-disabled"
+	DlSuffixTTLExpired          = "-dl-ttl-expired"
+	dlSuffixForeignSession      = "-dl-foreign-session"
+	dlSuffixForgedSender        = "-dl-forged-sender"
+	dlSuffixPhonyDeliveryFailed = "-dl-phony-delivery-failed"
 )
 
 const (
@@ -113,19 +115,27 @@ func SessionHash(sessionName string) string {
 	return fmt.Sprintf("%x", h[:2])
 }
 
-// GenerateFilename builds a message filename with optional session hash (#198).
-// Format: {timestamp}-s{hash}-from-{sender}-to-{recipient}.md (with hash)
-// Format: {timestamp}-from-{sender}-to-{recipient}.md (without hash)
-func GenerateFilename(ts, sender, recipient, sessionName string) string {
+// GenerateFilename builds a message filename with optional session hash and random nonce (#198).
+// Format: {timestamp}-s{hash}-r{nonce}-from-{sender}-to-{recipient}.md (with hash)
+// Format: {timestamp}-r{nonce}-from-{sender}-to-{recipient}.md (without hash)
+func GenerateFilename(ts, sender, recipient, sessionName string) (string, error) {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	nonce := fmt.Sprintf("%04x", b)
 	hash := SessionHash(sessionName)
 	if hash != "" {
-		return fmt.Sprintf("%s-s%s-from-%s-to-%s.md", ts, hash, sender, recipient)
+		return fmt.Sprintf("%s-s%s-r%s-from-%s-to-%s.md", ts, hash, nonce, sender, recipient), nil
 	}
-	return fmt.Sprintf("%s-from-%s-to-%s.md", ts, sender, recipient)
+	return fmt.Sprintf("%s-r%s-from-%s-to-%s.md", ts, nonce, sender, recipient), nil
 }
 
 // sessionHashRe matches the optional -s{4hex} session hash suffix in the timestamp portion (#198).
 var sessionHashRe = regexp.MustCompile(`-s([0-9a-f]{4})$`)
+
+// nonceRe matches the optional -r{4hex} random nonce in the timestamp portion.
+var nonceRe = regexp.MustCompile(`-r([0-9a-f]{4})$`)
 
 // ParseMessageFilename parses a message filename in the format:
 // {timestamp}-from-{sender}-to-{recipient}.md
@@ -167,12 +177,22 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q", to, filename)
 	}
 
-	// Extract optional session hash from timestamp portion (#198)
+	// Extract optional session hash and nonce from timestamp portion (#198)
 	var sessionHash string
 	timestamp := timestampRaw
-	if m := sessionHashRe.FindStringSubmatch(timestampRaw); m != nil {
+
+	// Step 1: Strip optional nonce (-r{4hex}) from end of timestamp portion.
+	// Must be done BEFORE session hash stripping because sessionHashRe anchors
+	// with $ and expects -s{4hex} at the very end of the string.
+	if m := nonceRe.FindStringSubmatch(timestamp); m != nil {
+		timestamp = timestamp[:len(timestamp)-len(m[0])]
+	}
+
+	// Step 2: Strip optional session hash (-s{4hex}) and capture it for MessageInfo.
+	// Both lines are required: m[1] carries the hash value; the slice drops the suffix.
+	if m := sessionHashRe.FindStringSubmatch(timestamp); m != nil {
 		sessionHash = m[1]
-		timestamp = timestampRaw[:len(timestampRaw)-len(m[0])]
+		timestamp = timestamp[:len(timestamp)-len(m[0])]
 	}
 
 	return &MessageInfo{
@@ -220,6 +240,12 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 	}
 	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, rawRecipient, sender, registry, msg); delErr != nil {
 		log.Printf("postman: WARNING: phony dispatch failed %s -> %s: %v\n", sender, rawRecipient, delErr)
+		dlDir := filepath.Join(filepath.Dir(filepath.Dir(postPath)), "dead-letter")
+		if mkErr := os.MkdirAll(dlDir, 0o755); mkErr == nil {
+			dst := filepath.Join(dlDir,
+				strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
+			_ = os.Rename(postPath, dst)
+		}
 	} else {
 		log.Printf("postman: phony-delivered %s -> %s\n", sender, rawRecipient)
 		if events != nil {
@@ -228,8 +254,8 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 				Message: fmt.Sprintf("Phony delivery: %s -> %s", sender, rawRecipient),
 			}
 		}
+		_ = os.Remove(postPath)
 	}
-	_ = os.Remove(postPath)
 	return true
 }
 
@@ -278,6 +304,23 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				log.Printf("postman: WARNING: stale post/ message %s (age: %s, threshold: %.0fs)\n", filename, preDeliveryAge.Truncate(time.Second), cfg.MessageAgeWarningSeconds)
 			}
 		}
+	}
+
+	// Guard: "postman" and "daemon" are reserved sender names only valid
+	// for messages originating from the daemon's own session.
+	// A filename claiming from=postman/daemon from a foreign session is a
+	// forgery — dead-letter it immediately.
+	if (info.From == "postman" || info.From == "daemon") && daemonSession != "" && sourceSessionName != daemonSession {
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
+		log.Printf("postman: SECURITY: forged sender %q in session %q (daemon session: %q) — dead-lettering %s\n",
+			info.From, sourceSessionName, daemonSession, filename)
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
+			}
+		}
+		return os.Rename(postPath, dst)
 	}
 
 	// Issue #161: Validate frontmatter envelope (skip for postman/daemon-origin messages)
@@ -418,7 +461,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 				// Expand template
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout)
+				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout, cfg.AllowShellTemplates)
 
 				// Issue #92: Append reply instructions for verbose mode
 				mode := cfg.EdgeViolationWarningMode

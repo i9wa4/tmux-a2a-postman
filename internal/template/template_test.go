@@ -101,7 +101,7 @@ func TestExpandTemplate_SanitizesInjection(t *testing.T) {
 	}
 	timeout := 5 * time.Second
 
-	got := ExpandTemplate(tmpl, vars, timeout)
+	got := ExpandTemplate(tmpl, vars, timeout, false)
 	want := "Node: evil"
 
 	if got != want {
@@ -117,7 +117,7 @@ func TestExpandTemplate(t *testing.T) {
 	}
 	timeout := 5 * time.Second
 
-	got := ExpandTemplate(template, vars, timeout)
+	got := ExpandTemplate(template, vars, timeout, true)
 
 	// Verify shell command was executed (no $(...) left)
 	if strings.Contains(got, "$(") {

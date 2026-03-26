@@ -117,7 +117,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 					"inbox_path": filepath.Join(nodeInfo.SessionDir, "inbox", nodeName),
 				}
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				content := template.ExpandTemplate(reminderMessage, vars, timeout)
+				content := template.ExpandTemplate(reminderMessage, vars, timeout, cfg.AllowShellTemplates)
 
 				paneIDForProbe := nodeInfo.PaneID
 				enterCount := notification.ResolveEnterCount(

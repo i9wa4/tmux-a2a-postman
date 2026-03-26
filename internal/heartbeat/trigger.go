@@ -78,7 +78,10 @@ func SendHeartbeatTrigger(
 
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
-	filename := message.GenerateFilename(ts, "postman", llmNode, nodeInfo.SessionName)
+	filename, err := message.GenerateFilename(ts, "postman", llmNode, nodeInfo.SessionName)
+	if err != nil {
+		return fmt.Errorf("heartbeat: generating filename: %w", err)
+	}
 	postDir := filepath.Join(nodeInfo.SessionDir, "post")
 	filePath := filepath.Join(postDir, filename)
 

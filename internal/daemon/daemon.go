@@ -964,7 +964,7 @@ func RunDaemonLoop(
 					"node":     nodeKey,
 					"duration": duration.Round(time.Second).String(),
 				}
-				eventMessage := template.ExpandTemplate(eventTemplate, vars, timeout)
+				eventMessage := template.ExpandTemplate(eventTemplate, vars, timeout, cfg.AllowShellTemplates)
 
 				// Emit dropped_ball event for Events pane
 				events <- tui.DaemonEvent{

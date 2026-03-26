@@ -1183,7 +1183,10 @@ func runCreateDraft(args []string) error {
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	filename := message.GenerateFilename(ts, sender, *to, sessionName)
+	filename, err := message.GenerateFilename(ts, sender, *to, sessionName)
+	if err != nil {
+		return fmt.Errorf("generating filename: %w", err)
+	}
 	draftPath := filepath.Join(draftDir, filename)
 
 	// Use draft_template from config if available
@@ -1239,7 +1242,7 @@ func runCreateDraft(args []string) error {
 
 	// Expand template with variables and shell commands
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	content = template.ExpandTemplate(content, vars, timeout)
+	content = template.ExpandTemplate(content, vars, timeout, cfg.AllowShellTemplates)
 
 	if *body != "" {
 		stripped, err := notification.StripVT(*body)
@@ -1251,7 +1254,7 @@ func runCreateDraft(args []string) error {
 
 	// Append message footer (separated by ---)
 	if cfg.MessageFooter != "" {
-		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout)
+		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout, cfg.AllowShellTemplates)
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
 

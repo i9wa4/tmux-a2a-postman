@@ -230,7 +230,7 @@ func TestTemplateExpandTemplate(t *testing.T) {
 		"count":    "5",
 		"template": "# WORKER ROLE",
 	}
-	msg := template.ExpandTemplate("{template} count:{count}", vars, 5*time.Second)
+	msg := template.ExpandTemplate("{template} count:{count}", vars, 5*time.Second, false)
 	if strings.Contains(msg, "{template}") {
 		t.Errorf("expected {template} to be expanded, got: %s", msg)
 	}
