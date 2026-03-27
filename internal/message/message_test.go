@@ -530,6 +530,46 @@ func TestDeliverMessage_CrossSessionPing(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_DisabledSessionPing(t *testing.T) {
+	// Verify Bug 3 scenario: a from=postman file arriving in a disabled session's post/ dir
+	// must be dead-lettered as forged sender. isSessionEnabled returns false, so the
+	// forged-sender guard at message.go:313 fires before ResolveNodeName is reached.
+	tmpDir := t.TempDir()
+	messengerDir := filepath.Join(tmpDir, "messenger")
+	if err := config.CreateSessionDirs(messengerDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260301-120000-from-postman-to-orchestrator.md"
+	postPath := filepath.Join(messengerDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: postman\n  to: orchestrator\n  timestamp: 2026-03-01T12:00:00Z\n---\n\nPING\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"messenger:orchestrator": {PaneID: "%10", SessionName: "messenger", SessionDir: messengerDir},
+	}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	// messenger is disabled; local-daemon is the daemon's own session
+	isSessionEnabled := func(s string) bool { return false }
+
+	_ = DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "local-daemon")
+
+	inboxPath := filepath.Join(messengerDir, "inbox", "orchestrator", filename)
+	if _, err := os.Stat(inboxPath); err == nil {
+		t.Errorf("ping should NOT be delivered to inbox for disabled session, but found: %s", inboxPath)
+	}
+
+	deadLetterGlob := filepath.Join(messengerDir, "dead-letter", "*forged*")
+	matches, _ := filepath.Glob(deadLetterGlob)
+	if len(matches) == 0 {
+		t.Errorf("expected ping to be dead-lettered as forged sender, but found no forged entries in dead-letter/")
+	}
+}
+
 func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 	sessionDir := t.TempDir()
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

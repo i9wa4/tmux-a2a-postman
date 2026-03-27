@@ -525,6 +525,16 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								sharedNodes.Store(&refreshed)
 								log.Printf("postman: node snapshot refreshed after enabling session %s (%d nodes)\n", cmd.Target, len(refreshed))
 							}
+						} else {
+							// Unregister disabled session dirs from the watcher.
+							disabledSessionDir := filepath.Join(contextDir, cmd.Target)
+							for _, subdir := range []string{"post", "inbox", "read"} {
+								dirToRemove := filepath.Join(disabledSessionDir, subdir)
+								if err := watcher.Remove(dirToRemove); err != nil {
+									log.Printf("postman: watcher.Remove %s: %v\n", dirToRemove, err)
+								}
+								delete(watchedDirs, dirToRemove)
+							}
 						}
 
 						// Rebuild session list and send status update (all sessions, not just nodes)
