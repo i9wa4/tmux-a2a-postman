@@ -1079,6 +1079,12 @@ func ResolveContextID(explicitID string) (string, error) {
 // Returns the filepath.Base-cleaned name, or an error if the name
 // contains path separators or collapses to a dot component.
 func ValidateSessionName(name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("session name %q: invalid value", name)
+	}
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("session name %q: invalid value", name)
+	}
 	if strings.ContainsAny(name, "/\\") {
 		return "", fmt.Errorf("session name %q: invalid value", name)
 	}

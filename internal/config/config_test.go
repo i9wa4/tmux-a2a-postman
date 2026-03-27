@@ -1812,6 +1812,8 @@ func TestValidateSessionName(t *testing.T) {
 	}{
 		{name: "valid plain name", input: "my-session", wantResult: "my-session"},
 		{name: "empty string", input: "", wantErrSub: "invalid value"},
+		{name: "whitespace only", input: "   ", wantErrSub: "invalid value"},
+		{name: "null byte", input: "a\x00b", wantErrSub: "invalid value"},
 		{name: "forward slash", input: "a/b", wantErrSub: "invalid value"},
 		{name: "backslash", input: "a\\b", wantErrSub: "invalid value"},
 		{name: "dot component", input: ".", wantErrSub: "invalid value"},
