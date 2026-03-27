@@ -1157,7 +1157,11 @@ func (m Model) renderVerticalLayout(width, height int) string {
 		}
 	}
 
-	footer := "[q: quit] [1/2: view] [l: layout]"
+	guardLabel := "off"
+	if m.startupGuardEnabled {
+		guardLabel = "ON"
+	}
+	footer := fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [g: guard=%s]", guardLabel)
 	selectedSessName := m.getSelectedSessionName()
 	footerStatus := m.sessionStatus[selectedSessName]
 	if footerStatus == "" {
