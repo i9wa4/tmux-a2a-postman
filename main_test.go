@@ -474,6 +474,24 @@ func TestFilterToUINode(t *testing.T) {
 			uiNode:    "messenger",
 			wantEmpty: true,
 		},
+		{
+			name:      "nil input map returns empty",
+			nodes:     nil,
+			uiNode:    "messenger",
+			wantEmpty: true,
+		},
+		{
+			name:     "no-colon node name matched by simple name",
+			nodes:    makeNodes("messenger", "worker"),
+			uiNode:   "messenger",
+			wantKeys: []string{"messenger"},
+		},
+		{
+			name:     "multi-session multi-match returns all matching entries",
+			nodes:    makeNodes("s1:messenger", "s2:messenger", "s1:worker"),
+			uiNode:   "messenger",
+			wantKeys: []string{"s1:messenger", "s2:messenger"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

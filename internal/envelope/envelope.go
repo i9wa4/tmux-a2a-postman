@@ -115,9 +115,18 @@ func BuildEnvelope(
 
 	// Extract sent_timestamp from filename prefix (YYYYMMDD-HHMMSS).
 	// Falls back to "" when filename is absent or has unexpected format.
+	// Digit check prevents non-numeric chars from passing through as timestamps.
+	isAllDigits := func(s string) bool {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return len(s) > 0
+	}
 	sentTimestamp := ""
 	base := filepath.Base(filename)
-	if parts := strings.SplitN(base, "-", 3); len(parts) >= 2 && len(parts[0]) == 8 && len(parts[1]) == 6 {
+	if parts := strings.SplitN(base, "-", 3); len(parts) >= 2 && len(parts[0]) == 8 && len(parts[1]) == 6 && isAllDigits(parts[0]) && isAllDigits(parts[1]) {
 		sentTimestamp = parts[0] + "-" + parts[1]
 	}
 

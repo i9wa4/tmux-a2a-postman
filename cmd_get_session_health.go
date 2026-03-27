@@ -11,6 +11,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 )
 
 // runGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
@@ -76,8 +77,7 @@ func runGetSessionHealth(args []string) error {
 
 	var healthEntries []nodeHealth
 	for nodeName := range nodes {
-		parts := strings.SplitN(nodeName, ":", 2)
-		rawName := parts[len(parts)-1]
+		rawName := ping.ExtractSimpleName(nodeName)
 		if !edgeNodes[rawName] {
 			continue
 		}

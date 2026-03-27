@@ -175,15 +175,13 @@ func resolveInboxPath(args []string) (string, error) {
 }
 
 // filterToUINode narrows nodes to the single entry whose simple name matches
-// uiNode. If uiNode is empty, the original map is returned unchanged.
+// uiNode. If uiNode is empty, a shallow copy of nodes is returned.
 // Returns an empty map when uiNode is set but not found.
+// NOTE: always returns a new map — callers may mutate freely.
 func filterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[string]discovery.NodeInfo {
-	if uiNode == "" {
-		return nodes
-	}
-	result := make(map[string]discovery.NodeInfo)
+	result := make(map[string]discovery.NodeInfo, len(nodes))
 	for nodeName, info := range nodes {
-		if ping.ExtractSimpleName(nodeName) == uiNode {
+		if uiNode == "" || ping.ExtractSimpleName(nodeName) == uiNode {
 			result[nodeName] = info
 		}
 	}

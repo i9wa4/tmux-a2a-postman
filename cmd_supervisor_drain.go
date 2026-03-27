@@ -43,7 +43,13 @@ func runSupervisorDrain(args []string) error {
 	if sessionName == "" {
 		return fmt.Errorf("supervisor-drain must be run inside tmux")
 	}
+	if strings.ContainsAny(sessionName, "/\\") {
+		return fmt.Errorf("session name %q: invalid value", sessionName)
+	}
 	sessionName = filepath.Base(sessionName)
+	if sessionName == "" || sessionName == "." || sessionName == ".." {
+		return fmt.Errorf("session name %q: invalid value", sessionName)
+	}
 
 	var resolvedContextID string
 	if *contextIDFlag != "" {
