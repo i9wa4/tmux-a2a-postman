@@ -310,7 +310,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// for messages originating from the daemon's own session.
 	// A filename claiming from=postman/daemon from a foreign session is a
 	// forgery — dead-letter it immediately.
-	if (info.From == "postman" || info.From == "daemon") && daemonSession != "" && sourceSessionName != daemonSession {
+	if (info.From == "postman" || info.From == "daemon") && daemonSession != "" && sourceSessionName != daemonSession &&
+		(info.From == "daemon" || !isSessionEnabled(sourceSessionName)) {
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
 		log.Printf("postman: SECURITY: forged sender %q in session %q (daemon session: %q) — dead-lettering %s\n",
 			info.From, sourceSessionName, daemonSession, filename)

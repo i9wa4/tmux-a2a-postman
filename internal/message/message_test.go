@@ -487,6 +487,49 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_CrossSessionPing(t *testing.T) {
+	// Verify Bug 1 fix: a ping file written by SendPingToNode to the target session's
+	// post/ dir must reach the inbox, not be dead-lettered as a forged sender.
+	// sourceSessionName == "messenger" != daemonSession == "local-daemon",
+	// but isSessionEnabled("messenger") == true, so the guard must pass.
+	tmpDir := t.TempDir()
+	messengerDir := filepath.Join(tmpDir, "messenger") // basename = sourceSessionName
+	if err := config.CreateSessionDirs(messengerDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260301-120000-from-postman-to-orchestrator.md"
+	postPath := filepath.Join(messengerDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: postman\n  to: orchestrator\n  timestamp: 2026-03-01T12:00:00Z\n---\n\nPING\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"messenger:orchestrator": {PaneID: "%10", SessionName: "messenger", SessionDir: messengerDir},
+	}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	// messenger is enabled; local-daemon is the daemon's own session
+	isSessionEnabled := func(s string) bool { return s == "messenger" }
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "local-daemon"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	inboxPath := filepath.Join(messengerDir, "inbox", "orchestrator", filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Errorf("ping not delivered to inbox: %v", err)
+	}
+
+	deadLetterGlob := filepath.Join(messengerDir, "dead-letter", "*forged*")
+	matches, _ := filepath.Glob(deadLetterGlob)
+	if len(matches) > 0 {
+		t.Errorf("ping was incorrectly dead-lettered as forged sender: %v", matches)
+	}
+}
+
 func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 	sessionDir := t.TempDir()
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

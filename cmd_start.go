@@ -485,6 +485,18 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
 								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
 							} else {
+								// Register newly created session dirs with the watcher.
+								newSessionDir := filepath.Join(contextDir, cmd.Target)
+								for _, subdir := range []string{"post", "inbox", "read"} {
+									dirToWatch := filepath.Join(newSessionDir, subdir)
+									if !watchedDirs[dirToWatch] {
+										if err := watcher.Add(dirToWatch); err != nil {
+											log.Printf("postman: watcher.Add %s: %v\n", dirToWatch, err)
+										} else {
+											watchedDirs[dirToWatch] = true
+										}
+									}
+								}
 								// Pre-claim panes in the enabled session so the F3 guard passes.
 								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
 								preClaimed := 0
