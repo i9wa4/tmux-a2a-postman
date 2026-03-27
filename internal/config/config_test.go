@@ -90,6 +90,30 @@ func TestCreateSessionDirs(t *testing.T) {
 	}
 }
 
+func TestCreateMultiSessionDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextDir := filepath.Join(tmpDir, "ctx-123")
+	sessionName := "test-session"
+
+	if err := CreateMultiSessionDirs(contextDir, sessionName); err != nil {
+		t.Fatalf("CreateMultiSessionDirs failed: %v", err)
+	}
+
+	sessionDir := filepath.Join(contextDir, sessionName)
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting"}
+	for _, d := range expectedDirs {
+		path := filepath.Join(sessionDir, d)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("directory %q not created: %v", d, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("%q is not a directory", d)
+		}
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)                     // Isolate from project-local config

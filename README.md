@@ -194,15 +194,24 @@ tmux-a2a-postman stop
 
 ## 6. Directory Structure
 
+Base directory resolution, in priority order
+
+1. `$POSTMAN_HOME`
+2. `base_dir` in config
+3. `$XDG_STATE_HOME/tmux-a2a-postman`
+
+Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
+
 ```text
-$XDG_STATE_HOME/tmux-a2a-postman/
+{baseDir}/
   {contextId}/
     {sessionName}/
-      inbox/{node}/     # incoming messages per node
-      post/             # outgoing messages (daemon picks up)
-      draft/            # message drafts
-      read/             # archived messages
-      dead-letter/      # undeliverable messages
+      draft/            # internal: draft staging area (use send-message instead)
+      post/             # internal: outbox queue managed by postman daemon
+      inbox/{node}/     # daemon delivers messages here
+      read/             # agent moves messages here after reading
+      dead-letter/      # unroutable messages land here
+      waiting/          # per-node waiting state files
 ```
 
 ## 7. Deployment Topology

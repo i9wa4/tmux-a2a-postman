@@ -1038,7 +1038,7 @@ func CreateSessionDirs(sessionDir string) error {
 
 // CreateMultiSessionDirs creates the multi-session directory structure.
 // For multi-session support: contextDir = baseDir/contextID, sessionName = tmux session name
-// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter}
+// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting}
 func CreateMultiSessionDirs(contextDir, sessionName string) error {
 	sessionDir := filepath.Join(contextDir, sessionName)
 	return CreateSessionDirs(sessionDir)
