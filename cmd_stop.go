@@ -37,7 +37,10 @@ func runStop(args []string) error {
 	if sessionName == "" {
 		return fmt.Errorf("--session is required (or run inside tmux)")
 	}
-	sessionName = filepath.Base(sessionName)
+	sessionName, err = config.ValidateSessionName(sessionName)
+	if err != nil {
+		return err
+	}
 
 	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
 	if err != nil {

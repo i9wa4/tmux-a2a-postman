@@ -68,7 +68,10 @@ func runRead(args []string) error {
 		if sessionName == "" {
 			return fmt.Errorf("tmux session name required (run inside tmux)")
 		}
-		sessionName = filepath.Base(sessionName)
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return err
+		}
 		var resolvedContextID string
 		if *contextID != "" {
 			resolvedContextID, err = config.ResolveContextID(*contextID)

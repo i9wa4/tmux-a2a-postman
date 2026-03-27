@@ -114,9 +114,9 @@ func runSendMessage(args []string) error {
 	if sessionName == "" {
 		return fmt.Errorf("--session is required (or run inside tmux)")
 	}
-	sessionName = filepath.Base(sessionName)
-	if sessionName == "." || sessionName == ".." || sessionName == "" {
-		return fmt.Errorf("invalid session name: %q", *session)
+	sessionName, err = config.ValidateSessionName(sessionName)
+	if err != nil {
+		return fmt.Errorf("invalid session name: %w", err)
 	}
 	if *from == "" && config.GetTmuxSessionName() != "" {
 		tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")

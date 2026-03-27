@@ -103,6 +103,11 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	sessionName := tmuxSessionName
 	if sessionName == "" {
 		sessionName = "default"
+	} else {
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return fmt.Errorf("start: invalid session name: %w", err)
+		}
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
 
