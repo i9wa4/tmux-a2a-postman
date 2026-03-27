@@ -241,6 +241,57 @@ func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	}
 }
 
+// TestRunSendMessage_FromFlagAccepted verifies --from is a recognized flag.
+// --from requires --bindings, so the test expects an error about --bindings, not a flag error.
+func TestRunSendMessage_FromFlagAccepted(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+	err := runSendMessage([]string{"--to", "worker", "--body", "hello", "--from", "orchestrator"})
+	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("--from not defined in runSendMessage: %v", err)
+	}
+	// Must error with --bindings requirement, not a flag parse error.
+	if err == nil {
+		t.Fatalf("expected error (--bindings required with --from), got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "bindings") {
+		t.Errorf("expected error mentioning 'bindings', got: %v", err)
+	}
+}
+
+// TestRunSendMessage_InvalidFromNodeName verifies that an invalid --from value
+// (one that fails ValidateNodeName) returns an appropriate error.
+func TestRunSendMessage_InvalidFromNodeName(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+	// Write a minimal bindings file so --bindings check passes.
+	bindingsFile := filepath.Join(tmpDir, "bindings.json")
+	if err := os.WriteFile(bindingsFile, []byte(`[]`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	err := runSendMessage([]string{
+		"--to", "worker", "--body", "hello",
+		"--from", "../escape", "--bindings", bindingsFile,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid --from node name, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid node name") && !strings.Contains(err.Error(), "invalid value") {
+		t.Errorf("expected 'invalid node name' or 'invalid value', got: %v", err)
+	}
+}
+
+// TestRunSendMessage_IdempotencyKeyFlagAccepted verifies --idempotency-key is recognized.
+func TestRunSendMessage_IdempotencyKeyFlagAccepted(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+	err := runSendMessage([]string{"--to", "worker", "--body", "hello", "--idempotency-key", "key-abc-123"})
+	// Will fail at sender auto-detection or context-id resolution, but must not be a flag error.
+	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Errorf("--idempotency-key not defined in runSendMessage: %v", err)
+	}
+}
+
 // --- Issue #351: parseParams / parseShorthand unit tests ---
 
 // TestParseParams verifies parseParams behavior across JSON, shorthand, and edge-case inputs.
@@ -326,6 +377,63 @@ func TestParseParams(t *testing.T) {
 				} else if got != tc.wantVal {
 					t.Errorf("result[%q] = %q; want %q", tc.wantKey, got, tc.wantVal)
 				}
+			}
+		})
+	}
+}
+
+// TestRunGetSessionHealth verifies flag parsing for runGetSessionHealth across key cases.
+func TestRunGetSessionHealth(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantErrSub string // non-empty: error must contain this substring
+	}{
+		{
+			name:       "valid session name no error on flag parse",
+			args:       []string{"--session", "my-session"},
+			wantErrSub: "", // may fail at context-id resolution, but not at flag parse or validation
+		},
+		{
+			name:       "path traversal rejected",
+			args:       []string{"--session", "../bad"},
+			wantErrSub: "invalid value",
+		},
+		{
+			// underscore is not a path separator; "bad_name" is valid for tmux sessions
+			name:       "underscore session name accepted",
+			args:       []string{"--session", "bad_name"},
+			wantErrSub: "", // may fail at context-id resolution, not at validation
+		},
+		{
+			name:       "dot session name rejected",
+			args:       []string{"--session", "."},
+			wantErrSub: "invalid value",
+		},
+		{
+			name:       "double dot",
+			args:       []string{"--session", ".."},
+			wantErrSub: "invalid value",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("POSTMAN_HOME", tmpDir)
+			err := runGetSessionHealth(tc.args)
+			if tc.wantErrSub == "" {
+				// Valid case: must not fail with "flag provided but not defined" or "invalid value".
+				if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
+					strings.Contains(err.Error(), "invalid value")) {
+					t.Errorf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("error = %q; want to contain %q", err.Error(), tc.wantErrSub)
 			}
 		})
 	}

@@ -186,6 +186,8 @@ func runHelp(args []string) {
 		fmt.Println("get-session-health")
 		fmt.Println("  Print session health: node count, inbox/waiting counts per node.")
 		fmt.Println("  Flags:")
+		fmt.Println("    --context-id <id>    Context ID (optional, auto-resolved from session)")
+		fmt.Println("    --session <name>     tmux session name (optional, auto-detected)")
 		fmt.Println("    --config <path>      Config file path (optional)")
 		fmt.Println("")
 		fmt.Println("read")

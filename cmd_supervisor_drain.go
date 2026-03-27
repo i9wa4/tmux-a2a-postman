@@ -13,7 +13,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/memory"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
-	"github.com/i9wa4/tmux-a2a-postman/internal/supervisor"
 )
 
 // runSupervisorDrain implements the Phase 3 → Phase 2 rollback drain procedure
@@ -188,9 +187,6 @@ func runSupervisorDrain(args []string) error {
 	log.Printf("supervisor-drain: PII retention: 90 days (default)\n")
 	fmt.Printf("supervisor-drain complete: redelivered=%d quarantined=%d redelivery_failed=%d passthrough=%d partial=%v\n",
 		redelivered, quarantined, redeliveryFailed, passthrough, partial)
-
-	// Also drain ConfidenceManager by resetting to Phase 2 defaults.
-	_ = supervisor.NewConfidenceManager(store) // instantiate for type usage; state reset is implicit via new instance
 
 	return nil
 }

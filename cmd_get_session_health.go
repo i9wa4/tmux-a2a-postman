@@ -17,6 +17,7 @@ import (
 func runGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-session-health", flag.ExitOnError)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
+	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "Config file path")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -29,11 +30,20 @@ func runGetSessionHealth(args []string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	sessionName := config.GetTmuxSessionName()
+	sessionName := *sessionFlag
 	if sessionName == "" {
-		return fmt.Errorf("--context-id is required (not in tmux)")
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return fmt.Errorf("session name required: run inside tmux or pass --session")
+	}
+	if strings.ContainsAny(sessionName, "/\\") {
+		return fmt.Errorf("session name %q: invalid value", sessionName)
 	}
 	sessionName = filepath.Base(sessionName)
+	if sessionName == "" || sessionName == "." || sessionName == ".." {
+		return fmt.Errorf("session name %q: invalid value", sessionName)
+	}
 
 	// Issue #249: auto-resolve --context-id if not provided
 	var resolvedContextID string
@@ -52,7 +62,7 @@ func runGetSessionHealth(args []string) error {
 	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
 
 	// Discover nodes
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID, config.GetTmuxSessionName())
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID, sessionName)
 	if err != nil {
 		return fmt.Errorf("discovering nodes: %w", err)
 	}

@@ -1765,3 +1765,39 @@ func TestResolveLocalConfigPath(t *testing.T) {
 		t.Errorf("ResolveLocalConfigPath (absent) = %q, want empty", empty)
 	}
 }
+
+func TestResolveContextID(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantResult string
+		wantErrSub string
+	}{
+		{name: "valid", input: "ctx-123", wantResult: "ctx-123"},
+		{name: "empty", input: "", wantErrSub: "--context-id is required"},
+		{name: "path traversal single", input: "../bad", wantErrSub: "invalid value"},
+		{name: "path traversal deep", input: "../../etc/passwd", wantErrSub: "invalid value"},
+		{name: "64-char at limit", input: strings.Repeat("a", 64), wantResult: strings.Repeat("a", 64)},
+		{name: "65-char exceeds limit", input: strings.Repeat("a", 65), wantErrSub: "invalid value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveContextID(tc.input)
+			if tc.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("ResolveContextID(%q) = %q, want error containing %q", tc.input, got, tc.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Errorf("ResolveContextID(%q) error = %q, want containing %q", tc.input, err.Error(), tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveContextID(%q) unexpected error: %v", tc.input, err)
+			}
+			if got != tc.wantResult {
+				t.Errorf("ResolveContextID(%q) = %q, want %q", tc.input, got, tc.wantResult)
+			}
+		})
+	}
+}

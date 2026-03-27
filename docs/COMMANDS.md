@@ -256,15 +256,16 @@ tmux-a2a-postman bind rebind --file PATH --node-name NAME [--session-name NAME]
 ### 7.1. get-session-health
 
 ```text
-tmux-a2a-postman get-session-health [--context-id ID] [--config PATH]
+tmux-a2a-postman get-session-health [--context-id ID] [--session NAME] [--config PATH]
 ```
 
 Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 
-| Flag           | Type   | Default | Description                                  |
-| -------------- | ------ | ------- | -------------------------------------------- |
-| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
-| `--config`     | string | ""      | Path to config file                          |
+| Flag           | Type   | Default | Description                                        |
+| -------------- | ------ | ------- | -------------------------------------------------- |
+| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session)       |
+| `--session`    | string | ""      | tmux session name (optional, auto-detect if in tmux) |
+| `--config`     | string | ""      | Path to config file                                |
 
 **Output shape:**
 
