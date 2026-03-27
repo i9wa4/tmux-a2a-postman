@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 func TestIsShellCommand(t *testing.T) {
@@ -434,6 +436,62 @@ func TestRunGetSessionHealth(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErrSub) {
 				t.Errorf("error = %q; want to contain %q", err.Error(), tc.wantErrSub)
+			}
+		})
+	}
+}
+
+func TestFilterToUINode(t *testing.T) {
+	makeNodes := func(names ...string) map[string]discovery.NodeInfo {
+		m := make(map[string]discovery.NodeInfo, len(names))
+		for _, n := range names {
+			m[n] = discovery.NodeInfo{SessionName: "s"}
+		}
+		return m
+	}
+	cases := []struct {
+		name      string
+		nodes     map[string]discovery.NodeInfo
+		uiNode    string
+		wantKeys  []string
+		wantEmpty bool
+	}{
+		{
+			name:     "uiNode empty returns all",
+			nodes:    makeNodes("s:messenger", "s:worker", "s:critic"),
+			uiNode:   "",
+			wantKeys: []string{"s:messenger", "s:worker", "s:critic"},
+		},
+		{
+			name:     "uiNode found returns only match",
+			nodes:    makeNodes("s:messenger", "s:worker", "s:critic"),
+			uiNode:   "messenger",
+			wantKeys: []string{"s:messenger"},
+		},
+		{
+			name:      "uiNode not found returns empty",
+			nodes:     makeNodes("s:worker", "s:critic"),
+			uiNode:    "messenger",
+			wantEmpty: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterToUINode(tc.nodes, tc.uiNode)
+			if tc.wantEmpty {
+				if len(got) != 0 {
+					t.Errorf("want empty map, got %v", got)
+				}
+				return
+			}
+			if len(got) != len(tc.wantKeys) {
+				t.Errorf("len = %d, want %d; got keys: %v", len(got), len(tc.wantKeys), got)
+				return
+			}
+			for _, k := range tc.wantKeys {
+				if _, ok := got[k]; !ok {
+					t.Errorf("missing key %q in result %v", k, got)
+				}
 			}
 		})
 	}

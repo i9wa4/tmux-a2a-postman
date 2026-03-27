@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 )
 
 // idempotencyKeyPattern is the canonical regex for --idempotency-key tokens.
@@ -170,6 +172,22 @@ func resolveInboxPath(args []string) (string, error) {
 
 	inboxPath := filepath.Join(baseDir, resolvedContextID, sessionName, "inbox", nodeName)
 	return inboxPath, nil
+}
+
+// filterToUINode narrows nodes to the single entry whose simple name matches
+// uiNode. If uiNode is empty, the original map is returned unchanged.
+// Returns an empty map when uiNode is set but not found.
+func filterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[string]discovery.NodeInfo {
+	if uiNode == "" {
+		return nodes
+	}
+	result := make(map[string]discovery.NodeInfo)
+	for nodeName, info := range nodes {
+		if ping.ExtractSimpleName(nodeName) == uiNode {
+			result[nodeName] = info
+		}
+	}
+	return result
 }
 
 // printDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).

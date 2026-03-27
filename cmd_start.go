@@ -589,17 +589,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							}
 						}
 						// Restrict ping to ui_node only (if configured).
-						if cfg.UINode != "" {
-							uiTarget := make(map[string]discovery.NodeInfo)
-							for nodeName, nodeInfo := range targetNodes {
-								parts := strings.SplitN(nodeName, ":", 2)
-								rawName := parts[len(parts)-1]
-								if rawName == cfg.UINode {
-									uiTarget[nodeName] = nodeInfo
-								}
-							}
-							targetNodes = uiTarget
-						}
+						targetNodes = filterToUINode(targetNodes, cfg.UINode)
 						if len(targetNodes) == 0 {
 							log.Printf("postman: PING skipped for session %s — ui_node %q not found\n", cmd.Target, cfg.UINode)
 							daemonEvents <- tui.DaemonEvent{
