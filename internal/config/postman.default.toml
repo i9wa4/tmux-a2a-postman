@@ -6,17 +6,18 @@
 # =============================================================================
 #
 # notification_template:
-#   {from_node}      - Sender node name
-#   {node}           - Recipient node name
-#   {timestamp}      - Message timestamp (YYYYMMDD-HHMMSS)
-#   {inbox_path}     - Full path to recipient's inbox directory
-#   {filename}       - Message filename
-#   {talks_to_line}  - Formatted list of nodes this node can communicate with
-#   {template}       - Node's role template (from [node].template)
-#   {reply_command}  - Command to create draft message
-#   {context_id}     - Current context ID
-#   {session_dir}    - Session directory path
-#   {session_name}   - tmux session name of the sender
+#   {from_node}        - Sender node name
+#   {node}             - Recipient node name
+#   {timestamp}        - Current time (YYYYMMDD-HHMMSS, when notification is built)
+#   {sent_timestamp}   - Sent time extracted from message filename (YYYYMMDD-HHMMSS; "" if unavailable)
+#   {inbox_path}       - Full path to recipient's inbox directory
+#   {filename}         - Message filename
+#   {talks_to_line}    - Formatted list of nodes this node can communicate with
+#   {template}         - Node's role template (from [node].template)
+#   {reply_command}    - Command to create draft message
+#   {context_id}       - Current context ID
+#   {session_dir}      - Session directory path
+#   {session_name}     - tmux session name of the sender
 #
 #
 # draft_template:
@@ -138,6 +139,7 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}!  You've got mail.
+Sent: {sent_timestamp}
 Run `tmux-a2a-postman pop` to read it. """
 
 # Message footer (appended by `pop` command after message content)

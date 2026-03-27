@@ -113,13 +113,22 @@ func BuildEnvelope(
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 
+	// Extract sent_timestamp from filename prefix (YYYYMMDD-HHMMSS).
+	// Falls back to "" when filename is absent or has unexpected format.
+	sentTimestamp := ""
+	base := filepath.Base(filename)
+	if parts := strings.SplitN(base, "-", 3); len(parts) >= 2 && len(parts[0]) == 8 && len(parts[1]) == 6 {
+		sentTimestamp = parts[0] + "-" + parts[1]
+	}
+
 	vars := map[string]string{
 		"context_id":       contextID,
 		"node":             recipient,
 		"from_node":        sender,
 		"timestamp":        ts,
 		"iso_timestamp":    now.Format(time.RFC3339),
-		"filename":         filepath.Base(filename),
+		"sent_timestamp":   sentTimestamp,
+		"filename":         base,
 		"inbox_path":       inboxPath,
 		"talks_to_line":    talksToLine,
 		"contacts_section": contactsSection,
