@@ -588,13 +588,34 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								break
 							}
 						}
+						// Restrict ping to ui_node only (if configured).
+						if cfg.UINode != "" {
+							uiTarget := make(map[string]discovery.NodeInfo)
+							for nodeName, nodeInfo := range targetNodes {
+								parts := strings.SplitN(nodeName, ":", 2)
+								rawName := parts[len(parts)-1]
+								if rawName == cfg.UINode {
+									uiTarget[nodeName] = nodeInfo
+								}
+							}
+							targetNodes = uiTarget
+						}
+						if len(targetNodes) == 0 {
+							log.Printf("postman: PING skipped for session %s — ui_node %q not found\n", cmd.Target, cfg.UINode)
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "status_update",
+								Message: fmt.Sprintf("ui_node %q not found in session %s", cfg.UINode, cmd.Target),
+								Details: map[string]interface{}{"session": cmd.Target},
+							}
+							break
+						}
 						// Build active nodes from freshNodes (not stale startup nodes)
 						activeNodes := make([]string, 0, len(freshNodes))
 						for nodeName := range freshNodes {
 							simpleName := ping.ExtractSimpleName(nodeName)
 							activeNodes = append(activeNodes, simpleName)
 						}
-						// Send PING to each node in the target session concurrently.
+						// Send PING to ui_node in the target session.
 						livenessMap := idleTracker.GetLivenessMap()
 						pingAdjacency, _ := config.ParseEdges(cfg.Edges)
 						if pingAdjacency == nil {

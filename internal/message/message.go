@@ -463,14 +463,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout, cfg.AllowShellTemplates)
 
-				// Issue #92: Append reply instructions for verbose mode.
-				// Compact mode applies to ui_node only; AI agent nodes always get verbose.
-				mode := "verbose"
-				if cfg.UINode != "" && info.From == cfg.UINode {
-					mode = cfg.EdgeViolationWarningMode
-					if mode == "" {
-						mode = "compact"
-					}
+				// Issue #92: Append reply instructions for verbose mode
+				mode := cfg.EdgeViolationWarningMode
+				if mode == "" {
+					mode = "compact"
 				}
 				if mode == "verbose" {
 					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send-message --context-id %s --to <allowed-node> --body \"<your message>\"\n  - Replace <allowed-node> with one of: %s",
