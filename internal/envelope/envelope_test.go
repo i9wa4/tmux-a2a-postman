@@ -123,3 +123,40 @@ func TestBuildEnvelope_InboxPath(t *testing.T) {
 		t.Errorf("result = %q, want to contain '/my/session/inbox/worker'", result)
 	}
 }
+
+func TestBuildEnvelope_SentTimestamp(t *testing.T) {
+	cfg := &config.Config{TmuxTimeout: 5.0}
+	adjacency := map[string][]string{}
+	nodes := map[string]discovery.NodeInfo{}
+	livenessMap := map[string]bool{}
+
+	tests := []struct {
+		name     string
+		filename string
+		wantTS   string
+	}{
+		{
+			name:     "valid YYYYMMDD-HHMMSS prefix",
+			filename: "/session/post/20060102-150405-msg-from-worker.md",
+			wantTS:   "20060102-150405",
+		},
+		{
+			name:     "malformed filename no timestamp prefix",
+			filename: "/session/post/foo-bar.md",
+			wantTS:   "",
+		},
+		{
+			name:     "correct length but non-digit chars",
+			filename: "/session/post/ABCDEFGH-123456-rest.md",
+			wantTS:   "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := BuildEnvelope(cfg, "{sent_timestamp}", "worker", "postman", "ctx", tc.filename, nil, adjacency, nodes, "", livenessMap)
+			if result != tc.wantTS {
+				t.Errorf("BuildEnvelope sent_timestamp = %q, want %q", result, tc.wantTS)
+			}
+		})
+	}
+}

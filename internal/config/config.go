@@ -1075,6 +1075,20 @@ func ResolveContextID(explicitID string) (string, error) {
 	return "", fmt.Errorf("--context-id is required")
 }
 
+// ValidateSessionName validates and sanitises a tmux session name.
+// Returns the filepath.Base-cleaned name, or an error if the name
+// contains path separators or collapses to a dot component.
+func ValidateSessionName(name string) (string, error) {
+	if strings.ContainsAny(name, "/\\") {
+		return "", fmt.Errorf("session name %q: invalid value", name)
+	}
+	clean := filepath.Base(name)
+	if clean == "" || clean == "." || clean == ".." {
+		return "", fmt.Errorf("session name %q: invalid value", name)
+	}
+	return clean, nil
+}
+
 // IsSessionPIDAlive reads postman.pid from baseDir/contextName/sessionName/
 // and returns true if the recorded process is still running.
 // Issue #249: liveness check for context disambiguation.

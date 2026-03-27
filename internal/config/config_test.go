@@ -1779,6 +1779,7 @@ func TestResolveContextID(t *testing.T) {
 		{name: "path traversal deep", input: "../../etc/passwd", wantErrSub: "invalid value"},
 		{name: "64-char at limit", input: strings.Repeat("a", 64), wantResult: strings.Repeat("a", 64)},
 		{name: "65-char exceeds limit", input: strings.Repeat("a", 65), wantErrSub: "invalid value"},
+		{name: "embedded slash", input: "valid/sub", wantErrSub: "invalid value"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1797,6 +1798,42 @@ func TestResolveContextID(t *testing.T) {
 			}
 			if got != tc.wantResult {
 				t.Errorf("ResolveContextID(%q) = %q, want %q", tc.input, got, tc.wantResult)
+			}
+		})
+	}
+}
+
+func TestValidateSessionName(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantResult string
+		wantErrSub string
+	}{
+		{name: "valid plain name", input: "my-session", wantResult: "my-session"},
+		{name: "empty string", input: "", wantErrSub: "invalid value"},
+		{name: "forward slash", input: "a/b", wantErrSub: "invalid value"},
+		{name: "backslash", input: "a\\b", wantErrSub: "invalid value"},
+		{name: "dot component", input: ".", wantErrSub: "invalid value"},
+		{name: "dotdot component", input: "..", wantErrSub: "invalid value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ValidateSessionName(tc.input)
+			if tc.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("ValidateSessionName(%q) = %q, want error containing %q", tc.input, got, tc.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Errorf("ValidateSessionName(%q) error = %q, want containing %q", tc.input, err.Error(), tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateSessionName(%q) unexpected error: %v", tc.input, err)
+			}
+			if got != tc.wantResult {
+				t.Errorf("ValidateSessionName(%q) = %q, want %q", tc.input, got, tc.wantResult)
 			}
 		})
 	}
