@@ -795,9 +795,15 @@ func RunDaemonLoop(
 			for _, collision := range scanCollisions {
 				alertKey := "pane_collision:" + collision.WinnerPaneID + ":" + collision.LoserPaneID
 				if daemonState.ShouldSendAlert(alertKey, 300) {
-					events <- tui.DaemonEvent{Type: "pane_collision", Message: fmt.Sprintf(
-						"[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID,
-					)}
+					events <- tui.DaemonEvent{
+						Type:    "pane_collision",
+						Message: fmt.Sprintf("[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID),
+						Details: map[string]interface{}{
+							"node":           collision.NodeKey,
+							"winner_pane_id": collision.WinnerPaneID,
+							"loser_pane_id":  collision.LoserPaneID,
+						},
+					}
 					daemonState.MarkAlertSent(alertKey)
 				}
 			}

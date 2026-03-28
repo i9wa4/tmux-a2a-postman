@@ -786,6 +786,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "pane_collision":
+			sessionName := m.resolveSessionFromDetails(msg.Details)
+			if sessionName != "" {
+				m.sessionStatus[sessionName] = msg.Message
+			}
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: sessionName,
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "alert_config_warning": // Issue #352: misconfigured alert system warning
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,

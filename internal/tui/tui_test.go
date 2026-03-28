@@ -534,6 +534,40 @@ func TestTUI_Update_NodeInactivityRecordsWarningForUniqueSession(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_PaneCollisionRecordsWarningForSession(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	event := DaemonEventMsg{
+		Type:    "pane_collision",
+		Message: "[COLLISION] review:critic: %11 displaced by %12",
+		Details: map[string]interface{}{
+			"node": "review:critic",
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["review"]; got != event.Message {
+		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
+	}
+	if len(m.events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(m.events))
+	}
+	if got := m.events[0].Message; got != event.Message {
+		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
+	}
+	if got := m.events[0].SessionName; got != "review" {
+		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
+	}
+	if got := m.events[0].Severity; got != SeverityWarning {
+		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
+	}
+}
+
 func TestTUI_Update_InboxUnreadSummaryRecordsWarningForUniqueSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
