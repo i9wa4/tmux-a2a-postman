@@ -498,6 +498,78 @@ func TestTUI_SpaceKey_GuardBlocks(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_PaneRestartRecordsRecoveryEvent(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	event := DaemonEventMsg{
+		Type:    "pane_restart",
+		Message: "Pane restart detected: review:critic (old: %11, new: %12)",
+		Details: map[string]interface{}{
+			"node":        "review:critic",
+			"old_pane_id": "%11",
+			"new_pane_id": "%12",
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["review"]; got != event.Message {
+		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
+	}
+	if len(m.events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(m.events))
+	}
+	if got := m.events[0].Message; got != event.Message {
+		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
+	}
+	if got := m.events[0].SessionName; got != "review" {
+		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
+	}
+	if got := m.events[0].Severity; got != SeverityWarning {
+		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
+	}
+}
+
+func TestTUI_Update_SessionCollapsedRecordsCriticalEvent(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	event := DaemonEventMsg{
+		Type:    "session_collapsed",
+		Message: "Session collapsed: review (2 panes disappeared)",
+		Details: map[string]interface{}{
+			"session": "review",
+			"nodes":   []string{"review:critic", "review:guardian"},
+			"count":   2,
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["review"]; got != event.Message {
+		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
+	}
+	if len(m.events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(m.events))
+	}
+	if got := m.events[0].Message; got != event.Message {
+		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
+	}
+	if got := m.events[0].SessionName; got != "review" {
+		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
+	}
+	if got := m.events[0].Severity; got != SeverityCritical {
+		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityCritical)
+	}
+}
+
 func TestTUI_Update_NodeInactivityRecordsWarningForUniqueSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
