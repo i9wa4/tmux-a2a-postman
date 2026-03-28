@@ -17,14 +17,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
-
-// validNodeNameRe validates from/to fields in message filenames (#174).
-// Allows alphanumeric characters and hyphens, must start with alphanumeric.
-// Enforces a 64-char cap (1 required + 0-63 trailing) to match the binding registry loader (#299).
-var validNodeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$`)
 
 // Dead-letter reason strings used in sender notifications and TUI events (Issue #161).
 const (
@@ -119,16 +115,25 @@ func SessionHash(sessionName string) string {
 // Format: {timestamp}-s{hash}-r{nonce}-from-{sender}-to-{recipient}.md (with hash)
 // Format: {timestamp}-r{nonce}-from-{sender}-to-{recipient}.md (without hash)
 func GenerateFilename(ts, sender, recipient, sessionName string) (string, error) {
+	if err := nodeaddr.Validate(sender); err != nil {
+		return "", fmt.Errorf("invalid sender address: %w", err)
+	}
+	if err := nodeaddr.Validate(recipient); err != nil {
+		return "", fmt.Errorf("invalid recipient address: %w", err)
+	}
+
 	var b [2]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
 	nonce := fmt.Sprintf("%04x", b)
 	hash := SessionHash(sessionName)
+	senderSegment := nodeaddr.EncodeFilenameSegment(sender)
+	recipientSegment := nodeaddr.EncodeFilenameSegment(recipient)
 	if hash != "" {
-		return fmt.Sprintf("%s-s%s-r%s-from-%s-to-%s.md", ts, hash, nonce, sender, recipient), nil
+		return fmt.Sprintf("%s-s%s-r%s-from-%s-to-%s.md", ts, hash, nonce, senderSegment, recipientSegment), nil
 	}
-	return fmt.Sprintf("%s-r%s-from-%s-to-%s.md", ts, nonce, sender, recipient), nil
+	return fmt.Sprintf("%s-r%s-from-%s-to-%s.md", ts, nonce, senderSegment, recipientSegment), nil
 }
 
 // sessionHashRe matches the optional -s{4hex} session hash suffix in the timestamp portion (#198).
@@ -162,19 +167,29 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}
 
 	timestampRaw := base[:fromIdx]
-	from := rest[:toIdx]
-	to := rest[toIdx+len("-to-"):]
+	fromSegment := rest[:toIdx]
+	toSegment := rest[toIdx+len("-to-"):]
+
+	from, err := nodeaddr.DecodeFilenameSegment(fromSegment)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filename: invalid from field %q in %q: %w", fromSegment, filename, err)
+	}
+	to, err := nodeaddr.DecodeFilenameSegment(toSegment)
+	if err != nil {
+		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q: %w", toSegment, filename, err)
+	}
 
 	if timestampRaw == "" || from == "" || to == "" {
 		return nil, fmt.Errorf("invalid filename: empty field in %q", filename)
 	}
 
-	// Validate from/to charset (#174): reject path traversal and injection
-	if !validNodeNameRe.MatchString(from) {
-		return nil, fmt.Errorf("invalid filename: invalid from field %q in %q", from, filename)
+	// Validate from/to address syntax (#174): reject path traversal and malformed
+	// session-prefixed values while allowing explicit session:node recipients.
+	if err := nodeaddr.Validate(from); err != nil {
+		return nil, fmt.Errorf("invalid filename: invalid from field %q in %q: %w", from, filename, err)
 	}
-	if !validNodeNameRe.MatchString(to) {
-		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q", to, filename)
+	if err := nodeaddr.Validate(to); err != nil {
+		return nil, fmt.Errorf("invalid filename: invalid to field %q in %q: %w", to, filename, err)
 	}
 
 	// Extract optional session hash and nonce from timestamp portion (#198)
@@ -263,9 +278,9 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 // Multi-session support: postPath is the full path to the message file in post/ directory.
 // The message will be delivered to the recipient's session directory based on NodeInfo.SessionDir.
 // Routing rules (DEFAULT DENY):
-// - sender="postman" is always allowed
+// - sender="daemon" is always allowed
 // - otherwise, sender->recipient edge must exist in adjacency map
-// Session check: both sender and recipient sessions must be enabled (unless sender is postman)
+// Session check: both sender and recipient sessions must be enabled (unless sender is daemon)
 // Issue #53: Added events channel parameter for dead-letter notifications
 // Issue #71: Added idleTracker parameter for activity tracking
 func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
@@ -295,6 +310,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		}
 		return os.Rename(postPath, dst)
 	}
+	senderSimpleName := nodeaddr.Simple(info.From)
+	recipientSimpleName := nodeaddr.Simple(info.To)
 
 	// Pre-delivery staleness warning: log WARN for messages sitting in post/ too long (#218)
 	if cfg.MessageAgeWarningSeconds > 0 {
@@ -306,12 +323,24 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		}
 	}
 
-	// Guard: "postman" and "daemon" are reserved sender names only valid
-	// for messages originating from the daemon's own session.
-	// A filename claiming from=postman/daemon from a foreign session is a
-	// forgery — dead-letter it immediately.
-	if (info.From == "postman" || info.From == "daemon") && daemonSession != "" && sourceSessionName != daemonSession &&
-		(info.From == "daemon" || !isSessionEnabled(sourceSessionName)) {
+	// Guard: legitimate postman traffic no longer traverses post/, so any
+	// generic from=postman file is a forgery and must be dead-lettered.
+	if info.From == "postman" {
+		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
+		log.Printf("postman: SECURITY: forged sender %q in session %q via generic post/ path — dead-lettering %s\n",
+			info.From, sourceSessionName, filename)
+		if events != nil {
+			events <- DaemonEvent{
+				Type:    "message_received",
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
+			}
+		}
+		return os.Rename(postPath, dst)
+	}
+
+	// Guard: "daemon" remains a reserved sender name only valid for messages
+	// originating from the daemon's own session.
+	if info.From == "daemon" && daemonSession != "" && sourceSessionName != daemonSession {
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
 		log.Printf("postman: SECURITY: forged sender %q in session %q (daemon session: %q) — dead-lettering %s\n",
 			info.From, sourceSessionName, daemonSession, filename)
@@ -324,8 +353,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 
-	// Issue #161: Validate frontmatter envelope (skip for postman/daemon-origin messages)
-	if info.From != "postman" && info.From != "daemon" {
+	// Issue #161: Validate frontmatter envelope (skip only for daemon-origin messages)
+	if info.From != "daemon" {
 		rawBytes, readErr := os.ReadFile(postPath)
 		if os.IsNotExist(readErr) {
 			return nil // Already processed (duplicate event)
@@ -336,7 +365,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
 			if parseErr != nil || envFrom != info.From || envTo != info.To {
 				dst := deadLetterDst(sourceSessionDir, filename, dlSuffixEnvelopeMismatch)
-				sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonEnvelopeMismatch, filename, filepath.Base(dst))
+				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonEnvelopeMismatch, filename, filepath.Base(dst))
 				if events != nil {
 					events <- DaemonEvent{
 						Type:    "message_received",
@@ -358,7 +387,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if recipientFullName == "" {
 		// Unknown recipient: move to dead-letter/ in source session
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownRecipient)
-		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonUnknownRecipient, filename, filepath.Base(dst))
+		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonUnknownRecipient, filename, filepath.Base(dst))
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
@@ -369,14 +398,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return os.Rename(postPath, dst)
 	}
 	nodeInfo := knownNodes[recipientFullName]
-	paneID := nodeInfo.PaneID
 
 	// F4: Delivery-time session boundary check.
 	// Reject delivery to a recipient whose session is neither the daemon's own session
 	// nor explicitly enabled. This is the last-resort safety net against 混信.
 	if daemonSession != "" && nodeInfo.SessionName != daemonSession && !isSessionEnabled(nodeInfo.SessionName) {
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForeignSession)
-		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonForeignSession, filename, filepath.Base(dst))
+		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonForeignSession, filename, filepath.Base(dst))
 		log.Printf("postman: F4: dead-lettering %s — recipient session %q is foreign (daemon session: %q)\n", filename, nodeInfo.SessionName, daemonSession)
 		if events != nil {
 			events <- DaemonEvent{
@@ -389,7 +417,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
 	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)
-	if senderFullName == "" && info.From != "postman" && info.From != "daemon" {
+	if senderFullName == "" && info.From != "daemon" {
 		// Unknown sender: move to dead-letter/ in source session
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownSender)
 		// Issue #53: Notify dead-letter event
@@ -403,8 +431,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Check routing permissions (DEFAULT DENY)
-	// IMPORTANT: sender="postman" or sender="daemon" is always allowed (#172)
-	if info.From != "postman" && info.From != "daemon" {
+	// IMPORTANT: sender="daemon" is always allowed (#172)
+	if info.From != "daemon" {
 		allowed := false
 		// Try adjacency lookup with both simple name and full name
 		// This supports both old-style (simple names) and new-style (session:node) adjacency configs
@@ -425,7 +453,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		}
 		if !allowed {
 			// Issue #80: Send warning message back to sender
-			senderInbox := filepath.Join(sourceSessionDir, "inbox", info.From)
+			senderInbox := filepath.Join(sourceSessionDir, "inbox", senderSimpleName)
 			if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr == nil {
 				// Build list of allowed neighbors for sender
 				var neighbors []string
@@ -438,7 +466,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 				now := time.Now()
 				warnTS := now.Format("20060102-150405")
-				warnFilename := fmt.Sprintf("%s-from-postman-to-%s.md", warnTS, info.From)
+				warnFilename := fmt.Sprintf("%s-from-postman-to-%s.md", warnTS, senderSimpleName)
 				neighborsStr := strings.Join(neighbors, ", ")
 				if neighborsStr == "" {
 					neighborsStr = "none"
@@ -450,7 +478,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				// Build variables map for template expansion
 				vars := map[string]string{
 					"context_id":          contextID,
-					"node":                info.From,
+					"node":                senderSimpleName,
 					"iso_timestamp":       now.Format(time.RFC3339),
 					"timestamp":           now.Format(time.RFC3339),
 					"attempted_recipient": info.To,
@@ -462,7 +490,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 				// Expand template
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout, cfg.AllowShellTemplates)
+				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout, cfg.AllowShellForEdgeViolationWarningTemplate())
 
 				// Issue #92: Append reply instructions for verbose mode
 				mode := cfg.EdgeViolationWarningMode
@@ -499,14 +527,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	senderSessionName := sourceSessionName
 	recipientSessionName := nodeInfo.SessionName
 
-	// Both sessions must be enabled (unless sender is postman or daemon)
-	// NOTE: Postman/daemon exemption applies to all system-generated messages.
-	// Postman sends PING; daemon sends alerts to ui_node (#172).
-	if info.From != "postman" && info.From != "daemon" {
+	// Both sessions must be enabled (unless sender is daemon)
+	if info.From != "daemon" {
 		if !isSessionEnabled(senderSessionName) {
 			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
-			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonSenderSessionDisabled, filename, filepath.Base(dst))
+			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonSenderSessionDisabled, filename, filepath.Base(dst))
 			// Issue #53: Notify dead-letter event
 			if events != nil {
 				events <- DaemonEvent{
@@ -517,11 +543,11 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			return os.Rename(postPath, dst)
 		}
 	}
-	if info.From != "postman" && info.From != "daemon" {
+	if info.From != "daemon" {
 		if !isSessionEnabled(recipientSessionName) {
 			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
-			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonRecipientSessionDisabled, filename, filepath.Base(dst))
+			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonRecipientSessionDisabled, filename, filepath.Base(dst))
 			// Issue #53: Notify dead-letter event
 			if events != nil {
 				events <- DaemonEvent{
@@ -535,7 +561,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Ensure recipient inbox subdirectory exists (in recipient's session directory)
 	recipientSessionDir := nodeInfo.SessionDir
-	recipientInbox := filepath.Join(recipientSessionDir, "inbox", info.To)
+	recipientInbox := filepath.Join(recipientSessionDir, "inbox", recipientSimpleName)
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
 		return fmt.Errorf("creating recipient inbox: %w", err)
 	}
@@ -544,7 +570,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Protects agent-session nodes from unbounded queue growth (#agent-session).
 	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixQueueFull)
-		sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterReasonQueueFull, filename, filepath.Base(dst))
+		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonQueueFull, filename, filepath.Base(dst))
 		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, count, filename)
 		if events != nil {
 			events <- DaemonEvent{
@@ -563,38 +589,20 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Send tmux notification to the recipient pane
 	// Issue #84: Get liveness map for talks_to_line filtering
 	livenessMap := idleTracker.GetLivenessMap()
-	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, livenessMap)
-	nodeEnterDelay := cfg.GetNodeConfig(info.To).EnterDelay
-	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
-	if nodeEnterDelay != 0 {
-		enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
-	}
-	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	paneIDForProbe := paneID
-	enterCount := notification.ResolveEnterCount(
-		cfg.GetNodeConfig(info.To).EnterCount,
-		func() (string, error) {
-			out, err := exec.Command("tmux", "display-message", "-t",
-				paneIDForProbe, "-p", "#{pane_current_command}").Output()
-			return strings.TrimSpace(string(out)), err
-		},
-	)
-
-	verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
-	_ = notification.SendToPane(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
+	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, livenessMap)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection (Issue #55)
-	// NOTE: Exclude system messages (from "postman" or "daemon") from ball tracking.
-	// Both UpdateSendActivity and UpdateReceiveActivity skip system senders
+	// NOTE: Exclude daemon system messages from ball tracking.
+	// Both UpdateSendActivity and UpdateReceiveActivity skip daemon senders
 	// to prevent system-delivered messages from causing false "holding" state.
 	// Issue #79: Use session-prefixed keys for tracking
-	if info.From != "postman" && info.From != "daemon" {
-		idleTracker.UpdateSendActivity(sourceSessionName + ":" + info.From)
+	if info.From != "daemon" {
+		idleTracker.UpdateSendActivity(senderFullName)
 	}
-	if info.From != "postman" && info.From != "daemon" {
-		idleTracker.UpdateReceiveActivity(recipientSessionName + ":" + info.To)
+	if info.From != "daemon" {
+		idleTracker.UpdateReceiveActivity(recipientFullName)
 	}
 
 	// Delivery latency logging (#179): parse message timestamp and log age.
@@ -615,6 +623,64 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	} else {
 		log.Printf("📬 postman: delivered %s -> %s\n", filename, info.To)
 	}
+	return nil
+}
+
+func sendDeliveryNotification(nodeInfo discovery.NodeInfo, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, notificationPath string, livenessMap map[string]bool) {
+	recipientSimpleName := nodeaddr.Simple(recipient)
+	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, recipient, sender, sourceSessionName, notificationPath, livenessMap)
+	nodeEnterDelay := cfg.GetNodeConfig(recipientSimpleName).EnterDelay
+	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+	if nodeEnterDelay != 0 {
+		enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
+	}
+	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	paneIDForProbe := nodeInfo.PaneID
+	enterCount := notification.ResolveEnterCount(
+		cfg.GetNodeConfig(recipientSimpleName).EnterCount,
+		func() (string, error) {
+			out, err := exec.Command("tmux", "display-message", "-t",
+				paneIDForProbe, "-p", "#{pane_current_command}").Output()
+			return strings.TrimSpace(string(out)), err
+		},
+	)
+
+	verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+	_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
+}
+
+func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {
+	if err := nodeaddr.Validate(recipient); err != nil {
+		return fmt.Errorf("invalid recipient address: %w", err)
+	}
+	recipientSimpleName := nodeaddr.Simple(recipient)
+
+	recipientInbox := filepath.Join(nodeInfo.SessionDir, "inbox", recipientSimpleName)
+	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
+		return fmt.Errorf("creating recipient inbox: %w", err)
+	}
+
+	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
+		deadLetterDir := filepath.Join(nodeInfo.SessionDir, "dead-letter")
+		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
+			return fmt.Errorf("creating dead-letter dir: %w", err)
+		}
+		dst := deadLetterDst(nodeInfo.SessionDir, filename, dlSuffixQueueFull)
+		if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
+			return fmt.Errorf("writing queue-full dead-letter: %w", err)
+		}
+		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", recipient, inboxQueueCap, count, filename)
+		return nil
+	}
+
+	dst := filepath.Join(recipientInbox, filename)
+	if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("writing to inbox: %w", err)
+	}
+
+	notificationPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
+	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, recipient, sender, nodeInfo.SessionName, notificationPath, livenessMap)
+	log.Printf("📬 postman: delivered %s -> %s\n", filename, recipient)
 	return nil
 }
 
@@ -643,14 +709,15 @@ func countInboxMessages(inboxDir string) (int, error) {
 // Issue #208: Extended with dead-letter path, allowed neighbors, and re-send hint.
 // deadLetterBasename is the actual basename of the dead-letter file (after rename).
 func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename, deadLetterBasename string) {
-	senderInbox := filepath.Join(sessionDir, "inbox", senderNode)
+	senderSimpleName := nodeaddr.Simple(senderNode)
+	senderInbox := filepath.Join(sessionDir, "inbox", senderSimpleName)
 	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
 		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, mkErr)
 		return
 	}
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderNode)
+	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderSimpleName)
 
 	// Build dead-letter file path for reference
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
@@ -658,7 +725,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	content := fmt.Sprintf(
 		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send: tmux-a2a-postman read --dead-letters --file %s\n(or: --resend-oldest to resend the oldest dead letter)\n",
 		contextID,
-		senderNode,
+		senderSimpleName,
 		now.Format(time.RFC3339),
 		originalFilename,
 		reason,

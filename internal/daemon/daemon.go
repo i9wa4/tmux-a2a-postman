@@ -973,7 +973,7 @@ func RunDaemonLoop(
 					"node":     nodeKey,
 					"duration": duration.Round(time.Second).String(),
 				}
-				eventMessage := template.ExpandTemplate(eventTemplate, vars, timeout, cfg.AllowShellTemplates)
+				eventMessage := template.ExpandTemplate(eventTemplate, vars, timeout, cfg.AllowShellForDroppedBallEventTemplate())
 
 				// Emit dropped_ball event for Events pane
 				events <- tui.DaemonEvent{
@@ -1215,7 +1215,7 @@ func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cf
 	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
 	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
 	postPath := filepath.Join(sessionDir, "post", filename)
-	scaffolded := envelope.BuildEnvelope(
+	scaffolded := envelope.BuildDaemonEnvelope(
 		cfg, tmpl, uiNode, "daemon",
 		contextID, postPath,
 		nil, adjacency, nodes, sourceSessionName,
@@ -2015,9 +2015,9 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 					simpleName = parts[1]
 				}
 				waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-				nodeInbox := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
 				if entries, readErr := os.ReadDir(waitingDir); readErr == nil {
 					requeueCount := 0
+					deadLetterCount := 0
 					for _, e := range entries {
 						if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 							continue
@@ -2025,17 +2025,21 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 						if !strings.Contains(e.Name(), "-to-"+simpleName) {
 							continue
 						}
-						src := filepath.Join(waitingDir, e.Name())
-						dst := filepath.Join(nodeInbox, e.Name())
-						if mkErr := os.MkdirAll(nodeInbox, 0o700); mkErr != nil {
+						if err := requeueWaitingMessage(nodeInfo.SessionDir, simpleName, e.Name()); err != nil {
 							continue
 						}
-						if mvErr := os.Rename(src, dst); mvErr == nil {
+						deadLetterPath := filepath.Join(nodeInfo.SessionDir, "dead-letter", deadLetterMissingOriginalName(e.Name()))
+						if _, err := os.Stat(deadLetterPath); err == nil {
+							deadLetterCount++
+						} else {
 							requeueCount++
 						}
 					}
 					if requeueCount > 0 {
 						log.Printf("postman: pane restart requeued %d waiting/ files for %s\n", requeueCount, nodeKey)
+					}
+					if deadLetterCount > 0 {
+						log.Printf("postman: pane restart dead-lettered %d waiting/ files for %s (missing original artifact)\n", deadLetterCount, nodeKey)
 					}
 				}
 			}
@@ -2151,4 +2155,40 @@ func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo)
 		}
 	}
 	return inboxCount, waitingCount
+}
+
+func requeueWaitingMessage(sessionDir, simpleName, filename string) error {
+	waitingPath := filepath.Join(sessionDir, "waiting", filename)
+	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
+	inboxPath := filepath.Join(inboxDir, filename)
+	readPath := filepath.Join(sessionDir, "read", filename)
+
+	if _, err := os.Stat(inboxPath); err == nil {
+		return os.Remove(waitingPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if data, err := os.ReadFile(readPath); err == nil {
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(inboxPath, data, 0o600); err != nil {
+			return err
+		}
+		return os.Remove(waitingPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Join(sessionDir, "dead-letter"), 0o700); err != nil {
+		return err
+	}
+	return os.Rename(waitingPath, filepath.Join(sessionDir, "dead-letter", deadLetterMissingOriginalName(filename)))
+}
+
+func deadLetterMissingOriginalName(filename string) string {
+	ext := filepath.Ext(filename)
+	base := strings.TrimSuffix(filename, ext)
+	return base + "-dl-missing-original" + ext
 }

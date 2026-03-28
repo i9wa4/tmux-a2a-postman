@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 func TestResolveBaseDir(t *testing.T) {
@@ -1206,6 +1209,65 @@ scan_interval_seconds = 9.0
 	}
 }
 
+func TestLoadConfig_ProjectLocal_ZeroValuePostmanInventory(t *testing.T) {
+	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalPostmanConfig())
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(%q): %v", projectDir, err)
+	}
+
+	assertZeroValuePostmanInventory(t, cfg)
+	if cfg.EnterDelay != 8.0 {
+		t.Fatalf("EnterDelay: got %v, want 8.0 (unrelated base field should remain inherited)", cfg.EnterDelay)
+	}
+}
+
+func TestLoadConfig_ProjectLocal_ZeroValueNodeInventory(t *testing.T) {
+	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalNodeConfig())
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(%q): %v", projectDir, err)
+	}
+
+	assertZeroValueNodeInventory(t, cfg.GetNodeConfig("worker"))
+	if cfg.Nodes["worker"].Role != "worker-base" {
+		t.Fatalf("worker.Role: got %q, want %q (unrelated node field should remain inherited)", cfg.Nodes["worker"].Role, "worker-base")
+	}
+}
+
+func TestLoadConfig_ProjectLocal_ZeroValueNodeDefaultsEnterCount(t *testing.T) {
+	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalNodeDefaultsConfig())
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(%q): %v", projectDir, err)
+	}
+
+	if cfg.NodeDefaults.EnterCount != 0 {
+		t.Fatalf("NodeDefaults.EnterCount: got %d, want 0", cfg.NodeDefaults.EnterCount)
+	}
+	if cfg.GetNodeConfig("orchestrator").EnterCount != 0 {
+		t.Fatalf("GetNodeConfig(orchestrator).EnterCount: got %d, want 0", cfg.GetNodeConfig("orchestrator").EnterCount)
+	}
+}
+
+func TestLoadConfig_ExplicitConfig_ProjectLocalZeroValueInventory(t *testing.T) {
+	_, explicitConfigPath := setupExplicitProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalAllConfig())
+
+	cfg, err := LoadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(%q): %v", explicitConfigPath, err)
+	}
+
+	assertZeroValuePostmanInventory(t, cfg)
+	if cfg.NodeDefaults.EnterCount != 0 {
+		t.Fatalf("NodeDefaults.EnterCount: got %d, want 0", cfg.NodeDefaults.EnterCount)
+	}
+	assertZeroValueNodeInventory(t, cfg.GetNodeConfig("worker"))
+}
+
 func TestLoadConfig_EmptyFile(t *testing.T) {
 	// An empty config file has no nodes, which is a validation error.
 	// This test documents the expected behavior.
@@ -1401,6 +1463,201 @@ func TestResolveContextIDFromSession(t *testing.T) {
 	})
 }
 
+func setupProjectLocalOverlayFixture(t *testing.T, baseContent, localContent string) (string, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	baseConfigPath := filepath.Join(xdgConfigDir, "postman.toml")
+
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir: %v", err)
+	}
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	writeFile(t, baseConfigPath, baseContent)
+	writeFile(t, filepath.Join(localConfigDir, "postman.toml"), localContent)
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+	t.Chdir(projectDir)
+
+	return projectDir, baseConfigPath
+}
+
+func setupExplicitProjectLocalOverlayFixture(t *testing.T, baseContent, localContent string) (string, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	explicitConfigDir := filepath.Join(tmpDir, "explicit")
+	explicitConfigPath := filepath.Join(explicitConfigDir, "postman.toml")
+
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	if err := os.MkdirAll(explicitConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll explicitConfigDir: %v", err)
+	}
+	writeFile(t, explicitConfigPath, baseContent)
+	writeFile(t, filepath.Join(localConfigDir, "postman.toml"), localContent)
+
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Setenv("HOME", fakeHome)
+	t.Chdir(projectDir)
+
+	return projectDir, explicitConfigPath
+}
+
+func zeroValueInventoryBaseConfig() string {
+	return `
+[postman]
+edges = ["worker -- orchestrator"]
+reminder_interval_messages = 7.0
+enter_verify_delay_seconds = 1.5
+enter_retry_max = 4
+node_spinning_seconds = 30.0
+message_age_warning_seconds = 45.0
+message_ttl_seconds = 600.0
+min_delivery_gap_seconds = 2.0
+startup_drain_window_seconds = 11.0
+pane_capture_max_panes = 5
+inbox_unread_threshold = 9
+pane_notify_cooldown_seconds = 33
+enter_delay_seconds = 8.0
+
+[worker]
+role = "worker-base"
+idle_timeout_seconds = 5.0
+dropped_ball_timeout_seconds = 6
+dropped_ball_cooldown_seconds = 7
+enter_count = 3
+enter_delay_seconds = 1.25
+delivery_idle_timeout_seconds = 12.0
+delivery_idle_retry_max = 5
+
+[orchestrator]
+role = "orchestrator-base"
+
+[node_defaults]
+idle_timeout_seconds = 15.0
+dropped_ball_timeout_seconds = 16
+dropped_ball_cooldown_seconds = 17
+enter_count = 2
+enter_delay_seconds = 2.5
+delivery_idle_timeout_seconds = 22.0
+delivery_idle_retry_max = 8
+`
+}
+
+func zeroValueInventoryLocalPostmanConfig() string {
+	return `
+[postman]
+reminder_interval_messages = 0
+enter_verify_delay_seconds = 0
+enter_retry_max = 0
+node_spinning_seconds = 0
+message_age_warning_seconds = 0
+message_ttl_seconds = 0
+min_delivery_gap_seconds = 0
+startup_drain_window_seconds = 0
+pane_capture_max_panes = 0
+inbox_unread_threshold = 0
+pane_notify_cooldown_seconds = 0
+`
+}
+
+func zeroValueInventoryLocalNodeConfig() string {
+	return `
+[worker]
+idle_timeout_seconds = 0
+dropped_ball_timeout_seconds = 0
+dropped_ball_cooldown_seconds = 0
+enter_count = 0
+enter_delay_seconds = 0
+delivery_idle_timeout_seconds = 0
+delivery_idle_retry_max = 0
+`
+}
+
+func zeroValueInventoryLocalNodeDefaultsConfig() string {
+	return `
+[node_defaults]
+enter_count = 0
+`
+}
+
+func zeroValueInventoryLocalAllConfig() string {
+	return zeroValueInventoryLocalPostmanConfig() + zeroValueInventoryLocalNodeConfig() + zeroValueInventoryLocalNodeDefaultsConfig()
+}
+
+func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
+	t.Helper()
+	if cfg.ReminderInterval != 0 {
+		t.Fatalf("ReminderInterval: got %v, want 0", cfg.ReminderInterval)
+	}
+	if cfg.EnterVerifyDelay != 0 {
+		t.Fatalf("EnterVerifyDelay: got %v, want 0", cfg.EnterVerifyDelay)
+	}
+	if cfg.EnterRetryMax != 0 {
+		t.Fatalf("EnterRetryMax: got %d, want 0", cfg.EnterRetryMax)
+	}
+	if cfg.NodeSpinningSeconds != 0 {
+		t.Fatalf("NodeSpinningSeconds: got %v, want 0", cfg.NodeSpinningSeconds)
+	}
+	if cfg.MessageAgeWarningSeconds != 0 {
+		t.Fatalf("MessageAgeWarningSeconds: got %v, want 0", cfg.MessageAgeWarningSeconds)
+	}
+	if cfg.MessageTTLSeconds != 0 {
+		t.Fatalf("MessageTTLSeconds: got %v, want 0", cfg.MessageTTLSeconds)
+	}
+	if cfg.MinDeliveryGapSeconds != 0 {
+		t.Fatalf("MinDeliveryGapSeconds: got %v, want 0", cfg.MinDeliveryGapSeconds)
+	}
+	if cfg.StartupDrainWindowSeconds != 0 {
+		t.Fatalf("StartupDrainWindowSeconds: got %v, want 0", cfg.StartupDrainWindowSeconds)
+	}
+	if cfg.PaneCaptureMaxPanes != 0 {
+		t.Fatalf("PaneCaptureMaxPanes: got %d, want 0", cfg.PaneCaptureMaxPanes)
+	}
+	if cfg.InboxUnreadThreshold != 0 {
+		t.Fatalf("InboxUnreadThreshold: got %d, want 0", cfg.InboxUnreadThreshold)
+	}
+	if cfg.PaneNotifyCooldownSeconds != 0 {
+		t.Fatalf("PaneNotifyCooldownSeconds: got %d, want 0", cfg.PaneNotifyCooldownSeconds)
+	}
+}
+
+func assertZeroValueNodeInventory(t *testing.T, cfg NodeConfig) {
+	t.Helper()
+	if cfg.IdleTimeoutSeconds != 0 {
+		t.Fatalf("IdleTimeoutSeconds: got %v, want 0", cfg.IdleTimeoutSeconds)
+	}
+	if cfg.DroppedBallTimeoutSeconds != 0 {
+		t.Fatalf("DroppedBallTimeoutSeconds: got %d, want 0", cfg.DroppedBallTimeoutSeconds)
+	}
+	if cfg.DroppedBallCooldownSeconds != 0 {
+		t.Fatalf("DroppedBallCooldownSeconds: got %d, want 0", cfg.DroppedBallCooldownSeconds)
+	}
+	if cfg.EnterCount != 0 {
+		t.Fatalf("EnterCount: got %d, want 0", cfg.EnterCount)
+	}
+	if cfg.EnterDelay != 0 {
+		t.Fatalf("EnterDelay: got %v, want 0", cfg.EnterDelay)
+	}
+	if cfg.DeliveryIdleTimeoutSeconds != 0 {
+		t.Fatalf("DeliveryIdleTimeoutSeconds: got %v, want 0", cfg.DeliveryIdleTimeoutSeconds)
+	}
+	if cfg.DeliveryIdleRetryMax != 0 {
+		t.Fatalf("DeliveryIdleRetryMax: got %d, want 0", cfg.DeliveryIdleRetryMax)
+	}
+}
+
 // TestIsSessionPIDAlive verifies liveness detection using postman.pid.
 func TestIsSessionPIDAlive(t *testing.T) {
 	t.Run("live pid returns true", func(t *testing.T) {
@@ -1440,6 +1697,73 @@ func TestIsSessionPIDAlive(t *testing.T) {
 		}
 		if IsSessionPIDAlive(baseDir, "ctx", "sess") {
 			t.Error("expected false for invalid pid content, got true")
+		}
+	})
+}
+
+func TestContextOwnsSession(t *testing.T) {
+	t.Run("live daemon plus session subdir returns true", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-live", "0")
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-live", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if !ContextOwnsSession(baseDir, "ctx-live", "other-session") {
+			t.Fatal("expected true for live context owning other-session, got false")
+		}
+	})
+
+	t.Run("live daemon without session subdir returns false", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-live", "0")
+		if ContextOwnsSession(baseDir, "ctx-live", "other-session") {
+			t.Fatal("expected false when session subdir is absent, got true")
+		}
+	})
+
+	t.Run("stale context with session subdir returns false", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeStalePID(t, baseDir, "ctx-stale", "0")
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-stale", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if ContextOwnsSession(baseDir, "ctx-stale", "other-session") {
+			t.Fatal("expected false for stale context ownership, got true")
+		}
+	})
+}
+
+func TestFindSessionOwner(t *testing.T) {
+	t.Run("returns other live owner for managed session", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-owner", "0")
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		got := FindSessionOwner(baseDir, "other-session", "ctx-self")
+		if got != "ctx-owner" {
+			t.Fatalf("got %q, want %q", got, "ctx-owner")
+		}
+	})
+
+	t.Run("skips own context", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-owner", "0")
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		got := FindSessionOwner(baseDir, "other-session", "ctx-owner")
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("live context without session subdir is not owner", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-live", "0")
+		got := FindSessionOwner(baseDir, "other-session", "ctx-self")
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
 		}
 	})
 }
@@ -1862,5 +2186,78 @@ func TestValidateSessionName(t *testing.T) {
 				t.Errorf("ValidateSessionName(%q) = %q, want %q", tc.input, got, tc.wantResult)
 			}
 		})
+	}
+}
+
+func TestLoadConfig_ExplicitConfigTrustedBaseShellExpansionAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	explicitConfigDir := filepath.Join(tmpDir, "explicit")
+	explicitConfigPath := filepath.Join(explicitConfigDir, "postman.toml")
+
+	writeFile(t, explicitConfigPath, `
+[postman]
+allow_shell_templates = true
+draft_template = "trusted $(printf explicit-config-base)"
+
+[worker]
+role = "worker"
+`)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll projectDir: %v", err)
+	}
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.AllowShellTemplates {
+		t.Fatal("AllowShellTemplates = false, want true from explicit trusted base")
+	}
+
+	got := template.ExpandTemplate(cfg.DraftTemplate, map[string]string{}, 5*time.Second, cfg.AllowShellForDraftTemplate())
+	if got != "trusted explicit-config-base" {
+		t.Fatalf("explicit trusted base draft template = %q, want %q", got, "trusted explicit-config-base")
+	}
+}
+
+func TestLoadConfig_ExplicitConfigProjectLocalMarkdownShellExpansionBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	explicitConfigDir := filepath.Join(tmpDir, "explicit")
+	explicitConfigPath := filepath.Join(explicitConfigDir, "postman.toml")
+
+	writeFile(t, explicitConfigPath, `
+[postman]
+allow_shell_templates = true
+message_footer = "trusted $(printf explicit-config-base-footer)"
+
+[worker]
+role = "worker"
+`)
+	writeFile(t, filepath.Join(localConfigDir, "postman.md"), "## `message_footer`\n\nLocal footer $(printf explicit-config-local-footer)\n")
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.AllowShellTemplates {
+		t.Fatal("AllowShellTemplates = false, want true from explicit trusted base")
+	}
+
+	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
+	if !strings.Contains(got, "$(printf explicit-config-local-footer)") {
+		t.Fatalf("project-local Markdown footer unexpectedly executed shell command under explicit --config: %q", got)
 	}
 }

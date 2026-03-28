@@ -132,14 +132,8 @@ func runPop(args []string) error {
 	if *jsonOut {
 		parsed := parseMessageContent(string(data), msgs[0].Filename)
 		if !*peek {
-			// Archive before returning JSON
-			readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
-			if err := os.MkdirAll(readDir, 0o700); err != nil {
-				return fmt.Errorf("creating read directory: %w", err)
-			}
-			dst := filepath.Join(readDir, msgs[0].Filename)
-			if err := os.Rename(abs, dst); err != nil {
-				return fmt.Errorf("archiving message: %w", err)
+			if _, err := archivePoppedMessage(abs, msgs[0].Filename); err != nil {
+				return err
 			}
 		}
 		return json.NewEncoder(os.Stdout).Encode(parsed)
@@ -153,21 +147,36 @@ func runPop(args []string) error {
 		return nil
 	}
 
-	// Archive: move to {base}/{contextID}/{session}/read/
-	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(abs))), "read")
-	if err := os.MkdirAll(readDir, 0o700); err != nil {
-		return fmt.Errorf("creating read directory: %w", err)
-	}
-	dst := filepath.Join(readDir, msgs[0].Filename)
-	if err := os.Rename(abs, dst); err != nil {
-		return fmt.Errorf("archiving message: %w", err)
+	archivedPath, err := archivePoppedMessage(abs, msgs[0].Filename)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
-	sender := extractSenderFromFile(dst)
+	sender := extractSenderFromFile(archivedPath)
 	if sender != "" {
 		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil
+}
+
+func archivePoppedMessage(absPath, filename string) (string, error) {
+	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(absPath))), "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating read directory: %w", err)
+	}
+	dst := filepath.Join(readDir, filename)
+	if _, err := os.Stat(dst); err == nil {
+		if err := os.Remove(absPath); err != nil {
+			return "", fmt.Errorf("archiving message: %w", err)
+		}
+		return dst, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("archiving message: %w", err)
+	}
+	if err := os.Rename(absPath, dst); err != nil {
+		return "", fmt.Errorf("archiving message: %w", err)
+	}
+	return dst, nil
 }
 
 // messageJSON holds JSON-serializable fields for a message (used by pop --json).

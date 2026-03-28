@@ -1,10 +1,12 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
@@ -152,6 +154,16 @@ func TestApplyWaitingOverlay(t *testing.T) {
 			wantPaneActivity:     map[string]string{"%10": "active"},
 		},
 		{
+			name: "session_prefixed_recipient_uses_explicit_session",
+			waitingFiles: map[string]string{
+				"20260101-000000-s0000-from-orchestrator-to-review-session:worker.md": "---\nstate: composing\n---",
+			},
+			initialPaneActivity:  map[string]string{"%20": "active"},
+			sessionTitleToPaneID: map[string]string{"review-session:worker": "%20"},
+			sessionSubdir:        "source-session",
+			wantPaneActivity:     map[string]string{"%20": "composing"},
+		},
+		{
 			name:                 "no_waiting_files_unchanged",
 			waitingFiles:         map[string]string{},
 			initialPaneActivity:  map[string]string{"%10": "idle"},
@@ -231,6 +243,108 @@ func TestRunPop_ContextIDFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRunPop_RequeuedMessagePreservesOriginalPayload(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForPop(t, tmpDir, "test-session", "worker")
+	contextID := "ctx-pop-requeued"
+	messageFile := "20260328-101503-from-orchestrator-to-worker.md"
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	readDir := filepath.Join(tmpDir, contextID, "test-session", "read")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+
+	content := messageFixture("orchestrator", "worker", "Requeued original payload")
+	inboxPath := filepath.Join(inboxDir, messageFile)
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return runPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("runPop: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "Requeued original payload") {
+		t.Fatalf("stdout %q does not contain original payload", stdout)
+	}
+	readPath := filepath.Join(readDir, messageFile)
+	archived, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("ReadFile read: %v", err)
+	}
+	if string(archived) != content {
+		t.Fatalf("archived content changed:\n got %q\nwant %q", archived, content)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("inbox file still present or wrong error: %v", err)
+	}
+}
+
+func TestRunPop_RestoredArchivedMessagePreservesCanonicalReadTracking(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForPop(t, tmpDir, "test-session", "worker")
+	contextID := "ctx-pop-restored"
+	messageFile := "20260328-101504-from-orchestrator-to-worker.md"
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	readDir := filepath.Join(tmpDir, contextID, "test-session", "read")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+
+	content := messageFixture("orchestrator", "worker", "Archived original payload")
+	readPath := filepath.Join(readDir, messageFile)
+	inboxPath := filepath.Join(inboxDir, messageFile)
+	if err := os.WriteFile(readPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+	canonicalReadTime := time.Date(2026, time.March, 28, 10, 15, 4, 0, time.UTC)
+	if err := os.Chtimes(readPath, canonicalReadTime, canonicalReadTime); err != nil {
+		t.Fatalf("Chtimes read: %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+	restoredCopyTime := canonicalReadTime.Add(2 * time.Minute)
+	if err := os.Chtimes(inboxPath, restoredCopyTime, restoredCopyTime); err != nil {
+		t.Fatalf("Chtimes inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return runPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("runPop: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "Archived original payload") {
+		t.Fatalf("stdout %q does not contain archived payload", stdout)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("restored inbox copy still present or wrong error: %v", err)
+	}
+	readInfo, err := os.Stat(readPath)
+	if err != nil {
+		t.Fatalf("Stat read: %v", err)
+	}
+	if !readInfo.ModTime().Equal(canonicalReadTime) {
+		t.Fatalf("canonical read modtime changed: got %s want %s", readInfo.ModTime().UTC().Format(time.RFC3339), canonicalReadTime.Format(time.RFC3339))
+	}
+	archived, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("ReadFile read: %v", err)
+	}
+	if string(archived) != content {
+		t.Fatalf("read content changed:\n got %q\nwant %q", archived, content)
+	}
+}
+
 // TestRunSendMessage_BasicFlagAccepted verifies basic flag parsing for runSendMessage
 // does not panic and does not return a "flag provided but not defined" error.
 func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
@@ -241,6 +355,109 @@ func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Errorf("unexpected flag-parse error: %v", err)
 	}
+}
+
+func installFakeTmuxForPop(t *testing.T, postmanHome, sessionName, paneTitle string) {
+	t.Helper()
+	t.Setenv("POSTMAN_HOME", postmanHome)
+	t.Setenv("TMUX_PANE", "%99")
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
+		"  *\"#{pane_title}\"*) printf '%s\\n' \"" + paneTitle + "\" ;;\n" +
+		"  *\"#{pane_id}\"*) printf '%s\\n' \"%99\" ;;\n" +
+		"  *) exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fake tmux: %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func messageFixture(from, to, body string) string {
+	return "---\nparams:\n  from: " + from + "\n  to: " + to + "\n  timestamp: 2026-03-28T10:15:00Z\n---\n\n" + body + "\n"
+}
+
+func captureCommandOutput(t *testing.T, fn func() error) (string, string, error) {
+	t.Helper()
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe stdout: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe stderr: %v", err)
+	}
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	defer func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+	}()
+
+	runErr := fn()
+
+	if err := stdoutW.Close(); err != nil {
+		t.Fatalf("Close stdout writer: %v", err)
+	}
+	if err := stderrW.Close(); err != nil {
+		t.Fatalf("Close stderr writer: %v", err)
+	}
+
+	stdoutBytes, err := io.ReadAll(stdoutR)
+	if err != nil {
+		t.Fatalf("ReadAll stdout: %v", err)
+	}
+	stderrBytes, err := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatalf("ReadAll stderr: %v", err)
+	}
+	return string(stdoutBytes), string(stderrBytes), runErr
+}
+
+func assertNoMarkdownFilesInTree(t *testing.T, root string) {
+	t.Helper()
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return
+	}
+
+	var found []string
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".md") {
+			found = append(found, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk %s: %v", root, err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("expected no markdown files under %s, found %v", root, found)
+	}
+}
+
+func writeMinimalNodeConfig(t *testing.T, dir string) string {
+	t.Helper()
+
+	configPath := filepath.Join(dir, "postman.toml")
+	content := `[postman]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	return configPath
 }
 
 // TestRunSendMessage_FromFlagAccepted verifies --from is a recognized flag.
@@ -280,6 +497,91 @@ func TestRunSendMessage_InvalidFromNodeName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid node name") && !strings.Contains(err.Error(), "invalid value") {
 		t.Errorf("expected 'invalid node name' or 'invalid value', got: %v", err)
+	}
+}
+
+func TestRunSendMessage_InvalidToNodeName(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := writeMinimalNodeConfig(t, tmpDir)
+	installFakeTmuxForPop(t, tmpDir, "test-session", "messenger")
+
+	err := runSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-invalid-to",
+		"--to", "worker_alt",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected invalid --to node name error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid node name") {
+		t.Fatalf("expected invalid node name error, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-to", "test-session"))
+}
+
+func TestRunSendMessage_InvalidAutoDetectedPaneTitle(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := writeMinimalNodeConfig(t, tmpDir)
+	installFakeTmuxForPop(t, tmpDir, "test-session", "messenger_alt")
+
+	err := runSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-invalid-pane",
+		"--to", "worker",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected invalid auto-detected pane title error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid node name") {
+		t.Fatalf("expected invalid node name error, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-pane", "test-session"))
+}
+
+func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := writeMinimalNodeConfig(t, tmpDir)
+	installFakeTmuxForPop(t, tmpDir, "test-session", "worker_alt")
+
+	_, err := resolveInboxPath([]string{
+		"--config", configPath,
+		"--context-id", "ctx-resolve-invalid-pane",
+	})
+	if err == nil {
+		t.Fatal("expected invalid auto-detected pane title error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid node name") {
+		t.Fatalf("expected invalid node name error, got: %v", err)
+	}
+}
+
+func TestRunRead_ArchivedSessionPrefixedRecipient(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForPop(t, tmpDir, "review-session", "worker")
+	contextID := "ctx-read-archived-prefixed"
+	readDir := filepath.Join(tmpDir, contextID, "review-session", "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll readDir: %v", err)
+	}
+
+	filename := "20260328-123500-from-orchestrator-to-review-session:worker.md"
+	content := messageFixture("orchestrator", "review-session:worker", "Archived cross-session payload")
+	if err := os.WriteFile(filepath.Join(readDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile archived message: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return runRead([]string{"--archived", "--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("runRead --archived: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stdout, filename) {
+		t.Fatalf("archived listing missing session-prefixed recipient file: stdout=%q", stdout)
 	}
 }
 

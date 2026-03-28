@@ -9,8 +9,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 )
 
@@ -130,6 +132,20 @@ func applyParams(fs *flag.FlagSet, resolvedParams map[string]string, explicitlyS
 	return nil
 }
 
+func validateOutboundNodeName(label, nodeName string) error {
+	if binding.ValidateNodeName(nodeName) {
+		return nil
+	}
+	return fmt.Errorf("%s %q: invalid node name (must match %s)", label, nodeName, binding.NodeNamePattern)
+}
+
+func validateNodeAddress(label, address string) error {
+	if err := nodeaddr.Validate(address); err != nil {
+		return fmt.Errorf("%s %q: %w", label, address, err)
+	}
+	return nil
+}
+
 // resolveInboxPath resolves the inbox path for the current node (#196).
 func resolveInboxPath(args []string) (string, error) {
 	fs := flag.NewFlagSet("inbox-resolve", flag.ContinueOnError)
@@ -149,6 +165,9 @@ func resolveInboxPath(args []string) (string, error) {
 	nodeName := config.GetTmuxPaneName()
 	if nodeName == "" {
 		return "", fmt.Errorf("node name auto-detection failed: set tmux pane title")
+	}
+	if err := validateOutboundNodeName("auto-detected pane title", nodeName); err != nil {
+		return "", err
 	}
 
 	sessionName := config.GetTmuxSessionName()

@@ -56,6 +56,9 @@ func runSendMessage(args []string) error {
 	if *to == "" {
 		return fmt.Errorf("--to is required (provide via flag or --params)")
 	}
+	if err := validateNodeAddress("--to", *to); err != nil {
+		return err
+	}
 	// NOTE: runCreateDraft issues only a warning (not an error) for --send
 	// without --body (see runCreateDraft:966-968). Enforce here before
 	// delegating so send-message never sends a placeholder-body message.
@@ -104,6 +107,9 @@ func runSendMessage(args []string) error {
 		sender = config.GetTmuxPaneName()
 		if sender == "" {
 			return fmt.Errorf("sender auto-detection failed: set tmux pane title")
+		}
+		if err := validateOutboundNodeName("auto-detected pane title", sender); err != nil {
+			return err
 		}
 	}
 
@@ -207,7 +213,7 @@ func runSendMessage(args []string) error {
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	content = template.ExpandTemplate(content, vars, timeout, cfg.AllowShellTemplates)
+	content = template.ExpandTemplate(content, vars, timeout, cfg.AllowShellForDraftTemplate())
 
 	stripped, err := notification.StripVT(*body)
 	if err != nil {
@@ -216,7 +222,7 @@ func runSendMessage(args []string) error {
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 
 	if cfg.MessageFooter != "" {
-		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout, cfg.AllowShellTemplates)
+		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
 
@@ -263,6 +269,9 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 		return ""
 	}
 	nodeConfig, exists := cfg.Nodes[nodeName]
+	if !exists {
+		nodeConfig, exists = cfg.Nodes[strings.SplitN(nodeName, ":", 2)[len(strings.SplitN(nodeName, ":", 2))-1]]
+	}
 	if !exists {
 		return ""
 	}

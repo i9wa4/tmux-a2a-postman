@@ -50,6 +50,13 @@ func TestParseMessageFilename(t *testing.T) {
 			wantFrom: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			wantTo:   "b",
 		},
+		{
+			name:     "session-prefixed recipient",
+			filename: "20260201-022121-from-orchestrator-to-review-session:worker.md",
+			wantTS:   "20260201-022121",
+			wantFrom: "orchestrator",
+			wantTo:   "review-session:worker",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -90,6 +97,90 @@ func TestParseMessageFilename_Invalid(t *testing.T) {
 			_, err := ParseMessageFilename(tt.filename)
 			if err == nil {
 				t.Errorf("expected error for %q, got nil", tt.filename)
+			}
+		})
+	}
+}
+
+func TestGenerateFilename_InvalidNodeSegments(t *testing.T) {
+	tests := []struct {
+		name      string
+		sender    string
+		recipient string
+	}{
+		{
+			name:      "invalid sender",
+			sender:    "messenger_alt",
+			recipient: "worker",
+		},
+		{
+			name:      "invalid recipient",
+			sender:    "messenger",
+			recipient: "worker_alt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := GenerateFilename("20260328-121000", tt.sender, tt.recipient, "test-session")
+			if err == nil {
+				t.Fatal("expected invalid node name error, got nil")
+			}
+			if !strings.Contains(err.Error(), "invalid node name") {
+				t.Fatalf("expected invalid node name error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestGenerateFilename_RoundTripSessionPrefixedSender(t *testing.T) {
+	tests := []struct {
+		name      string
+		sender    string
+		recipient string
+	}{
+		{
+			name:      "session-prefixed sender with hyphenated session name",
+			sender:    "qa-to-prod:orchestrator",
+			recipient: "worker",
+		},
+		{
+			name:      "session-prefixed sender with tilde-prefixed session name",
+			sender:    "~ops:orchestrator",
+			recipient: "worker",
+		},
+		{
+			name:      "session-prefixed sender and recipient with reserved markers",
+			sender:    "qa-to-prod:orchestrator",
+			recipient: "review-to-prod:worker",
+		},
+		{
+			name:      "session-prefixed sender and recipient with tilde-prefixed session names",
+			sender:    "~ops:orchestrator",
+			recipient: "~review:worker",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filename, err := GenerateFilename("20260328-121000", tt.sender, tt.recipient, "local-session")
+			if err != nil {
+				t.Fatalf("GenerateFilename failed: %v", err)
+			}
+
+			info, err := ParseMessageFilename(filename)
+			if err != nil {
+				t.Fatalf("ParseMessageFilename failed: %v", err)
+			}
+
+			if info.Timestamp != "20260328-121000" {
+				t.Fatalf("Timestamp: got %q, want %q", info.Timestamp, "20260328-121000")
+			}
+			if info.From != tt.sender {
+				t.Fatalf("From: got %q, want %q (filename=%q)", info.From, tt.sender, filename)
+			}
+			if info.To != tt.recipient {
+				t.Fatalf("To: got %q, want %q (filename=%q)", info.To, tt.recipient, filename)
 			}
 		})
 	}
@@ -176,6 +267,49 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-030000-from-orchestrator-to-unknown-node-dl-unknown-recipient.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
+	}
+}
+
+func TestDeliverMessage_CrossSessionExplicitRecipient(t *testing.T) {
+	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
+	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs source failed: %v", err)
+	}
+	recipientSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(recipientSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs recipient failed: %v", err)
+	}
+
+	filename := "20260201-030000-from-orchestrator-to-review-session:worker.md"
+	postPath := filepath.Join(sourceSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: review-session:worker\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sender-session:orchestrator": {PaneID: "%2", SessionName: "sender-session", SessionDir: sourceSessionDir},
+		"review-session:worker":       {PaneID: "%1", SessionName: "review-session", SessionDir: recipientSessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"review-session:worker"},
+	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	inboxPath := filepath.Join(recipientSessionDir, "inbox", "worker", filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Fatalf("cross-session message not delivered to simple-name inbox: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(recipientSessionDir, "inbox", "review-session:worker", filename)); !os.IsNotExist(err) {
+		t.Fatalf("unexpected session-prefixed inbox artifact: %v", err)
 	}
 }
 
@@ -275,7 +409,7 @@ func TestRouting_Denied(t *testing.T) {
 	}
 }
 
-func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
+func TestDeliverMessage_PostmanGenericPathDeadLettered(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
@@ -305,19 +439,18 @@ func TestRouting_PostmanAlwaysAllowed(t *testing.T) {
 		TmuxTimeout: 1.0,
 	}
 
-	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "test"); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	// Verify delivered to inbox (postman is always allowed)
 	inboxPath := filepath.Join(recipientInbox, filename)
-	if _, err := os.Stat(inboxPath); err != nil {
-		t.Errorf("message not delivered to inbox: %v", err)
+	if _, err := os.Stat(inboxPath); err == nil {
+		t.Fatalf("generic from=postman file should not reach inbox: %s", inboxPath)
 	}
-	// Verify NOT in dead-letter/
-	deadPath := filepath.Join(sessionDir, "dead-letter", filename)
-	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
-		t.Error("message should not be in dead-letter/ (postman is always allowed)")
+
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-040000-from-postman-to-worker-dl-forged-sender.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Fatalf("generic from=postman file not dead-lettered as forged sender: %v", err)
 	}
 }
 
@@ -487,53 +620,43 @@ func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 	}
 }
 
-func TestDeliverMessage_CrossSessionPing(t *testing.T) {
-	// Verify Bug 1 fix: a ping file written by SendPingToNode to the target session's
-	// post/ dir must reach the inbox, not be dead-lettered as a forged sender.
-	// sourceSessionName == "messenger" != daemonSession == "local-daemon",
-	// but isSessionEnabled("messenger") == true, so the guard must pass.
+func TestDeliverMessage_SameSessionDaemonAllowed(t *testing.T) {
 	tmpDir := t.TempDir()
-	messengerDir := filepath.Join(tmpDir, "messenger") // basename = sourceSessionName
-	if err := config.CreateSessionDirs(messengerDir); err != nil {
+	daemonDir := filepath.Join(tmpDir, "daemon-session")
+	if err := config.CreateSessionDirs(daemonDir); err != nil {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
-	filename := "20260301-120000-from-postman-to-orchestrator.md"
-	postPath := filepath.Join(messengerDir, "post", filename)
-	content := "---\nparams:\n  contextId: test-ctx\n  from: postman\n  to: orchestrator\n  timestamp: 2026-03-01T12:00:00Z\n---\n\nPING\n"
+	filename := "20260301-120000-from-daemon-to-orchestrator.md"
+	postPath := filepath.Join(daemonDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: daemon\n  to: orchestrator\n  timestamp: 2026-03-01T12:00:00Z\n---\n\nALERT\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 
 	nodes := map[string]discovery.NodeInfo{
-		"messenger:orchestrator": {PaneID: "%10", SessionName: "messenger", SessionDir: messengerDir},
+		"daemon-session:orchestrator": {PaneID: "%10", SessionName: "daemon-session", SessionDir: daemonDir},
 	}
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	// messenger is enabled; local-daemon is the daemon's own session
-	isSessionEnabled := func(s string) bool { return s == "messenger" }
-
-	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "local-daemon"); err != nil {
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return false }, nil, idle.NewIdleTracker(), "daemon-session"); err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	inboxPath := filepath.Join(messengerDir, "inbox", "orchestrator", filename)
+	inboxPath := filepath.Join(daemonDir, "inbox", "orchestrator", filename)
 	if _, err := os.Stat(inboxPath); err != nil {
-		t.Errorf("ping not delivered to inbox: %v", err)
+		t.Errorf("daemon message not delivered to inbox: %v", err)
 	}
 
-	deadLetterGlob := filepath.Join(messengerDir, "dead-letter", "*forged*")
+	deadLetterGlob := filepath.Join(daemonDir, "dead-letter", "*forged*")
 	matches, _ := filepath.Glob(deadLetterGlob)
 	if len(matches) > 0 {
-		t.Errorf("ping was incorrectly dead-lettered as forged sender: %v", matches)
+		t.Errorf("daemon message was incorrectly dead-lettered as forged sender: %v", matches)
 	}
 }
 
-func TestDeliverMessage_DisabledSessionPing(t *testing.T) {
-	// Verify Bug 3 scenario: a from=postman file arriving in a disabled session's post/ dir
-	// must be dead-lettered as forged sender. isSessionEnabled returns false, so the
-	// forged-sender guard at message.go:313 fires before ResolveNodeName is reached.
+func TestDeliverMessage_DisabledSessionPostmanDeadLettered(t *testing.T) {
 	tmpDir := t.TempDir()
 	messengerDir := filepath.Join(tmpDir, "messenger")
 	if err := config.CreateSessionDirs(messengerDir); err != nil {
@@ -553,10 +676,7 @@ func TestDeliverMessage_DisabledSessionPing(t *testing.T) {
 	adjacency := map[string][]string{}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
-	// messenger is disabled; local-daemon is the daemon's own session
-	isSessionEnabled := func(s string) bool { return false }
-
-	_ = DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "local-daemon")
+	_ = DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return false }, nil, idle.NewIdleTracker(), "local-daemon")
 
 	inboxPath := filepath.Join(messengerDir, "inbox", "orchestrator", filename)
 	if _, err := os.Stat(inboxPath); err == nil {
@@ -567,6 +687,42 @@ func TestDeliverMessage_DisabledSessionPing(t *testing.T) {
 	matches, _ := filepath.Glob(deadLetterGlob)
 	if len(matches) == 0 {
 		t.Errorf("expected ping to be dead-lettered as forged sender, but found no forged entries in dead-letter/")
+	}
+}
+
+func TestDeliverMessage_ForeignEnabledSessionForgedPostman(t *testing.T) {
+	tmpDir := t.TempDir()
+	foreignDir := filepath.Join(tmpDir, "foreign-session")
+	if err := config.CreateSessionDirs(foreignDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260301-120000-from-postman-to-orchestrator.md"
+	postPath := filepath.Join(foreignDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("forged payload"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"foreign-session:orchestrator": {PaneID: "%10", SessionName: "foreign-session", SessionDir: foreignDir},
+	}
+	adjacency := map[string][]string{}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	isSessionEnabled := func(s string) bool { return s == "foreign-session" }
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "local-daemon"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	inboxPath := filepath.Join(foreignDir, "inbox", "orchestrator", filename)
+	if _, err := os.Stat(inboxPath); err == nil {
+		t.Fatalf("forged from=postman message should not reach inbox: %s", inboxPath)
+	}
+
+	deadPath := filepath.Join(foreignDir, "dead-letter", "20260301-120000-from-postman-to-orchestrator-dl-forged-sender.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Fatalf("forged from=postman message not dead-lettered: %v", err)
 	}
 }
 
@@ -589,41 +745,41 @@ func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 	}
 }
 
-// TestPostmanMessage_NoHoldingState verifies that postman → node messages
+// TestDaemonMessage_NoHoldingState verifies that daemon → node messages
 // do not cause false "holding" state (Issue #87).
-func TestPostmanMessage_NoHoldingState(t *testing.T) {
+func TestDaemonMessage_NoHoldingState(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
 
 	cfg := &config.Config{
-		Edges:                []string{"postman -- worker"},
+		Edges:                []string{"daemon -- worker"},
 		Nodes:                map[string]config.NodeConfig{"worker": {}},
 		NotificationTemplate: "test notification",
 		TmuxTimeout:          1.0,
 	}
 
 	adjacency := map[string][]string{
-		"postman": {"worker"},
-		"worker":  {"postman"},
+		"daemon": {"worker"},
+		"worker": {"daemon"},
 	}
 
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
-	// Create postman → worker message in post/
-	filename := "20260209-120000-from-postman-to-worker.md"
+	// Create daemon → worker message in post/
+	filename := "20260209-120000-from-daemon-to-worker.md"
 	content := `---
 params:
   contextId: test-ctx
-  from: postman
+  from: daemon
   to: worker
   timestamp: 2026-02-09T12:00:00+09:00
 ---
 
 ## Content
 
-PING from postman
+PING from daemon
 `
 	postPath := filepath.Join(sessionDir, "post", filename)
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
@@ -642,24 +798,24 @@ PING from postman
 	idleTracker := idle.NewIdleTracker()
 
 	// Deliver message
-	err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(s string) bool { return true }, nil, idleTracker, "")
+	err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idleTracker, "test-session")
 	if err != nil {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
 	// Verify: UpdateReceiveActivity was NOT called for worker
-	// (Because info.From == "postman", UpdateReceiveActivity is skipped)
+	// (Because info.From == "daemon", UpdateReceiveActivity is skipped)
 	nodeKey := "test-session:worker"
 	activity := idleTracker.GetNodeStates()[nodeKey]
 
 	// activity.LastReceived should be zero (not updated)
 	if !activity.LastReceived.IsZero() {
-		t.Errorf("LastReceived should be zero for postman → worker message, got %v", activity.LastReceived)
+		t.Errorf("LastReceived should be zero for daemon → worker message, got %v", activity.LastReceived)
 	}
 
 	// Verify NOT holding (IsHoldingBall should return false)
 	if idleTracker.IsHoldingBall(nodeKey) {
-		t.Error("worker should NOT be holding ball after postman message")
+		t.Error("worker should NOT be holding ball after daemon message")
 	}
 }
 
@@ -667,7 +823,7 @@ PING from postman
 // addressed to a recipient in a foreign (non-daemon, non-enabled) session.
 func TestDeliverMessage_ForeignSession(t *testing.T) {
 	// F4: Verify that a recipient in a foreign (non-daemon, non-enabled) session is dead-lettered.
-	// Setup: daemon owns "own-session". Sender (postman) delivers to bob, who somehow appears
+	// Setup: daemon owns "own-session". Sender alice delivers to bob, who somehow appears
 	// in knownNodes under "own-session" but nodeInfo.SessionName resolves to "foreign-session"
 	// (simulating stale knownNodes after a session was previously enabled then not).
 	senderDir := filepath.Join(t.TempDir(), "own-session") // basename matches daemonSession
@@ -676,10 +832,9 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	}
 	recipientDir := t.TempDir()
 
-	filename := "20260201-040000-from-postman-to-bob.md"
+	filename := "20260201-040000-from-alice-to-bob.md"
 	postPath := filepath.Join(senderDir, "post", filename)
-	// postman sender bypasses adjacency and envelope checks
-	content := "---\nparams:\n  contextId: test-ctx\n  from: postman\n  to: bob\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ncontent\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: alice\n  to: bob\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ncontent\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -687,9 +842,12 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	// bob's NodeInfo has SessionName "foreign-session" (a stale cross-session entry in knownNodes).
 	// "own-session:bob" key means same-session lookup succeeds, but nodeInfo reveals the actual session.
 	nodes := map[string]discovery.NodeInfo{
-		"own-session:bob": {PaneID: "%2", SessionName: "foreign-session", SessionDir: recipientDir},
+		"own-session:alice": {PaneID: "%1", SessionName: "own-session", SessionDir: senderDir},
+		"own-session:bob":   {PaneID: "%2", SessionName: "foreign-session", SessionDir: recipientDir},
 	}
-	adjacency := map[string][]string{}
+	adjacency := map[string][]string{
+		"alice": {"bob"},
+	}
 	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
 
 	// foreign-session is not enabled; daemonSession = "own-session"
@@ -698,7 +856,7 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-040000-from-postman-to-bob-dl-foreign-session.md")
+	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-040000-from-alice-to-bob-dl-foreign-session.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not dead-lettered with dlSuffixForeignSession: %v", err)
 	}
@@ -920,5 +1078,88 @@ func TestDeliverMessage_PhonyDispatch(t *testing.T) {
 	// Verify post/ file was removed by dispatchPhonyNode.
 	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
 		t.Error("post/ file should be removed after phony dispatch")
+	}
+}
+
+func TestDeliverMessage_ProjectLocalEdgeViolationWarningTemplateShellExpansionBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	sessionDir := filepath.Join(tmpDir, "test")
+
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir failed: %v", err)
+	}
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir failed: %v", err)
+	}
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	xdgConfig := `
+[postman]
+allow_shell_templates = true
+
+[worker]
+role = "worker"
+
+[orchestrator]
+role = "orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config failed: %v", err)
+	}
+
+	localConfig := `
+[postman]
+edge_violation_warning_template = "Routing denied $(printf project-local-edge-warning)"
+`
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile local config failed: %v", err)
+	}
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Chdir(projectDir)
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	filename := "20260201-040000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile postPath failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	warningMatches, err := filepath.Glob(filepath.Join(sessionDir, "inbox", "orchestrator", "*-from-postman-to-orchestrator.md"))
+	if err != nil {
+		t.Fatalf("Glob warningMatches failed: %v", err)
+	}
+	if len(warningMatches) == 0 {
+		t.Fatal("routing-denied warning file not found in sender inbox")
+	}
+
+	warningBody, err := os.ReadFile(warningMatches[0])
+	if err != nil {
+		t.Fatalf("ReadFile warning failed: %v", err)
+	}
+	if !strings.Contains(string(warningBody), "$(printf project-local-edge-warning)") {
+		t.Fatalf("project-local edge violation warning unexpectedly executed shell command: %q", string(warningBody))
 	}
 }

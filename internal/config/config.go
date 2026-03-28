@@ -99,6 +99,9 @@ type Config struct {
 
 	// Shell template execution opt-in (#security)
 	AllowShellTemplates bool `toml:"allow_shell_templates"`
+
+	directTemplateRootTrust  map[string]bool
+	projectLocalExplicitZero localExplicitZeroInventory
 }
 
 // NodeConfig holds per-node configuration.
@@ -115,6 +118,12 @@ type NodeConfig struct {
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
 	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
+}
+
+type localExplicitZeroInventory struct {
+	postman      map[string]bool
+	nodeDefaults map[string]bool
+	nodes        map[string]map[string]bool
 }
 
 // AgentCard holds agent card information.
@@ -388,7 +397,190 @@ func loadConfigFile(path string) (*Config, error) {
 		}
 	}
 
+	markLocalExplicitZeroInventory(cfg, md)
+
 	return cfg, nil
+}
+
+func markLocalExplicitZeroInventory(cfg *Config, md toml.MetaData) {
+	inventory := localExplicitZeroInventory{
+		postman:      make(map[string]bool),
+		nodeDefaults: make(map[string]bool),
+		nodes:        make(map[string]map[string]bool),
+	}
+	for _, key := range md.Keys() {
+		if len(key) != 2 {
+			continue
+		}
+		section := key[0]
+		field := key[1]
+		switch section {
+		case "postman":
+			if localPostmanExplicitZero(cfg, field) {
+				inventory.postman[field] = true
+			}
+		case "node_defaults":
+			if localNodeDefaultsExplicitZero(cfg.NodeDefaults, field) {
+				inventory.nodeDefaults[field] = true
+			}
+		case "heartbeat":
+			continue
+		default:
+			node := cfg.Nodes[section]
+			if localNodeExplicitZero(node, field) {
+				if inventory.nodes[section] == nil {
+					inventory.nodes[section] = make(map[string]bool)
+				}
+				inventory.nodes[section][field] = true
+			}
+		}
+	}
+	cfg.projectLocalExplicitZero = inventory
+}
+
+func localPostmanExplicitZero(cfg *Config, field string) bool {
+	switch field {
+	case "reminder_interval_messages":
+		return cfg.ReminderInterval == 0
+	case "enter_verify_delay_seconds":
+		return cfg.EnterVerifyDelay == 0
+	case "enter_retry_max":
+		return cfg.EnterRetryMax == 0
+	case "node_spinning_seconds":
+		return cfg.NodeSpinningSeconds == 0
+	case "message_age_warning_seconds":
+		return cfg.MessageAgeWarningSeconds == 0
+	case "message_ttl_seconds":
+		return cfg.MessageTTLSeconds == 0
+	case "min_delivery_gap_seconds":
+		return cfg.MinDeliveryGapSeconds == 0
+	case "startup_drain_window_seconds":
+		return cfg.StartupDrainWindowSeconds == 0
+	case "pane_capture_max_panes":
+		return cfg.PaneCaptureMaxPanes == 0
+	case "inbox_unread_threshold":
+		return cfg.InboxUnreadThreshold == 0
+	case "pane_notify_cooldown_seconds":
+		return cfg.PaneNotifyCooldownSeconds == 0
+	default:
+		return false
+	}
+}
+
+func localNodeExplicitZero(node NodeConfig, field string) bool {
+	switch field {
+	case "idle_timeout_seconds":
+		return node.IdleTimeoutSeconds == 0
+	case "dropped_ball_timeout_seconds":
+		return node.DroppedBallTimeoutSeconds == 0
+	case "dropped_ball_cooldown_seconds":
+		return node.DroppedBallCooldownSeconds == 0
+	case "enter_count":
+		return node.EnterCount == 0
+	case "enter_delay_seconds":
+		return node.EnterDelay == 0
+	case "delivery_idle_timeout_seconds":
+		return node.DeliveryIdleTimeoutSeconds == 0
+	case "delivery_idle_retry_max":
+		return node.DeliveryIdleRetryMax == 0
+	default:
+		return false
+	}
+}
+
+func localNodeDefaultsExplicitZero(node NodeConfig, field string) bool {
+	switch field {
+	case "enter_count":
+		return node.EnterCount == 0
+	default:
+		return false
+	}
+}
+
+func applyProjectLocalExplicitZero(base, override *Config) {
+	if override == nil {
+		return
+	}
+	for field := range override.projectLocalExplicitZero.postman {
+		switch field {
+		case "reminder_interval_messages":
+			base.ReminderInterval = 0
+		case "enter_verify_delay_seconds":
+			base.EnterVerifyDelay = 0
+		case "enter_retry_max":
+			base.EnterRetryMax = 0
+		case "node_spinning_seconds":
+			base.NodeSpinningSeconds = 0
+		case "message_age_warning_seconds":
+			base.MessageAgeWarningSeconds = 0
+		case "message_ttl_seconds":
+			base.MessageTTLSeconds = 0
+		case "min_delivery_gap_seconds":
+			base.MinDeliveryGapSeconds = 0
+		case "startup_drain_window_seconds":
+			base.StartupDrainWindowSeconds = 0
+		case "pane_capture_max_panes":
+			base.PaneCaptureMaxPanes = 0
+		case "inbox_unread_threshold":
+			base.InboxUnreadThreshold = 0
+		case "pane_notify_cooldown_seconds":
+			base.PaneNotifyCooldownSeconds = 0
+		}
+	}
+	for name, fields := range override.projectLocalExplicitZero.nodes {
+		node := base.Nodes[name]
+		for field := range fields {
+			switch field {
+			case "idle_timeout_seconds":
+				node.IdleTimeoutSeconds = 0
+			case "dropped_ball_timeout_seconds":
+				node.DroppedBallTimeoutSeconds = 0
+			case "dropped_ball_cooldown_seconds":
+				node.DroppedBallCooldownSeconds = 0
+			case "enter_count":
+				node.EnterCount = 0
+			case "enter_delay_seconds":
+				node.EnterDelay = 0
+			case "delivery_idle_timeout_seconds":
+				node.DeliveryIdleTimeoutSeconds = 0
+			case "delivery_idle_retry_max":
+				node.DeliveryIdleRetryMax = 0
+			}
+		}
+		base.Nodes[name] = node
+	}
+	for field := range override.projectLocalExplicitZero.nodeDefaults {
+		switch field {
+		case "enter_count":
+			base.NodeDefaults.EnterCount = 0
+		}
+	}
+	base.mergeProjectLocalExplicitZeroNodes(override.projectLocalExplicitZero.nodes)
+}
+
+func (cfg *Config) mergeProjectLocalExplicitZeroNodes(nodes map[string]map[string]bool) {
+	if len(nodes) == 0 {
+		return
+	}
+	if cfg.projectLocalExplicitZero.nodes == nil {
+		cfg.projectLocalExplicitZero.nodes = make(map[string]map[string]bool)
+	}
+	for name, fields := range nodes {
+		if cfg.projectLocalExplicitZero.nodes[name] == nil {
+			cfg.projectLocalExplicitZero.nodes[name] = make(map[string]bool)
+		}
+		for field := range fields {
+			cfg.projectLocalExplicitZero.nodes[name][field] = true
+		}
+	}
+}
+
+func (cfg *Config) hasProjectLocalExplicitZeroNode(name, field string) bool {
+	if cfg == nil {
+		return false
+	}
+	fields := cfg.projectLocalExplicitZero.nodes[name]
+	return fields[field]
 }
 
 // mergeConfig merges override fields into base using "non-zero wins" semantics.
@@ -783,16 +975,20 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	cfg.initDirectTemplateRootTrust()
+
 	// Issue #121: Apply project-local config on top if found.
 	if localPath != "" {
 		localCfg, err := loadConfigFile(localPath)
 		if err != nil {
 			return nil, err
 		}
+		cfg.markDirectTemplateRootsUntrusted(localCfg)
 		// Snapshot AllowShellTemplates from XDG config before applying project-local
 		// overlay. Project-local config must NOT be able to self-elevate this flag.
 		xdgAllowShell := cfg.AllowShellTemplates
 		mergeConfig(cfg, localCfg)
+		applyProjectLocalExplicitZero(cfg, localCfg)
 		// Issue #274: Apply project-local nodes/ directory on top of merged config.
 		localNodesDir := filepath.Join(filepath.Dir(localPath), "nodes")
 		if info, err := os.Stat(localNodesDir); err == nil && info.IsDir() {
@@ -819,6 +1015,9 @@ func LoadConfig(path string) (*Config, error) {
 					if err := md2.PrimitiveDecode(prim, &node); err != nil {
 						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
 						continue
+					}
+					if node.ReminderMessage != "" {
+						cfg.directTemplateRootTrust[reminderTemplateRoot(name)] = false
 					}
 					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
 				}
@@ -860,6 +1059,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if localMarkdownPath != "" {
 		if mdCfg, err := loadMarkdownConfig(localMarkdownPath); err == nil {
+			cfg.markDirectTemplateRootsUntrusted(mdCfg)
 			mergeConfig(cfg, mdCfg)
 		} else {
 			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
@@ -1138,6 +1338,20 @@ func isContextDaemonAlive(baseDir, contextName string) bool {
 	return false
 }
 
+// ContextOwnsSession reports whether contextName currently owns sessionName.
+// Ownership means the context has a subdirectory for sessionName and at least
+// one live daemon PID somewhere under that context.
+func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
+	if baseDir == "" || contextName == "" || sessionName == "" {
+		return false
+	}
+	sessionDir := filepath.Join(baseDir, contextName, sessionName)
+	if _, err := os.Stat(sessionDir); err != nil {
+		return false
+	}
+	return isContextDaemonAlive(baseDir, contextName)
+}
+
 // ResolveContextIDFromSession scans baseDir for context directories that
 // contain a live postman daemon managing sessionName. A daemon writes its PID
 // file under its own tmux session but may manage other sessions via
@@ -1159,13 +1373,7 @@ func ResolveContextIDFromSession(baseDir, sessionName string) (string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// Check if this context has a subdirectory for the requested session
-		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
-		if _, statErr := os.Stat(sessionDir); os.IsNotExist(statErr) {
-			continue
-		}
-		// Check if any session under this context has a live daemon
-		if isContextDaemonAlive(baseDir, e.Name()) {
+		if ContextOwnsSession(baseDir, e.Name(), sessionName) {
 			matches = append(matches, e.Name())
 		}
 	}
@@ -1196,13 +1404,7 @@ func FindSessionOwner(baseDir, sessionName, ownContextID string) string {
 		if !e.IsDir() || e.Name() == ownContextID {
 			continue
 		}
-		// Check if this context has a subdirectory for the requested session
-		sessionDir := filepath.Join(baseDir, e.Name(), sessionName)
-		if _, statErr := os.Stat(sessionDir); os.IsNotExist(statErr) {
-			continue
-		}
-		// Check if any session under this context has a live daemon
-		if isContextDaemonAlive(baseDir, e.Name()) {
+		if ContextOwnsSession(baseDir, e.Name(), sessionName) {
 			return e.Name()
 		}
 	}
@@ -1309,28 +1511,28 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	if specific.ReminderMessage != "" {
 		result.ReminderMessage = specific.ReminderMessage
 	}
-	if specific.IdleTimeoutSeconds != 0 {
+	if specific.IdleTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "idle_timeout_seconds") {
 		result.IdleTimeoutSeconds = specific.IdleTimeoutSeconds
 	}
-	if specific.DroppedBallTimeoutSeconds != 0 {
+	if specific.DroppedBallTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "dropped_ball_timeout_seconds") {
 		result.DroppedBallTimeoutSeconds = specific.DroppedBallTimeoutSeconds
 	}
-	if specific.DroppedBallCooldownSeconds != 0 {
+	if specific.DroppedBallCooldownSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "dropped_ball_cooldown_seconds") {
 		result.DroppedBallCooldownSeconds = specific.DroppedBallCooldownSeconds
 	}
 	if specific.DroppedBallNotification != "" {
 		result.DroppedBallNotification = specific.DroppedBallNotification
 	}
-	if specific.EnterCount != 0 {
+	if specific.EnterCount != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "enter_count") {
 		result.EnterCount = specific.EnterCount
 	}
-	if specific.EnterDelay != 0 {
+	if specific.EnterDelay != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "enter_delay_seconds") {
 		result.EnterDelay = specific.EnterDelay
 	}
-	if specific.DeliveryIdleTimeoutSeconds != 0 {
+	if specific.DeliveryIdleTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "delivery_idle_timeout_seconds") {
 		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
 	}
-	if specific.DeliveryIdleRetryMax != 0 {
+	if specific.DeliveryIdleRetryMax != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "delivery_idle_retry_max") {
 		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result

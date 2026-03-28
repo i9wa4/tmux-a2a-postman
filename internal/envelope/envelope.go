@@ -8,6 +8,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -34,9 +35,65 @@ func BuildEnvelope(
 	sourceSessionName string,
 	livenessMap map[string]bool,
 ) string {
+	allowShell := false
+	if cfg != nil {
+		allowShell = cfg.AllowShellTemplates
+	}
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, allowShell)
+}
+
+func BuildNotificationEnvelope(
+	cfg *config.Config,
+	tmpl string,
+	recipient string,
+	sender string,
+	contextID string,
+	filename string,
+	activeNodes []string,
+	adjacency map[string][]string,
+	nodes map[string]discovery.NodeInfo,
+	sourceSessionName string,
+	livenessMap map[string]bool,
+) string {
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForNotificationTemplate())
+}
+
+func BuildDaemonEnvelope(
+	cfg *config.Config,
+	tmpl string,
+	recipient string,
+	sender string,
+	contextID string,
+	filename string,
+	activeNodes []string,
+	adjacency map[string][]string,
+	nodes map[string]discovery.NodeInfo,
+	sourceSessionName string,
+	livenessMap map[string]bool,
+) string {
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForDaemonMessageTemplate())
+}
+
+func buildEnvelope(
+	cfg *config.Config,
+	tmpl string,
+	recipient string,
+	sender string,
+	contextID string,
+	filename string,
+	activeNodes []string,
+	adjacency map[string][]string,
+	nodes map[string]discovery.NodeInfo,
+	sourceSessionName string,
+	livenessMap map[string]bool,
+	allowShell bool,
+) string {
+	recipientSimple := nodeaddr.Simple(recipient)
+	senderSimple := nodeaddr.Simple(sender)
+
 	// Role template resolution: Nodes → CommonTemplate prepend.
 	recipientTemplate := ""
-	if nodeConfig, ok := cfg.Nodes[recipient]; ok {
+	if nodeConfig, ok := cfg.Nodes[recipientSimple]; ok {
 		recipientTemplate = nodeConfig.Template
 	}
 	// Issue #49: Prepend common_template if present.
@@ -55,6 +112,9 @@ func BuildEnvelope(
 	// talks_to_line: session-aware liveness-filtered neighbor list.
 	// Uses notification-path semantics: same-session priority, exact key lookup.
 	talksTo := config.GetTalksTo(adjacency, recipient)
+	if len(talksTo) == 0 && recipientSimple != recipient {
+		talksTo = config.GetTalksTo(adjacency, recipientSimple)
+	}
 	activeTalksTo := []string{}
 	for _, node := range talksTo {
 		nodeFullName := discovery.ResolveNodeName(node, sourceSessionName, nodes)
@@ -70,7 +130,7 @@ func BuildEnvelope(
 	// contacts_section: adjacent nodes with role descriptions (liveness-filtered, or all-adjacent when nil).
 	contactLines := []string{}
 	for _, node := range activeTalksTo {
-		nodeConfig := cfg.GetNodeConfig(node)
+		nodeConfig := cfg.GetNodeConfig(nodeaddr.Simple(node))
 		if nodeConfig.Role != "" {
 			contactLines = append(contactLines, fmt.Sprintf("- %s: %s", node, nodeConfig.Role))
 		} else {
@@ -94,7 +154,7 @@ func BuildEnvelope(
 	}
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 	// ping.go also replaced {node} in reply_command — preserve that behavior.
-	replyCmd = strings.ReplaceAll(replyCmd, "{node}", recipient)
+	replyCmd = strings.ReplaceAll(replyCmd, "{node}", recipientSimple)
 
 	// Resolve recipient session directory for inbox_path and session_dir.
 	sessionDir := ""
@@ -108,7 +168,7 @@ func BuildEnvelope(
 		// Fallback: derive from filename path (post/ → session dir).
 		sessionDir = filepath.Dir(filepath.Dir(filename))
 	}
-	inboxPath := filepath.Join(sessionDir, "inbox", recipient)
+	inboxPath := filepath.Join(sessionDir, "inbox", recipientSimple)
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
@@ -132,8 +192,8 @@ func BuildEnvelope(
 
 	vars := map[string]string{
 		"context_id":       contextID,
-		"node":             recipient,
-		"from_node":        sender,
+		"node":             recipientSimple,
+		"from_node":        senderSimple,
 		"timestamp":        ts,
 		"iso_timestamp":    now.Format(time.RFC3339),
 		"sent_timestamp":   sentTimestamp,
@@ -149,7 +209,7 @@ func BuildEnvelope(
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	return template.ExpandTemplate(tmpl, vars, timeout, cfg.AllowShellTemplates)
+	return template.ExpandTemplate(tmpl, vars, timeout, allowShell)
 }
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.

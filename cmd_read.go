@@ -11,6 +11,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
 // runRead lists inbox message file paths for the current node (#196).
@@ -209,7 +210,7 @@ func runRead(args []string) error {
 			if err != nil {
 				return fmt.Errorf("read --archived --file: invalid filename %q: %w", *fileFlag, err)
 			}
-			if info.To != currentNodeName {
+			if nodeaddr.Simple(info.To) != currentNodeName {
 				return fmt.Errorf("read --archived --file: %q belongs to %q, not %q", *fileFlag, info.To, currentNodeName)
 			}
 			data, err := os.ReadFile(absFile)
@@ -241,7 +242,7 @@ func runRead(args []string) error {
 			if err != nil {
 				continue
 			}
-			if info.To != currentNodeName {
+			if nodeaddr.Simple(info.To) != currentNodeName {
 				continue
 			}
 			names = append(names, e.Name())

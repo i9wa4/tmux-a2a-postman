@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -263,5 +265,152 @@ func TestMessageEventSuppressesNormalDelivery(t *testing.T) {
 				t.Fatalf("messageEventSuppressesNormalDelivery(%q) = %v, want %v", tc.event.Message, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRequeueWaitingMessage_UnreadOriginalPreservesInboxPayload(t *testing.T) {
+	sessionDir := t.TempDir()
+	simpleName := "worker"
+	filename := "20260328-101500-from-orchestrator-to-worker.md"
+	waitingDir := filepath.Join(sessionDir, "waiting")
+	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
+	if err := os.MkdirAll(waitingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll waiting: %v", err)
+	}
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	waitingPath := filepath.Join(waitingDir, filename)
+	inboxPath := filepath.Join(inboxDir, filename)
+	waitingContent := []byte("---\nstate: composing\n---\n")
+	originalContent := []byte("---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-03-28T10:15:00Z\n---\n\nOriginal payload\n")
+	if err := os.WriteFile(waitingPath, waitingContent, 0o600); err != nil {
+		t.Fatalf("WriteFile waiting: %v", err)
+	}
+	if err := os.WriteFile(inboxPath, originalContent, 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+		t.Fatalf("requeueWaitingMessage: %v", err)
+	}
+
+	if _, err := os.Stat(waitingPath); !os.IsNotExist(err) {
+		t.Fatalf("waiting file still present or wrong error: %v", err)
+	}
+	gotInbox, err := os.ReadFile(inboxPath)
+	if err != nil {
+		t.Fatalf("ReadFile inbox: %v", err)
+	}
+	if string(gotInbox) != string(originalContent) {
+		t.Fatalf("inbox content changed:\n got %q\nwant %q", gotInbox, originalContent)
+	}
+}
+
+func TestRequeueWaitingMessage_ArchivedOriginalRestoresInboxCopy(t *testing.T) {
+	sessionDir := t.TempDir()
+	simpleName := "worker"
+	filename := "20260328-101501-from-orchestrator-to-worker.md"
+	waitingDir := filepath.Join(sessionDir, "waiting")
+	readDir := filepath.Join(sessionDir, "read")
+	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
+	if err := os.MkdirAll(waitingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll waiting: %v", err)
+	}
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	waitingPath := filepath.Join(waitingDir, filename)
+	readPath := filepath.Join(readDir, filename)
+	inboxPath := filepath.Join(inboxDir, filename)
+	waitingContent := []byte("---\nstate: composing\n---\n")
+	originalContent := []byte("---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-03-28T10:15:01Z\n---\n\nArchived payload\n")
+	if err := os.WriteFile(waitingPath, waitingContent, 0o600); err != nil {
+		t.Fatalf("WriteFile waiting: %v", err)
+	}
+	if err := os.WriteFile(readPath, originalContent, 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+	originalReadTime := time.Date(2026, time.March, 28, 10, 15, 1, 0, time.UTC)
+	if err := os.Chtimes(readPath, originalReadTime, originalReadTime); err != nil {
+		t.Fatalf("Chtimes read: %v", err)
+	}
+
+	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+		t.Fatalf("requeueWaitingMessage: %v", err)
+	}
+
+	if _, err := os.Stat(waitingPath); !os.IsNotExist(err) {
+		t.Fatalf("waiting file still present or wrong error: %v", err)
+	}
+	gotInbox, err := os.ReadFile(inboxPath)
+	if err != nil {
+		t.Fatalf("ReadFile inbox: %v", err)
+	}
+	if string(gotInbox) != string(originalContent) {
+		t.Fatalf("restored inbox content changed:\n got %q\nwant %q", gotInbox, originalContent)
+	}
+	gotRead, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("ReadFile read: %v", err)
+	}
+	if string(gotRead) != string(originalContent) {
+		t.Fatalf("read content changed:\n got %q\nwant %q", gotRead, originalContent)
+	}
+	readInfo, err := os.Stat(readPath)
+	if err != nil {
+		t.Fatalf("Stat read: %v", err)
+	}
+	if !readInfo.ModTime().Equal(originalReadTime) {
+		t.Fatalf("read modtime changed: got %s want %s", readInfo.ModTime().UTC().Format(time.RFC3339), originalReadTime.Format(time.RFC3339))
+	}
+}
+
+func TestRequeueWaitingMessage_NoOriginalArtifactMovesMarkerToDeadLetter(t *testing.T) {
+	sessionDir := t.TempDir()
+	simpleName := "worker"
+	filename := "20260328-101502-from-orchestrator-to-worker.md"
+	waitingDir := filepath.Join(sessionDir, "waiting")
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
+	if err := os.MkdirAll(waitingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll waiting: %v", err)
+	}
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	waitingPath := filepath.Join(waitingDir, filename)
+	waitingContent := []byte("---\nstate: composing\n---\n")
+	if err := os.WriteFile(waitingPath, waitingContent, 0o600); err != nil {
+		t.Fatalf("WriteFile waiting: %v", err)
+	}
+
+	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+		t.Fatalf("requeueWaitingMessage: %v", err)
+	}
+
+	if _, err := os.Stat(waitingPath); !os.IsNotExist(err) {
+		t.Fatalf("waiting file still present or wrong error: %v", err)
+	}
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected empty inbox, found %d entries", len(entries))
+	}
+	deadLetterPath := filepath.Join(deadLetterDir, deadLetterMissingOriginalName(filename))
+	gotDeadLetter, err := os.ReadFile(deadLetterPath)
+	if err != nil {
+		t.Fatalf("ReadFile dead-letter: %v", err)
+	}
+	if string(gotDeadLetter) != string(waitingContent) {
+		t.Fatalf("dead-letter content changed:\n got %q\nwant %q", gotDeadLetter, waitingContent)
 	}
 }

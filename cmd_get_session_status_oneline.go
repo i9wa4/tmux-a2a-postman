@@ -15,6 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
 // runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
@@ -397,7 +398,7 @@ func applyWaitingOverlay(
 			}
 			// sessionSubdir is the tmux session name; fileInfo.To is the recipient node name.
 			// Color the RECIPIENT's dot — the node expected to reply.
-			recipientKey := sessionSubdir + ":" + fileInfo.To
+			recipientKey := nodeaddr.Full(fileInfo.To, sessionSubdir)
 			paneID, ok := sessionTitleToPaneID[recipientKey]
 			if !ok {
 				continue

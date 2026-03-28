@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
 // writeFile is a helper to write a file, creating parent dirs as needed.
@@ -668,5 +671,64 @@ idle_timeout_seconds = 42
 	// TOML structural field preserved
 	if cfg.Nodes["worker"].IdleTimeoutSeconds != 42 {
 		t.Errorf("worker.IdleTimeoutSeconds: got %v, want 42", cfg.Nodes["worker"].IdleTimeoutSeconds)
+	}
+}
+
+func TestLoadConfig_ProjectLocalMarkdownMessageFooterShellExpansionBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	xdgDir, fakeHome := setupXDGAndHome(t, tmpDir)
+
+	writeFile(t, filepath.Join(xdgDir, "postman.toml"), `
+[postman]
+allow_shell_templates = true
+
+[worker]
+role = "worker"
+`)
+
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	writeFile(t, filepath.Join(localConfigDir, "postman.md"), "## `message_footer`\n\nProject footer $(printf project-local-markdown-footer)\n")
+
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.AllowShellTemplates {
+		t.Fatal("AllowShellTemplates = false, want true from trusted base")
+	}
+
+	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
+	if !strings.Contains(got, "$(printf project-local-markdown-footer)") {
+		t.Fatalf("project-local Markdown footer unexpectedly executed shell command: %q", got)
+	}
+}
+
+func TestLoadConfig_TrustedXDGMarkdownMessageFooterShellExpansionAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	xdgDir, _ := setupXDGAndHome(t, tmpDir)
+
+	writeFile(t, filepath.Join(xdgDir, "postman.toml"), `
+[postman]
+allow_shell_templates = true
+
+[worker]
+role = "worker"
+`)
+	writeFile(t, filepath.Join(xdgDir, "postman.md"), "## `message_footer`\n\nTrusted footer $(printf trusted-xdg-markdown-footer)\n")
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.AllowShellTemplates {
+		t.Fatal("AllowShellTemplates = false, want true from trusted XDG base")
+	}
+
+	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
+	if got != "Trusted footer trusted-xdg-markdown-footer" {
+		t.Fatalf("trusted XDG Markdown footer = %q, want %q", got, "Trusted footer trusted-xdg-markdown-footer")
 	}
 }
