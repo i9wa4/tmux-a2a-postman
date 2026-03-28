@@ -526,8 +526,11 @@ func RunDaemonLoop(
 									Message: fmt.Sprintf("deliver %s: %v", filename, err),
 								}
 							} else {
-								// Issue #53: Check if dead-letter event was sent
-								deadLetterEventSent := false
+								// Issue #53: Only terminal message-layer events suppress
+								// the normal post-delivery bookkeeping and follow-up TUI
+								// updates. Advisory success events should still pass
+								// through while preserving the normal delivery path.
+								suppressNormalDelivery := false
 								select {
 								case msgEvent := <-messageEvents:
 									events <- tui.DaemonEvent{
@@ -535,13 +538,13 @@ func RunDaemonLoop(
 										Message: msgEvent.Message,
 										Details: msgEvent.Details,
 									}
-									deadLetterEventSent = true
+									suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 								default:
 									// No dead-letter event, normal delivery
 								}
 
 								// Issue #211: Record delivery timestamp for rate limiting
-								if !deadLetterEventSent {
+								if !suppressNormalDelivery {
 									if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 										deliveryKey := msgInfo.From + ":" + msgInfo.To
 										daemonState.lastDeliveryMu.Lock()
@@ -552,7 +555,7 @@ func RunDaemonLoop(
 								}
 
 								// Send normal delivery event only if not dead-lettered
-								if !deadLetterEventSent {
+								if !suppressNormalDelivery {
 									// Remove waiting files for sender: successfully sent, no longer composing reply
 									{
 										senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
@@ -581,7 +584,7 @@ func RunDaemonLoop(
 									}
 								}
 								// Send observer digest on successful delivery (only for normal delivery)
-								if !deadLetterEventSent {
+								if !suppressNormalDelivery {
 									if info, err := message.ParseMessageFilename(filename); err == nil {
 										// Normal message delivery - record edge activity, send digest, etc.
 										// Issue #37: Record edge activity
@@ -1927,6 +1930,10 @@ func (ds *DaemonState) MarkAlertSent(alertKey string) {
 // Daemon-generated messages (from="postman" or from="daemon") are excluded.
 func reminderShouldIncrement(from string) bool {
 	return from != "postman" && from != "daemon"
+}
+
+func messageEventSuppressesNormalDelivery(event message.DaemonEvent) bool {
+	return event.Type == "message_received" && strings.HasPrefix(event.Message, "Dead-letter:")
 }
 
 // startHeartbeatTrigger periodically sends heartbeat triggers to the configured LLM node.

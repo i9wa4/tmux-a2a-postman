@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -219,6 +220,47 @@ func TestHasNodeSentSince(t *testing.T) {
 			got := ds.hasNodeSentSince(tc.nodeName, tc.since)
 			if got != tc.want {
 				t.Errorf("hasNodeSentSince(%q, since): got %v, want %v", tc.nodeName, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMessageEventSuppressesNormalDelivery(t *testing.T) {
+	tests := []struct {
+		name  string
+		event message.DaemonEvent
+		want  bool
+	}{
+		{
+			name: "dead letter",
+			event: message.DaemonEvent{
+				Type:    "message_received",
+				Message: "Dead-letter: orchestrator -> worker (routing denied)",
+			},
+			want: true,
+		},
+		{
+			name: "latency warning",
+			event: message.DaemonEvent{
+				Type:    "latency_warning",
+				Message: "Delivery latency alert: orchestrator -> worker (age: 31s, threshold: 30s)",
+			},
+			want: false,
+		},
+		{
+			name: "phony delivery",
+			event: message.DaemonEvent{
+				Type:    "message_received",
+				Message: "Phony delivery: orchestrator -> channel-a",
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := messageEventSuppressesNormalDelivery(tc.event); got != tc.want {
+				t.Fatalf("messageEventSuppressesNormalDelivery(%q) = %v, want %v", tc.event.Message, got, tc.want)
 			}
 		})
 	}
