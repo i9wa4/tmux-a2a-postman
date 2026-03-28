@@ -640,6 +640,42 @@ func TestTUI_Update_PaneCollisionRecordsWarningForSession(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_DroppedBallRecordsSessionForQualifiedNode(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessionNodes = map[string][]string{
+		"review": {"critic"},
+		"main":   {"worker"},
+	}
+
+	event := DaemonEventMsg{
+		Type:    "dropped_ball",
+		Message: "Dropped ball: review:critic inactive for 30m0s",
+		Details: map[string]interface{}{
+			"node":     "review:critic",
+			"duration": "30m0s",
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if got := m.lastEvent; got != event.Message {
+		t.Fatalf("lastEvent = %q, want %q", got, event.Message)
+	}
+	if len(m.events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(m.events))
+	}
+	if got := m.events[0].Message; got != event.Message {
+		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
+	}
+	if got := m.events[0].SessionName; got != "review" {
+		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
+	}
+}
+
 func TestTUI_Update_PaneDisappearedRecordsDroppedStatusForSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

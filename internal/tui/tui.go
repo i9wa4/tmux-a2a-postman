@@ -544,22 +544,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "dropped_ball":
 			// Issue #56: Dropped ball event
 			m.lastEvent = msg.Message
-			// Extract session from node name (Details["node"])
-			sessionName := ""
-			if node, ok := msg.Details["node"].(string); ok {
-				// NOTE: node is simple name, need to find session from sessionNodes
-				for session, nodes := range m.sessionNodes {
-					for _, n := range nodes {
-						if n == node {
-							sessionName = session
-							break
-						}
-					}
-					if sessionName != "" {
-						break
-					}
-				}
-			}
+			sessionName := m.resolveSessionFromDetails(msg.Details)
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
 				SessionName: sessionName,
