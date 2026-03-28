@@ -738,9 +738,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = m.events[len(m.events)-10:]
 			}
 		case "unreplied_message":
+			sessionName := m.resolveSessionFromDetails(msg.Details)
+			if sessionName != "" {
+				m.sessionStatus[sessionName] = msg.Message
+			}
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
+				SessionName: sessionName,
 				Timestamp:   time.Now(),
 				Severity:    SeverityWarning,
 			})
