@@ -568,6 +568,44 @@ func TestTUI_Update_PaneCollisionRecordsWarningForSession(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_PaneDisappearedRecordsDroppedStatusForSession(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	event := DaemonEventMsg{
+		Type:    "pane_disappeared",
+		Message: "Pane disappeared: %11 (node: review:critic)",
+		Details: map[string]interface{}{
+			"pane_id": "%11",
+			"node":    "review:critic",
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["review"]; got != event.Message {
+		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
+	}
+	if got := m.nodeStates["review:critic"]; got != "stale" {
+		t.Fatalf("nodeStates[review:critic] = %q, want %q", got, "stale")
+	}
+	if len(m.events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(m.events))
+	}
+	if got := m.events[0].Message; got != event.Message {
+		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
+	}
+	if got := m.events[0].SessionName; got != "review" {
+		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
+	}
+	if got := m.events[0].Severity; got != SeverityDropped {
+		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityDropped)
+	}
+}
+
 func TestTUI_Update_InboxUnreadSummaryRecordsWarningForUniqueSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

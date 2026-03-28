@@ -773,13 +773,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pane_disappeared":
 			// Mark node as inactive when pane disappears (killed)
+			sessionName := m.resolveSessionFromDetails(msg.Details)
+			if sessionName != "" {
+				m.sessionStatus[sessionName] = msg.Message
+			}
 			if node, ok := msg.Details["node"].(string); ok {
 				m.nodeStates[node] = "stale" // Use "stale" for disappeared panes
 			}
 			// Add event entry
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
+				SessionName: sessionName,
 				Timestamp:   time.Now(),
 				Severity:    SeverityDropped,
 			})
