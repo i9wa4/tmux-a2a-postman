@@ -693,6 +693,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "node_inactivity":
+			sessionName := m.resolveSessionFromDetails(msg.Details)
+			if sessionName != "" {
+				m.sessionStatus[sessionName] = msg.Message
+			}
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: sessionName,
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "node_inactivity_warning":
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
@@ -737,6 +751,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "inbox_unread_summary":
+			sessionName := m.resolveSessionFromDetails(msg.Details)
+			if sessionName != "" {
+				m.sessionStatus[sessionName] = msg.Message
+			}
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: sessionName,
 				Timestamp:   time.Now(),
 				Severity:    SeverityWarning,
 			})
@@ -797,6 +825,36 @@ func extractSessionFromDetails(details map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+// resolveSessionFromDetails resolves session context from event details and
+// falls back to a unique bare-node lookup through the current session map.
+func (m Model) resolveSessionFromDetails(details map[string]interface{}) string {
+	sessionName := extractSessionFromDetails(details)
+	if sessionName != "" || details == nil {
+		return sessionName
+	}
+
+	node, ok := details["node"].(string)
+	if !ok || node == "" || strings.Contains(node, ":") {
+		return ""
+	}
+
+	match := ""
+	for sessionName, nodes := range m.sessionNodes {
+		for _, sessionNode := range nodes {
+			if sessionNode != node {
+				continue
+			}
+			if match != "" && match != sessionName {
+				return ""
+			}
+			match = sessionName
+			break
+		}
+	}
+
+	return match
 }
 
 // View renders the TUI with left-right split layout (Issue #45).
