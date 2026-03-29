@@ -1,13 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 )
 
 // runGetContextID prints the live context ID for the current tmux session.
@@ -42,31 +39,5 @@ func runGetContextID(args []string) error {
 		}
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-
-	sessionName := *sessionFlag
-	if sessionName == "" {
-		sessionName = config.GetTmuxSessionName()
-	}
-	if sessionName == "" {
-		return fmt.Errorf("--session is required (or run inside tmux)")
-	}
-	sessionName = filepath.Base(sessionName)
-
-	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(struct {
-			ContextID string `json:"context_id"`
-		}{ContextID: contextID})
-	}
-	fmt.Println(contextID)
-	return nil
+	return cli.RunGetContextID(os.Stdout, *sessionFlag, *configPath, *jsonOut)
 }
