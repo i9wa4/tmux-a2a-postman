@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/bindcmd"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
@@ -87,83 +88,38 @@ func main() {
 		args = args[1:]
 	}
 
-	// Issue #315: forward global --context-id to subcommands that accept it.
-	// Prepending ensures subcommand-level --context-id takes precedence (last-wins).
-	prependContextID := func(a []string) []string {
-		if *contextID == "" {
-			return a
+	result := cli.Dispatch(
+		command,
+		args,
+		cli.Config{
+			ContextID:   *contextID,
+			ConfigPath:  *configPath,
+			LogFilePath: *logFilePath,
+			NoTUI:       *noTUI,
+		},
+		cli.Handlers{
+			Start:                   runStartWithFlags,
+			GetSessionStatusOneline: runGetSessionStatusOneline,
+			Read:                    runRead,
+			Pop:                     runPop,
+			GetSessionHealth:        runGetSessionHealth,
+			GetContextID:            runGetContextID,
+			SupervisorDrain:         runSupervisorDrain,
+			SendMessage:             runSendMessage,
+			Stop:                    runStop,
+			Bind:                    bindcmd.Run,
+			Schema:                  runSchema,
+			Help:                    runHelp,
+		},
+	)
+	if result.Err != nil {
+		fmt.Fprintf(os.Stderr, "❌ %s: %v\n", result.Label, result.Err)
+		if result.ShowUsage {
+			fs.Usage()
 		}
-		return append([]string{"--context-id", *contextID}, a...)
-	}
-	// Forward global --config to subcommands that accept it (BLOCKING #5).
-	prependConfig := func(a []string) []string {
-		if *configPath == "" {
-			return a
-		}
-		return append([]string{"--config", *configPath}, a...)
-	}
-
-	switch command {
-	case "start":
-		if err := runStartWithFlags(*contextID, *configPath, *logFilePath, *noTUI); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman start: %v\n", err)
-			os.Exit(1)
-		}
-	case "get-session-status-oneline":
-		if err := runGetSessionStatusOneline(args); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman get-session-status-oneline: %v\n", err)
-			os.Exit(1)
-		}
-	case "read":
-		if err := runRead(prependConfig(prependContextID(args))); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman read: %v\n", err)
-			os.Exit(1)
-		}
-	case "pop":
-		if err := runPop(prependConfig(prependContextID(args))); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman pop: %v\n", err)
-			os.Exit(1)
-		}
-	case "get-session-health":
-		if err := runGetSessionHealth(prependConfig(prependContextID(args))); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman get-session-health: %v\n", err)
-			os.Exit(1)
-		}
-	case "get-context-id":
-		if err := runGetContextID(prependConfig(args)); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman get-context-id: %v\n", err)
-			os.Exit(1)
-		}
-	case "supervisor-drain":
-		if err := runSupervisorDrain(prependConfig(prependContextID(args))); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman supervisor-drain: %v\n", err)
-			os.Exit(1)
-		}
-	case "send-message":
-		if err := runSendMessage(prependConfig(prependContextID(args))); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman send-message: %v\n", err)
-			os.Exit(1)
-		}
-	case "stop":
-		if err := runStop(prependConfig(args)); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman stop: %v\n", err)
-			os.Exit(1)
-		}
-	case "bind":
-		if err := bindcmd.Run(args); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman bind: %v\n", err)
-			os.Exit(1)
-		}
-	case "schema":
-		if err := runSchema(args); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ postman schema: %v\n", err)
-			os.Exit(1)
-		}
-	case "help":
-		runHelp(args)
-	default:
-		fmt.Fprintf(os.Stderr, "❌ postman: unknown command %q\n", command)
-		fs.Usage()
 		os.Exit(1)
+	}
+	if result.ShowUsage {
+		fs.Usage()
 	}
 }
