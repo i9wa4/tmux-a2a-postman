@@ -699,6 +699,12 @@ role = "worker"
 	if !cfg.AllowShellTemplates {
 		t.Fatal("AllowShellTemplates = false, want true from trusted base")
 	}
+	if !strings.Contains(cfg.MessageFooter, "You can talk to: {can_talk_to}") {
+		t.Fatalf("MessageFooter missing default footer content: %q", cfg.MessageFooter)
+	}
+	if !strings.Contains(cfg.MessageFooter, "Project footer $(printf project-local-markdown-footer)") {
+		t.Fatalf("MessageFooter missing appended project-local footer: %q", cfg.MessageFooter)
+	}
 
 	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
 	if !strings.Contains(got, "$(printf project-local-markdown-footer)") {

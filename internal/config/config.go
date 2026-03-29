@@ -801,6 +801,16 @@ func mergeConfig(base, override *Config) {
 	}
 }
 
+func appendMessageFooter(baseFooter, localFooter string) string {
+	if localFooter == "" {
+		return baseFooter
+	}
+	if baseFooter == "" {
+		return localFooter
+	}
+	return strings.TrimRight(baseFooter, "\n") + "\n" + strings.TrimLeft(localFooter, "\n")
+}
+
 // LoadConfig loads configuration from a TOML file (Python format).
 // Python format requires [postman] section and [nodename] sections.
 // If path is empty, tries XDG config fallback chain, then project-local config
@@ -1060,7 +1070,10 @@ func LoadConfig(path string) (*Config, error) {
 	if localMarkdownPath != "" {
 		if mdCfg, err := loadMarkdownConfig(localMarkdownPath); err == nil {
 			cfg.markDirectTemplateRootsUntrusted(mdCfg)
+			localFooter := mdCfg.MessageFooter
+			mdCfg.MessageFooter = ""
 			mergeConfig(cfg, mdCfg)
+			cfg.MessageFooter = appendMessageFooter(cfg.MessageFooter, localFooter)
 		} else {
 			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
 		}

@@ -2255,8 +2255,17 @@ role = "worker"
 	if !cfg.AllowShellTemplates {
 		t.Fatal("AllowShellTemplates = false, want true from explicit trusted base")
 	}
+	if !strings.Contains(cfg.MessageFooter, "trusted $(printf explicit-config-base-footer)") {
+		t.Fatalf("MessageFooter missing trusted base footer: %q", cfg.MessageFooter)
+	}
+	if !strings.Contains(cfg.MessageFooter, "Local footer $(printf explicit-config-local-footer)") {
+		t.Fatalf("MessageFooter missing appended project-local footer: %q", cfg.MessageFooter)
+	}
 
 	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
+	if !strings.Contains(got, "$(printf explicit-config-base-footer)") {
+		t.Fatalf("trusted base footer unexpectedly executed shell command after local append: %q", got)
+	}
 	if !strings.Contains(got, "$(printf explicit-config-local-footer)") {
 		t.Fatalf("project-local Markdown footer unexpectedly executed shell command under explicit --config: %q", got)
 	}
