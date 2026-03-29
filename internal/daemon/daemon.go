@@ -308,7 +308,8 @@ func RunDaemonLoop(
 	reminderState *reminder.ReminderState,
 	events chan<- tui.DaemonEvent,
 	configPath string,
-	nodesDir string,
+	configPaths []string,
+	nodesDirs []string,
 	daemonState *DaemonState,
 	idleTracker *idle.IdleTracker,
 	alertRateLimiter *alert.AlertRateLimiter,
@@ -666,8 +667,20 @@ func RunDaemonLoop(
 
 			// Handle config file events (with debounce)
 			// Issue #50: Also handle events from nodes/ directory
-			isConfigEvent := configPath != "" && eventPath == configPath
-			isNodesDirEvent := nodesDir != "" && strings.HasPrefix(eventPath, nodesDir+string(filepath.Separator))
+			isConfigEvent := false
+			for _, watchedConfigPath := range configPaths {
+				if eventPath == watchedConfigPath {
+					isConfigEvent = true
+					break
+				}
+			}
+			isNodesDirEvent := false
+			for _, nodesDir := range nodesDirs {
+				if strings.HasPrefix(eventPath, nodesDir+string(filepath.Separator)) {
+					isNodesDirEvent = true
+					break
+				}
+			}
 			if isConfigEvent || isNodesDirEvent {
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 					// Debounce config updates (200ms)

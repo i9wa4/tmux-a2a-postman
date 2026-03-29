@@ -327,20 +327,21 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 	}
 
-	// Watch config file if exists
+	// Watch the same TOML config files LoadConfig effectively applies.
 	resolvedConfigPath := configPath
 	if resolvedConfigPath == "" {
 		resolvedConfigPath = config.ResolveConfigPath()
 	}
-	if resolvedConfigPath != "" {
-		if err := watcher.Add(resolvedConfigPath); err != nil {
+	watchedConfigPaths := resolveWatchedConfigPaths(configPath)
+	for _, watchedConfigPath := range watchedConfigPaths {
+		if err := watcher.Add(watchedConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch config: %v\n", err)
 		}
 	}
 
 	// Issue #50: Watch nodes/ directory if exists
-	nodesDir := config.ResolveNodesDir(resolvedConfigPath)
-	if nodesDir != "" {
+	watchedNodesDirs := resolveWatchedNodesDirs(watchedConfigPaths)
+	for _, nodesDir := range watchedNodesDirs {
 		if err := watcher.Add(nodesDir); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch nodes dir: %v\n", err)
 		}
@@ -376,7 +377,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, nodesDir, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, watchedConfigPaths, watchedNodesDirs, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
 	})
 
 	// Issue #117: Discover all tmux sessions
@@ -777,4 +778,50 @@ func cleanupStaleInbox(inboxDir, readDir string) error {
 	}
 
 	return nil
+}
+
+func resolveWatchedConfigPaths(configPath string) []string {
+	seen := make(map[string]bool)
+	paths := make([]string, 0, 2)
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+
+	xdgPath := config.ResolveConfigPath()
+	if configPath != "" {
+		add(configPath)
+	} else {
+		add(xdgPath)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return paths
+	}
+
+	localPath, err := config.ResolveLocalConfigPath(cwd, xdgPath)
+	if err != nil {
+		return paths
+	}
+	add(localPath)
+
+	return paths
+}
+
+func resolveWatchedNodesDirs(configPaths []string) []string {
+	seen := make(map[string]bool)
+	nodesDirs := make([]string, 0, len(configPaths))
+	for _, configPath := range configPaths {
+		nodesDir := config.ResolveNodesDir(configPath)
+		if nodesDir == "" || seen[nodesDir] {
+			continue
+		}
+		seen[nodesDir] = true
+		nodesDirs = append(nodesDirs, nodesDir)
+	}
+	return nodesDirs
 }
