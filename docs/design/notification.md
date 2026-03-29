@@ -19,7 +19,7 @@ prevents notification floods.
 | alert                 | A daemon-generated message written to `post/` and routed to `ui_node`   |
 | reminder              | A pane notification sent after N messages are archived without reply     |
 | heartbeat             | A periodic message written to `post/` for `llm_node` (keeps it active)  |
-| PING                  | A liveness-check message written to `post/` by the daemon at startup    |
+| PING                  | A daemon-originated liveness-check message sent for discovery, restart, or manual recheck |
 | ui_node               | Node designated to receive all alert messages (configured globally)      |
 | llm_node              | Node designated to receive heartbeat messages (configured in `[heartbeat]`) |
 | post/                 | Outgoing message staging directory; daemon watches and delivers from here |
@@ -47,6 +47,25 @@ prevents notification floods.
 | 6 | Dropped ball detection  | `LastReceived > LastSent` > timeout            | TUI event + optional `tmux display-message` | TUI / status bar |
 | 7 | Heartbeat trigger       | Periodic interval                              | Write to `post/`     | `llm_node` |
 
+### 2.1.1. Message Classification (Current Tree)
+
+| Traffic                       | Primary Surface      | Control-Plane Role            | Current Overlap / Note                                                                 |
+| ----------------------------- | -------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
+| Pane notification             | pane-only            | operator-visible              | Immediate companion to inbox delivery; current default text tells the node to run `tmux-a2a-postman pop` |
+| Reminder                      | pane-only            | operator-visible              | No inbox message is created; per-pane cooldown can suppress the reminder quietly      |
+| Inbox unread summary alert    | inbox-visible        | operator-visible              | Routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery |
+| Node inactivity alert         | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
+| Unreplied message alert       | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
+| Spinning alert                | inbox-visible        | operator-visible              | Produced by the waiting-file state machine and overlaps with the yellow `spinning` TUI/oneline state |
+| Dropped ball detection        | TUI-only             | operator-visible              | Default `dropped_ball_notification = "tui"` keeps it off the inbox path; `display` / `all` adds a tmux status-bar side channel |
+| PING                          | inbox-visible        | control-plane + operator-visible | The current tree uses PING beyond startup: first discovery, pane restarts, and manual TUI rechecks still surface as readable daemon mail |
+| Heartbeat trigger             | inbox-visible        | control-plane + operator-visible | Written to `post/` for `llm_node`, then routed like normal mail; single-slot guard keeps it from flooding |
+
+Current-tree note: none of the named daemon-generated traffic is hidden
+control-plane only. PING and heartbeat are control-plane by purpose, but both
+remain operator-visible because they land as daemon mail and inherit the usual
+delivery surfaces.
+
 ---
 
 ### 2.1. Pane Notification
@@ -54,7 +73,7 @@ prevents notification floods.
 **What it does:** When a message is successfully delivered to a node's
 `inbox/{node}/` directory, the daemon immediately injects a notification hint
 into that node's tmux pane. The hint is rendered from `notification_template`
-and greets the node with a prompt to run `next`.
+and greets the node with a prompt to run `pop`.
 
 **When it fires:** On every successful message delivery. The per-pane cooldown
 is bypassed (`bypassCooldown=true`) so every incoming message triggers a
@@ -68,7 +87,7 @@ notification regardless of how recently the pane was last notified.
 
 | Field                        | Default | Description                                      |
 | ---------------------------- | ------- | ------------------------------------------------ |
-| `notification_template`      | `"Hello, {node}! You've got mail.\nRun tmux-a2a-postman next to read it."` | Template for the pane hint text |
+| `notification_template`      | `"Hello, {node}! You've got mail.\nRun tmux-a2a-postman pop to read it."` | Template for the pane hint text |
 | `enter_delay_seconds`        | `3.0`   | Delay before sending `C-m`                       |
 | `pane_notify_cooldown_seconds` | `600` | Cooldown for reminder/alert pane sends (NOT applied here; bypassed for direct delivery) |
 
@@ -354,10 +373,12 @@ the sender's inbox, bypassing `post/` routing. The edge violation warning uses
 
 ### 3.3. Liveness Tracking (PING / Liveness Confirmed)
 
-At startup, the daemon sends a PING message via `post/`. When `ui_node` is
-configured, PING is sent only to that node; otherwise it is sent to all
-discovered nodes in the target session (`main.go` — `// If ui_node is
-configured, restrict PING to that node only.`).
+The daemon sends PING as a direct system message when it needs to confirm
+liveness. In the current tree that includes first discovery, pane-restart
+rechecks, and manual TUI-triggered PING. When `ui_node` is configured, a given
+PING pass is restricted to that node; otherwise it is sent to all discovered
+nodes in the target session (`main.go` — `// If ui_node is configured, restrict
+PING to that node only.`).
 
 Liveness is confirmed via two independent paths:
 
@@ -471,7 +492,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 
 | Field                              | Default  | Scope   | Used by                   |
 | ---------------------------------- | -------- | ------- | ------------------------- |
-| `notification_template`            | (greeting + next cmd)      | Global | §2.1 |
+| `notification_template`            | (greeting + pop cmd)       | Global | §2.1 |
 | `enter_delay_seconds`              | `3.0`    | Global  | §2.1, §2.2                |
 | `pane_notify_cooldown_seconds`     | `600`    | Global  | §2.2                      |
 | `reminder_interval_messages`       | `20`     | Global + per-node | §2.2             |
