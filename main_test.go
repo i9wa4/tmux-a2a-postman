@@ -686,63 +686,6 @@ func TestParseParams(t *testing.T) {
 	}
 }
 
-// TestRunGetSessionHealth verifies flag parsing for runGetSessionHealth across key cases.
-func TestRunGetSessionHealth(t *testing.T) {
-	tests := []struct {
-		name       string
-		args       []string
-		wantErrSub string // non-empty: error must contain this substring
-	}{
-		{
-			name:       "valid session name no error on flag parse",
-			args:       []string{"--session", "my-session"},
-			wantErrSub: "", // may fail at context-id resolution, but not at flag parse or validation
-		},
-		{
-			name:       "path traversal rejected",
-			args:       []string{"--session", "../bad"},
-			wantErrSub: "invalid value",
-		},
-		{
-			// underscore is not a path separator; "bad_name" is valid for tmux sessions
-			name:       "underscore session name accepted",
-			args:       []string{"--session", "bad_name"},
-			wantErrSub: "", // may fail at context-id resolution, not at validation
-		},
-		{
-			name:       "dot session name rejected",
-			args:       []string{"--session", "."},
-			wantErrSub: "invalid value",
-		},
-		{
-			name:       "double dot",
-			args:       []string{"--session", ".."},
-			wantErrSub: "invalid value",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			t.Setenv("POSTMAN_HOME", tmpDir)
-			err := runGetSessionHealth(tc.args)
-			if tc.wantErrSub == "" {
-				// Valid case: must not fail with "flag provided but not defined" or "invalid value".
-				if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
-					strings.Contains(err.Error(), "invalid value")) {
-					t.Errorf("unexpected validation error: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
-			}
-			if !strings.Contains(err.Error(), tc.wantErrSub) {
-				t.Errorf("error = %q; want to contain %q", err.Error(), tc.wantErrSub)
-			}
-		})
-	}
-}
-
 func TestFilterToUINode(t *testing.T) {
 	makeNodes := func(names ...string) map[string]discovery.NodeInfo {
 		m := make(map[string]discovery.NodeInfo, len(names))

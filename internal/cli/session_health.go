@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -14,8 +14,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 )
 
-// runGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
-func runGetSessionHealth(args []string) error {
+// RunGetSessionHealth prints session health: node count, inbox/waiting counts (#220).
+func RunGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-session-health", flag.ExitOnError)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
@@ -43,7 +43,6 @@ func runGetSessionHealth(args []string) error {
 		return err
 	}
 
-	// Issue #249: auto-resolve --context-id if not provided
 	var resolvedContextID string
 	if *contextID != "" {
 		resolvedContextID, err = config.ResolveContextID(*contextID)
@@ -59,7 +58,6 @@ func runGetSessionHealth(args []string) error {
 
 	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
 
-	// Discover nodes
 	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, resolvedContextID, sessionName)
 	if err != nil {
 		return fmt.Errorf("discovering nodes: %w", err)

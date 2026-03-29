@@ -102,7 +102,7 @@ func main() {
 			GetSessionStatusOneline: runGetSessionStatusOneline,
 			Read:                    runRead,
 			Pop:                     runPop,
-			GetSessionHealth:        runGetSessionHealth,
+			GetSessionHealth:        cli.RunGetSessionHealth,
 			GetContextID:            runGetContextID,
 			SupervisorDrain:         runSupervisorDrain,
 			SendMessage:             runSendMessage,
