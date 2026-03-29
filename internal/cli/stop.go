@@ -1,8 +1,9 @@
-package main
+package cli
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,9 +14,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
-// runStop gracefully stops the running postman daemon for this tmux session.
-// Sends SIGTERM and polls until the process exits or --timeout expires.
-func runStop(args []string) error {
+// RunStop gracefully stops the running postman daemon for this tmux session.
+func RunStop(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	sessionFlag := fs.String("session", "", "tmux session name (auto-detect if in tmux)")
 	configPath := fs.String("config", "", "path to config file")
@@ -44,21 +44,16 @@ func runStop(args []string) error {
 
 	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
 	if err != nil {
-		// "no active postman found" is benign — nothing to stop.
-		// "constraint violation" (multiple live daemons) is a real error.
 		if strings.Contains(err.Error(), "no active postman found") {
-			fmt.Println("postman: no daemon running")
-			return nil
+			_, err = fmt.Fprintln(stdout, "postman: no daemon running")
+			return err
 		}
 		return err
 	}
 
-	// Verify the resolved context has a live daemon for THIS session specifically.
-	// ResolveContextIDFromSession scans all subdirs — the live PID may be for a
-	// different session within the same context. Confirm before signalling.
 	if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
-		fmt.Println("postman: no daemon running for this session")
-		return nil
+		_, err = fmt.Fprintln(stdout, "postman: no daemon running for this session")
+		return err
 	}
 
 	pidPath := filepath.Join(baseDir, contextID, sessionName, "postman.pid")
@@ -82,8 +77,8 @@ func runStop(args []string) error {
 	deadline := time.Now().Add(time.Duration(*timeoutSecs) * time.Second)
 	for time.Now().Before(deadline) {
 		if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
-			fmt.Printf("postman: daemon (pid %d) stopped\n", pid)
-			return nil
+			_, err = fmt.Fprintf(stdout, "postman: daemon (pid %d) stopped\n", pid)
+			return err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

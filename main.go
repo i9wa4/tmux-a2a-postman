@@ -106,10 +106,12 @@ func main() {
 			GetContextID:            runGetContextID,
 			SupervisorDrain:         runSupervisorDrain,
 			SendMessage:             runSendMessage,
-			Stop:                    runStop,
-			Bind:                    bindcmd.Run,
-			Schema:                  runSchema,
-			Help:                    runHelp,
+			Stop: func(args []string) error {
+				return cli.RunStop(os.Stdout, args)
+			},
+			Bind:   bindcmd.Run,
+			Schema: runSchema,
+			Help:   runHelp,
 		},
 	)
 	if result.Err != nil {
