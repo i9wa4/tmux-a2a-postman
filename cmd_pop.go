@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
@@ -49,20 +50,27 @@ func runPop(args []string) error {
 		if strings.ContainsAny(*file, "/\\") {
 			return fmt.Errorf("pop --file: filename must not contain path separators")
 		}
-		fileInboxArgs := fs.Args()
 		if *contextID != "" {
-			fileInboxArgs = append([]string{"--context-id", *contextID}, fileInboxArgs...)
+			if _, err := config.ResolveContextID(*contextID); err != nil {
+				return err
+			}
 		}
-		if *configPath != "" {
-			fileInboxArgs = append([]string{"--config", *configPath}, fileInboxArgs...)
+		cfg, err := config.LoadConfig(*configPath)
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
 		}
-		fileInboxPath, err := resolveInboxPath(fileInboxArgs)
+		baseDir := config.ResolveBaseDir(cfg.BaseDir)
+		sessionName := config.GetTmuxSessionName()
+		if sessionName == "" {
+			return fmt.Errorf("tmux session name required (run inside tmux)")
+		}
+		sessionName, err = config.ValidateSessionName(sessionName)
 		if err != nil {
 			return err
 		}
-		absFile := filepath.Join(fileInboxPath, *file)
-		if _, err := os.Stat(absFile); err != nil {
-			return fmt.Errorf("error: %s not found in inbox/: %w", *file, err)
+		absFile, err := findInboxFileByName(baseDir, sessionName, *contextID, *file)
+		if err != nil {
+			return err
 		}
 		data, err := os.ReadFile(absFile)
 		if err != nil {
@@ -157,6 +165,40 @@ func runPop(args []string) error {
 		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil
+}
+
+func findInboxFileByName(baseDir, sessionName, contextID, filename string) (string, error) {
+	if contextID != "" {
+		pattern := filepath.Join(baseDir, contextID, sessionName, "inbox", "*", filename)
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return "", fmt.Errorf("globbing for %s: %w", filename, err)
+		}
+		sort.Strings(matches)
+		switch len(matches) {
+		case 0:
+			return "", fmt.Errorf("error: %s not found in any inbox/ directory", filename)
+		case 1:
+			return matches[0], nil
+		default:
+			return "", fmt.Errorf("error: %s found in multiple inbox/ directories: %v", filename, matches)
+		}
+	}
+
+	pattern := filepath.Join(baseDir, "*", sessionName, "inbox", "*", filename)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return "", fmt.Errorf("globbing for %s: %w", filename, err)
+	}
+	sort.Strings(matches)
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("error: %s not found in any inbox/ directory", filename)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("error: %s found in multiple inbox/ directories: %v", filename, matches)
+	}
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
