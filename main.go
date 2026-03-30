@@ -135,7 +135,7 @@ func main() {
 		},
 		cli.Handlers{
 			Start:                   runStartWithFlags,
-			GetSessionStatusOneline: runGetSessionStatusOneline,
+			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			Read:                    runRead,
 			Pop:                     runPop,
 			GetSessionHealth:        cli.RunGetSessionHealth,

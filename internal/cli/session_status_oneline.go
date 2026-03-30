@@ -1,9 +1,10 @@
-package main
+package cli
 
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
-// runGetSessionStatusOneline shows all tmux sessions' pane status in one line.
 // statusDot returns the status indicator string for a pane.
 // When isTerminal is true, returns a lipgloss-styled ANSI dot.
 // When isTerminal is false, returns a plain emoji suitable for tmux #() output.
@@ -65,7 +65,7 @@ func statusDot(status string, isTerminal bool) string {
 }
 
 // isShellCommand returns true if cmd is a known interactive shell name.
-// Used by runGetSessionStatusOneline to exclude panes with no AI running (Issue #312).
+// Used by RunGetSessionStatusOneline to exclude panes with no AI running (Issue #312).
 var shellCommands = map[string]bool{
 	"bash": true, "zsh": true, "sh": true, "fish": true,
 	"dash": true, "ksh": true, "csh": true, "tcsh": true, "nu": true,
@@ -75,6 +75,7 @@ func isShellCommand(cmd string) bool {
 	return shellCommands[cmd]
 }
 
+// RunGetSessionStatusOneline shows all tmux sessions' pane status in one line.
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
@@ -82,7 +83,7 @@ func isShellCommand(cmd string) bool {
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 // Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
 // Issue #312: Filter panes by pane_current_command; fix session index stability.
-func runGetSessionStatusOneline(args []string) error {
+func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-session-status-oneline", flag.ContinueOnError)
 	// Options struct fields (--params scope): json
 	// SYNC: schema get-session-status-oneline properties; alwaysExcludedParams map
@@ -109,17 +110,12 @@ func runGetSessionStatusOneline(args []string) error {
 		}
 	}
 
-	// Load config to get base directory
 	cfg, err := config.LoadConfig("")
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-
-	// Find the most recently started live context for the current tmux session.
-	// Context directories are named YYYYMMDD-HHMMSS-XXXX; lexicographic
-	// descending sort gives newest first.
 	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
 	paneActivity := make(map[string]string)
 
@@ -127,7 +123,7 @@ func runGetSessionStatusOneline(args []string) error {
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
 	var liveStateFiles []string
-	var liveCtxSessionPairs [][2]string // [ctxDir, sessionSubdir]
+	var liveCtxSessionPairs [][2]string
 	paneActivityAdded := make(map[string]bool)
 	for _, ctxDir := range contextDirs {
 		fi, err := os.Stat(ctxDir)
@@ -135,7 +131,6 @@ func runGetSessionStatusOneline(args []string) error {
 			continue
 		}
 		ctxName := filepath.Base(ctxDir)
-		// Scan all session subdirs for any live postman.pid.
 		sessionEntries, _ := os.ReadDir(ctxDir)
 		for _, se := range sessionEntries {
 			if !se.IsDir() {
@@ -147,35 +142,30 @@ func runGetSessionStatusOneline(args []string) error {
 					paneActivityAdded[ctxDir] = true
 				}
 				liveCtxSessionPairs = append(liveCtxSessionPairs, [2]string{ctxDir, se.Name()})
-				// NOTE: no break — collect ALL live session subdirs for waiting-file overlay (#285)
 			}
 		}
 	}
 
 	if len(liveStateFiles) == 0 {
 		if *jsonOut {
-			return json.NewEncoder(os.Stdout).Encode(struct {
+			return json.NewEncoder(stdout).Encode(struct {
 				Status string `json:"status"`
 			}{Status: ""})
 		}
-		return nil // no live context found
+		return nil
 	}
 
 	for _, liveStateFile := range liveStateFiles {
 		stateData, err := os.ReadFile(liveStateFile)
 		if err == nil {
-			// Issue #123: Dual-format reader — supports both legacy map[string]string and
-			// new map[string]PaneActivityExport formats.
 			var rawMap map[string]json.RawMessage
 			if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
 				for paneID, raw := range rawMap {
 					var status string
-					// Try legacy format: plain string value
 					if err := json.Unmarshal(raw, &status); err != nil {
-						// Try new format: PaneActivityExport struct
 						var export idle.PaneActivityExport
 						if err := json.Unmarshal(raw, &export); err != nil {
-							continue // skip on schema mismatch
+							continue
 						}
 						status = export.Status
 					}
@@ -184,22 +174,18 @@ func runGetSessionStatusOneline(args []string) error {
 					}
 					existing, exists := paneActivity[paneID]
 					if !exists || statusPriority[status] > statusPriority[existing] {
-						paneActivity[paneID] = status // higher priority wins on conflict
+						paneActivity[paneID] = status
 					}
 				}
 			}
 		}
 	}
 
-	// Build edge node set and pane title map for filtering.
-	// Issue #312: also capture pane_current_command to detect shell-only panes.
-	// Edge node names are always single-word identifiers, so SplitN(4) safely
-	// captures all four fields: pane_id, session_name, pane_title, pane_current_command.
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
 	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title} #{pane_current_command}").Output()
-	paneTitles := make(map[string]string)           // paneID -> paneTitle (for edge filter)
-	sessionTitleToPaneID := make(map[string]string) // "sessionName:paneTitle" -> paneID (for waiting overlay, #285)
-	paneCurrentCmd := make(map[string]string)       // paneID -> current command name (for shell filter, #312)
+	paneTitles := make(map[string]string)
+	sessionTitleToPaneID := make(map[string]string)
+	paneCurrentCmd := make(map[string]string)
 	for _, line := range strings.Split(strings.TrimSpace(string(paneTitleOutput)), "\n") {
 		parts := strings.SplitN(strings.TrimSpace(line), " ", 4)
 		if len(parts) >= 3 && parts[0] != "" && parts[2] != "" {
@@ -212,26 +198,14 @@ func runGetSessionStatusOneline(args []string) error {
 		}
 	}
 
-	// Overlay waiting-file states onto paneActivity (Issue #285).
-	// waiting/*.md files carry "composing", "spinning", "stuck", "user_input" states
-	// that are never present in pane-activity.json. This mirrors the TUI's
-	// effectiveNodeState merge (tui.go:260).
 	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
-	// Get all tmux sessions sorted alphabetically by name to match the tmux
-	// choose-tree default sort order (prefix-s uses choose-tree -Zs without -O,
-	// so it defaults to name sort). The displayed index is the sequential
-	// position in this sorted list INCLUDING hidden sessions (those with no
-	// agent-tracked panes produce no output), so gaps like [1][3] are expected
-	// and reflect the full chooser position. Index shifts when earlier sessions
-	// are removed (Issue #312, #349). #{session_index} is unsupported on tmux 3.6a.
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
-		// Check if no server running
 		if strings.Contains(string(sessionsOutput), "no server running") {
 			if *jsonOut {
-				return json.NewEncoder(os.Stdout).Encode(struct {
+				return json.NewEncoder(stdout).Encode(struct {
 					Status string `json:"status"`
 				}{Status: ""})
 			}
@@ -255,22 +229,23 @@ func runGetSessionStatusOneline(args []string) error {
 	})
 	if len(sessions) == 0 {
 		if *jsonOut {
-			return json.NewEncoder(os.Stdout).Encode(struct {
+			return json.NewEncoder(stdout).Encode(struct {
 				Status string `json:"status"`
 			}{Status: ""})
 		}
 		return nil
 	}
 
-	// Issue #275: Use plain emoji when stdout is not a TTY (e.g. tmux status-right #()).
-	isTerminal := term.IsTerminal(os.Stdout.Fd())
+	isTerminal := false
+	if file, ok := stdout.(interface{ Fd() uintptr }); ok {
+		isTerminal = term.IsTerminal(file.Fd())
+	}
 
 	var output []string
 
 	for i, sess := range sessions {
 		sessionName := sess.name
 
-		// Get all windows in this session
 		windowsOutput, err := exec.Command("tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}").Output()
 		if err != nil {
 			return fmt.Errorf("listing windows for session %s: %w", sessionName, err)
@@ -284,7 +259,6 @@ func runGetSessionStatusOneline(args []string) error {
 				continue
 			}
 
-			// Get all panes in this window with their IDs
 			target := fmt.Sprintf("%s:%s", sessionName, windowIndex)
 			panesOutput, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").Output()
 			if err != nil {
@@ -298,13 +272,9 @@ func runGetSessionStatusOneline(args []string) error {
 				if paneID == "" {
 					continue
 				}
-				// Edge filter: only show panes in edge list
 				if !edgeNodes[paneTitles[paneID]] {
 					continue
 				}
-				// #312: Skip panes with no running agent.
-				// (a) Pane not in paneActivity: daemon hasn't captured it yet.
-				// (b) Pane's foreground process is a shell: no AI launched there.
 				if _, tracked := paneActivity[paneID]; !tracked {
 					continue
 				}
@@ -319,7 +289,6 @@ func runGetSessionStatusOneline(args []string) error {
 			}
 		}
 
-		// Build session status: [N]window0:window1:...
 		if len(windowStatuses) > 0 {
 			sessionStatus := fmt.Sprintf("[%d]%s", i, strings.Join(windowStatuses, ":"))
 			output = append(output, sessionStatus)
@@ -329,15 +298,15 @@ func runGetSessionStatusOneline(args []string) error {
 	if len(output) > 0 {
 		statusStr := strings.Join(output, " ")
 		if *jsonOut {
-			return json.NewEncoder(os.Stdout).Encode(struct {
+			return json.NewEncoder(stdout).Encode(struct {
 				Status string `json:"status"`
 			}{Status: statusStr})
 		}
-		fmt.Println(statusStr)
-		return nil
+		_, err := fmt.Fprintln(stdout, statusStr)
+		return err
 	}
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(struct {
+		return json.NewEncoder(stdout).Encode(struct {
 			Status string `json:"status"`
 		}{Status: ""})
 	}
@@ -377,7 +346,7 @@ func applyWaitingOverlay(
 			}
 			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
 			if parseErr != nil {
-				continue // malformed filename: skip silently (mirrors daemon.go:1032-1034)
+				continue
 			}
 			content, readErr := os.ReadFile(filepath.Join(waitingDir, entry.Name()))
 			if readErr != nil {
@@ -397,8 +366,6 @@ func applyWaitingOverlay(
 			default:
 				continue
 			}
-			// sessionSubdir is the tmux session name; fileInfo.To is the recipient node name.
-			// Color the RECIPIENT's dot — the node expected to reply.
 			recipientKey := nodeaddr.Full(fileInfo.To, sessionSubdir)
 			paneID, ok := sessionTitleToPaneID[recipientKey]
 			if !ok {
@@ -447,7 +414,7 @@ func applyPendingOverlay(
 				if waitingOverlayRank["pending"] >= waitingOverlayRank[paneActivity[paneID]] {
 					paneActivity[paneID] = "pending"
 				}
-				break // one message is enough to mark pending
+				break
 			}
 		}
 	}
