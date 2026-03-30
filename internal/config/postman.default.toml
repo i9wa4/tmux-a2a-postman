@@ -138,8 +138,8 @@ spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_du
 # common_template = ""
 
 # Notification template (when new message arrives)
-notification_template = """Hello, {node}!  You've got mail.
-Sent: {sent_timestamp}
+notification_template = """Hello, {node}!
+You've got mail: {filename}
 Run `tmux-a2a-postman pop` to read it. """
 
 # Message footer (appended by `pop` command after message content)

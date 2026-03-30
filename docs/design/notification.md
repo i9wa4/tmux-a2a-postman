@@ -51,7 +51,7 @@ prevents notification floods.
 
 | Traffic                       | Primary Surface      | Control-Plane Role            | Current Overlap / Note                                                                 |
 | ----------------------------- | -------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| Pane notification             | pane-only            | operator-visible              | Immediate companion to inbox delivery; current default text tells the node to run `tmux-a2a-postman pop` |
+| Pane notification             | pane-only            | operator-visible              | Immediate companion to inbox delivery; current default text shows the delivered filename and tells the node to run `tmux-a2a-postman pop` |
 | Reminder                      | pane-only            | operator-visible              | No inbox message is created; per-pane cooldown can suppress the reminder quietly      |
 | Inbox unread summary alert    | inbox-visible        | operator-visible              | Routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery |
 | Node inactivity alert         | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
@@ -72,8 +72,9 @@ delivery surfaces.
 
 **What it does:** When a message is successfully delivered to a node's
 `inbox/{node}/` directory, the daemon immediately injects a notification hint
-into that node's tmux pane. The hint is rendered from `notification_template`
-and greets the node with a prompt to run `pop`.
+into that node's tmux pane. The hint is rendered from `notification_template`,
+greets the node, shows the delivered message filename, and prompts the node to
+run `pop`.
 
 **When it fires:** On every successful message delivery. The per-pane cooldown
 is bypassed (`bypassCooldown=true`) so every incoming message triggers a
@@ -87,14 +88,15 @@ notification regardless of how recently the pane was last notified.
 
 | Field                        | Default | Description                                      |
 | ---------------------------- | ------- | ------------------------------------------------ |
-| `notification_template`      | `"Hello, {node}! You've got mail.\nRun tmux-a2a-postman pop to read it."` | Template for the pane hint text |
+| `notification_template`      | `"Hello, {node}!\nYou've got mail: {filename}\nRun tmux-a2a-postman pop to read it."` | Template for the pane hint text |
 | `enter_delay_seconds`        | `3.0`   | Delay before sending `C-m`                       |
 | `pane_notify_cooldown_seconds` | `600` | Cooldown for reminder/alert pane sends (NOT applied here; bypassed for direct delivery) |
 
 **Source:** `internal/notification/notification.go` — `BuildNotification`,
 `SendToPane`
 
-**Template variables:** `{from_node}`, `{node}`, `{timestamp}`, `{filename}`,
+**Template variables:** `{from_node}`, `{node}`, `{timestamp}`, `{filename}`
+(used by the current default as the visible message identifier),
 `{inbox_path}`, `{talks_to_line}`, `{template}`, `{reply_command}`,
 `{context_id}`
 
@@ -492,7 +494,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 
 | Field                              | Default  | Scope   | Used by                   |
 | ---------------------------------- | -------- | ------- | ------------------------- |
-| `notification_template`            | (greeting + pop cmd)       | Global | §2.1 |
+| `notification_template`            | (greeting + filename + pop cmd) | Global | §2.1 |
 | `enter_delay_seconds`              | `3.0`    | Global  | §2.1, §2.2                |
 | `pane_notify_cooldown_seconds`     | `600`    | Global  | §2.2                      |
 | `reminder_interval_messages`       | `20`     | Global + per-node | §2.2             |
