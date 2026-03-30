@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -42,11 +43,11 @@ func runRead(args []string) error {
 	})
 	// Steps 3+4: parse and apply --params to non-explicit flags
 	if explicitlySet["params"] {
-		resolvedParams, err := parseParams(*paramsFlag)
+		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
 		if err != nil {
 			return err
 		}
-		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
 			return err
 		}
 	}
@@ -191,7 +192,7 @@ func runRead(args []string) error {
 	if *configPath != "" {
 		inboxArgs = append([]string{"--config", *configPath}, inboxArgs...)
 	}
-	inboxPath, err := resolveInboxPath(inboxArgs)
+	inboxPath, err := cliutil.ResolveInboxPath(inboxArgs)
 	if err != nil {
 		return err
 	}

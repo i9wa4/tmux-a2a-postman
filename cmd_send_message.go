@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -44,11 +45,11 @@ func runSendMessage(args []string) error {
 	})
 	// Steps 3+4: parse and apply --params to non-explicit flags
 	if explicitlySet["params"] {
-		resolvedParams, err := parseParams(*paramsFlag)
+		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
 		if err != nil {
 			return err
 		}
-		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
 			return err
 		}
 	}
@@ -56,7 +57,7 @@ func runSendMessage(args []string) error {
 	if *to == "" {
 		return fmt.Errorf("--to is required (provide via flag or --params)")
 	}
-	if err := validateNodeAddress("--to", *to); err != nil {
+	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
 		return err
 	}
 	// NOTE: runCreateDraft issues only a warning (not an error) for --send
@@ -67,8 +68,8 @@ func runSendMessage(args []string) error {
 	}
 	// Step 5b: post-merge re-validation for constrained fields
 	if *idempotencyKey != "" {
-		if !validIdempotencyKeyRe.MatchString(*idempotencyKey) {
-			return fmt.Errorf("--idempotency-key %q: invalid token (must match %s)", *idempotencyKey, idempotencyKeyPattern)
+		if !cliutil.ValidIdempotencyKeyRe.MatchString(*idempotencyKey) {
+			return fmt.Errorf("--idempotency-key %q: invalid token (must match %s)", *idempotencyKey, cliutil.IdempotencyKeyPattern)
 		}
 	}
 	cfg, err := config.LoadConfig(*configPath)
@@ -108,7 +109,7 @@ func runSendMessage(args []string) error {
 		if sender == "" {
 			return fmt.Errorf("sender auto-detection failed: set tmux pane title")
 		}
-		if err := validateOutboundNodeName("auto-detected pane title", sender); err != nil {
+		if err := cliutil.ValidateOutboundNodeName("auto-detected pane title", sender); err != nil {
 			return err
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package cliutil
 
 import (
 	"encoding/json"
@@ -16,11 +16,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 )
 
-// idempotencyKeyPattern is the canonical regex for --idempotency-key tokens.
+// IdempotencyKeyPattern is the canonical regex for --idempotency-key tokens.
 // Prevents newline/YAML injection via caller-supplied token.
-const idempotencyKeyPattern = `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`
+const IdempotencyKeyPattern = `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`
 
-var validIdempotencyKeyRe = regexp.MustCompile(idempotencyKeyPattern)
+var ValidIdempotencyKeyRe = regexp.MustCompile(IdempotencyKeyPattern)
 
 // alwaysExcludedParams is the set of flag names excluded from --params scope
 // for ALL commands. These are security/semantics guards.
@@ -73,10 +73,10 @@ func parseShorthand(raw string) (map[string]string, error) {
 	return result, nil
 }
 
-// parseParams parses a --params value (shorthand or JSON) into map[string]string.
+// ParseParams parses a --params value (shorthand or JSON) into map[string]string.
 // JSON path uses dec.UseNumber() to preserve integer literals (e.g., "1000000"
 // not "1e+06"). Type-switch rejects non-scalar values (arrays, objects, null).
-func parseParams(raw string) (map[string]string, error) {
+func ParseParams(raw string) (map[string]string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
@@ -115,10 +115,10 @@ func parseParams(raw string) (map[string]string, error) {
 	return out, nil
 }
 
-// applyParams applies resolvedParams to fs for flags not in explicitlySet.
+// ApplyParams applies resolvedParams to fs for flags not in explicitlySet.
 // commandName is passed to isExcludedParam to enforce per-command exclusions.
 // Returns a hard error if any key is on the excluded list.
-func applyParams(fs *flag.FlagSet, resolvedParams map[string]string, explicitlySet map[string]bool, commandName string) error {
+func ApplyParams(fs *flag.FlagSet, resolvedParams map[string]string, explicitlySet map[string]bool, commandName string) error {
 	for key, strVal := range resolvedParams {
 		if isExcludedParam(key, commandName) {
 			return fmt.Errorf("--params: field %q is not settable via --params", key)
@@ -132,22 +132,22 @@ func applyParams(fs *flag.FlagSet, resolvedParams map[string]string, explicitlyS
 	return nil
 }
 
-func validateOutboundNodeName(label, nodeName string) error {
+func ValidateOutboundNodeName(label, nodeName string) error {
 	if binding.ValidateNodeName(nodeName) {
 		return nil
 	}
 	return fmt.Errorf("%s %q: invalid node name (must match %s)", label, nodeName, binding.NodeNamePattern)
 }
 
-func validateNodeAddress(label, address string) error {
+func ValidateNodeAddress(label, address string) error {
 	if err := nodeaddr.Validate(address); err != nil {
 		return fmt.Errorf("%s %q: %w", label, address, err)
 	}
 	return nil
 }
 
-// resolveInboxPath resolves the inbox path for the current node (#196).
-func resolveInboxPath(args []string) (string, error) {
+// ResolveInboxPath resolves the inbox path for the current node (#196).
+func ResolveInboxPath(args []string) (string, error) {
 	fs := flag.NewFlagSet("inbox-resolve", flag.ContinueOnError)
 	contextID := fs.String("context-id", "", "context ID")
 	configPath := fs.String("config", "", "path to config file")
@@ -166,7 +166,7 @@ func resolveInboxPath(args []string) (string, error) {
 	if nodeName == "" {
 		return "", fmt.Errorf("node name auto-detection failed: set tmux pane title")
 	}
-	if err := validateOutboundNodeName("auto-detected pane title", nodeName); err != nil {
+	if err := ValidateOutboundNodeName("auto-detected pane title", nodeName); err != nil {
 		return "", err
 	}
 
@@ -196,11 +196,11 @@ func resolveInboxPath(args []string) (string, error) {
 	return inboxPath, nil
 }
 
-// filterToUINode narrows nodes to the single entry whose simple name matches
+// FilterToUINode narrows nodes to the single entry whose simple name matches
 // uiNode. If uiNode is empty, a shallow copy of nodes is returned.
 // Returns an empty map when uiNode is set but not found.
 // NOTE: always returns a new map — callers may mutate freely.
-func filterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[string]discovery.NodeInfo {
+func FilterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[string]discovery.NodeInfo {
 	result := make(map[string]discovery.NodeInfo, len(nodes))
 	for nodeName, info := range nodes {
 		if uiNode == "" || ping.ExtractSimpleName(nodeName) == uiNode {
@@ -210,8 +210,8 @@ func filterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[stri
 	return result
 }
 
-// printDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).
-func printDoubleDashDefaults(fs *flag.FlagSet) {
+// PrintDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).
+func PrintDoubleDashDefaults(fs *flag.FlagSet) {
 	fs.VisitAll(func(f *flag.Flag) {
 		typeName, usage := flag.UnquoteUsage(f)
 		var line string

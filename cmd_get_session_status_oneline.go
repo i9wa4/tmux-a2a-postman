@@ -12,6 +12,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -99,11 +100,11 @@ func runGetSessionStatusOneline(args []string) error {
 	})
 	// Steps 3+4: parse and apply --params to non-explicit flags
 	if explicitlySet["params"] {
-		resolvedParams, err := parseParams(*paramsFlag)
+		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
 		if err != nil {
 			return err
 		}
-		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
 			return err
 		}
 	}

@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -617,7 +618,7 @@ func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							}
 						}
 						// Restrict ping to ui_node only (if configured).
-						targetNodes = filterToUINode(targetNodes, cfg.UINode)
+						targetNodes = cliutil.FilterToUINode(targetNodes, cfg.UINode)
 						if len(targetNodes) == 0 {
 							log.Printf("postman: PING skipped for session %s — ui_node %q not found\n", cmd.Target, cfg.UINode)
 							daemonEvents <- tui.DaemonEvent{

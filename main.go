@@ -7,6 +7,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/bindcmd"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
@@ -33,11 +34,11 @@ func runGetContextID(args []string) error {
 	})
 	// Steps 3+4: parse and apply --params to non-explicit flags
 	if explicitlySet["params"] {
-		resolvedParams, err := parseParams(*paramsFlag)
+		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
 		if err != nil {
 			return err
 		}
-		if err := applyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
+		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
 			return err
 		}
 	}
@@ -61,7 +62,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman [options] [command]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Options:")
-		printDoubleDashDefaults(fs)
+		cliutil.PrintDoubleDashDefaults(fs)
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")

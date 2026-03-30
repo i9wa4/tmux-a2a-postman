@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
@@ -647,7 +648,7 @@ func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	configPath := writeMinimalNodeConfig(t, tmpDir)
 	installFakeTmuxForPop(t, tmpDir, "test-session", "worker_alt")
 
-	_, err := resolveInboxPath([]string{
+	_, err := cliutil.ResolveInboxPath([]string{
 		"--config", configPath,
 		"--context-id", "ctx-resolve-invalid-pane",
 	})
@@ -755,7 +756,7 @@ func TestParseParams(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := parseParams(tc.input)
+			result, err := cliutil.ParseParams(tc.input)
 			if tc.wantErr != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
@@ -840,7 +841,7 @@ func TestFilterToUINode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filterToUINode(tc.nodes, tc.uiNode)
+			got := cliutil.FilterToUINode(tc.nodes, tc.uiNode)
 			if tc.wantEmpty {
 				if len(got) != 0 {
 					t.Errorf("want empty map, got %v", got)
