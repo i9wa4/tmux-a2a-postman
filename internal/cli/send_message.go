@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
-func runSendMessage(args []string) error {
+func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	// Options struct fields (--params scope): to, body, idempotency-key, json
 	// SYNC: schema send-message properties; alwaysExcludedParams map

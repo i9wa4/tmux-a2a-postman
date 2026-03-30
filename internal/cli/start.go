@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 	}()
 }
 
-func runStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
+func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {
 		contextID = fmt.Sprintf("%s-%04x",

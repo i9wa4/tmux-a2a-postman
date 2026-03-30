@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -14,8 +14,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
-// runPop reads and optionally archives the oldest unread inbox message (#277).
-func runPop(args []string) error {
+// RunPop reads and optionally archives the oldest unread inbox message (#277).
+func RunPop(args []string) error {
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
 	// Options struct fields (--params scope): peek, json
 	// SYNC: schema pop properties; alwaysExcludedParams map

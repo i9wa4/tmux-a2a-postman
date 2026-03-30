@@ -134,14 +134,14 @@ func main() {
 			NoTUI:       *noTUI,
 		},
 		cli.Handlers{
-			Start:                   runStartWithFlags,
+			Start:                   cli.RunStartWithFlags,
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
-			Read:                    runRead,
-			Pop:                     runPop,
+			Read:                    cli.RunRead,
+			Pop:                     cli.RunPop,
 			GetSessionHealth:        cli.RunGetSessionHealth,
 			GetContextID:            runGetContextID,
 			SupervisorDrain:         cli.RunSupervisorDrain,
-			SendMessage:             runSendMessage,
+			SendMessage:             cli.RunSendMessage,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},

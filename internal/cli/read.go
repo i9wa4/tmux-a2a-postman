@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -15,10 +15,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
-// runRead lists inbox message file paths for the current node (#196).
+// RunRead lists inbox message file paths for the current node (#196).
 // With --archived: lists archived (read/) messages, self-filtered to the calling node.
 // With --dead-letters: lists dead-letter metadata or resends messages.
-func runRead(args []string) error {
+func RunRead(args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
 	// Options struct fields (--params scope): json, archived, dead-letters, resend-oldest
 	// SYNC: schema read properties; alwaysExcludedParams map
