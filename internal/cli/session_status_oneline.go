@@ -328,6 +328,43 @@ var waitingOverlayRank = map[string]int{
 	"stalled":    4,
 }
 
+func waitingFrontmatterBool(content, key string) bool {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return false
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return false
+	}
+	for _, line := range strings.Split(rest[:second], "\n") {
+		if strings.TrimSpace(line) == key+": true" {
+			return true
+		}
+	}
+	return false
+}
+
+func waitingFileVisibleState(content string) string {
+	if strings.Contains(content, "state: user_input") {
+		return "user_input"
+	}
+	if !waitingFrontmatterBool(content, "expects_reply") {
+		return ""
+	}
+	switch {
+	case strings.Contains(content, "state: stalled"), strings.Contains(content, "state: stuck"):
+		return "stalled"
+	case strings.Contains(content, "state: spinning"):
+		return "spinning"
+	case strings.Contains(content, "state: composing"):
+		return "composing"
+	default:
+		return ""
+	}
+}
+
 func applyWaitingOverlay(
 	liveCtxSessionPairs [][2]string,
 	sessionTitleToPaneID map[string]string,
@@ -352,18 +389,8 @@ func applyWaitingOverlay(
 			if readErr != nil {
 				continue
 			}
-			cs := string(content)
-			var fileState string
-			switch {
-			case strings.Contains(cs, "state: stalled"), strings.Contains(cs, "state: stuck"):
-				fileState = "stalled"
-			case strings.Contains(cs, "state: spinning"):
-				fileState = "spinning"
-			case strings.Contains(cs, "state: composing"):
-				fileState = "composing"
-			case strings.Contains(cs, "state: user_input"):
-				fileState = "user_input"
-			default:
+			fileState := waitingFileVisibleState(string(content))
+			if fileState == "" {
 				continue
 			}
 			recipientKey := nodeaddr.Full(fileInfo.To, sessionSubdir)

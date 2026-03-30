@@ -87,7 +87,7 @@ func TestApplyWaitingOverlay(t *testing.T) {
 		{
 			name: "composing_overrides_active",
 			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\n---",
+				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: true\n---",
 			},
 			initialPaneActivity:  map[string]string{"%10": "active"},
 			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
@@ -97,8 +97,8 @@ func TestApplyWaitingOverlay(t *testing.T) {
 		{
 			name: "spinning_overrides_composing_multiple_files",
 			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\n---",
-				"20260101-000001-s0000-from-messenger-to-worker.md":    "---\nstate: spinning\n---",
+				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: true\n---",
+				"20260101-000001-s0000-from-messenger-to-worker.md":    "---\nstate: spinning\nexpects_reply: true\n---",
 			},
 			initialPaneActivity:  map[string]string{"%10": "active"},
 			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
@@ -108,12 +108,22 @@ func TestApplyWaitingOverlay(t *testing.T) {
 		{
 			name: "session_prefixed_recipient_uses_explicit_session",
 			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-review-session:worker.md": "---\nstate: composing\n---",
+				"20260101-000000-s0000-from-orchestrator-to-review-session:worker.md": "---\nstate: composing\nexpects_reply: true\n---",
 			},
 			initialPaneActivity:  map[string]string{"%20": "active"},
 			sessionTitleToPaneID: map[string]string{"review-session:worker": "%20"},
 			sessionSubdir:        "source-session",
 			wantPaneActivity:     map[string]string{"%20": "composing"},
+		},
+		{
+			name: "composing_without_explicit_reply_tracking_is_ignored",
+			waitingFiles: map[string]string{
+				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: false\n---",
+			},
+			initialPaneActivity:  map[string]string{"%10": "active"},
+			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
+			sessionSubdir:        "mysession",
+			wantPaneActivity:     map[string]string{"%10": "active"},
 		},
 		{
 			name:                 "no_waiting_files_unchanged",

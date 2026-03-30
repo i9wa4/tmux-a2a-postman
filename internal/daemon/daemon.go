@@ -92,6 +92,107 @@ func replaceWaitingState(content, oldState, newState string) string {
 	return content[:first+4] + fm + after
 }
 
+func frontmatterBool(content, key string) bool {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return false
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return false
+	}
+	for _, line := range strings.Split(rest[:second], "\n") {
+		if strings.TrimSpace(line) == key+": true" {
+			return true
+		}
+	}
+	return false
+}
+
+func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {
+	waitingSince := now.UTC().Format(time.RFC3339)
+	if cfg != nil && cfg.UINode != "" && info.To == cfg.UINode {
+		return fmt.Sprintf(
+			"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: user_input\nstate_updated_at: %s\nexpects_reply: false\n---\n",
+			info.From, info.To, waitingSince, waitingSince,
+		), true
+	}
+	if !frontmatterBool(string(messageContent), "expects_reply") {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: composing\nstate_updated_at: %s\nexpects_reply: true\n---\n",
+		info.From, info.To, waitingSince, waitingSince,
+	), true
+}
+
+func waitingSinceFromContent(content string) time.Time {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "waiting_since: ") {
+			ts := strings.TrimPrefix(line, "waiting_since: ")
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(ts)); err == nil {
+				return t
+			}
+			return time.Time{}
+		}
+	}
+	return time.Time{}
+}
+
+func advanceWaitingState(content, paneState string, now time.Time, idleThreshold, spinningThreshold time.Duration, spinningEnabled bool) (string, bool) {
+	if !frontmatterBool(content, "expects_reply") {
+		return content, false
+	}
+
+	isComposing := strings.Contains(content, "state: composing")
+	isSpinning := strings.Contains(content, "state: spinning")
+	if !isComposing && !isSpinning {
+		return content, false
+	}
+
+	if isSpinning {
+		if paneState == "stale" {
+			return replaceWaitingState(content, "spinning", "stalled"), true
+		}
+		return content, false
+	}
+
+	waitingSince := waitingSinceFromContent(content)
+	if waitingSince.IsZero() {
+		return content, false
+	}
+	if now.Sub(waitingSince) <= idleThreshold {
+		return content, false
+	}
+	if paneState == "stale" {
+		return replaceWaitingState(content, "composing", "stalled"), true
+	}
+	if spinningEnabled && now.Sub(waitingSince) > spinningThreshold && paneState == "active" {
+		return replaceWaitingState(content, "composing", "spinning"), true
+	}
+	return content, false
+}
+
+func visibleWaitingState(content string) string {
+	if strings.Contains(content, "state: user_input") {
+		return "user_input"
+	}
+	if !frontmatterBool(content, "expects_reply") {
+		return ""
+	}
+	switch {
+	case strings.Contains(content, "state: stalled"), strings.Contains(content, "state: stuck"):
+		return "stalled"
+	case strings.Contains(content, "state: spinning"):
+		return "spinning"
+	case strings.Contains(content, "state: composing"):
+		return "composing"
+	default:
+		return ""
+	}
+}
+
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
 type EdgeActivity struct {
 	LastForwardAt  time.Time // A -> B last communication time
@@ -640,21 +741,17 @@ func RunDaemonLoop(
 								if reminderShouldIncrement(info.From) {
 									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
 								}
-								// Create waiting file: only for agent-to-agent messages (not daemon alerts)
+								// Create waiting file only for explicit reply-tracked reads or ui_node prompts.
 								if info.From != "postman" && info.From != "daemon" {
 									waitingDir := filepath.Join(sourceSessionDir, "waiting")
 									waitingFile := filepath.Join(waitingDir, filename)
-									waitingSince := time.Now().UTC().Format(time.RFC3339)
-									// Determine state: user_input for ui_node, composing for all others
-									state := "composing"
-									if cfg.UINode != "" && info.To == cfg.UINode {
-										state = "user_input"
-									}
-									waitingContent := fmt.Sprintf(
-										"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: %s\nstate_updated_at: %s\n---\n",
-										info.From, info.To, waitingSince, state, waitingSince)
-									if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o600); writeErr != nil {
-										log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
+									readContent, readErr := os.ReadFile(eventPath)
+									if readErr != nil {
+										log.Printf("postman: WARNING: failed to inspect read file %s for waiting semantics: %v\n", eventPath, readErr)
+									} else if waitingContent, ok := waitingFileContentForRead(info, readContent, cfg, time.Now()); ok {
+										if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o600); writeErr != nil {
+											log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
+										}
 									}
 								}
 							}
@@ -1064,16 +1161,17 @@ func RunDaemonLoop(
 			checkNodeInactivity(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter)
 			checkUnrepliedMessages(nodes, cfg, events, sessionDir, contextID, adjacency, idleTracker, alertRateLimiter, daemonState)
 			checkSwallowedMessages(nodes, cfg, events, contextID, adjacency, idleTracker, daemonState)
-			// Issue #283: Emit live inbox counts for TUI display (replaces cumulative reminder counts).
+			// Issue #283: Emit live unread inbox counts for routing-view display.
 			events <- tui.DaemonEvent{
-				Type: "read_count_update",
+				Type: "inbox_unread_count_update",
 				Details: map[string]interface{}{
-					"counts": scanLiveInboxCounts(nodes),
+					"unread_counts": scanLiveInboxCounts(nodes),
 				},
 			}
 
 			// Update waiting file states based on current pane activity
 			paneStatus := idleTracker.GetPaneActivityStatus(cfg)
+			now := time.Now()
 			idleThreshold := time.Duration(cfg.NodeIdleSeconds * float64(time.Second))
 			spinningEnabled := cfg.NodeSpinningSeconds > 0
 			spinningThreshold := time.Duration(cfg.NodeSpinningSeconds * float64(time.Second))
@@ -1093,25 +1191,6 @@ func RunDaemonLoop(
 						continue
 					}
 					contentStr := string(fileContent)
-					isComposing := strings.Contains(contentStr, "state: composing")
-					isSpinning := strings.Contains(contentStr, "state: spinning")
-					if !isComposing && !isSpinning {
-						continue // skip user_input, stuck, or unreadable
-					}
-					// Parse waiting_since from file content (anchor for composing window)
-					var waitingSince time.Time
-					for _, line := range strings.Split(contentStr, "\n") {
-						if strings.HasPrefix(line, "waiting_since: ") {
-							ts := strings.TrimPrefix(line, "waiting_since: ")
-							if t, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(ts)); parseErr == nil {
-								waitingSince = t
-							}
-							break
-						}
-					}
-					if waitingSince.IsZero() {
-						continue // malformed file; skip
-					}
 					// Parse recipient from filename
 					fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
 					if parseErr != nil {
@@ -1124,29 +1203,7 @@ func RunDaemonLoop(
 						continue // recipient not in current node snapshot
 					}
 					paneState := paneStatus[recipientInfo.PaneID]
-
-					if isSpinning {
-						// spinning → stalled: pane went stale after spinning was detected
-						if paneState == "stale" {
-							updated := replaceWaitingState(contentStr, "spinning", "stalled")
-							_ = os.WriteFile(filePath, []byte(updated), 0o600)
-						}
-						continue
-					}
-
-					// isComposing: composing window guard (same as before)
-					if time.Since(waitingSince) <= idleThreshold {
-						continue
-					}
-					// composing → stalled: pane stale after composing window
-					if paneState == "stale" {
-						updated := replaceWaitingState(contentStr, "composing", "stalled")
-						_ = os.WriteFile(filePath, []byte(updated), 0o600)
-						continue
-					}
-					// composing → spinning: pane active after spinning threshold
-					if spinningEnabled && time.Since(waitingSince) > spinningThreshold && paneState == "active" {
-						updated := replaceWaitingState(contentStr, "composing", "spinning")
+					if updated, changed := advanceWaitingState(contentStr, paneState, now, idleThreshold, spinningThreshold, spinningEnabled); changed {
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
 					}
 				}
@@ -1174,18 +1231,8 @@ func RunDaemonLoop(
 					if wReadErr != nil {
 						continue
 					}
-					cs := string(wContent)
-					var fileState string
-					switch {
-					case strings.Contains(cs, "state: stalled"), strings.Contains(cs, "state: stuck"):
-						fileState = "stalled"
-					case strings.Contains(cs, "state: spinning"):
-						fileState = "spinning"
-					case strings.Contains(cs, "state: composing"):
-						fileState = "composing"
-					case strings.Contains(cs, "state: user_input"):
-						fileState = "user_input"
-					default:
+					fileState := visibleWaitingState(string(wContent))
+					if fileState == "" {
 						continue
 					}
 					wFileInfo, wParseErr := message.ParseMessageFilename(wEntry.Name())
@@ -1424,7 +1471,7 @@ func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Confi
 
 // scanLiveInboxCounts returns the current .md file count per node from the
 // inbox filesystem, keyed by session-prefixed node key (e.g. "session:worker").
-// Used to update the TUI readCounts display with live data (Issue #283).
+// Used to update the TUI unread inbox depth display with live data (Issue #283).
 func scanLiveInboxCounts(nodes map[string]discovery.NodeInfo) map[string]int {
 	counts := make(map[string]int, len(nodes))
 	for nodeKey, nodeInfo := range nodes {

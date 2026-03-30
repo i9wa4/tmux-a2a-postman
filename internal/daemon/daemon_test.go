@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
@@ -412,5 +413,69 @@ func TestRequeueWaitingMessage_NoOriginalArtifactMovesMarkerToDeadLetter(t *test
 	}
 	if string(gotDeadLetter) != string(waitingContent) {
 		t.Fatalf("dead-letter content changed:\n got %q\nwant %q", gotDeadLetter, waitingContent)
+	}
+}
+
+func TestWaitingFileContentForRead_DefaultSkipsReplyTracking(t *testing.T) {
+	cfg := &config.Config{UINode: "messenger"}
+	info := &message.MessageInfo{From: "orchestrator", To: "worker"}
+
+	got, ok := waitingFileContentForRead(info, []byte("---\nparams:\n---\n\nStatus update\n"), cfg, time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC))
+	if ok {
+		t.Fatalf("waitingFileContentForRead unexpectedly created waiting content: %q", got)
+	}
+}
+
+func TestWaitingFileContentForRead_ExplicitReplyTracking(t *testing.T) {
+	cfg := &config.Config{UINode: "messenger"}
+	info := &message.MessageInfo{From: "orchestrator", To: "worker"}
+
+	got, ok := waitingFileContentForRead(info, []byte("---\nexpects_reply: true\n---\n\nPlease reply.\n"), cfg, time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("waitingFileContentForRead did not create waiting content for expects_reply: true")
+	}
+	if !strings.Contains(got, "state: composing") {
+		t.Fatalf("waiting file missing composing state:\n%s", got)
+	}
+	if !strings.Contains(got, "expects_reply: true") {
+		t.Fatalf("waiting file missing expects_reply flag:\n%s", got)
+	}
+}
+
+func TestAdvanceWaitingState_NonReplyTrackedComposingDoesNotTransition(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 12, 20, 0, 0, time.UTC)
+	content := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-03-30T12:00:00Z\nstate: composing\nstate_updated_at: 2026-03-30T12:00:00Z\nexpects_reply: false\n---\n"
+
+	got, changed := advanceWaitingState(content, "active", now, 5*time.Minute, 10*time.Minute, true)
+	if changed {
+		t.Fatalf("advanceWaitingState unexpectedly changed non-reply-tracked content:\n%s", got)
+	}
+	if got != content {
+		t.Fatalf("advanceWaitingState changed content without transition:\n got %q\nwant %q", got, content)
+	}
+}
+
+func TestScanLiveInboxCounts_CountsUnreadInboxMarkdownFiles(t *testing.T) {
+	sessionDir := t.TempDir()
+	workerInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(workerInbox, 0o700); err != nil {
+		t.Fatalf("MkdirAll worker inbox: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerInbox, "20260330-120000-from-orchestrator-to-worker.md"), []byte("first"), 0o600); err != nil {
+		t.Fatalf("WriteFile first unread: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerInbox, "20260330-120001-from-critic-to-worker.md"), []byte("second"), 0o600); err != nil {
+		t.Fatalf("WriteFile second unread: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerInbox, "notes.txt"), []byte("ignore"), 0o600); err != nil {
+		t.Fatalf("WriteFile sidecar: %v", err)
+	}
+
+	counts := scanLiveInboxCounts(map[string]discovery.NodeInfo{
+		"review:worker": {SessionDir: sessionDir},
+	})
+
+	if got := counts["review:worker"]; got != 2 {
+		t.Fatalf("scanLiveInboxCounts review:worker = %d, want 2", got)
 	}
 }

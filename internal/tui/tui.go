@@ -49,7 +49,7 @@ var (
 				Foreground(lipgloss.Color("196")) // red
 
 	composingNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("33")) // Blue: node actively composing a reply
+				Foreground(lipgloss.Color("33")) // Blue: explicit reply-tracked work
 
 	// Issue #286: New state styles
 	pendingNodeStyle = lipgloss.NewStyle().
@@ -182,9 +182,9 @@ type Model struct {
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 
 	// Node state tracking (Issue #55)
-	nodeStates    map[string]string // "active" / "idle" / "stale"
-	waitingStates map[string]string // "composing" / "spinning" / "stuck" / "user_input"
-	readCounts    map[string]int    // cumulative read/ moves per node (Issue #246)
+	nodeStates        map[string]string // "active" / "idle" / "stale"
+	waitingStates     map[string]string // "composing" / "spinning" / "stuck" / "user_input"
+	unreadInboxCounts map[string]int    // live unread inbox depth per node
 
 	// Shared state
 	daemonEvents  <-chan DaemonEvent
@@ -364,7 +364,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
 		nodeStates:          make(map[string]string),   // Issue #55: Node state tracking
 		waitingStates:       make(map[string]string),
-		readCounts:          make(map[string]int), // Issue #246: Cumulative read counts
+		unreadInboxCounts:   make(map[string]int),
 		config:              cfg,
 		daemonEvents:        daemonEvents,
 		tuiCommands:         tuiCommands,    // Issue #47: Command channel
@@ -642,10 +642,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if wsRaw, ok := msg.Details["waiting_states"].(map[string]string); ok {
 				m.waitingStates = wsRaw
 			}
-		case "read_count_update":
-			// Issue #246: Update per-node cumulative read counts for edge display.
-			if counts, ok := msg.Details["counts"].(map[string]int); ok {
-				m.readCounts = counts
+		case "inbox_unread_count_update":
+			if counts, ok := msg.Details["unread_counts"].(map[string]int); ok {
+				m.unreadInboxCounts = counts
 			}
 		case "error":
 			m.events = append(m.events, EventEntry{
@@ -1137,8 +1136,8 @@ func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
 					}
 				}
 				builder.WriteString(nodeStyle.Render(node))
-				if cnt := m.readCounts[stateKey]; cnt > 0 {
-					builder.WriteString(fmt.Sprintf(" (%d)", cnt))
+				if cnt := m.unreadInboxCounts[stateKey]; cnt > 0 {
+					builder.WriteString(fmt.Sprintf(" [inbox:%d]", cnt))
 				}
 				if j < len(edge.SegmentDirections) {
 					var arrow string

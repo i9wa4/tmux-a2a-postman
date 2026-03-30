@@ -314,6 +314,26 @@ func TestTUI_RoutingView_RemoveEdge(t *testing.T) {
 	}
 }
 
+func TestRenderEdgeLine_LabelsUnreadInboxCounts(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessionNodes = map[string][]string{
+		"review": {"critic", "guardian"},
+	}
+	m.unreadInboxCounts["review:critic"] = 2
+
+	got := m.renderEdgeLine(Edge{
+		Raw:               "critic -- guardian",
+		SegmentDirections: []string{"none"},
+	}, "review")
+
+	if !strings.Contains(got, "critic [inbox:2]") {
+		t.Fatalf("renderEdgeLine = %q, want explicit unread inbox label", got)
+	}
+}
+
 func TestTUI_HotReload(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

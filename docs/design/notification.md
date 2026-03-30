@@ -26,7 +26,7 @@ prevents notification floods.
 | inbox/{node}/         | Incoming messages for a node; arrival here triggers pane notification    |
 | read/                 | Archive of messages the recipient has read                               |
 | dead-letter/          | Directory for messages that could not be delivered                       |
-| waiting/              | Directory for waiting-file state tracking (composing/spinning/stuck)     |
+| waiting/              | Directory for waiting-file state tracking (`user_input` or reply-tracked `composing`/`spinning`/`stalled`) |
 | cooldown              | Minimum interval enforced between two notifications of the same type     |
 | dropped ball          | A node received a message but has not sent any message since             |
 | contextId             | Unique session identifier shared by all nodes in one daemon invocation   |
@@ -333,26 +333,39 @@ to `llm_node`'s inbox and sends a pane notification.
 
 ### 3.1. Waiting File State Machine
 
-When a message is sent to a node, a waiting file is created in `waiting/` to
-track whether the node is composing a reply. The file transitions through
-states:
+The current tree does not create a waiting file for every sent message. A
+waiting file is created or updated only when a node archives a message from
+`inbox/` to `read/` and one of these explicit cases applies:
+
+- the message is for `ui_node`, which produces `state: user_input` with
+  `expects_reply: false`
+- the archived message carries `expects_reply: true`, which produces
+  `state: composing` with `expects_reply: true`
+
+Messages without explicit reply tracking do not create a reply-tracked waiting
+marker, and visible `composing`, `spinning`, or `stalled` overlays are
+suppressed unless `expects_reply: true` is present. Reply-tracked files
+transition through states like this:
 
 ```text
-composing ──(idle threshold elapsed, pane active, spinning enabled)──> spinning
-composing ──(idle threshold elapsed, pane stale)──────────────────────> stuck
-spinning  ──(pane stale)───────────────────────────────────────────────> stuck
+composing ──(idle threshold elapsed, pane active, spinning enabled, expects_reply: true)──> spinning
+composing ──(idle threshold elapsed, pane stale, expects_reply: true)──────────────────────> stalled
+spinning  ──(pane stale, expects_reply: true)───────────────────────────────────────────────> stalled
 ```
 
 States:
 
-- `composing` — Message sent; awaiting reply within idle window
-- `spinning` — Composing window elapsed but pane is still active (possible loop)
-- `stuck` — Pane went stale; agent appears unresponsive
-- `user_input` — Message sent to `ui_node`; human is being prompted
+- `user_input` — Message was delivered to `ui_node`; a human is being prompted
+- `composing` — Explicit reply-tracked work is outstanding within the idle
+  window
+- `spinning` — Reply-tracked work exceeded the composing window while the pane
+  is still active
+- `stalled` — Reply-tracked work exceeded the idle or spinning window and the
+  pane appears stale
 
-When `spinning` is detected, a `spinning_alert_template` alert is sent to
-`ui_node`. The `node_inactivity` alert suppresses nodes with `state: user_input`
-files (Guard 3).
+When `spinning` is detected for a reply-tracked marker, a
+`spinning_alert_template` alert is sent to `ui_node`. The `node_inactivity`
+alert suppresses nodes with `state: user_input` files (Guard 3).
 
 **Config fields:**
 
