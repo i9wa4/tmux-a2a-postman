@@ -104,7 +104,7 @@ func main() {
 			Pop:                     runPop,
 			GetSessionHealth:        cli.RunGetSessionHealth,
 			GetContextID:            runGetContextID,
-			SupervisorDrain:         runSupervisorDrain,
+			SupervisorDrain:         cli.RunSupervisorDrain,
 			SendMessage:             runSendMessage,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)

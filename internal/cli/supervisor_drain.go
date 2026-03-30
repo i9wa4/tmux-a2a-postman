@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"flag"
@@ -15,7 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
-// runSupervisorDrain implements the Phase 3 → Phase 2 rollback drain procedure
+// RunSupervisorDrain implements the Phase 3 → Phase 2 rollback drain procedure
 // (Issue #309 section 9). It:
 //  1. Annotates all supervisor memory records with outcome=pending.
 //  2. Drains the supervisor dead-letter directory, classifying each file by
@@ -25,7 +25,7 @@ import (
 // Eligible reasons (redeliver): session_offline, channel_unbound, sidecar_unavailable.
 // Ineligible reasons (quarantine): routing_denied, redelivery_failed, empty idempotency_key.
 // Everything else: passthrough (archived in quarantine dir with passthrough marker).
-func runSupervisorDrain(args []string) error {
+func RunSupervisorDrain(args []string) error {
 	fs := flag.NewFlagSet("supervisor-drain", flag.ContinueOnError)
 	contextIDFlag := fs.String("context-id", "", "context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "path to config file (optional)")
@@ -64,7 +64,6 @@ func runSupervisorDrain(args []string) error {
 		return fmt.Errorf("invalid context ID %q: must match %s", resolvedContextID, binding.NodeNamePattern)
 	}
 
-	// Step 1: annotate pending supervisor memory records.
 	store, err := memory.NewStore(baseDir, resolvedContextID)
 	if err != nil {
 		return fmt.Errorf("supervisor-drain: open memory store: %w", err)
@@ -73,7 +72,6 @@ func runSupervisorDrain(args []string) error {
 		return fmt.Errorf("supervisor-drain: annotate pending rollback: %w", err)
 	}
 
-	// Step 2: drain supervisor dead-letter directory.
 	deadLetterDir := filepath.Join(baseDir, resolvedContextID, "supervisor-memory", "dead-letter")
 	archiveDir := filepath.Join(deadLetterDir, "archive")
 	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
@@ -92,7 +90,6 @@ func runSupervisorDrain(args []string) error {
 	var redelivered, quarantined, redeliveryFailed, passthrough int
 	partial := false
 
-	// Eligible drain reasons → redeliver to post/.
 	eligibleReasons := map[string]bool{
 		"session-offline":     true,
 		"session_offline":     true,
@@ -101,7 +98,6 @@ func runSupervisorDrain(args []string) error {
 		"sidecar-unavailable": true,
 		"sidecar_unavailable": true,
 	}
-	// Ineligible drain reasons → quarantine.
 	ineligibleReasons := map[string]bool{
 		"routing-denied":    true,
 		"routing_denied":    true,
@@ -114,14 +110,13 @@ func runSupervisorDrain(args []string) error {
 			continue
 		}
 		name := entry.Name()
+		if name == "drain-summary.txt" {
+			continue
+		}
 		src := filepath.Join(deadLetterDir, name)
-
-		// Extract reason from -dl-<reason> suffix.
 		reason := extractDrainReason(name)
 
-		// Check for empty idempotency_key quarantine condition.
 		if reason == "" {
-			// No dl-suffix found: treat as passthrough.
 			dst := filepath.Join(archiveDir, "passthrough-"+name)
 			if mvErr := os.Rename(src, dst); mvErr != nil {
 				log.Printf("supervisor-drain: WARNING: passthrough rename %s: %v\n", name, mvErr)
@@ -137,7 +132,6 @@ func runSupervisorDrain(args []string) error {
 			dst := filepath.Join(postDir, cleanName)
 			if mvErr := os.Rename(src, dst); mvErr != nil {
 				log.Printf("supervisor-drain: WARNING: redeliver rename %s: %v\n", name, mvErr)
-				// Redeliver failed: quarantine instead.
 				dst2 := filepath.Join(archiveDir, "redelivery-failed-"+name)
 				_ = os.Rename(src, dst2)
 				redeliveryFailed++
@@ -154,7 +148,6 @@ func runSupervisorDrain(args []string) error {
 			}
 			quarantined++
 		} else {
-			// Unknown reason: passthrough.
 			dst := filepath.Join(archiveDir, "passthrough-"+name)
 			if mvErr := os.Rename(src, dst); mvErr != nil {
 				log.Printf("supervisor-drain: WARNING: passthrough rename %s: %v\n", name, mvErr)
@@ -165,7 +158,6 @@ func runSupervisorDrain(args []string) error {
 		}
 	}
 
-	// Step 3: write drain-summary.txt (mode 0600).
 	summaryPath := filepath.Join(deadLetterDir, "drain-summary.txt")
 	summaryLine := fmt.Sprintf("drained_at=%s redelivered=%d archived_redelivery_failed=%d archived_quarantined=%d archived_passthrough=%d",
 		time.Now().UTC().Format(time.RFC3339), redelivered, redeliveryFailed, quarantined, passthrough)
@@ -174,7 +166,6 @@ func runSupervisorDrain(args []string) error {
 	}
 	summaryLine += "\n"
 
-	// Append (not overwrite) to allow multiple drain attempts.
 	f, err := os.OpenFile(summaryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("supervisor-drain: open drain-summary.txt: %w", err)
