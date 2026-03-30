@@ -89,7 +89,7 @@ Two sub-checks:
 - FAIL: template lacks `pop` — agents use the old `read` + manual cat workflow
   instead of the streamlined command
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
-  `tmux-a2a-postman pop <message>` (auto-archives on read)
+  `tmux-a2a-postman pop` (auto-archives the next unread message on read)
 - FAIL: template references raw filesystem paths for monitoring (e.g.,
   `ls ~/.local/state/.../waiting/`) — use `get-session-health` instead
 
