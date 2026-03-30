@@ -76,7 +76,7 @@ func main() {
 	}
 
 	if *showHelp {
-		runHelp([]string{})
+		cli.RunHelp([]string{})
 		return
 	}
 
@@ -110,8 +110,8 @@ func main() {
 				return cli.RunStop(os.Stdout, args)
 			},
 			Bind:   bindcmd.Run,
-			Schema: runSchema,
-			Help:   runHelp,
+			Schema: cli.RunSchema,
+			Help:   cli.RunHelp,
 		},
 	)
 	if result.Err != nil {

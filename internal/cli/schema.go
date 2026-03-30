@@ -1,19 +1,24 @@
-package main
+package cli
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
-// runSchema prints JSON Schema for the postman config or a specific command's options.
+// RunSchema prints JSON Schema for the postman config or a specific command's options.
 //
 //	tmux-a2a-postman schema              # postman.toml config schema
 //	tmux-a2a-postman schema send-message # send-message options schema
-func runSchema(args []string) error {
-	enc := json.NewEncoder(os.Stdout)
+func RunSchema(args []string) error {
+	return runSchema(os.Stdout, args)
+}
+
+func runSchema(stdout io.Writer, args []string) error {
+	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 
 	// Parse --nodes-dir flag before the switch (opt-in path, not inline in no-arg output).
@@ -34,7 +39,7 @@ func runSchema(args []string) error {
 			localConfigPath, _ = config.ResolveLocalConfigPath(cwd, xdgPath)
 		}
 		localNodesDir := config.ResolveNodesDir(localConfigPath)
-		return json.NewEncoder(os.Stdout).Encode(struct {
+		return json.NewEncoder(stdout).Encode(struct {
 			XDG          string `json:"xdg"`
 			ProjectLocal string `json:"project_local"`
 		}{XDG: xdgNodesDir, ProjectLocal: localNodesDir})
