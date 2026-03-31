@@ -56,7 +56,7 @@ prevents notification floods.
 | Inbox unread summary alert    | inbox-visible        | operator-visible              | Routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery |
 | Node inactivity alert         | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
 | Unreplied message alert       | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
-| Spinning alert                | inbox-visible        | operator-visible              | Produced by the waiting-file state machine and overlaps with the yellow `spinning` TUI/oneline state |
+| Spinning waiting state        | TUI / oneline        | operator-visible              | Produced by the waiting-file state machine; the current tree does not emit a separate daemon alert for it |
 | Dropped ball detection        | TUI-only             | operator-visible              | Default `dropped_ball_notification = "tui"` keeps it off the inbox path; `display` / `all` adds a tmux status-bar side channel |
 | PING                          | inbox-visible        | control-plane + operator-visible | The current tree uses PING beyond startup: first discovery, pane restarts, and manual TUI rechecks still surface as readable daemon mail |
 | Heartbeat trigger             | inbox-visible        | control-plane + operator-visible | Written to `post/` for `llm_node`, then routed like normal mail; single-slot guard keeps it from flooding |
@@ -363,17 +363,19 @@ States:
 - `stalled` — Reply-tracked work exceeded the idle or spinning window and the
   pane appears stale
 
-When `spinning` is detected for a reply-tracked marker, a
-`spinning_alert_template` alert is sent to `ui_node`. The `node_inactivity`
-alert suppresses nodes with `state: user_input` files (Guard 3).
+When `spinning` is detected for a reply-tracked marker, the current tree only
+changes the visible waiting overlay. No separate daemon alert is sent to
+`ui_node`. The `node_inactivity` alert suppresses nodes with
+`state: user_input` files (Guard 3).
 
 **Config fields:**
 
 | Field                     | Default | Description                                     |
 | ------------------------- | ------- | ----------------------------------------------- |
-| `node_idle_seconds`       | (none)  | Composing window before transition               |
+| `node_active_seconds`     | `300`   | Pane-activity threshold for internal `active`; after this the pane becomes internally `idle` |
+| `node_idle_seconds`       | `900`   | Pane-activity threshold for internal `stale`; after `node_active_seconds` and before this the pane remains internally `idle` |
 | `node_spinning_seconds`   | `0`     | Spinning threshold (0 = disabled)                |
-| `spinning_alert_template` | (see default config) | Alert body for spinning state      |
+| `spinning_alert_template` | (see default config; reserved) | Template retained in config, but the current tree does not emit a spinning alert |
 
 **Source:** `internal/daemon/daemon.go` (state transition logic in ticker loop)
 
@@ -420,8 +422,10 @@ confirmation (Issue #150)
 file state machine (composing → spinning transition requires
 `paneState == "active"`).
 
-Pane states: `active` (recent change), `idle` (within `node_idle_seconds`),
-`stale` (beyond `node_stale_seconds`).
+Pane states: `active` (within `node_active_seconds` since the last captured
+change), `idle` (after `node_active_seconds` and within `node_idle_seconds`),
+`stale` (beyond `node_idle_seconds`). `node_stale_seconds` is only the pane
+capture memory-cleanup threshold, not the visible stale-state boundary.
 
 **Source:** `internal/idle/idle.go` — `StartPaneCaptureCheck`,
 `checkPaneCapture`
@@ -520,7 +524,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `inbox_unread_summary_alert_template` | (see config) | Global | §2.3              |
 | `node_inactivity_alert_template`   | (see config) | Global | §2.4                   |
 | `unreplied_message_alert_template` | (see config) | Global | §2.5                   |
-| `spinning_alert_template`          | (see config) | Global | §3.1                   |
+| `spinning_alert_template`          | (see config; reserved) | Global | §3.1            |
 | `alert_action_reachable_template`  | (see config) | Global | §2.3, §2.4, §2.5       |
 | `alert_action_unreachable_template` | (see config) | Global | §2.3, §2.4, §2.5     |
 | `dropped_ball_timeout_seconds`     | `0`      | Per-node | §2.5, §2.6               |
@@ -528,7 +532,8 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `dropped_ball_notification`        | `"tui"`  | Per-node | §2.6                     |
 | `dropped_ball_event_template`      | (see config) | Global | §2.6                   |
 | `idle_timeout_seconds`             | (none)   | Per-node | §2.4                     |
-| `node_idle_seconds`                | (none)   | Global  | §3.1                      |
+| `node_active_seconds`              | `300`    | Global  | §3.1, §3.4               |
+| `node_idle_seconds`                | `900`    | Global  | §3.1, §3.4               |
 | `node_spinning_seconds`            | `0`      | Global  | §3.1                      |
 | `node_stale_seconds`               | `900`    | Global  | §3.1, §3.4 (cleanup)      |
 | `heartbeat_message_template`       | (envelope) | Global | §2.7                    |

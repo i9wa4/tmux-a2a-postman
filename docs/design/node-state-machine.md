@@ -38,9 +38,9 @@ stateDiagram-v2
 | `ready --> pending`    | Unread file appears in `inbox/{node}/` and the recipient gets a pane hint | inbox + pane + TUI / oneline | One delivery creates both an inbox-visible unread item and an immediate pane notification |
 | `pending --> ready`    | Unread file is archived and the node returns to `ready`               | inbox + TUI / oneline   | No dedicated follow-up message is emitted; the visible change is the cleared unread state |
 | `pending --> composing` | Waiting state enters `composing` only when the archived message explicitly carries `expects_reply: true` | TUI / oneline | No separate daemon alert is emitted by the transition itself                          |
-| `composing --> spinning` | Node crosses the spinning threshold and turns `spinning`            | TUI / oneline + inbox   | Current overlap is explicit: the yellow spinning surface is paired with a `ui_node` spinning alert |
+| `composing --> spinning` | Node crosses the spinning threshold and turns `spinning`            | TUI / oneline           | The current tree exposes this only as a yellow waiting overlay; no separate daemon alert is emitted |
 | `composing --> stalled` | Node goes stale while composing and turns `stalled`                  | TUI / oneline           | No dedicated inbox alert is emitted by this transition alone                          |
-| `spinning --> stalled` | Node goes stale after spinning and stays visible as `stalled`         | TUI / oneline           | Any earlier spinning alert may already exist, but the stalled transition itself is only a surface change |
+| `spinning --> stalled` | Node goes stale after spinning and stays visible as `stalled`         | TUI / oneline           | The stalled transition itself is only a surface change; no dedicated inbox alert is emitted |
 | `spinning --> ready`   | Later send activity clears `spinning` and returns the node to `ready` | TUI / oneline          | The send may create inbox-visible effects elsewhere, but this transition emits no separate notification |
 | `stalled --> ready`    | Later send activity clears `stalled` and returns the node to `ready` | TUI / oneline           | No dedicated recovery alert is emitted by the transition itself                       |
 | `pending --> user_input` | Human-facing prompt is active and the node turns `user_input`       | inbox + pane + TUI / oneline | Current overlap is intentional: the prompting message is inbox-visible while the purple dot suppresses inactivity alerts |
@@ -50,9 +50,9 @@ stateDiagram-v2
 
 | Parameter            | Default | Description                              |
 | -------------------- | ------- | ---------------------------------------- |
-| NodeActiveSeconds    | 300s    | Idle duration before node transitions from ready to stale (first threshold) |
-| NodeIdleSeconds      | 900s    | Idle duration before node is marked stale (second threshold) |
-| NodeSpinningSeconds  | 0       | Seconds composing before transitioning to spinning (0 = disabled) |
+| NodeActiveSeconds    | 300s    | Internal pane-activity threshold for `active`; after this boundary the pane becomes internally `idle`, but the display still collapses both `active` and `idle` to `ready` unless a waiting overlay wins |
+| NodeIdleSeconds      | 900s    | Internal pane-activity threshold for `stale`; after `NodeActiveSeconds` and before this boundary the pane remains internally `idle` |
+| NodeSpinningSeconds  | 0       | Seconds an explicit reply-tracked `composing` wait may remain active before transitioning to `spinning` (0 = disabled) |
 
 ## Implementation Files
 

@@ -76,8 +76,8 @@ alert_delivery_window_seconds = 60    # Suppress alerts/warnings if the recipien
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 
 # Node state thresholds
-node_active_seconds = 300          # 0-5min: active (green)
-node_idle_seconds = 900            # 5-15min: idle (orange), 15min+: stale (red)
+node_active_seconds = 300          # <=5min since last pane change: internal active; display still collapses to ready unless a waiting overlay applies
+node_idle_seconds = 900            # >5min and <=15min since last pane change: internal idle; >15min becomes internal stale
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
 node_spinning_seconds = 0          # disabled by default; set to positive seconds to enable spinning detection
 
@@ -132,6 +132,7 @@ inbox_stagnation_alert_template = "Inbox stagnation [{severity}]: {node} has unr
 inbox_unread_summary_alert_template = "Inbox unread summary: {node} has {count} unread messages (threshold: {threshold})"
 node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive for {inactive_duration} (threshold: {threshold}). Last sent: {last_sent}, Last received: {last_received}, Liveness confirmed: {liveness_confirmed}"
 unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has message in read/ for {time_since_read} without reply (from: {from}, threshold: {threshold})"
+# Reserved for a future spinning alert; the current tree does not emit this alert.
 spinning_alert_template = "[SPINNING] {node} has been composing for {spinning_duration} (threshold: {threshold}). Pane is active — possible infinite loop or runaway computation."
 
 # Common template (prepended to all node templates)

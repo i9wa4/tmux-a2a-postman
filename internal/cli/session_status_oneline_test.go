@@ -47,7 +47,7 @@ func TestStatusDot_NonTTY(t *testing.T) {
 		{"user_input", "🟣"},
 		{"pending", "🔷"},
 		{"composing", "🔵"},
-		{"idle", "🟡"},
+		{"idle", "🟢"},
 		{"spinning", "🟡"},
 		{"stale", "🔴"},
 		{"stalled", "🔴"},
@@ -72,6 +72,13 @@ func TestStatusDot_TTY(t *testing.T) {
 		if !strings.Contains(got, "●") {
 			t.Errorf("statusDot(%q, true) = %q; want string containing ●", status, got)
 		}
+	}
+
+	if got, want := statusDot("idle", true), statusDot("ready", true); got != want {
+		t.Fatalf("statusDot(%q, true) = %q; want same TTY rendering as ready %q", "idle", got, want)
+	}
+	if got, dontWant := statusDot("idle", true), statusDot("spinning", true); got == dontWant {
+		t.Fatalf("statusDot(%q, true) = %q; want different TTY rendering from spinning", "idle", got)
 	}
 }
 

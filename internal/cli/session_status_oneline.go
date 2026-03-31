@@ -34,13 +34,13 @@ func statusDot(status string, isTerminal bool) string {
 		staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 		userInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
 		switch status {
-		case "ready", "active":
+		case "ready", "active", "idle":
 			return activeStyle.Render("●")
 		case "pending":
 			return pendingStyle.Render("●")
 		case "composing":
 			return composingStyle.Render("●")
-		case "spinning", "idle":
+		case "spinning":
 			return spinningStyle.Render("●")
 		case "user_input":
 			return userInputStyle.Render("●")
@@ -49,13 +49,13 @@ func statusDot(status string, isTerminal bool) string {
 		}
 	}
 	switch status {
-	case "ready", "active":
+	case "ready", "active", "idle":
 		return "🟢"
 	case "pending":
 		return "🔷"
 	case "composing":
 		return "🔵"
-	case "spinning", "idle":
+	case "spinning":
 		return "🟡"
 	case "user_input":
 		return "🟣"
@@ -79,7 +79,7 @@ func isShellCommand(cmd string) bool {
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
-// Pane status: active=green, composing=blue, idle/spinning=yellow, stale=red
+// Pane status: active/idle=green, composing=blue, spinning=yellow, stale=red
 // Issue #120: Refactored to use idle.go activity detection instead of #{pane_active}
 // Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
 // Issue #312: Filter panes by pane_current_command; fix session index stability.
