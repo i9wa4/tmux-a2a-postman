@@ -31,6 +31,36 @@ prevents notification floods.
 | dropped ball          | A node received a message but has not sent any message since             |
 | contextId             | Unique session identifier shared by all nodes in one daemon invocation   |
 
+### 1.2. Project-Shipped Low-Noise Defaults
+
+The field tables later in this document describe embedded product defaults from
+`internal/config/postman.default.toml`. In this project, the shipped config
+surfaces loaded from `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/`
+intentionally go further and enable a low-noise notification policy by default.
+
+For the current repo-local sample and deployed XDG profile:
+
+| Mechanism | Current project-shipped default |
+| --------- | ------------------------------- |
+| Reminder | ON at `20` messages |
+| Inbox unread summary | ON at `3+` unread via `ui_node = messenger` |
+| Node inactivity alert | ON with per-node timers: `boss=3600`, `critic=1800`, `guardian=1800`, `messenger=1800`, `orchestrator=1800`, `worker=900`, `worker-alt=900` |
+| Unreplied message alert | ON with the same per-node timers |
+| Dropped ball detection | ON with the same per-node timers, with default delivery kept at `tui` |
+| Spinning alert | OFF (`node_spinning_seconds = 0`) |
+| Heartbeat | OFF (`[heartbeat].enabled = false`) |
+
+Authority note:
+
+- In the deployed XDG profile, `ui_node: messenger` currently comes from
+  `postman.md` frontmatter.
+- In the repo-local sample, `ui_node = "messenger"` is declared in
+  `.tmux-a2a-postman/postman.toml`.
+- The effective behavior is the same even though the file type differs.
+
+Opt-out knobs for these project-shipped defaults are summarized in
+`docs/guides/alert-config.md`.
+
 ---
 
 ## 2. Notification Mechanisms
