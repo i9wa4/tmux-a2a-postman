@@ -46,9 +46,8 @@ When two daemons are running, `stop` may silently target the wrong one.
 
    ```bash
    pgrep -f tmux-a2a-postman
+   # Expected: no output (exit 1)
    ```
-
-   Expected: no output (exit 1).
 
 5. Start a fresh daemon:
 
