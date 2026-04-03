@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
@@ -236,42 +237,23 @@ func (m Model) getSessionWorstState(sessionName string) string {
 	if !ok {
 		return "active"
 	}
-	worstState := "active"
-	worstRank := 0
+	healthNodes := make([]status.NodeHealth, 0, len(nodes))
 	for _, nodeName := range nodes {
-		es := m.effectiveNodeState(sessionName + ":" + nodeName)
-		if r := waitingStateRank[es]; r > worstRank {
-			worstRank = r
-			worstState = es
-		}
+		key := sessionName + ":" + nodeName
+		healthNodes = append(healthNodes, status.NodeHealth{
+			Name:         nodeName,
+			PaneState:    m.nodeStates[key],
+			WaitingState: m.waitingStates[key],
+			InboxCount:   m.unreadInboxCounts[key],
+		})
 	}
-	// Normalize waiting-only states to renderable session states.
-	// All 6 states pass through; no mapping needed since tui now handles all.
-	switch worstState {
-	case "stalled":
-		return "stalled"
-	case "spinning":
-		return "spinning"
-	case "user_input":
-		return "user_input"
-	default:
-		return worstState // "ready", "pending", "composing", "stale" pass through
-	}
+	return status.SessionVisibleState(healthNodes)
 }
 
 // effectiveNodeState returns the display state for a session-prefixed node key.
 // waiting/ state overrides nodeStates when it represents an equal or worse condition.
 func (m Model) effectiveNodeState(key string) string {
-	state := ""
-	if ns, ok := m.nodeStates[key]; ok {
-		state = ns
-	}
-	if ws, ok := m.waitingStates[key]; ok {
-		if waitingStateRank[ws] >= waitingStateRank[state] {
-			state = ws
-		}
-	}
-	return state
+	return status.VisibleState(m.nodeStates[key], m.waitingStates[key], m.unreadInboxCounts[key])
 }
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).

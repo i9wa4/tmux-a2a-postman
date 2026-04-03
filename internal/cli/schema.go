@@ -157,17 +157,35 @@ func runSchema(stdout io.Writer, args []string) error {
 			Title:  "get-session-health output",
 			Type:   "object",
 			Properties: map[string]schemaPropertyWithItems{
-				"context_id": {Type: "string", Description: "Active context ID for the current tmux session"},
-				"node_count": {Type: "integer", Description: "Number of known nodes"},
+				"context_id":    {Type: "string", Description: "Active context ID for the current tmux session"},
+				"session_name":  {Type: "string", Description: "tmux session name used for the health snapshot"},
+				"node_count":    {Type: "integer", Description: "Number of known nodes"},
+				"visible_state": {Type: "string", Description: "Worst visible state across the session"},
 				"nodes": {
 					Type:        "array",
-					Description: "Per-node health status",
+					Description: "Per-node health and visible-state facts",
 					Items: &arrayItems{
 						Type: "object",
 						Properties: map[string]schemaProperty{
-							"name":          {Type: "string", Description: "Node name"},
-							"inbox_count":   {Type: "integer", Description: "Unread messages in inbox"},
-							"waiting_count": {Type: "integer", Description: "Messages waiting to be delivered"},
+							"name":            {Type: "string", Description: "Node name"},
+							"pane_id":         {Type: "string", Description: "Live tmux pane ID for the node"},
+							"pane_state":      {Type: "string", Description: "Base pane state before waiting or unread overlays"},
+							"waiting_state":   {Type: "string", Description: "Reply-tracked waiting overlay state for the node"},
+							"visible_state":   {Type: "string", Description: "Canonical visible state after unread and waiting overlays"},
+							"inbox_count":     {Type: "integer", Description: "Unread messages in inbox"},
+							"waiting_count":   {Type: "integer", Description: "Waiting-file count for the node"},
+							"current_command": {Type: "string", Description: "Current tmux pane command for the node"},
+						},
+					},
+				},
+				"windows": {
+					Type:        "array",
+					Description: "tmux window topology for pure renderer views",
+					Items: &arrayItems{
+						Type: "object",
+						Properties: map[string]schemaProperty{
+							"index": {Type: "string", Description: "tmux window index"},
+							"nodes": {Type: "array", Description: "Ordered node list for the window"},
 						},
 					},
 				},

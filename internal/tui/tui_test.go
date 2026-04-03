@@ -329,8 +329,24 @@ func TestRenderEdgeLine_LabelsUnreadInboxCounts(t *testing.T) {
 		SegmentDirections: []string{"none"},
 	}, "review")
 
-	if !strings.Contains(got, "critic [inbox:2]") {
-		t.Fatalf("renderEdgeLine = %q, want explicit unread inbox label", got)
+	if !strings.Contains(got, "critic") || !strings.Contains(got, "[inbox:2]") {
+		t.Fatalf("renderEdgeLine = %q, want critic label plus explicit unread inbox label", got)
+	}
+}
+
+func TestTUI_GetSessionWorstState_UsesUnreadPending(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessionNodes = map[string][]string{
+		"review": {"critic"},
+	}
+	m.nodeStates["review:critic"] = "ready"
+	m.unreadInboxCounts["review:critic"] = 2
+
+	if got := m.getSessionWorstState("review"); got != "pending" {
+		t.Fatalf("getSessionWorstState(%q) = %q, want %q", "review", got, "pending")
 	}
 }
 

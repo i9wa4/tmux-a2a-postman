@@ -15,7 +15,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
-	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
@@ -116,15 +115,12 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-	statusPriority := map[string]int{"active": 2, "idle": 1, "stale": 0}
-	paneActivity := make(map[string]string)
 
 	contextDirs, _ := filepath.Glob(filepath.Join(baseDir, "[0-9]*"))
 	sort.Sort(sort.Reverse(sort.StringSlice(contextDirs)))
 
-	var liveStateFiles []string
+	liveContextBySession := make(map[string]string)
 	var liveCtxSessionPairs [][2]string
-	paneActivityAdded := make(map[string]bool)
 	for _, ctxDir := range contextDirs {
 		fi, err := os.Stat(ctxDir)
 		if err != nil || !fi.IsDir() {
@@ -137,16 +133,13 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 				continue
 			}
 			if config.IsSessionPIDAlive(baseDir, ctxName, se.Name()) {
-				if !paneActivityAdded[ctxDir] {
-					liveStateFiles = append(liveStateFiles, filepath.Join(ctxDir, "pane-activity.json"))
-					paneActivityAdded[ctxDir] = true
-				}
 				liveCtxSessionPairs = append(liveCtxSessionPairs, [2]string{ctxDir, se.Name()})
+				liveContextBySession[se.Name()] = ctxName
 			}
 		}
 	}
 
-	if len(liveStateFiles) == 0 {
+	if len(liveCtxSessionPairs) == 0 {
 		if *jsonOut {
 			return json.NewEncoder(stdout).Encode(struct {
 				Status string `json:"status"`
@@ -154,52 +147,6 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		}
 		return nil
 	}
-
-	for _, liveStateFile := range liveStateFiles {
-		stateData, err := os.ReadFile(liveStateFile)
-		if err == nil {
-			var rawMap map[string]json.RawMessage
-			if jsonErr := json.Unmarshal(stateData, &rawMap); jsonErr == nil {
-				for paneID, raw := range rawMap {
-					var status string
-					if err := json.Unmarshal(raw, &status); err != nil {
-						var export idle.PaneActivityExport
-						if err := json.Unmarshal(raw, &export); err != nil {
-							continue
-						}
-						status = export.Status
-					}
-					if status == "" {
-						continue
-					}
-					existing, exists := paneActivity[paneID]
-					if !exists || statusPriority[status] > statusPriority[existing] {
-						paneActivity[paneID] = status
-					}
-				}
-			}
-		}
-	}
-
-	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	paneTitleOutput, _ := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title} #{pane_current_command}").Output()
-	paneTitles := make(map[string]string)
-	sessionTitleToPaneID := make(map[string]string)
-	paneCurrentCmd := make(map[string]string)
-	for _, line := range strings.Split(strings.TrimSpace(string(paneTitleOutput)), "\n") {
-		parts := strings.SplitN(strings.TrimSpace(line), " ", 4)
-		if len(parts) >= 3 && parts[0] != "" && parts[2] != "" {
-			paneID, sessionName, title := parts[0], parts[1], parts[2]
-			paneTitles[paneID] = title
-			sessionTitleToPaneID[sessionName+":"+title] = paneID
-			if len(parts) == 4 {
-				paneCurrentCmd[paneID] = parts[3]
-			}
-		}
-	}
-
-	applyWaitingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
-	applyPendingOverlay(liveCtxSessionPairs, sessionTitleToPaneID, paneActivity)
 
 	sessionsOutput, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
@@ -245,45 +192,46 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 
 	for i, sess := range sessions {
 		sessionName := sess.name
-
-		windowsOutput, err := exec.Command("tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}").Output()
-		if err != nil {
-			return fmt.Errorf("listing windows for session %s: %w", sessionName, err)
+		contextID, ok := liveContextBySession[sessionName]
+		if !ok {
+			continue
 		}
 
-		windows := strings.Split(strings.TrimSpace(string(windowsOutput)), "\n")
+		health, err := collectSessionHealth(baseDir, contextID, sessionName, cfg)
+		if err != nil {
+			return err
+		}
+
+		nodeByName := make(map[string]struct {
+			PaneState      string
+			VisibleState   string
+			CurrentCommand string
+		}, len(health.Nodes))
+		for _, node := range health.Nodes {
+			nodeByName[node.Name] = struct {
+				PaneState      string
+				VisibleState   string
+				CurrentCommand string
+			}{
+				PaneState:      node.PaneState,
+				VisibleState:   node.VisibleState,
+				CurrentCommand: node.CurrentCommand,
+			}
+		}
+
 		var windowStatuses []string
-
-		for _, windowIndex := range windows {
-			if windowIndex == "" {
-				continue
-			}
-
-			target := fmt.Sprintf("%s:%s", sessionName, windowIndex)
-			panesOutput, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_id}").Output()
-			if err != nil {
-				return fmt.Errorf("listing panes for %s: %w", target, err)
-			}
-
-			panes := strings.Split(strings.TrimSpace(string(panesOutput)), "\n")
+		for _, window := range health.Windows {
 			var paneStatuses string
-
-			for _, paneID := range panes {
-				if paneID == "" {
+			for _, windowNode := range window.Nodes {
+				node, ok := nodeByName[windowNode.Name]
+				if !ok || node.PaneState == "" {
 					continue
 				}
-				if !edgeNodes[paneTitles[paneID]] {
+				if isShellCommand(node.CurrentCommand) {
 					continue
 				}
-				if _, tracked := paneActivity[paneID]; !tracked {
-					continue
-				}
-				if isShellCommand(paneCurrentCmd[paneID]) {
-					continue
-				}
-				paneStatuses += statusDot(paneActivity[paneID], isTerminal)
+				paneStatuses += statusDot(node.VisibleState, isTerminal)
 			}
-
 			if paneStatuses != "" {
 				windowStatuses = append(windowStatuses, paneStatuses)
 			}

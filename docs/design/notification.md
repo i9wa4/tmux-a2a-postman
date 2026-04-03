@@ -407,6 +407,13 @@ changes the visible waiting overlay. No separate daemon alert is sent to
 | `node_spinning_seconds`   | `0`     | Spinning threshold (0 = disabled)                |
 | `spinning_alert_template` | (see default config; reserved) | Template retained in config, but the current tree does not emit a spinning alert |
 
+These waiting facts now flow into the shared health contract rather than being
+re-derived separately per renderer. The canonical per-node payload carries
+`pane_state` as the base fact, `waiting_state` as the reply-tracked overlay
+fact, and `visible_state` as the resolved renderer recommendation after unread
+and waiting overlays are applied. `get-session-status-oneline` and the TUI
+consume that same resolved state.
+
 **Source:** `internal/daemon/daemon.go` (state transition logic in ticker loop)
 
 ### 3.2. Dead-Letter Notifications

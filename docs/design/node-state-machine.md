@@ -58,9 +58,11 @@ stateDiagram-v2
 
 | Layer        | File                            | Key Sections                                      |
 | ------------ | ------------------------------- | ------------------------------------------------- |
+| Shared contract | internal/status/contract.go  | VisibleState, SessionVisibleState, canonical payload types |
+| Health payload | internal/cli/session_health.go | Session health snapshot with `visible_state` and `windows` |
 | Daemon       | internal/daemon/daemon.go       | replaceWaitingState, worstStatePriority, collectPendingStates |
-| TUI          | internal/tui/tui.go             | waitingStateRank, getSessionWorstState, updateNodeStatesFromActivity, node render switch |
-| Oneline      | internal/cli/session_status_oneline.go | statusDot, applyWaitingOverlay, applyPendingOverlay |
+| TUI          | internal/tui/tui.go             | shared visible-state consumption, session worst-state rendering, updateNodeStatesFromActivity |
+| Oneline      | internal/cli/session_status_oneline.go | statusDot plus pure formatting over the shared health payload |
 | Config       | internal/config/config.go       | NodeSpinningSeconds                               |
 
 ## Design Decisions
@@ -76,6 +78,13 @@ unchanged. The display layer maps:
 - waiting/ file states overlay the display layer via waitingStateRank /
   waitingOverlayRank, but `composing`, `spinning`, and `stalled` only surface
   when the waiting file explicitly carries `expects_reply: true`
+
+The shared status contract now carries both sides of that split in the health
+payload: per-node `pane_state` records the base fact, per-node `waiting_state`
+records the reply-tracked overlay fact, and per-node `visible_state` records
+the canonical renderer recommendation after unread and waiting overlays are
+applied. `get-session-status-oneline` and the TUI both consume that same
+visible-state resolution instead of maintaining separate overlay precedence.
 
 ### Backward Compatibility
 
