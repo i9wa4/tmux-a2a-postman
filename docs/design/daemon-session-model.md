@@ -11,15 +11,18 @@ daemon to reside in the same tmux session as the agent nodes it serves.
 
 ### 2. Multiple Daemons Allowed
 
-N daemons may run simultaneously with no restrictions at startup. The system
-places no hard limit on the number of running daemon processes.
+Multiple daemons may run simultaneously. Startup rejects only a duplicate
+daemon for the same `contextID` and tmux session; daemons in other contexts or
+other tmux sessions remain allowed. The system places no hard limit on the
+number of running daemon processes.
 
-### 3. Exclusive Session Ownership (Toggle-Only Enforcement)
+### 3. Exclusive Session Ownership
 
 Only ONE daemon may have a given tmux session set to ON at a time. This
-constraint is enforced solely via the TUI Space-key toggle — it is NOT enforced
-at daemon startup. Operators must use the TUI to transfer session ownership
-between daemons.
+constraint is not a global startup ban across all daemons. Instead, the daemon
+blocks later ownership collisions when a session is enabled, so only one live
+daemon may actively own a given tmux session at a time. The simplified default
+TUI no longer serves as the ownership-transfer control surface.
 
 ### 4. Cross-Daemon Node Discovery
 

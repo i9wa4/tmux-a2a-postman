@@ -27,7 +27,7 @@ patches):
 
 - Wrong or missing edges in `postman.toml` or `postman.md`
 - Node not defined in `postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`
-- Session disabled in postman TUI
+- Session not currently owned or enabled by the running daemon
 
 **Template-level confirmed** (node exists, edges correct, but behavior is
 wrong):

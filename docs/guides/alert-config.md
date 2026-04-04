@@ -23,8 +23,8 @@ default:
   `~/.config/tmux-a2a-postman/postman.md`
 
 Starting with the version that includes fix `#352`, the daemon also emits a
-visible warning in the log and TUI when `ui_node` is missing or when all
-per-node timeouts are zero at startup.
+visible startup warning in the daemon log when `ui_node` is missing or when
+all per-node timeouts are zero at startup.
 
 ## 2. Current Project Default Behavior
 
@@ -92,8 +92,8 @@ Verify the pane is discovered:
 tmux-a2a-postman get-health
 ```
 
-The `messenger` node must appear with `inbox_count` and `waiting_count` in the
-output.
+The `messenger` node must appear in `nodes[*]`, with the canonical
+`visible_state` plus the live `inbox_count` and `waiting_count` facts.
 
 ## 6. Daemon Startup Warning
 
@@ -110,5 +110,6 @@ postman: WARNING: alert system partially disabled: no nodes have
     idle_timeout_seconds or dropped_ball_timeout_seconds set. ...
 ```
 
-These warnings also appear in the TUI event log. Resolve them by adding the
-config values shown above.
+Resolve these warnings by adding the config values shown above. Use the daemon
+log as the reliable startup signal; the reduced default TUI does not expose a
+separate event-log pane.

@@ -289,15 +289,31 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 ```text
 {
   "context_id": "20240101-...",
+  "session_name": "review",
   "node_count": 4,
+  "visible_state": "composing",
   "nodes": [
-    {"name": "worker", "inbox_count": 2, "waiting_count": 0},
+    {
+      "name": "worker",
+      "pane_id": "%11",
+      "pane_state": "active",
+      "waiting_state": "composing",
+      "visible_state": "composing",
+      "inbox_count": 2,
+      "waiting_count": 1,
+      "current_command": "claude"
+    },
     ...
+  ],
+  "windows": [
+    {"index": "0", "nodes": [{"name": "worker"}, {"name": "critic"}]}
   ]
 }
 ```
 
-Use `nodes[*].waiting_count > 0` to detect delivery stalls.
+Use top-level `visible_state` for the session summary, `nodes[*].visible_state`
+for per-node status, and `windows` for the canonical node ordering consumed by
+`get-health-oneline` and the default TUI.
 
 ### 7.2. get-health-oneline
 
@@ -476,7 +492,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
 | `get-health-oneline`       | N/A                     | `{"status":"[0]●●●●"}`                                       |
-| `get-health`               | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`                  |
+| `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.
 Always test for the presence of the `id` key before treating the result as a

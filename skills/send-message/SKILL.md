@@ -54,7 +54,7 @@ tmux-a2a-postman send --params 'to=worker,body=hello' --body override
 
 Run `tmux-a2a-postman schema send` to get the current schema. The scope
 includes: `to`, `body`, `idempotency-key`, `json`. Always-excluded flags
-(`context-id`, `session`, `config`, `from`, `bindings`, `send`, `file`) cannot
+(`context-id`, `session`, `config`, `from`, `bindings`, `file`) cannot
 be set via `--params` and return an error if attempted.
 
 NOTE: `--params` JSON keys use hyphen form matching flag names (e.g.,
@@ -67,7 +67,7 @@ To discover any command's options and required fields at point of use:
 
 ```text
 tmux-a2a-postman schema send           # required: ["to","body"]
-tmux-a2a-postman schema pop            # output shape
+tmux-a2a-postman schema pop            # pop --params scope
 tmux-a2a-postman schema               # postman.toml config schema
 ```
 
