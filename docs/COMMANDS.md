@@ -29,6 +29,16 @@ Lifecycle and recovery commands (`start`, `stop`, `get-context-id`, and
 similar helpers) remain discoverable, but they do not define the default
 beginner/operator loop.
 
+## 1.1. Migration Map
+
+Older default-path names are now historical only:
+
+| Older name                   | Current path           | Role in the reduced surface |
+| ---------------------------- | ---------------------- | --------------------------- |
+| `send-message`               | `send`                 | Default operator command |
+| `get-session-health`         | `get-health`           | Canonical JSON status payload |
+| `get-session-status-oneline` | `get-health-oneline`   | Pure one-line formatter over `get-health` |
+
 ## 2. Daemon Management
 
 ### 2.1. Global Flags

@@ -257,6 +257,14 @@ tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, director
 tmux-a2a-postman schema [COMMAND]   # JSON Schema for a command's --params-settable options
 ```
 
+Migration from older names:
+
+| Older name                      | Current path              | Note |
+| ------------------------------- | ------------------------- | ---- |
+| `send-message`                  | `send`                    | Use `send` in the default operator loop |
+| `get-session-health`            | `get-health`              | `get-health` is the canonical JSON payload |
+| `get-session-status-oneline`    | `get-health-oneline`      | `get-health-oneline` is the one-line formatter over `get-health` |
+
 ## 9. Skills
 
 The `skills/` directory contains reusable agent skill files for AI coding

@@ -37,7 +37,7 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman start",
 			Err:   handlers.Start(cfg.ContextID, cfg.ConfigPath, cfg.LogFilePath, cfg.NoTUI),
 		}
-	case "get-health-oneline", "get-session-status-oneline":
+	case "get-health-oneline":
 		return Result{
 			Label: "postman get-health-oneline",
 			Err:   handlers.GetSessionStatusOneline(args),
@@ -52,7 +52,7 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman pop",
 			Err:   handlers.Pop(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "get-health", "get-session-health":
+	case "get-health":
 		return Result{
 			Label: "postman get-health",
 			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
@@ -67,7 +67,7 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman supervisor-drain",
 			Err:   handlers.SupervisorDrain(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "send", "send-message":
+	case "send":
 		return Result{
 			Label: "postman send",
 			Err:   handlers.SendMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),

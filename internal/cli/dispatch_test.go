@@ -114,39 +114,34 @@ func TestDispatch_BindPreservesArgsAndLabel(t *testing.T) {
 	}
 }
 
-func TestDispatch_SendSupportsCanonicalAndLegacyNames(t *testing.T) {
-	cases := []string{"send", "send-message"}
-	for _, command := range cases {
-		t.Run(command, func(t *testing.T) {
-			var gotArgs []string
+func TestDispatch_SendUsesCanonicalNameOnly(t *testing.T) {
+	var gotArgs []string
 
-			result := Dispatch(
-				command,
-				[]string{"--to", "worker", "--body", "hello"},
-				Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
-				Handlers{
-					SendMessage: func(args []string) error {
-						gotArgs = append([]string(nil), args...)
-						return nil
-					},
-				},
-			)
+	result := Dispatch(
+		"send",
+		[]string{"--to", "worker", "--body", "hello"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			SendMessage: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
 
-			if result.Err != nil {
-				t.Fatalf("Dispatch returned error: %v", result.Err)
-			}
-			if result.Label != "postman send" {
-				t.Fatalf("label = %q, want %q", result.Label, "postman send")
-			}
-			wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker", "--body", "hello"}
-			if !reflect.DeepEqual(gotArgs, wantArgs) {
-				t.Fatalf("send args = %#v, want %#v", gotArgs, wantArgs)
-			}
-		})
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman send" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman send")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker", "--body", "hello"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("send args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
 
-func TestDispatch_HealthCommandsSupportCanonicalAndLegacyNames(t *testing.T) {
+func TestDispatch_HealthCommandsUseCanonicalNamesOnly(t *testing.T) {
 	t.Run("get-health", func(t *testing.T) {
 		var gotArgs []string
 
@@ -175,34 +170,47 @@ func TestDispatch_HealthCommandsSupportCanonicalAndLegacyNames(t *testing.T) {
 	})
 
 	t.Run("get-health-oneline", func(t *testing.T) {
-		cases := []string{"get-health-oneline", "get-session-status-oneline"}
-		for _, command := range cases {
-			t.Run(command, func(t *testing.T) {
-				var gotArgs []string
+		var gotArgs []string
 
-				result := Dispatch(
-					command,
-					[]string{"--json"},
-					Config{},
-					Handlers{
-						GetSessionStatusOneline: func(args []string) error {
-							gotArgs = append([]string(nil), args...)
-							return nil
-						},
-					},
-				)
+		result := Dispatch(
+			"get-health-oneline",
+			[]string{"--json"},
+			Config{},
+			Handlers{
+				GetSessionStatusOneline: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
 
-				if result.Err != nil {
-					t.Fatalf("Dispatch returned error: %v", result.Err)
-				}
-				if result.Label != "postman get-health-oneline" {
-					t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
-				}
-				wantArgs := []string{"--json"}
-				if !reflect.DeepEqual(gotArgs, wantArgs) {
-					t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
-				}
-			})
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-health-oneline" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
+		}
+		wantArgs := []string{"--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
 		}
 	})
+}
+
+func TestDispatch_LegacyDefaultNamesReturnUnknownCommand(t *testing.T) {
+	cases := []string{"send-message", "get-session-health", "get-session-status-oneline"}
+	for _, command := range cases {
+		t.Run(command, func(t *testing.T) {
+			result := Dispatch(command, nil, Config{}, Handlers{})
+			if result.Err == nil {
+				t.Fatal("Dispatch returned nil error for legacy command")
+			}
+			if result.Err.Error() != `unknown command "`+command+`"` {
+				t.Fatalf("error = %q, want %q", result.Err.Error(), `unknown command "`+command+`"`)
+			}
+			if !result.ShowUsage {
+				t.Fatal("ShowUsage = false, want true")
+			}
+		})
+	}
 }

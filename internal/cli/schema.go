@@ -81,7 +81,7 @@ func runSchema(stdout io.Writer, args []string) error {
 		})
 	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)
 	// SYNC: options struct fields; alwaysExcludedParams + perCommandExcludedParams maps
-	case "send", "send-message":
+	case "send":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
 			Title:  "send options",
@@ -126,7 +126,7 @@ func runSchema(stdout io.Writer, args []string) error {
 				"json": {Type: "boolean", Description: "Output JSON: {\"context_id\": \"...\"}"},
 			},
 		})
-	case "get-health-oneline", "get-session-status-oneline":
+	case "get-health-oneline":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
 			Title:  "get-health-oneline options",
@@ -135,7 +135,7 @@ func runSchema(stdout io.Writer, args []string) error {
 				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[0]●●●●\"}"},
 			},
 		})
-	case "get-health", "get-session-health":
+	case "get-health":
 		// Always-JSON command; no --json flag. Schema has no json property.
 		type arrayItems struct {
 			Type       string                    `json:"type"`
