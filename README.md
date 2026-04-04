@@ -182,10 +182,10 @@ All default values are defined in `postman.default.toml` (SSOT).
 ## 5. Running the Daemon
 
 ```sh
-# Start daemon (interactive TUI)
+# Start daemon (interactive single-column TUI)
 tmux-a2a-postman start
 
-# Headless mode (no TUI; for CI or automated environments)
+# Headless mode (no TUI surface; for CI or automated environments)
 tmux-a2a-postman start --no-tui
 
 # Stop daemon

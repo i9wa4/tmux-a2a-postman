@@ -9,7 +9,7 @@ JSON Schema for a command's `--params`-settable options.
 
 | Command                    | Purpose                                              |
 | -------------------------- | ---------------------------------------------------- |
-| `start`                    | Start the postman daemon (interactive TUI)           |
+| `start`                    | Start the postman daemon (interactive single-column TUI) |
 | `stop`                     | Stop the running daemon                              |
 | `send`                     | Compose and send a message in one step               |
 | `pop`                      | Read and archive the next inbox message              |
@@ -37,7 +37,7 @@ The following flags are defined at the root level and apply to all commands:
 
 | Flag            | Type   | Default | Description                                            |
 | --------------- | ------ | ------- | ------------------------------------------------------ |
-| `--no-tui`      | bool   | false   | Run headless (no TUI; for CI or automated environments)|
+| `--no-tui`      | bool   | false   | Run headless (no TUI surface; for CI or automated environments) |
 | `--context-id`  | string | ""      | Override context ID (auto-detected from tmux session)  |
 | `--config`      | string | ""      | Path to config file (auto-detected from XDG_CONFIG_HOME)|
 | `--log-file`    | string | ""      | Path to log file (defaults to state dir log)           |

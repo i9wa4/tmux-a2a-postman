@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,38 +108,58 @@ func TestTUI_View(t *testing.T) {
 	defer close(ch)
 
 	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.generalStatus = "Running"
-	m.nodeCount = 3
-	m.events = []EventEntry{
-		{Message: "Message 1"},
-		{Message: "Message 2"},
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+		{Name: "review", Enabled: true},
 	}
+	m.sessionNodes = map[string][]string{
+		"main":   {"boss", "messenger"},
+		"review": {"critic", "worker"},
+	}
+	m.nodeStates["main:boss"] = "ready"
+	m.nodeStates["main:messenger"] = "ready"
+	m.unreadInboxCounts["review:critic"] = 1
+	m.waitingStates["review:worker"] = "user_input"
 
 	view := m.View().Content
 
-	// Issue #45: Verify new split layout components
-	// Left pane
-	if !strings.Contains(view, "Sessions") {
-		t.Error("view missing left pane Sessions header")
+	if !strings.Contains(view, "tmux-a2a-postman "+version.Version+"   [p:ping] [q:quit]") {
+		t.Fatalf("view missing simplified header: %q", view)
 	}
-
-	// Right pane
-	if !strings.Contains(view, "1:Events") {
-		t.Error("view missing Events tab")
+	if !strings.Contains(view, "[sessions]") {
+		t.Error("view missing [sessions] section")
 	}
-	if !strings.Contains(view, "2:Routing") {
-		t.Error("view missing Routing tab")
+	if !strings.Contains(view, "> [0] main") {
+		t.Error("view missing selected numbered session row")
 	}
-	if !strings.Contains(view, "Recent Events:") {
-		t.Error("view missing Recent Events header")
+	if !strings.Contains(view, "  [1] review") {
+		t.Error("view missing secondary numbered session row")
 	}
-
-	// Verify messages
-	if !strings.Contains(view, "Message 1") {
-		t.Error("view missing Message 1")
+	if !strings.Contains(view, "[nodes]") {
+		t.Error("view missing [nodes] section")
 	}
-	if !strings.Contains(view, "Message 2") {
-		t.Error("view missing Message 2")
+	if !strings.Contains(view, "boss") || !strings.Contains(view, "messenger") {
+		t.Error("view missing selected-session node rows")
+	}
+	if strings.Contains(view, "critic") || strings.Contains(view, "worker") {
+		t.Error("view leaked nodes from an unselected session")
+	}
+	for _, forbidden := range []string{
+		"1:Events",
+		"2:Routing",
+		"Recent Events:",
+		"Routing Edges:",
+		"Legend:",
+		"[space: session on/off]",
+		"[l: layout]",
+		"[g: guard=",
+		"╭",
+		"│",
+		"╰",
+	} {
+		if strings.Contains(view, forbidden) {
+			t.Fatalf("view still contains removed default-surface artifact %q: %q", forbidden, view)
+		}
 	}
 }
 
@@ -170,62 +187,51 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 	}
 }
 
-func TestTUI_Update_LayoutToggle(t *testing.T) {
+func TestTUI_Update_DefaultSurfaceIgnoresRemovedKeys(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	if m.layoutMode {
-		t.Error("initial layoutMode should be false")
+	commands := make(chan TUICommand, 10)
+	m := InitialModel(ch, commands, config.DefaultConfig(), "")
+	m.currentView = ViewRouting
+	m.layoutMode = true
+	m.startupGuardEnabled = true
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+		{Name: "review", Enabled: false},
 	}
-	newModel, _ := m.Update(tea.KeyPressMsg{Text: "l", Code: 'l'})
-	m = newModel.(Model)
+	m.selectedSession = 0
+
+	for _, key := range []tea.KeyPressMsg{
+		{Text: "tab"},
+		{Text: "1", Code: '1'},
+		{Text: "2", Code: '2'},
+		{Text: "j", Code: 'j'},
+		{Text: "k", Code: 'k'},
+		{Text: "g", Code: 'g'},
+		{Text: "l", Code: 'l'},
+		{Text: " ", Code: ' '},
+	} {
+		newModel, cmd := m.Update(key)
+		if cmd != nil {
+			t.Fatalf("Update(%q) returned cmd %v, want nil", key.Text, cmd)
+		}
+		m = newModel.(Model)
+	}
+
+	if m.currentView != ViewRouting {
+		t.Fatalf("currentView = %v, want unchanged %v", m.currentView, ViewRouting)
+	}
 	if !m.layoutMode {
-		t.Error("layoutMode should be true after 'l' key")
+		t.Fatal("layoutMode changed unexpectedly")
 	}
-	newModel, _ = m.Update(tea.KeyPressMsg{Text: "l", Code: 'l'})
-	m = newModel.(Model)
-	if m.layoutMode {
-		t.Error("layoutMode should be false after second 'l' key")
+	if !m.startupGuardEnabled {
+		t.Fatal("startupGuardEnabled changed unexpectedly")
 	}
-}
-
-func TestTUI_View_VerticalLayout(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.layoutMode = true
-	m.sessions = []SessionInfo{
-		{Name: "session-a", Enabled: true},
-		{Name: "session-b", Enabled: true},
+	if m.selectedSession != 0 {
+		t.Fatalf("selectedSession = %d, want unchanged 0", m.selectedSession)
 	}
-	view := m.View().Content
-	if !strings.Contains(view, "session-a") {
-		t.Error("vertical layout missing session-a")
-	}
-	if !strings.Contains(view, "session-b") {
-		t.Error("vertical layout missing session-b")
-	}
-}
-
-func TestTUI_View_VerticalLayout_SessionStatus(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.layoutMode = true
-	m.sessions = []SessionInfo{
-		{Name: "session-a", Enabled: true},
-		{Name: "session-b", Enabled: true},
-	}
-	m.sessionStatus["session-a"] = "Sending ping..."
-	m.sessionStatus["session-b"] = "PING: 7/7 dispatched"
-
-	view := m.View().Content
-
-	if !strings.Contains(view, "Sending ping...") {
-		t.Error("vertical layout missing sessionStatus for session-a")
-	}
-	if !strings.Contains(view, "PING: 7/7 dispatched") {
-		t.Error("vertical layout missing sessionStatus for session-b")
+	if len(commands) != 0 {
+		t.Fatalf("removed keys emitted %d command(s), want 0", len(commands))
 	}
 }
 
@@ -493,44 +499,6 @@ func TestInitialModel_OwnContextID(t *testing.T) {
 	m := InitialModel(ch, nil, cfg, "session-abc")
 	if m.ownContextID != "session-abc" {
 		t.Errorf("ownContextID = %q, want %q", m.ownContextID, "session-abc")
-	}
-}
-
-func TestTUI_SpaceKey_GuardBlocks(t *testing.T) {
-	// Create a temp baseDir that simulates another daemon owning "other-ctx/sess-name"
-	baseDir := t.TempDir()
-	otherCtx := filepath.Join(baseDir, "other-ctx", "sess-name")
-	if err := os.MkdirAll(otherCtx, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	// Write current PID — always alive
-	pidPath := filepath.Join(otherCtx, "postman.pid")
-	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	cfg := config.DefaultConfig()
-	cfg.BaseDir = baseDir
-
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, cfg, "own-ctx")
-	m.startupGuardEnabled = true
-	m.sessions = []SessionInfo{{Name: "sess-name", Enabled: false, NodeCount: 1}}
-	m.selectedSession = 0
-
-	// Simulate space key press (toggle ON)
-	newModel, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-	got := newModel.(Model)
-
-	// Expect: session NOT flipped to enabled
-	if got.sessions[0].Enabled {
-		t.Error("guard failed: session was enabled despite owning daemon in other-ctx")
-	}
-	// Expect: sessionStatus for sess-name contains "already active"
-	if !strings.Contains(got.sessionStatus["sess-name"], "already active") {
-		t.Errorf("expected sessionStatus[%q] with 'already active', got %q", "sess-name", got.sessionStatus["sess-name"])
 	}
 }
 

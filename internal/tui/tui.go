@@ -230,6 +230,27 @@ func (m Model) getSelectedBorderColor() string {
 	return "10" // highlight color (green, matches session selection)
 }
 
+func clampSelectedSession(sessions []SessionInfo, selected int) int {
+	if len(sessions) == 0 {
+		return 0
+	}
+	if selected >= 0 && selected < len(sessions) && sessions[selected].Enabled {
+		return selected
+	}
+	for i, session := range sessions {
+		if session.Enabled {
+			return i
+		}
+	}
+	if selected >= len(sessions) {
+		return len(sessions) - 1
+	}
+	if selected < 0 {
+		return 0
+	}
+	return selected
+}
+
 // getSessionWorstState returns the worst node state for a session (Issue #97).
 // Priority: stuck/stale > spinning/idle > composing > active
 func (m Model) getSessionWorstState(sessionName string) string {
@@ -389,97 +410,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		// Issue #45: Redesigned key bindings
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-
-		// Right pane tab switching (Issue #45)
-		case "tab":
-			switch m.currentView {
-			case ViewEvents:
-				m.currentView = ViewRouting
-			default:
-				m.currentView = ViewEvents
-			}
-			return m, nil
-		case "1":
-			m.currentView = ViewEvents
-			return m, nil
-		case "2":
-			m.currentView = ViewRouting
-			return m, nil
-
-		// Left pane (Sessions) navigation (Issue #45)
-		case "j", "down":
-			if m.selectedSession < len(m.sessions)-1 {
-				m.selectedSession++
-				// Clear edge history when switching sessions
-				if m.tuiCommands != nil {
-					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
-				}
-			}
-			m.lastKey = ""
-			return m, nil
-		case "k", "up":
-			if m.selectedSession > 0 {
-				m.selectedSession--
-				// Clear edge history when switching sessions
-				if m.tuiCommands != nil {
-					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
-				}
-			}
-			m.lastKey = ""
-			return m, nil
-		case "g":
-			// Issue #249: Toggle startup guard (initially disabled at code level).
-			// 'g' key for startup guard toggle.
-			m.startupGuardEnabled = !m.startupGuardEnabled
-			m.lastKey = ""
-			return m, nil
-		case "G":
-			if len(m.sessions) > 0 {
-				m.selectedSession = len(m.sessions) - 1
-				if m.tuiCommands != nil {
-					m.tuiCommands <- TUICommand{Type: "clear_edge_history"}
-				}
-			}
-			m.lastKey = ""
-			return m, nil
-		case "space":
-			// Session toggle via TUICommand
-			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
-				sess := m.sessions[m.selectedSession]
-				// Issue #249: TUI-level guard — block toggle-ON if another daemon owns this session.
-				// Only active when m.startupGuardEnabled (press 'g' to enable guard; default: off).
-				// Early return here skips both the TUICommand send AND the optimistic update at line 482.
-				// TODO: make async via tea.Cmd for network filesystem support
-				if !sess.Enabled && m.startupGuardEnabled && m.config != nil && m.ownContextID != "" {
-					baseDir := config.ResolveBaseDir(m.config.BaseDir)
-					if liveCtx := config.FindSessionOwner(baseDir, sess.Name, m.ownContextID); liveCtx != "" {
-						m.sessionStatus[sess.Name] = fmt.Sprintf("session %q already active in %s (guard=ON blocks enable)", sess.Name, liveCtx)
-						m.lastKey = ""
-						return m, nil
-					}
-				}
-				if m.tuiCommands != nil {
-					m.tuiCommands <- TUICommand{
-						Type:   "session_toggle",
-						Target: sess.Name,
-					}
-				}
-				// Optimistic immediate update to avoid race with file watcher status_update
-				m.sessions[m.selectedSession].Enabled = !sess.Enabled
-			}
-			m.lastKey = ""
-			return m, nil
 		case "p":
-			// Issue #47: Send PING to selected session
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
 				if !sess.Enabled {
-					m.sessionStatus[sess.Name] = fmt.Sprintf("Session %s is OFF — press [Space] to enable", sess.Name)
+					m.sessionStatus[sess.Name] = fmt.Sprintf("Session %s is OFF", sess.Name)
 					return m, nil
 				}
 				m.sessionStatus[sess.Name] = "Sending ping..."
@@ -493,13 +432,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sessionStatus[sess.Name] = "Ping: daemon unavailable"
 				}
 			}
-			return m, nil
-		case "l":
-			// Issue #127: Toggle layout mode
-			m.layoutMode = !m.layoutMode
-			return m, nil
-		case "d":
-			// Issue #230: create-draft removed in #354; 'd' is now a no-op
 			return m, nil
 		}
 
@@ -549,13 +481,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Issue #36: Bug 2 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
 				m.sessions = sessionList
-				// Clamp selection
-				if m.selectedSession >= len(m.sessions) {
-					m.selectedSession = len(m.sessions) - 1
-				}
-				if m.selectedSession < 0 {
-					m.selectedSession = 0
-				}
+				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 			}
 			// Issue #59: Update session-node mapping
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
@@ -577,13 +503,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
 				m.sessions = sessionList
-				// Clamp selection
-				if m.selectedSession >= len(m.sessions) {
-					m.selectedSession = len(m.sessions) - 1
-				}
-				if m.selectedSession < 0 {
-					m.selectedSession = 0
-				}
+				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 			}
 			// Issue #59: Update session-node mapping
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
@@ -873,69 +793,112 @@ func (m Model) resolveSessionFromDetails(details map[string]interface{}) string 
 	return match
 }
 
-// View renders the TUI with left-right split layout (Issue #45).
+func sessionIndicator(state string, enabled bool) string {
+	if !enabled {
+		return "⚫"
+	}
+	switch state {
+	case "pending", "composing", "spinning":
+		return "🟡"
+	case "user_input":
+		return "🟣"
+	case "stale", "stalled", "stuck":
+		return "🔴"
+	default:
+		return "🟢"
+	}
+}
+
+func nodeStateLabel(state string) string {
+	switch state {
+	case "", "ready", "active", "idle":
+		return "ready"
+	case "user_input":
+		return "input"
+	case "stale", "stalled", "stuck":
+		return "stalled"
+	default:
+		return state
+	}
+}
+
+func (m Model) renderSessionsSection() string {
+	var b strings.Builder
+
+	b.WriteString("[sessions]\n")
+	if len(m.sessions) == 0 {
+		b.WriteString("(no sessions)\n")
+		return b.String()
+	}
+
+	nameWidth := 0
+	for _, session := range m.sessions {
+		if len(session.Name) > nameWidth {
+			nameWidth = len(session.Name)
+		}
+	}
+
+	for i, session := range m.sessions {
+		cursor := "  "
+		if i == m.selectedSession {
+			cursor = "> "
+		}
+		worstState := m.getSessionWorstState(session.Name)
+		indicator := sessionIndicator(worstState, session.Enabled)
+		b.WriteString(fmt.Sprintf("%s[%d] %-*s %s\n", cursor, i, nameWidth, session.Name, indicator))
+	}
+
+	return b.String()
+}
+
+func (m Model) renderNodesSection() string {
+	var b strings.Builder
+
+	b.WriteString("[nodes]\n")
+	selectedSession := m.getSelectedSessionName()
+	nodes := m.sessionNodes[selectedSession]
+	if len(nodes) == 0 {
+		b.WriteString("(no nodes)\n")
+		return b.String()
+	}
+
+	nameWidth := 0
+	for _, nodeName := range nodes {
+		if len(nodeName) > nameWidth {
+			nameWidth = len(nodeName)
+		}
+	}
+
+	for _, nodeName := range nodes {
+		stateKey := selectedSession + ":" + nodeName
+		visibleState := m.effectiveNodeState(stateKey)
+		indicator := sessionIndicator(visibleState, true)
+		label := nodeStateLabel(visibleState)
+		b.WriteString(fmt.Sprintf("%-*s  %s  %s\n", nameWidth, nodeName, indicator, label))
+	}
+
+	return b.String()
+}
+
+// View renders the simplified default operator surface for #363.
 func (m Model) View() tea.View {
 	if m.quitting {
 		return tea.View{Content: "Shutting down...\n"}
 	}
 
-	// Minimum size check (Issue #35)
 	if m.width < minWidth || m.height < minHeight {
 		warning := warningStyle.Render(fmt.Sprintf("⚠️  Terminal too small (min: %dx%d, current: %dx%d)", minWidth, minHeight, m.width, m.height))
-		return tea.View{Content: borderStyle.Width(m.width - 2).Render(warning)}
+		return tea.View{Content: warning + "\n"}
 	}
 
-	// Issue #45: Calculate pane widths for split layout
-	totalWidth := m.width - 4 // Account for border + padding
-	leftPaneWidth := 25       // Fixed width for sessions list
-	rightPaneWidth := totalWidth - leftPaneWidth - 1
-	contentHeight := m.height - 5 // Account for border + padding + header line
+	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 
-	// Header line: application title + version (Issue #149)
-	headerLine := lipgloss.NewStyle().Width(m.width - 4).Render("tmux-a2a-postman " + version.Version)
-
-	// Issue #127: Branch on layout mode
-	var mainContent string
-	if m.layoutMode {
-		mainContent = m.renderVerticalLayout(m.width-4, contentHeight)
-	} else {
-		// Render left and right panes
-		leftPane := m.renderLeftPane(leftPaneWidth, contentHeight)
-		rightPane := m.renderRightPane(rightPaneWidth, contentHeight)
-
-		// Create vertical separator with exact height
-		// NOTE: lipgloss.JoinHorizontal requires all inputs to have the same line count.
-		// Use lipgloss.Place to ensure separator matches contentHeight exactly.
-		separator := lipgloss.Place(
-			1,             // width: 1 character
-			contentHeight, // height: match content
-			lipgloss.Left, // horizontal alignment
-			lipgloss.Top,  // vertical alignment
-			strings.Repeat("│\n", contentHeight-1)+"│", // contentHeight lines without trailing newline
-		)
-
-		// Ensure leftPane and rightPane are exact height using lipgloss.PlaceVertical
-		leftPaneStyled := lipgloss.NewStyle().
-			Width(leftPaneWidth).
-			Height(contentHeight).
-			Render(leftPane)
-		rightPaneStyled := lipgloss.NewStyle().
-			Width(rightPaneWidth).
-			Height(contentHeight).
-			Render(rightPane)
-
-		// Horizontal split using lipgloss with separator
-		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, leftPaneStyled, separator, rightPaneStyled)
-	}
-
-	content := lipgloss.JoinVertical(lipgloss.Top, headerLine, mainContent)
-
-	// Apply border (Issue #35)
-	// Issue #59: Dynamic border color based on selection
-	localBorderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(m.getSelectedBorderColor()))
-	return tea.View{Content: localBorderStyle.Width(m.width - 2).Height(m.height - 2).Render(content)}
+	var b strings.Builder
+	b.WriteString("tmux-a2a-postman " + version.Version + "   [p:ping] [q:quit]\n\n")
+	b.WriteString(m.renderSessionsSection())
+	b.WriteString("\n")
+	b.WriteString(m.renderNodesSection())
+	return tea.View{Content: b.String()}
 }
 
 // renderLeftPane renders the left pane (Sessions list).

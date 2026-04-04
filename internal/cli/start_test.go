@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +125,52 @@ func writeWatcherConfigFixture(t *testing.T, path string) {
 	}
 	if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "nodes"), 0o755); err != nil {
 		t.Fatalf("MkdirAll nodes dir: %v", err)
+	}
+}
+
+func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "state")
+	contextID := "20260404-ctx"
+	sessionName := "main"
+
+	configPath := filepath.Join(root, "postman.toml")
+	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
+		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	pidDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pidDir): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2 $3 $4 $5\" = \"display-message -t %11 -p #{session_name}\" ]; then\n" +
+		"  printf '%s\\n' '" + sessionName + "'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Setenv("POSTMAN_HOME", baseDir)
+	t.Setenv("TMUX_PANE", "%11")
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := RunStartWithFlags(contextID, configPath, "", true)
+	if err == nil {
+		t.Fatal("RunStartWithFlags() error = nil, want duplicate-daemon rejection")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("RunStartWithFlags() error = %q, want duplicate-daemon wording", err)
 	}
 }
