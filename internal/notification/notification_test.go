@@ -121,6 +121,36 @@ func TestBuildNotification(t *testing.T) {
 	}
 }
 
+func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
+	cfg := &config.Config{
+		NotificationTemplate: "Reply: {reply_command}",
+		TmuxTimeout:          5.0,
+		ReplyCommand:         "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\"",
+	}
+
+	notification := BuildNotification(
+		cfg,
+		map[string][]string{},
+		map[string]discovery.NodeInfo{},
+		"ctx-notify",
+		"worker",
+		"orchestrator",
+		"test",
+		"/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md",
+		nil,
+	)
+
+	if strings.Contains(notification, "send-message") {
+		t.Fatalf("notification still contains legacy send-message: %q", notification)
+	}
+	if strings.Contains(notification, "<recipient>") {
+		t.Fatalf("notification still contains recipient placeholder: %q", notification)
+	}
+	if !strings.Contains(notification, "send --context-id ctx-notify --to worker") {
+		t.Fatalf("notification missing concrete reply target: %q", notification)
+	}
+}
+
 // TestBuildNotification_LivenessFiltering tests Issue #84 - talks_to_line filtering
 func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	cfg := &config.Config{

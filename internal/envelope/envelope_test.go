@@ -265,3 +265,32 @@ func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
 		t.Fatalf("daemon envelope self-targeted ui node: %q", result)
 	}
 }
+
+func TestRenderReplyCommand_DoesNotRewriteWrapperNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "bare wrapper name",
+			command: "send-message-wrapper --to <recipient>",
+		},
+		{
+			name:    "absolute wrapper path",
+			command: "/usr/local/bin/send-message-wrapper --to <recipient>",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RenderReplyCommand(tc.command, "ctx-wrapper", "worker")
+
+			if got != tc.command {
+				t.Fatalf("RenderReplyCommand() = %q, want wrapper command unchanged %q", got, tc.command)
+			}
+			if strings.Contains(got, "--context-id") {
+				t.Fatalf("RenderReplyCommand() unexpectedly injected context into wrapper command: %q", got)
+			}
+		})
+	}
+}

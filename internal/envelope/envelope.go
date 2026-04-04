@@ -40,7 +40,7 @@ func BuildEnvelope(
 	if cfg != nil {
 		allowShell = cfg.AllowShellTemplates
 	}
-	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, allowShell)
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, allowShell, true)
 }
 
 func BuildNotificationEnvelope(
@@ -56,7 +56,7 @@ func BuildNotificationEnvelope(
 	sourceSessionName string,
 	livenessMap map[string]bool,
 ) string {
-	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForNotificationTemplate())
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForNotificationTemplate(), true)
 }
 
 func BuildDaemonEnvelope(
@@ -72,7 +72,7 @@ func BuildDaemonEnvelope(
 	sourceSessionName string,
 	livenessMap map[string]bool,
 ) string {
-	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForDaemonMessageTemplate())
+	return buildEnvelope(cfg, tmpl, recipient, sender, contextID, filename, activeNodes, adjacency, nodes, sourceSessionName, livenessMap, cfg.AllowShellForDaemonMessageTemplate(), false)
 }
 
 func buildEnvelope(
@@ -88,6 +88,7 @@ func buildEnvelope(
 	sourceSessionName string,
 	livenessMap map[string]bool,
 	allowShell bool,
+	expandRecipientPlaceholder bool,
 ) string {
 	recipientSimple := nodeaddr.Simple(recipient)
 	senderSimple := nodeaddr.Simple(sender)
@@ -144,6 +145,9 @@ func buildEnvelope(
 	}
 
 	replyCmd := RenderReplyCommand(cfg.ReplyCommand, contextID, recipientSimple)
+	if expandRecipientPlaceholder {
+		replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", recipientSimple)
+	}
 
 	// Resolve recipient session directory for inbox_path and session_dir.
 	sessionDir := ""
@@ -204,13 +208,8 @@ func buildEnvelope(
 // RenderReplyCommand normalizes the configured reply command and expands the
 // placeholders used by envelope, daemon alerts, and draft templates.
 func RenderReplyCommand(replyCmd, contextID, recipient string) string {
-	replyCmd = legacySendMessageRe.ReplaceAllString(replyCmd, "send")
+	replyCmd = legacySendMessageTokenRe.ReplaceAllString(replyCmd, "${1}send${2}")
 	fields := strings.Fields(replyCmd)
-	for i, field := range fields {
-		if field == "send-message" {
-			fields[i] = "send"
-		}
-	}
 	if containsToken(fields, "send") && !strings.Contains(replyCmd, "--context-id") {
 		if strings.Contains(replyCmd, "--to") {
 			replyCmd = strings.Replace(replyCmd, "--to", fmt.Sprintf("--context-id %s --to", contextID), 1)
@@ -223,7 +222,7 @@ func RenderReplyCommand(replyCmd, contextID, recipient string) string {
 	return replyCmd
 }
 
-var legacySendMessageRe = regexp.MustCompile(`\bsend-message\b`)
+var legacySendMessageTokenRe = regexp.MustCompile(`(^|[[:space:]])send-message([[:space:]]|$)`)
 
 func containsToken(fields []string, want string) bool {
 	for _, field := range fields {

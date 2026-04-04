@@ -148,6 +148,40 @@ func TestSendPingToNode(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+
+	cfg := &config.Config{
+		TmuxTimeout:  5.0,
+		ReplyCommand: "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\"",
+	}
+
+	if err := SendPingToNode(nodeInfo, "ctx-ping", "worker", "Reply: {reply_command}", cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	_, body := readSingleInboxMessage(t, sessionDir, "worker")
+	if strings.Contains(body, "send-message") {
+		t.Fatalf("ping content still contains legacy send-message: %q", body)
+	}
+	if strings.Contains(body, "<recipient>") {
+		t.Fatalf("ping content still contains recipient placeholder: %q", body)
+	}
+	if !strings.Contains(body, "send --context-id ctx-ping --to worker") {
+		t.Fatalf("ping content missing concrete reply target: %q", body)
+	}
+}
+
 func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "review-session")
