@@ -60,7 +60,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "Additional tools:")
 		fmt.Fprintln(stdout, "  read                       Inspect inbox, archived, or dead-letter messages")
 		fmt.Fprintln(stdout, "  supervisor-drain           Drain supervisor dead-letters after rollback")
-		fmt.Fprintln(stdout, "  schema [command]           Print JSON Schema for config or command options")
+		fmt.Fprintln(stdout, "  schema [command]           Print JSON Schema for config or supported command surfaces")
 		fmt.Fprintln(stdout, "  help [topic]               Show help (topics: messaging, directories, config, commands)")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Messaging Protocol:")

@@ -182,3 +182,38 @@ func TestBuildEnvelope_NormalizesLegacyReplyCommandToSend(t *testing.T) {
 		t.Fatalf("reply_command = %q, want %q", result, want)
 	}
 }
+
+func TestBuildEnvelope_InjectsContextIDForBareReplySendCommands(t *testing.T) {
+	tests := []struct {
+		name         string
+		replyCommand string
+	}{
+		{
+			name:         "bare legacy send-message",
+			replyCommand: "send-message --to orchestrator",
+		},
+		{
+			name:         "bare canonical send",
+			replyCommand: "send --to orchestrator",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				TmuxTimeout:  5.0,
+				ReplyCommand: tc.replyCommand,
+			}
+
+			result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-456", "/session/post/file.md", nil, map[string][]string{}, map[string]discovery.NodeInfo{}, "", map[string]bool{})
+
+			if strings.Contains(result, "send-message") {
+				t.Fatalf("reply_command still contains legacy send-message: %q", result)
+			}
+			want := "send --context-id ctx-456 --to orchestrator"
+			if result != want {
+				t.Fatalf("reply_command = %q, want %q", result, want)
+			}
+		})
+	}
+}

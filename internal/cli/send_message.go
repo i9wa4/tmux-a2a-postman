@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
@@ -205,7 +206,7 @@ func RunSendMessage(args []string) error {
 		"timestamp":      now.Format(time.RFC3339),
 		"can_talk_to":    canTalkTo,
 		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":  expandReplyCommand(cfg.ReplyCommand, resolvedContextID),
+		"reply_command":  envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to),
 		"template":       getNodeTemplate(cfg, *to),
 		"session_name":   sessionName,
 		"sender_pane_id": config.GetTmuxPaneID(),
@@ -255,11 +256,6 @@ func RunSendMessage(args []string) error {
 	}
 	fmt.Printf("Sent: %s\n", filename)
 	return nil
-}
-
-// expandReplyCommand substitutes {context_id} in the reply command template
-func expandReplyCommand(replyCmd string, contextID string) string {
-	return strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

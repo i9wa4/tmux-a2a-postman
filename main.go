@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/bindcmd"
@@ -59,40 +60,7 @@ func main() {
 	globalStateHome := fs.String("state-home", "", "override XDG_STATE_HOME")
 
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: tmux-a2a-postman [options] [command]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Options:")
-		cliutil.PrintDoubleDashDefaults(fs)
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Default operator surface:")
-		fmt.Fprintln(os.Stderr, "  send                       Send a message in one step (--to and --body required)")
-		fmt.Fprintln(os.Stderr, "  pop                        Read and archive the oldest unread inbox message")
-		fmt.Fprintln(os.Stderr, "  bind                       Manage sidecar bindings")
-		fmt.Fprintln(os.Stderr, "  get-health                 Print the canonical JSON session-health payload")
-		fmt.Fprintln(os.Stderr, "  get-health-oneline         Print a one-line formatter over get-health")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Lifecycle and recovery:")
-		fmt.Fprintln(os.Stderr, "  start                      Start tmux-a2a-postman daemon (default)")
-		fmt.Fprintln(os.Stderr, "  stop                       Stop the running daemon for this tmux session")
-		fmt.Fprintln(os.Stderr, "  get-context-id             Print live context ID for current tmux session")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Additional tools:")
-		fmt.Fprintln(os.Stderr, "  read                       List inbox messages or access archived/dead-letter messages")
-		fmt.Fprintln(os.Stderr, "  supervisor-drain           Phase 3→2 rollback: annotate pending records and drain supervisor dead-letters")
-		fmt.Fprintln(os.Stderr, "  schema [command]           Print JSON Schema for config or command options")
-		fmt.Fprintln(os.Stderr, "  help [topic]               Show help overview or topic-based help")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Global Flags:")
-		fmt.Fprintln(os.Stderr, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
-		fmt.Fprintln(os.Stderr, "  --state-home <path>        Override XDG_STATE_HOME")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman start                               # Start daemon")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman schema send                         # Show send JSON Schema")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman --base-dir /tmp/test read           # Override state directory")
-		fmt.Fprintln(os.Stderr, "  tmux-a2a-postman help messaging                      # Messaging guide")
+		printUsage(os.Stderr, fs)
 	}
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -165,4 +133,41 @@ func main() {
 	if result.ShowUsage {
 		fs.Usage()
 	}
+}
+
+func printUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprintln(w, "Usage: tmux-a2a-postman [options] [command]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Options:")
+	cliutil.PrintDoubleDashDefaults(fs)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Default operator surface:")
+	fmt.Fprintln(w, "  send                       Send a message in one step (--to and --body required)")
+	fmt.Fprintln(w, "  pop                        Read and archive the oldest unread inbox message")
+	fmt.Fprintln(w, "  bind                       Manage sidecar bindings")
+	fmt.Fprintln(w, "  get-health                 Print the canonical JSON session-health payload")
+	fmt.Fprintln(w, "  get-health-oneline         Print a one-line formatter over get-health")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Lifecycle and recovery:")
+	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon (default)")
+	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
+	fmt.Fprintln(w, "  get-context-id             Print live context ID for current tmux session")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Additional tools:")
+	fmt.Fprintln(w, "  read                       List inbox messages or access archived/dead-letter messages")
+	fmt.Fprintln(w, "  supervisor-drain           Phase 3→2 rollback: annotate pending records and drain supervisor dead-letters")
+	fmt.Fprintln(w, "  schema [command]           Print JSON Schema for config or supported command surfaces")
+	fmt.Fprintln(w, "  help [topic]               Show help overview or topic-based help")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Global Flags:")
+	fmt.Fprintln(w, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
+	fmt.Fprintln(w, "  --state-home <path>        Override XDG_STATE_HOME")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")
+	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
+	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
+	fmt.Fprintln(w, "  tmux-a2a-postman schema send                         # Show send JSON Schema")
+	fmt.Fprintln(w, "  tmux-a2a-postman --base-dir /tmp/test read           # Override state directory")
+	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")
 }

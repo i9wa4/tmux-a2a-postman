@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"strings"
 	"testing"
 
@@ -169,5 +171,19 @@ func TestFilterToUINode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
+	var stderr bytes.Buffer
+	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
+
+	printUsage(&stderr, fs)
+
+	if !strings.Contains(stderr.String(), "Print JSON Schema for config or supported command surfaces") {
+		t.Fatalf("usage missing neutral schema description: %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Print JSON Schema for config or command options") {
+		t.Fatalf("usage still contains stale schema wording: %q", stderr.String())
 	}
 }

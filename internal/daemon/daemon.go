@@ -1437,8 +1437,7 @@ func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Confi
 		// Build action text
 		var replyCmd string
 		if cfg.ReplyCommand != "" {
-			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
 		} else {
 			replyCmd = fmt.Sprintf(
 				"nix run github:i9wa4/tmux-a2a-postman -- send --context-id %s --to %s --body \"<your reply>\"",
@@ -1595,8 +1594,7 @@ func checkNodeInactivity(nodes map[string]discovery.NodeInfo, cfg *config.Config
 
 		var replyCmd string
 		if cfg.ReplyCommand != "" {
-			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
 		} else {
 			replyCmd = fmt.Sprintf(
 				"nix run github:i9wa4/tmux-a2a-postman -- send --context-id %s --to %s --body \"<your reply>\"",
@@ -1741,8 +1739,7 @@ func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Con
 
 		var replyCmd string
 		if cfg.ReplyCommand != "" {
-			replyCmd = strings.ReplaceAll(cfg.ReplyCommand, "{context_id}", contextID)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
+			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
 		} else {
 			replyCmd = fmt.Sprintf(
 				"nix run github:i9wa4/tmux-a2a-postman -- send --context-id %s --to %s --body \"<your reply>\"",

@@ -119,3 +119,54 @@ func TestRunSendMessage_IdempotencyKeyFlagAccepted(t *testing.T) {
 		t.Errorf("--idempotency-key not defined in RunSendMessage: %v", err)
 	}
 }
+
+func TestRunSendMessage_DraftTemplateNormalizesLegacyReplyCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+reply_command = "send-message --to <recipient>"
+draft_template = "{reply_command}"
+message_footer = ""
+edges = ["orchestrator -- worker"]
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-draft-reply",
+		"--to", "worker",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-draft-reply", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+
+	draftPath := filepath.Join(postDir, entries[0].Name())
+	draftContent, err := os.ReadFile(draftPath)
+	if err != nil {
+		t.Fatalf("ReadFile draft: %v", err)
+	}
+	if strings.Contains(string(draftContent), "send-message") {
+		t.Fatalf("draft content still contains legacy send-message: %q", string(draftContent))
+	}
+	if !strings.Contains(string(draftContent), "send --context-id ctx-draft-reply --to worker") {
+		t.Fatalf("draft content missing normalized reply command: %q", string(draftContent))
+	}
+}

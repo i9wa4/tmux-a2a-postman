@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
@@ -477,5 +479,67 @@ func TestScanLiveInboxCounts_CountsUnreadInboxMarkdownFiles(t *testing.T) {
 
 	if got := counts["review:worker"]; got != 2 {
 		t.Fatalf("scanLiveInboxCounts review:worker = %d, want 2", got)
+	}
+}
+
+func TestCheckInboxStagnation_NormalizesLegacyReplyCommandInAlertText(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "ctx-alert", "review")
+	workerInbox := filepath.Join(sessionDir, "inbox", "worker")
+	postDir := filepath.Join(sessionDir, "post")
+	if err := os.MkdirAll(workerInbox, 0o700); err != nil {
+		t.Fatalf("MkdirAll worker inbox: %v", err)
+	}
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll post: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerInbox, "20260404-120000-from-orchestrator-to-worker.md"), []byte("msg"), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox message: %v", err)
+	}
+
+	cfg := &config.Config{
+		UINode:                          "messenger",
+		InboxUnreadThreshold:            1,
+		InboxUnreadSummaryAlertTemplate: "Unread {count}",
+		AlertActionReachableTemplate:    "\nReply: {reply_command}",
+		DaemonMessageTemplate:           "{message}",
+		ReplyCommand:                    "send-message --to <recipient>",
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			SessionDir:  sessionDir,
+			SessionName: "review",
+		},
+	}
+
+	checkInboxStagnation(
+		nodes,
+		cfg,
+		make(chan tui.DaemonEvent, 2),
+		sessionDir,
+		"ctx-alert",
+		map[string][]string{"messenger": {"worker"}},
+		idle.NewIdleTracker(),
+		alert.NewAlertRateLimiter(0),
+		NewDaemonState(0, "ctx-alert"),
+	)
+
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+
+	alertPath := filepath.Join(postDir, entries[0].Name())
+	alertContent, err := os.ReadFile(alertPath)
+	if err != nil {
+		t.Fatalf("ReadFile alert: %v", err)
+	}
+	if strings.Contains(string(alertContent), "send-message") {
+		t.Fatalf("alert text still contains legacy send-message: %q", string(alertContent))
+	}
+	if !strings.Contains(string(alertContent), "send --context-id ctx-alert --to worker") {
+		t.Fatalf("alert text missing normalized reply command: %q", string(alertContent))
 	}
 }
