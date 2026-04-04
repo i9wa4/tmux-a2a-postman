@@ -95,3 +95,26 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 		t.Fatalf("view unexpectedly fell back to legacy composing state: %q", view)
 	}
 }
+
+func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "review", Enabled: true},
+	}
+	m.sessionHealth["review"] = status.SessionHealth{
+		SessionName:  "review",
+		VisibleState: "unavailable",
+	}
+
+	view := m.View().Content
+
+	if !strings.Contains(view, "> [0] review ⚪") {
+		t.Fatalf("view missing unavailable session indicator: %q", view)
+	}
+	if !strings.Contains(view, "(session unavailable)") {
+		t.Fatalf("view missing unavailable session text: %q", view)
+	}
+}

@@ -838,6 +838,8 @@ func sessionIndicator(state string, enabled bool) string {
 		return "⚫"
 	}
 	switch state {
+	case "unavailable", "unowned":
+		return "⚪"
 	case "pending":
 		return "🔷"
 	case "composing":
@@ -853,12 +855,19 @@ func sessionIndicator(state string, enabled bool) string {
 	}
 }
 
+func sessionHealthUnavailable(health status.SessionHealth) bool {
+	return health.VisibleState == "unavailable" || health.VisibleState == "unowned"
+}
+
 func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	if !session.Enabled {
 		return "⚫"
 	}
 	health, ok := m.sessionHealthFor(session.Name)
 	if !ok {
+		return "⚪"
+	}
+	if sessionHealthUnavailable(health) {
 		return "⚪"
 	}
 	state := health.VisibleState
@@ -922,6 +931,9 @@ func (m Model) renderNodesSection() string {
 		return b.String()
 	}
 	if health, ok := m.sessionHealthFor(selectedSession); ok {
+		if sessionHealthUnavailable(health) {
+			return b.String() + "(session unavailable)\n"
+		}
 		return b.String() + m.renderNodesSectionFromHealth(health)
 	}
 	b.WriteString("(loading canonical health)\n")

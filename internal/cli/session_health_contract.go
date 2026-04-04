@@ -31,6 +31,10 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 		ContextID:   contextID,
 		SessionName: sessionName,
 	}
+	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
+		result.VisibleState = "unavailable"
+		return result, nil
+	}
 
 	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 	if err != nil {
@@ -84,6 +88,10 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Windows = buildSessionWindows(result.Nodes, panes)
 	return result, nil
+}
+
+func ownsCanonicalSessionHealth(baseDir, contextID, sessionName string) bool {
+	return config.FindSessionOwner(baseDir, sessionName, contextID) == ""
 }
 
 func loadPaneActivityStatus(stateFile string) map[string]string {
