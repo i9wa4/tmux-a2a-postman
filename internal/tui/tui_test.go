@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
@@ -116,10 +117,40 @@ func TestTUI_View(t *testing.T) {
 		"main":   {"boss", "messenger"},
 		"review": {"critic", "worker"},
 	}
-	m.nodeStates["main:boss"] = "ready"
-	m.nodeStates["main:messenger"] = "ready"
-	m.unreadInboxCounts["review:critic"] = 1
-	m.waitingStates["review:worker"] = "user_input"
+	m.sessionHealth["main"] = status.SessionHealth{
+		SessionName:  "main",
+		VisibleState: "ready",
+		Nodes: []status.NodeHealth{
+			{Name: "boss", VisibleState: "ready"},
+			{Name: "messenger", VisibleState: "ready"},
+		},
+		Windows: []status.SessionWindow{
+			{
+				Index: "0",
+				Nodes: []status.WindowNode{
+					{Name: "boss"},
+					{Name: "messenger"},
+				},
+			},
+		},
+	}
+	m.sessionHealth["review"] = status.SessionHealth{
+		SessionName:  "review",
+		VisibleState: "user_input",
+		Nodes: []status.NodeHealth{
+			{Name: "critic", VisibleState: "pending"},
+			{Name: "worker", VisibleState: "user_input"},
+		},
+		Windows: []status.SessionWindow{
+			{
+				Index: "0",
+				Nodes: []status.WindowNode{
+					{Name: "critic"},
+					{Name: "worker"},
+				},
+			},
+		},
+	}
 
 	view := m.View().Content
 

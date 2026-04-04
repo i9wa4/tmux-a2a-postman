@@ -181,6 +181,7 @@ type Model struct {
 	sessions        []SessionInfo
 	selectedSession int
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
+	sessionHealth   map[string]status.SessionHealth
 
 	// Node state tracking (Issue #55)
 	nodeStates        map[string]string // "active" / "idle" / "stale"
@@ -251,9 +252,41 @@ func clampSelectedSession(sessions []SessionInfo, selected int) int {
 	return selected
 }
 
+func (m *Model) pruneSessionHealth() {
+	if len(m.sessionHealth) == 0 {
+		return
+	}
+	liveSessions := make(map[string]struct{}, len(m.sessions))
+	for _, session := range m.sessions {
+		liveSessions[session.Name] = struct{}{}
+	}
+	for sessionName := range m.sessionHealth {
+		if _, ok := liveSessions[sessionName]; !ok {
+			delete(m.sessionHealth, sessionName)
+		}
+	}
+}
+
+func (m Model) sessionHealthFor(sessionName string) (status.SessionHealth, bool) {
+	if sessionName == "" {
+		return status.SessionHealth{}, false
+	}
+	health, ok := m.sessionHealth[sessionName]
+	return health, ok
+}
+
 // getSessionWorstState returns the worst node state for a session (Issue #97).
 // Priority: stuck/stale > spinning/idle > composing > active
 func (m Model) getSessionWorstState(sessionName string) string {
+	if health, ok := m.sessionHealthFor(sessionName); ok {
+		if health.VisibleState != "" {
+			return health.VisibleState
+		}
+		if len(health.Nodes) == 0 {
+			return "ready"
+		}
+		return status.SessionVisibleState(health.Nodes)
+	}
 	nodes, ok := m.sessionNodes[sessionName]
 	if !ok {
 		return "active"
@@ -365,7 +398,8 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessions:            []SessionInfo{},           // Issue #35: Requirement 3
 		selectedSession:     0,                         // Issue #35: Requirement 3
 		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
-		nodeStates:          make(map[string]string),   // Issue #55: Node state tracking
+		sessionHealth:       make(map[string]status.SessionHealth),
+		nodeStates:          make(map[string]string), // Issue #55: Node state tracking
 		waitingStates:       make(map[string]string),
 		unreadInboxCounts:   make(map[string]int),
 		config:              cfg,
@@ -482,6 +516,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
 				m.sessions = sessionList
 				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
+				m.pruneSessionHealth()
 			}
 			// Issue #59: Update session-node mapping
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
@@ -504,10 +539,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
 				m.sessions = sessionList
 				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
+				m.pruneSessionHealth()
 			}
 			// Issue #59: Update session-node mapping
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
+			}
+		case "session_health_update":
+			if health, ok := msg.Details["health"].(status.SessionHealth); ok && health.SessionName != "" {
+				m.sessionHealth[health.SessionName] = health
 			}
 		case "edge_update":
 			// Issue #40: Update edges from edge_update event
@@ -798,7 +838,11 @@ func sessionIndicator(state string, enabled bool) string {
 		return "⚫"
 	}
 	switch state {
-	case "pending", "composing", "spinning":
+	case "pending":
+		return "🔷"
+	case "composing":
+		return "🔵"
+	case "spinning":
 		return "🟡"
 	case "user_input":
 		return "🟣"
@@ -807,6 +851,24 @@ func sessionIndicator(state string, enabled bool) string {
 	default:
 		return "🟢"
 	}
+}
+
+func (m Model) defaultSessionIndicator(session SessionInfo) string {
+	if !session.Enabled {
+		return "⚫"
+	}
+	health, ok := m.sessionHealthFor(session.Name)
+	if !ok {
+		return "⚪"
+	}
+	state := health.VisibleState
+	if state == "" {
+		state = status.SessionVisibleState(health.Nodes)
+	}
+	if state == "" {
+		return "⚪"
+	}
+	return sessionIndicator(state, true)
 }
 
 func nodeStateLabel(state string) string {
@@ -843,8 +905,7 @@ func (m Model) renderSessionsSection() string {
 		if i == m.selectedSession {
 			cursor = "> "
 		}
-		worstState := m.getSessionWorstState(session.Name)
-		indicator := sessionIndicator(worstState, session.Enabled)
+		indicator := m.defaultSessionIndicator(session)
 		b.WriteString(fmt.Sprintf("%s[%d] %-*s %s\n", cursor, i, nameWidth, session.Name, indicator))
 	}
 
@@ -856,22 +917,68 @@ func (m Model) renderNodesSection() string {
 
 	b.WriteString("[nodes]\n")
 	selectedSession := m.getSelectedSessionName()
-	nodes := m.sessionNodes[selectedSession]
-	if len(nodes) == 0 {
+	if selectedSession == "" {
 		b.WriteString("(no nodes)\n")
 		return b.String()
 	}
+	if health, ok := m.sessionHealthFor(selectedSession); ok {
+		return b.String() + m.renderNodesSectionFromHealth(health)
+	}
+	b.WriteString("(loading canonical health)\n")
+	return b.String()
+}
+
+func visibleStateLabel(node status.NodeHealth) string {
+	if node.VisibleState != "" {
+		return node.VisibleState
+	}
+	return status.VisibleState(node.PaneState, node.WaitingState, node.InboxCount)
+}
+
+func orderedHealthNodeNames(health status.SessionHealth) []string {
+	seen := make(map[string]struct{}, len(health.Nodes))
+	var ordered []string
+	for _, window := range health.Windows {
+		for _, windowNode := range window.Nodes {
+			if _, ok := seen[windowNode.Name]; ok {
+				continue
+			}
+			seen[windowNode.Name] = struct{}{}
+			ordered = append(ordered, windowNode.Name)
+		}
+	}
+	for _, node := range health.Nodes {
+		if _, ok := seen[node.Name]; ok {
+			continue
+		}
+		seen[node.Name] = struct{}{}
+		ordered = append(ordered, node.Name)
+	}
+	return ordered
+}
+
+func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string {
+	nodeByName := make(map[string]status.NodeHealth, len(health.Nodes))
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+
+	nodeNames := orderedHealthNodeNames(health)
+	if len(nodeNames) == 0 {
+		return "(no nodes)\n"
+	}
 
 	nameWidth := 0
-	for _, nodeName := range nodes {
+	for _, nodeName := range nodeNames {
 		if len(nodeName) > nameWidth {
 			nameWidth = len(nodeName)
 		}
 	}
 
-	for _, nodeName := range nodes {
-		stateKey := selectedSession + ":" + nodeName
-		visibleState := m.effectiveNodeState(stateKey)
+	var b strings.Builder
+	for _, nodeName := range nodeNames {
+		node := nodeByName[nodeName]
+		visibleState := visibleStateLabel(node)
 		indicator := sessionIndicator(visibleState, true)
 		label := nodeStateLabel(visibleState)
 		b.WriteString(fmt.Sprintf("%-*s  %s  %s\n", nameWidth, nodeName, indicator, label))

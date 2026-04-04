@@ -724,23 +724,9 @@ func RunDaemonLoop(
 							// Skip files moved to read/ by daemon (To == "postman").
 							// Skip daemon-originated files.
 							if info.To != "postman" && info.To != "daemon" {
-								// Liveness confirmed: node archived a message, proving it is alive.
 								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 								sourceSessionName := filepath.Base(sourceSessionDir)
 								prefixedKey := sourceSessionName + ":" + info.To
-								idleTracker.MarkNodeAlive(prefixedKey)
-								events <- tui.DaemonEvent{
-									Type: "node_alive",
-									Details: map[string]interface{}{
-										"node":   prefixedKey,
-										"source": "read_move",
-									},
-								}
-								// Count actual reads toward reminder threshold (#244).
-								// Only count human-authored messages (not daemon/postman alerts).
-								if reminderShouldIncrement(info.From) {
-									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
-								}
 								// Create waiting file only for explicit reply-tracked reads or ui_node prompts.
 								if info.From != "postman" && info.From != "daemon" {
 									waitingDir := filepath.Join(sourceSessionDir, "waiting")
@@ -753,6 +739,22 @@ func RunDaemonLoop(
 											log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
 										}
 									}
+								}
+								// Liveness confirmed: node archived a message, proving it is alive.
+								// Emit after waiting-file creation so the default TUI refresh sees the
+								// canonical post-read snapshot immediately.
+								idleTracker.MarkNodeAlive(prefixedKey)
+								events <- tui.DaemonEvent{
+									Type: "node_alive",
+									Details: map[string]interface{}{
+										"node":   prefixedKey,
+										"source": "read_move",
+									},
+								}
+								// Count actual reads toward reminder threshold (#244).
+								// Only count human-authored messages (not daemon/postman alerts).
+								if reminderShouldIncrement(info.From) {
+									reminderState.Increment(info.To, sourceSessionName, nodes, cfg)
 								}
 							}
 						}

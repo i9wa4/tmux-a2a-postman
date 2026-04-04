@@ -377,6 +377,13 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
+	tuiEvents := daemonEvents
+	if !noTUI {
+		tuiEvents = make(chan tui.DaemonEvent, 200)
+		safeGo("tui-health-relay", nil, func() {
+			relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
+		})
+	}
 	safeGo("daemon-loop", daemonEvents, func() {
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, watchedConfigPaths, watchedNodesDirs, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
 	})
@@ -703,7 +710,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			}
 		})
 
-		p := tea.NewProgram(tui.InitialModel(daemonEvents, tuiCommands, cfg, contextID))
+		p := tea.NewProgram(tui.InitialModel(tuiEvents, tuiCommands, cfg, contextID))
 		finalModel, err := p.Run()
 		if err != nil {
 			log.Printf("postman: TUI exited with error: %v\n", err)
