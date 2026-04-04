@@ -11,18 +11,20 @@ daemon to reside in the same tmux session as the agent nodes it serves.
 
 ### 2. Multiple Daemons Allowed
 
-Multiple daemons may run simultaneously. Startup rejects only a duplicate
-daemon for the same `contextID` and tmux session; daemons in other contexts or
-other tmux sessions remain allowed. The system places no hard limit on the
-number of running daemon processes.
+Multiple daemons may run simultaneously, but startup is still serialized per
+tmux session name. The start path first rejects a duplicate daemon for the
+same `contextID` plus tmux session via `postman.pid`, then acquires a
+tmux-session-wide lock, so two contexts cannot start daemons against the same
+tmux session at the same time. Daemons in other tmux sessions remain allowed.
 
 ### 3. Exclusive Session Ownership
 
 Only ONE daemon may have a given tmux session set to ON at a time. This
-constraint is not a global startup ban across all daemons. Instead, the daemon
-blocks later ownership collisions when a session is enabled, so only one live
-daemon may actively own a given tmux session at a time. The simplified default
-TUI no longer serves as the ownership-transfer control surface.
+constraint is not just a later enable-time guard. The session-wide startup lock
+is an additional same-session guard, and later ownership checks still block
+collisions when a session is enabled, so only one live daemon may actively own
+a given tmux session at a time. The simplified default TUI no longer serves as
+the ownership-transfer control surface.
 
 ### 4. Cross-Daemon Node Discovery
 

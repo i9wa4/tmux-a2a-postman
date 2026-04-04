@@ -25,7 +25,7 @@ func RunPop(args []string) error {
 	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	configPath := fs.String("config", "", "path to config file (optional)")
-	file := fs.String("file", "", "print a specific inbox message by filename (cross-context, non-destructive)")
+	file := fs.String("file", "", "print a specific inbox message by filename (non-destructive; searches across contexts only when --context-id is omitted; explicit --context-id binds lookup to that context)")
 	commandName := fs.Name()
 	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {

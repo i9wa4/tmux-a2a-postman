@@ -114,8 +114,9 @@ tmux-a2a-postman pop [--peek] [--json] [--params ...] [--context-id ID] [--file 
 ```
 
 Reads the next unread inbox message. Archives it after reading unless
-`--peek` is used. `--file` performs a non-destructive cross-context read
-without archiving.
+`--peek` is used. `--file` remains non-destructive; it searches across
+contexts only when `--context-id` is omitted, and an explicit
+`--context-id` binds lookup to that context without archiving.
 
 | Flag           | Type   | Default | --params? | Description                                        |
 | -------------- | ------ | ------- | --------- | -------------------------------------------------- |
@@ -123,7 +124,7 @@ without archiving.
 | `--json`       | bool   | false   | Yes       | Output JSON (two-shape; see below)                 |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters (see Section 9)       |
 | `--context-id` | string | ""      | No        | Context ID (excluded from --params)                |
-| `--file`       | string | ""      | No        | Print specific inbox message by filename; cross-context, non-destructive (excluded from --params) |
+| `--file`       | string | ""      | No        | Print specific inbox message by filename; non-destructive. Searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context (excluded from --params) |
 
 **`--json` output shapes (two-shape contract):**
 
