@@ -170,3 +170,59 @@ role = "worker"
 		t.Fatalf("draft content missing normalized reply command: %q", string(draftContent))
 	}
 }
+
+func TestRunSendMessage_DraftTemplatePreservesMultilineReplyCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+reply_command = """
+tmux-a2a-postman send-message
+  --to <recipient>
+  --body "<your message>"
+"""
+draft_template = "{reply_command}"
+message_footer = ""
+edges = ["orchestrator -- worker"]
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-draft-multiline",
+		"--to", "worker",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-draft-multiline", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+
+	draftPath := filepath.Join(postDir, entries[0].Name())
+	draftContent, err := os.ReadFile(draftPath)
+	if err != nil {
+		t.Fatalf("ReadFile draft: %v", err)
+	}
+	want := "tmux-a2a-postman send\n  --context-id ctx-draft-multiline --to worker\n  --body \"<your message>\""
+	if !strings.Contains(string(draftContent), want) {
+		t.Fatalf("draft content missing preserved multiline reply command:\n%s", string(draftContent))
+	}
+	if strings.Contains(string(draftContent), "send-message") {
+		t.Fatalf("draft content still contains legacy send-message: %q", string(draftContent))
+	}
+}

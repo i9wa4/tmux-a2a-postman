@@ -206,7 +206,7 @@ func RunSendMessage(args []string) error {
 		"timestamp":      now.Format(time.RFC3339),
 		"can_talk_to":    canTalkTo,
 		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":  envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to),
+		"reply_command":  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
 		"template":       getNodeTemplate(cfg, *to),
 		"session_name":   sessionName,
 		"sender_pane_id": config.GetTmuxPaneID(),

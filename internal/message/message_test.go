@@ -1163,3 +1163,52 @@ edge_violation_warning_template = "Routing denied $(printf project-local-edge-wa
 		t.Fatalf("project-local edge violation warning unexpectedly executed shell command: %q", string(warningBody))
 	}
 }
+
+func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260201-040000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	cfg := &config.Config{
+		EnterDelay:                   0.1,
+		TmuxTimeout:                  1.0,
+		ReplyCommand:                 "send-message --to <recipient>",
+		EdgeViolationWarningTemplate: "Reply: {reply_command}",
+	}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	warningDir := filepath.Join(sessionDir, "inbox", "orchestrator")
+	entries, err := os.ReadDir(warningDir)
+	if err != nil {
+		t.Fatalf("ReadDir warningDir failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("warning entry count = %d, want 1", len(entries))
+	}
+
+	warningBody, err := os.ReadFile(filepath.Join(warningDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile warning failed: %v", err)
+	}
+	if strings.Contains(string(warningBody), "send-message") {
+		t.Fatalf("warning still contains legacy send-message: %q", string(warningBody))
+	}
+	if !strings.Contains(string(warningBody), "send --context-id test-ctx --to <recipient>") {
+		t.Fatalf("warning missing normalized reply command: %q", string(warningBody))
+	}
+}

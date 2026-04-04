@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -483,7 +484,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					"timestamp":           now.Format(time.RFC3339),
 					"attempted_recipient": info.To,
 					"allowed_edges":       neighborsStr,
-					"reply_command":       cfg.ReplyCommand,
+					"reply_command":       envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, senderSimpleName),
 					"session_dir":         sourceSessionDir,
 					"filename":            warnFilename,
 				}

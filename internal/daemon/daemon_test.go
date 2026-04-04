@@ -501,7 +501,7 @@ func TestCheckInboxStagnation_NormalizesLegacyReplyCommandInAlertText(t *testing
 		InboxUnreadThreshold:            1,
 		InboxUnreadSummaryAlertTemplate: "Unread {count}",
 		AlertActionReachableTemplate:    "\nReply: {reply_command}",
-		DaemonMessageTemplate:           "{message}",
+		DaemonMessageTemplate:           "Outer: {reply_command}\n{message}",
 		ReplyCommand:                    "send-message --to <recipient>",
 	}
 	nodes := map[string]discovery.NodeInfo{
@@ -538,6 +538,12 @@ func TestCheckInboxStagnation_NormalizesLegacyReplyCommandInAlertText(t *testing
 	}
 	if strings.Contains(string(alertContent), "send-message") {
 		t.Fatalf("alert text still contains legacy send-message: %q", string(alertContent))
+	}
+	if !strings.Contains(string(alertContent), "Outer: send --context-id ctx-alert --to <recipient>") {
+		t.Fatalf("outer daemon envelope missing normalized placeholder reply command: %q", string(alertContent))
+	}
+	if strings.Contains(string(alertContent), "Outer: send --context-id ctx-alert --to messenger") {
+		t.Fatalf("outer daemon envelope self-targeted ui node: %q", string(alertContent))
 	}
 	if !strings.Contains(string(alertContent), "send --context-id ctx-alert --to worker") {
 		t.Fatalf("alert text missing normalized reply command: %q", string(alertContent))

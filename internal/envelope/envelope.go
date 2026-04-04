@@ -3,6 +3,7 @@ package envelope
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -203,13 +204,13 @@ func buildEnvelope(
 // RenderReplyCommand normalizes the configured reply command and expands the
 // placeholders used by envelope, daemon alerts, and draft templates.
 func RenderReplyCommand(replyCmd, contextID, recipient string) string {
+	replyCmd = legacySendMessageRe.ReplaceAllString(replyCmd, "send")
 	fields := strings.Fields(replyCmd)
 	for i, field := range fields {
 		if field == "send-message" {
 			fields[i] = "send"
 		}
 	}
-	replyCmd = strings.Join(fields, " ")
 	if containsToken(fields, "send") && !strings.Contains(replyCmd, "--context-id") {
 		if strings.Contains(replyCmd, "--to") {
 			replyCmd = strings.Replace(replyCmd, "--to", fmt.Sprintf("--context-id %s --to", contextID), 1)
@@ -219,9 +220,10 @@ func RenderReplyCommand(replyCmd, contextID, recipient string) string {
 	}
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 	replyCmd = strings.ReplaceAll(replyCmd, "{node}", recipient)
-	replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", recipient)
 	return replyCmd
 }
+
+var legacySendMessageRe = regexp.MustCompile(`\bsend-message\b`)
 
 func containsToken(fields []string, want string) bool {
 	for _, field := range fields {

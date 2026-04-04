@@ -217,3 +217,51 @@ func TestBuildEnvelope_InjectsContextIDForBareReplySendCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
+	replyCommand := "tmux-a2a-postman send-message\n  --to <recipient>\n  --body \"<your message>\""
+
+	got := RenderReplyCommand(replyCommand, "ctx-789", "worker")
+
+	want := "tmux-a2a-postman send\n  --context-id ctx-789 --to <recipient>\n  --body \"<your message>\""
+	if got != want {
+		t.Fatalf("RenderReplyCommand() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "send-message") {
+		t.Fatalf("RenderReplyCommand() still contains legacy send-message: %q", got)
+	}
+	if strings.Contains(got, "--to worker") {
+		t.Fatalf("RenderReplyCommand() unexpectedly expanded recipient placeholder: %q", got)
+	}
+}
+
+func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
+	cfg := &config.Config{
+		TmuxTimeout:  5.0,
+		ReplyCommand: "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\"",
+	}
+
+	result := BuildDaemonEnvelope(
+		cfg,
+		"Outer: {reply_command}",
+		"messenger",
+		"daemon",
+		"ctx-daemon",
+		"/session/post/file.md",
+		nil,
+		map[string][]string{},
+		map[string]discovery.NodeInfo{},
+		"review",
+		nil,
+	)
+
+	if strings.Contains(result, "send-message") {
+		t.Fatalf("daemon envelope still contains legacy send-message: %q", result)
+	}
+	if !strings.Contains(result, "--to <recipient>") {
+		t.Fatalf("daemon envelope lost recipient placeholder: %q", result)
+	}
+	if strings.Contains(result, "--to messenger") {
+		t.Fatalf("daemon envelope self-targeted ui node: %q", result)
+	}
+}
