@@ -89,7 +89,7 @@ tmux select-pane -T messenger
 Verify the pane is discovered:
 
 ```sh
-tmux-a2a-postman get-session-health
+tmux-a2a-postman get-health
 ```
 
 The `messenger` node must appear with `inbox_count` and `waiting_count` in the

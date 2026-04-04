@@ -19,8 +19,35 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "tmux-a2a-postman — A2A message routing daemon for tmux panes") {
 		t.Fatalf("stdout missing overview header: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "tmux-a2a-postman send-message --to <node> --body \"text\"") {
-		t.Fatalf("stdout missing send-message quick-start line: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "tmux-a2a-postman send --to <node> --body \"text\"") {
+		t.Fatalf("stdout missing send quick-start line: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Lifecycle and recovery:") {
+		t.Fatalf("stdout missing lifecycle split: %q", stdout.String())
+	}
+}
+
+func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if err := runHelp(&stdout, &stderr, []string{"commands"}); err != nil {
+		t.Fatalf("runHelp: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Default operator surface") {
+		t.Fatalf("stdout missing default operator section: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "get-health-oneline") {
+		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
+		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "get-context-id") {
+		t.Fatalf("stdout missing get-context-id command: %q", stdout.String())
 	}
 }
 

@@ -43,12 +43,12 @@ graph TD
 Example: orchestrator delegates a task to worker.
 
 1. orchestrator sends:
-   `tmux-a2a-postman send-message --to worker --body "implement X"`
+   `tmux-a2a-postman send --to worker --body "implement X"`
 2. Daemon routes the message (edge rules enforced)
 3. worker is notified in their pane
 4. worker reads: `tmux-a2a-postman pop`
 5. worker replies:
-   `tmux-a2a-postman send-message --to orchestrator --body "DONE: ..."`
+   `tmux-a2a-postman send --to orchestrator --body "DONE: ..."`
 
 ### 3.2. ui_node
 
@@ -192,6 +192,11 @@ tmux-a2a-postman start --no-tui
 tmux-a2a-postman stop
 ```
 
+The default operator loop is `send`, `pop`, `bind`, `get-health`, and
+`get-health-oneline`. Lifecycle and recovery commands such as `start`, `stop`,
+and `get-context-id` remain available, but they are no longer the main
+beginner/operator surface.
+
 ## 6. Directory Structure
 
 Base directory resolution, in priority order
@@ -206,7 +211,7 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
 {baseDir}/
   {contextId}/
     {sessionName}/
-      draft/            # internal: draft staging area (use send-message instead)
+      draft/            # internal: draft staging area (use send instead)
       post/             # internal: outbox queue managed by postman daemon
       inbox/{node}/     # daemon delivers messages here
       read/             # agent moves messages here after reading
@@ -232,9 +237,22 @@ See `docs/design/daemon-session-model.md` for the full daemon/session model.
 See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference,
 including flag tables, `--json` output shapes, and `--params` usage.
 
-Quick reference:
+Default operator surface:
 
 ```text
+tmux-a2a-postman send --to worker --body "hello"
+tmux-a2a-postman pop
+tmux-a2a-postman bind <subcommand> ...
+tmux-a2a-postman get-health
+tmux-a2a-postman get-health-oneline --json
+```
+
+Lifecycle and recovery:
+
+```text
+tmux-a2a-postman start
+tmux-a2a-postman stop
+tmux-a2a-postman get-context-id
 tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
 tmux-a2a-postman schema [COMMAND]   # JSON Schema for a command's --params-settable options
 ```

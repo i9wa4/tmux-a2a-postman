@@ -11,16 +11,23 @@ JSON Schema for a command's `--params`-settable options.
 | -------------------------- | ---------------------------------------------------- |
 | `start`                    | Start the postman daemon (interactive TUI)           |
 | `stop`                     | Stop the running daemon                              |
-| `send-message`             | Compose and send a message in one step               |
+| `send`                     | Compose and send a message in one step               |
 | `pop`                      | Read and archive the next inbox message              |
 | `read`                     | List inbox messages, archived messages, or dead-letters |
-| `get-session-health`       | JSON health report for all nodes in the session      |
-| `get-session-status-oneline` | One-line status string for tmux status-bar         |
+| `get-health`               | Canonical JSON health report for all nodes in the session |
+| `get-health-oneline`       | One-line formatter over the canonical health payload |
 | `get-context-id`           | Print the active context ID                          |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
 | `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
 | `schema`                   | Print JSON Schema for a command or config            |
 | `help`                     | Print help topics                                    |
+
+The default operator surface is `send`, `pop`, `bind`, `get-health`, and
+`get-health-oneline`.
+
+Lifecycle and recovery commands (`start`, `stop`, `get-context-id`, and
+similar helpers) remain discoverable, but they do not define the default
+beginner/operator loop.
 
 ## 2. Daemon Management
 
@@ -62,10 +69,10 @@ Sends SIGTERM and polls until the process exits or timeout expires.
 
 ## 3. Messaging Commands
 
-### 3.1. send-message
+### 3.1. send
 
 ```text
-tmux-a2a-postman send-message --to NODE --body TEXT [options]
+tmux-a2a-postman send --to NODE --body TEXT [options]
 ```
 
 The primary command for agent-to-agent messaging. Composes and delivers
@@ -253,10 +260,10 @@ tmux-a2a-postman bind rebind --file PATH --node-name NAME [--session-name NAME]
 
 ## 7. Session Inspection Commands
 
-### 7.1. get-session-health
+### 7.1. get-health
 
 ```text
-tmux-a2a-postman get-session-health [--context-id ID] [--session NAME] [--config PATH]
+tmux-a2a-postman get-health [--context-id ID] [--session NAME] [--config PATH]
 ```
 
 Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
@@ -282,10 +289,10 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 
 Use `nodes[*].waiting_count > 0` to detect delivery stalls.
 
-### 7.2. get-session-status-oneline
+### 7.2. get-health-oneline
 
 ```text
-tmux-a2a-postman get-session-status-oneline [--json] [--params ...]
+tmux-a2a-postman get-health-oneline [--json] [--params ...]
 ```
 
 One-line status string suitable for embedding in a tmux status-bar.
@@ -333,12 +340,12 @@ Can be combined with a command argument or used alone.
 | Argument                   | Describes                                     |
 | -------------------------- | --------------------------------------------- |
 | (none)                     | `postman.toml` config properties              |
-| `send-message`             | `send-message` `--params` scope               |
+| `send`                     | `send` `--params` scope                       |
 | `pop`                      | `pop` `--params` scope                        |
 | `read`                     | `read` `--params` scope                       |
 | `get-context-id`           | `get-context-id` `--params` scope             |
-| `get-session-status-oneline` | `get-session-status-oneline` `--params` scope |
-| `get-session-health`       | `get-session-health` output shape             |
+| `get-health-oneline`       | `get-health-oneline` `--params` scope         |
+| `get-health`               | `get-health` output shape                     |
 
 **Important:** Schema properties show only `--params`-settable flags.
 Always-excluded flags (`context-id`, `config`, `session`, `from`, `bindings`,
@@ -354,7 +361,7 @@ callers set command options via a single argument instead of multiple flags.
 **Shorthand (k=v,k=v):**
 
 ```text
-tmux-a2a-postman send-message --params 'to=worker,body=hello'
+tmux-a2a-postman send --params 'to=worker,body=hello'
 ```
 
 Values may contain `=` characters (split on first `=` only). Values
@@ -363,7 +370,7 @@ containing commas require JSON form.
 **JSON:**
 
 ```text
-tmux-a2a-postman send-message --params '{"to":"worker","body":"hello"}'
+tmux-a2a-postman send --params '{"to":"worker","body":"hello"}'
 ```
 
 Detection: if the trimmed value starts with `{`, it is parsed as JSON;
@@ -374,7 +381,7 @@ otherwise shorthand is assumed.
 Explicit CLI flags override `--params` values. Use this to override a param:
 
 ```text
-tmux-a2a-postman send-message --params 'to=worker,body=hello' --body override
+tmux-a2a-postman send --params 'to=worker,body=hello' --body override
 # sends body="override", to="worker"
 ```
 
@@ -431,7 +438,7 @@ mixed-case keys will not match and produce an "unknown flag" error:
 To see exactly which flags are settable via `--params` for any command:
 
 ```text
-tmux-a2a-postman schema send-message   # required: ["to","body"]
+tmux-a2a-postman schema send           # required: ["to","body"]
 tmux-a2a-postman schema pop            # no required fields
 tmux-a2a-postman schema               # postman.toml config schema
 ```
@@ -446,15 +453,15 @@ flag. Output goes to stdout; errors go to stderr.
 
 | Command                    | Empty / no-result shape | Populated shape (keys)                                       |
 | -------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `send-message`             | N/A                     | `{"sent": "filename.md"}`                                    |
+| `send`                     | N/A                     | `{"sent": "filename.md"}`                                    |
 | `pop`                      | `{}`                    | `{"id","from","to","body","timestamp"}`                      |
 | `read` (default)           | `{"files":[]}`          | `{"files":["...","..."]}`                                    |
 | `read --archived`          | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}`            |
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-session-status-oneline` | N/A                   | `{"status":"[1]●●●●"}`                                       |
-| `get-session-health`       | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`                  |
+| `get-health-oneline`       | N/A                     | `{"status":"[1]●●●●"}`                                       |
+| `get-health`               | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`                  |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.
 Always test for the presence of the `id` key before treating the result as a

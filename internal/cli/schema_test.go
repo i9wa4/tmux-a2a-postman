@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-func TestRunSchema_SendMessageOutput(t *testing.T) {
+func TestRunSchema_SendOutput(t *testing.T) {
 	var stdout bytes.Buffer
 
-	if err := runSchema(&stdout, []string{"send-message"}); err != nil {
+	if err := runSchema(&stdout, []string{"send"}); err != nil {
 		t.Fatalf("runSchema: %v", err)
 	}
-	if !strings.Contains(stdout.String(), `"title": "send-message options"`) {
+	if !strings.Contains(stdout.String(), `"title": "send options"`) {
 		t.Fatalf("stdout missing schema title: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), `"to"`) {

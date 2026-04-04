@@ -163,7 +163,7 @@ func RunPop(args []string) error {
 	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
 	sender := extractSenderFromFile(archivedPath)
 	if sender != "" {
-		fmt.Printf("Next steps: Reply with tmux-a2a-postman send-message --to %s --body \"<your message>\"\n", sender)
+		fmt.Printf("Next steps: Reply with tmux-a2a-postman send --to %s --body \"<your message>\"\n", sender)
 	}
 	return nil
 }

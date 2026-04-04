@@ -83,8 +83,8 @@ The shared status contract now carries both sides of that split in the health
 payload: per-node `pane_state` records the base fact, per-node `waiting_state`
 records the reply-tracked overlay fact, and per-node `visible_state` records
 the canonical renderer recommendation after unread and waiting overlays are
-applied. `get-session-status-oneline` and the TUI both consume that same
-visible-state resolution instead of maintaining separate overlay precedence.
+applied. `get-health-oneline` and the TUI both consume that same visible-state
+resolution instead of maintaining separate overlay precedence.
 
 ### Backward Compatibility
 

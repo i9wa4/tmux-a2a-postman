@@ -11,8 +11,8 @@ import (
 
 // RunSchema prints JSON Schema for the postman config or a specific command's options.
 //
-//	tmux-a2a-postman schema              # postman.toml config schema
-//	tmux-a2a-postman schema send-message # send-message options schema
+//	tmux-a2a-postman schema      # postman.toml config schema
+//	tmux-a2a-postman schema send # send options schema
 func RunSchema(args []string) error {
 	return runSchema(os.Stdout, args)
 }
@@ -81,10 +81,10 @@ func runSchema(stdout io.Writer, args []string) error {
 		})
 	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)
 	// SYNC: options struct fields; alwaysExcludedParams + perCommandExcludedParams maps
-	case "send-message":
+	case "send", "send-message":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
-			Title:  "send-message options",
+			Title:  "send options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"to":              {Type: "string", Description: "Recipient node name (required)"},
@@ -126,16 +126,16 @@ func runSchema(stdout io.Writer, args []string) error {
 				"json": {Type: "boolean", Description: "Output JSON: {\"context_id\": \"...\"}"},
 			},
 		})
-	case "get-session-status-oneline":
+	case "get-health-oneline", "get-session-status-oneline":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
-			Title:  "get-session-status-oneline options",
+			Title:  "get-health-oneline options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
 				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[1]●●●●\"}"},
 			},
 		})
-	case "get-session-health":
+	case "get-health", "get-session-health":
 		// Always-JSON command; no --json flag. Schema has no json property.
 		type arrayItems struct {
 			Type       string                    `json:"type"`
@@ -154,7 +154,7 @@ func runSchema(stdout io.Writer, args []string) error {
 		}
 		return enc.Encode(healthSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
-			Title:  "get-session-health output",
+			Title:  "get-health output",
 			Type:   "object",
 			Properties: map[string]schemaPropertyWithItems{
 				"context_id":    {Type: "string", Description: "Active context ID for the current tmux session"},

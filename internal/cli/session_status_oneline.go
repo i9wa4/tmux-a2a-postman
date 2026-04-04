@@ -74,7 +74,7 @@ func isShellCommand(cmd string) bool {
 	return shellCommands[cmd]
 }
 
-// RunGetSessionStatusOneline shows all tmux sessions' pane status in one line.
+// RunGetSessionStatusOneline formats all tmux sessions' pane status in one line.
 // Output format: [0]window0_panes:window1_panes:... [1]window0_panes:...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
@@ -83,9 +83,9 @@ func isShellCommand(cmd string) bool {
 // Issue #275: TTY detection so tmux status-right receives plain emoji, not ANSI codes
 // Issue #312: Filter panes by pane_current_command; fix session index stability.
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("get-session-status-oneline", flag.ContinueOnError)
+	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	// Options struct fields (--params scope): json
-	// SYNC: schema get-session-status-oneline properties; alwaysExcludedParams map
+	// SYNC: schema get-health-oneline properties; alwaysExcludedParams map
 	jsonOut := fs.Bool("json", false, `output json: {"status":"..."}`)
 	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
 	commandName := fs.Name()

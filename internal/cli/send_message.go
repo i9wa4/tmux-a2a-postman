@@ -19,9 +19,9 @@ import (
 )
 
 func RunSendMessage(args []string) error {
-	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
+	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	// Options struct fields (--params scope): to, body, idempotency-key, json
-	// SYNC: schema send-message properties; alwaysExcludedParams map
+	// SYNC: schema send properties; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
@@ -62,7 +62,7 @@ func RunSendMessage(args []string) error {
 	}
 	// NOTE: runCreateDraft issues only a warning (not an error) for --send
 	// without --body (see runCreateDraft:966-968). Enforce here before
-	// delegating so send-message never sends a placeholder-body message.
+	// delegating so send never sends a placeholder-body message.
 	if *body == "" {
 		return fmt.Errorf("--body is required (provide via flag or --params)")
 	}

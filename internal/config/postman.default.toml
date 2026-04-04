@@ -100,7 +100,7 @@ activity_window_seconds = 300.0
 edges = []
 
 # Global settings
-reply_command = "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\""
+reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
 # ui_node = "messenger"            # TUI target node for daemon alerts
 auto_enable_new_sessions = false   # Auto-enable newly discovered sessions (default: false)
 auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
@@ -146,7 +146,7 @@ Run `tmux-a2a-postman pop` to read it. """
 # Message footer (appended by `pop` command after message content)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 message_footer = """You can talk to: {can_talk_to}
-Reply: tmux-a2a-postman send-message --to <receiver> --body "<your message>"
+Reply: tmux-a2a-postman send --to <receiver> --body "<your message>"
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
 
 # Daemon message template (unified envelope for ping, alert, heartbeat)
@@ -179,7 +179,7 @@ How to reply: {reply_command}
 {message}
 """
 
-# Draft message template (user-initiated messages via send-message)
+# Draft message template (user-initiated messages via send)
 # Variables: {context_id}, {task_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command}
 draft_template = """---
@@ -259,11 +259,11 @@ llm_node = ""
 prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tasks from prior history.
 
 If nothing needs attention:
-  nix run github:i9wa4/tmux-a2a-postman -- send-message \\
+  nix run github:i9wa4/tmux-a2a-postman -- send \\
     --context-id {context_id} --to postman --body "HEARTBEAT_OK"
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
-  nix run github:i9wa4/tmux-a2a-postman -- send-message \\
+  nix run github:i9wa4/tmux-a2a-postman -- send \\
     --context-id {context_id} --to messenger \\
     --body "[HEARTBEAT ALERT] <your message>""""
 

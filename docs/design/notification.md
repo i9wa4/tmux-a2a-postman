@@ -411,8 +411,8 @@ These waiting facts now flow into the shared health contract rather than being
 re-derived separately per renderer. The canonical per-node payload carries
 `pane_state` as the base fact, `waiting_state` as the reply-tracked overlay
 fact, and `visible_state` as the resolved renderer recommendation after unread
-and waiting overlays are applied. `get-session-status-oneline` and the TUI
-consume that same resolved state.
+and waiting overlays are applied. `get-health-oneline` and the TUI consume
+that same resolved state.
 
 **Source:** `internal/daemon/daemon.go` (state transition logic in ticker loop)
 

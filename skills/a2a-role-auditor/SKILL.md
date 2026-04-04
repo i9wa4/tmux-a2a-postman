@@ -77,21 +77,21 @@ Two sub-checks:
 
 ### 2.6. Check 5 — Messaging Protocol Instructions
 
-- PASS: template contains instruction to use `send-message` as the primary
-  messaging command (e.g., "tmux-a2a-postman send-message --to <node> --body")
+- PASS: template contains instruction to use `send` as the primary messaging
+  command (e.g., "tmux-a2a-postman send --to <node> --body")
 - PASS (also verify): template mentions `pop` for reading messages
   (read + archive in one step)
 - PASS (also verify): template does NOT reference raw filesystem paths
   (e.g., `~/.local/state/tmux-a2a-postman/...`); use CLI commands like
-  `get-session-health` instead (#287: filesystem internals hidden from agents)
-- FAIL: template lacks `send-message` instruction — agents construct messages
+  `get-health` instead (#287: filesystem internals hidden from agents)
+- FAIL: template lacks `send` instruction — agents construct messages
   manually instead of using the atomic one-step command
 - FAIL: template lacks `pop` — agents use the old `read` + manual cat workflow
   instead of the streamlined command
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman pop` (auto-archives the next unread message on read)
 - FAIL: template references raw filesystem paths for monitoring (e.g.,
-  `ls ~/.local/state/.../waiting/`) — use `get-session-health` instead
+  `ls ~/.local/state/.../waiting/`) — use `get-health` instead
 
 ### 2.7. Check 6 — Pre-Approval Verification
 
@@ -126,7 +126,7 @@ Applies to all non-observer nodes (nodes whose role does NOT contain
 ### 2.10. Check B-I8 — Protocol Reminder Presence
 
 - PASS: template references the postman protocol (e.g., contains
-  "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", or "send-message")
+  "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", or "send")
 - FAIL: template lacks any protocol reminder — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
 
@@ -193,7 +193,7 @@ Key templates that inject context automatically:
 
 | Template            | Injected at                  | Key variables provided                        |
 | ------------------- | ---------------------------- | --------------------------------------------- |
-| `draft_template`    | draft/send-message creation  | `{template}` (recipient role), frontmatter    |
+| `draft_template`    | draft/send creation          | `{template}` (recipient role), frontmatter    |
 | `message_footer`    | appended to delivered message | `{can_talk_to}`, `{reply_command}`            |
 | `notification_template` | sendkeys to pane on arrival | `{node}`, `{from_node}`                      |
 | `message_template`  | daemon ping delivery         | `{role_content}`, `{talks_to_line}`           |

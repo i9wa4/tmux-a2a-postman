@@ -59,7 +59,7 @@ func TestBuildNotification_SentinelObfuscation(t *testing.T) {
 		// Protocol wrapper ends with the real sentinel.
 		NotificationTemplate: "<!-- message start -->\n{template}\n<!-- end of message -->\n",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send-message --to <recipient>",
+		ReplyCommand:         "postman send --to <recipient>",
 		Nodes: map[string]config.NodeConfig{
 			"worker": {Template: nodeTemplate},
 		},
@@ -88,7 +88,7 @@ func TestBuildNotification(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message from {from_node} to {node}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send-message --to <recipient>",
+		ReplyCommand:         "postman send --to <recipient>",
 	}
 
 	adjacency := map[string][]string{
@@ -126,7 +126,7 @@ func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message: {talks_to_line}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send-message --to <recipient>",
+		ReplyCommand:         "postman send --to <recipient>",
 	}
 
 	adjacency := map[string][]string{

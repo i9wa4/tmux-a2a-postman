@@ -113,3 +113,96 @@ func TestDispatch_BindPreservesArgsAndLabel(t *testing.T) {
 		t.Fatalf("bind args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
+
+func TestDispatch_SendSupportsCanonicalAndLegacyNames(t *testing.T) {
+	cases := []string{"send", "send-message"}
+	for _, command := range cases {
+		t.Run(command, func(t *testing.T) {
+			var gotArgs []string
+
+			result := Dispatch(
+				command,
+				[]string{"--to", "worker", "--body", "hello"},
+				Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+				Handlers{
+					SendMessage: func(args []string) error {
+						gotArgs = append([]string(nil), args...)
+						return nil
+					},
+				},
+			)
+
+			if result.Err != nil {
+				t.Fatalf("Dispatch returned error: %v", result.Err)
+			}
+			if result.Label != "postman send" {
+				t.Fatalf("label = %q, want %q", result.Label, "postman send")
+			}
+			wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker", "--body", "hello"}
+			if !reflect.DeepEqual(gotArgs, wantArgs) {
+				t.Fatalf("send args = %#v, want %#v", gotArgs, wantArgs)
+			}
+		})
+	}
+}
+
+func TestDispatch_HealthCommandsSupportCanonicalAndLegacyNames(t *testing.T) {
+	t.Run("get-health", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"get-health",
+			[]string{"--json"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				GetSessionHealth: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-health" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-health")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-health args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("get-health-oneline", func(t *testing.T) {
+		cases := []string{"get-health-oneline", "get-session-status-oneline"}
+		for _, command := range cases {
+			t.Run(command, func(t *testing.T) {
+				var gotArgs []string
+
+				result := Dispatch(
+					command,
+					[]string{"--json"},
+					Config{},
+					Handlers{
+						GetSessionStatusOneline: func(args []string) error {
+							gotArgs = append([]string(nil), args...)
+							return nil
+						},
+					},
+				)
+
+				if result.Err != nil {
+					t.Fatalf("Dispatch returned error: %v", result.Err)
+				}
+				if result.Label != "postman get-health-oneline" {
+					t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
+				}
+				wantArgs := []string{"--json"}
+				if !reflect.DeepEqual(gotArgs, wantArgs) {
+					t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
+				}
+			})
+		}
+	})
+}
