@@ -166,9 +166,10 @@ template = "orchestrator template"
 
 	t.Run("trusted XDG base expands shell", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
 		projectDir := filepath.Join(tmpDir, "project")
-		xdgDir := filepath.Join(tmpDir, "xdg")
-		xdgConfigPath := filepath.Join(xdgDir, "postman.toml")
+		xdgConfigHome := filepath.Join(tmpDir, "xdg")
+		xdgConfigPath := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.toml")
 
 		if err := os.MkdirAll(filepath.Dir(xdgConfigPath), 0o755); err != nil {
 			t.Fatalf("MkdirAll xdg config dir failed: %v", err)
@@ -176,13 +177,18 @@ template = "orchestrator template"
 		if err := os.MkdirAll(projectDir, 0o755); err != nil {
 			t.Fatalf("MkdirAll project dir failed: %v", err)
 		}
+		if err := os.MkdirAll(homeDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll home dir failed: %v", err)
+		}
 		if err := os.WriteFile(xdgConfigPath, []byte(baseConfig), 0o644); err != nil {
 			t.Fatalf("WriteFile xdg config failed: %v", err)
 		}
 
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
 		t.Chdir(projectDir)
 
-		cfg, err := config.LoadConfig(xdgConfigPath)
+		cfg, err := config.LoadConfig("")
 		if err != nil {
 			t.Fatalf("LoadConfig() error = %v", err)
 		}
@@ -215,9 +221,10 @@ template = "orchestrator template"
 
 	t.Run("project-local override stays literal", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
 		projectDir := filepath.Join(tmpDir, "project")
-		xdgDir := filepath.Join(tmpDir, "xdg")
-		xdgConfigPath := filepath.Join(xdgDir, "postman.toml")
+		xdgConfigHome := filepath.Join(tmpDir, "xdg")
+		xdgConfigPath := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.toml")
 		localConfigPath := filepath.Join(projectDir, ".tmux-a2a-postman", "postman.toml")
 
 		if err := os.MkdirAll(filepath.Dir(xdgConfigPath), 0o755); err != nil {
@@ -225,6 +232,9 @@ template = "orchestrator template"
 		}
 		if err := os.MkdirAll(filepath.Dir(localConfigPath), 0o755); err != nil {
 			t.Fatalf("MkdirAll local config dir failed: %v", err)
+		}
+		if err := os.MkdirAll(homeDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll home dir failed: %v", err)
 		}
 		if err := os.WriteFile(xdgConfigPath, []byte(baseConfig), 0o644); err != nil {
 			t.Fatalf("WriteFile xdg config failed: %v", err)
@@ -237,9 +247,11 @@ notification_template = "local $(printf project-local-notification-template)"
 			t.Fatalf("WriteFile local config failed: %v", err)
 		}
 
+		t.Setenv("HOME", homeDir)
+		t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
 		t.Chdir(projectDir)
 
-		cfg, err := config.LoadConfig(xdgConfigPath)
+		cfg, err := config.LoadConfig("")
 		if err != nil {
 			t.Fatalf("LoadConfig() error = %v", err)
 		}
