@@ -151,6 +151,75 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	}
 }
 
+func TestBuildNotification_UsesNotificationTemplateTrustBoundary(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	xdgDir := filepath.Join(tmpDir, "xdg")
+	xdgConfigPath := filepath.Join(xdgDir, "postman.toml")
+	localConfigPath := filepath.Join(projectDir, ".tmux-a2a-postman", "postman.toml")
+
+	if err := os.MkdirAll(filepath.Dir(xdgConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll xdg config dir failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(localConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll local config dir failed: %v", err)
+	}
+
+	baseConfig := `[postman]
+allow_shell_templates = true
+notification_template = "trusted $(printf xdg-notification-template)"
+edges = ["orchestrator -> worker"]
+
+[worker]
+template = "worker template"
+
+[orchestrator]
+template = "orchestrator template"
+`
+	if err := os.WriteFile(xdgConfigPath, []byte(baseConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile xdg config failed: %v", err)
+	}
+
+	localConfig := `[postman]
+notification_template = "local $(printf project-local-notification-template)"
+`
+	if err := os.WriteFile(localConfigPath, []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile local config failed: %v", err)
+	}
+
+	t.Chdir(projectDir)
+
+	cfg, err := config.LoadConfig(xdgConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !cfg.AllowShellTemplates {
+		t.Fatalf("AllowShellTemplates = false, want true")
+	}
+	if cfg.AllowShellForNotificationTemplate() {
+		t.Fatalf("AllowShellForNotificationTemplate() = true, want false after project-local override")
+	}
+
+	notification := BuildNotification(
+		cfg,
+		map[string][]string{},
+		map[string]discovery.NodeInfo{},
+		"ctx-notify-trust",
+		"worker",
+		"orchestrator",
+		"test",
+		"/path/to/session/post/20260204-120000-from-orchestrator-to-worker.md",
+		nil,
+	)
+
+	if strings.Contains(notification, "local project-local-notification-template") {
+		t.Fatalf("notification template unexpectedly executed shell command: %q", notification)
+	}
+	if !strings.Contains(notification, "$(printf project-local-notification-template)") {
+		t.Fatalf("notification template missing literal untrusted shell fragment: %q", notification)
+	}
+}
+
 // TestBuildNotification_LivenessFiltering tests Issue #84 - talks_to_line filtering
 func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	cfg := &config.Config{

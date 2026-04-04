@@ -41,7 +41,7 @@ func InitPaneCooldown(d time.Duration) {
 // recipient and sender are simple node names (not session-prefixed).
 // sourceSessionName is the session name where the message originated.
 func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, filename string, livenessMap map[string]bool) string {
-	return envelope.BuildEnvelope(cfg, cfg.NotificationTemplate, recipient, sender, contextID, filename, nil, adjacency, nodes, sourceSessionName, livenessMap)
+	return envelope.BuildNotificationEnvelope(cfg, cfg.NotificationTemplate, recipient, sender, contextID, filename, nil, adjacency, nodes, sourceSessionName, livenessMap)
 }
 
 // SendToPane sends a message to a tmux pane using set-buffer + paste-buffer.
