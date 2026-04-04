@@ -292,15 +292,20 @@ Use `nodes[*].waiting_count > 0` to detect delivery stalls.
 ### 7.2. get-health-oneline
 
 ```text
-tmux-a2a-postman get-health-oneline [--json] [--params ...]
+tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [--session NAME] [--config PATH]
 ```
 
-One-line status string suitable for embedding in a tmux status-bar.
+One-line status string suitable for embedding in a tmux status-bar. Formats the
+resolved `get-health` payload for one session; it does not do independent
+session discovery or separate overlay derivation.
 
-| Flag       | Type   | Default | --params? | Description                                         |
-| ---------- | ------ | ------- | --------- | --------------------------------------------------- |
-| `--json`   | bool   | false   | Yes       | Output JSON: `{"status": "[1]●●●●"}`                |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters                        |
+| Flag           | Type   | Default | --params? | Description                                         |
+| -------------- | ------ | ------- | --------- | --------------------------------------------------- |
+| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]●●●●"}`                |
+| `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
+| `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
+| `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
+| `--config`     | string | ""      | No        | Path to config file                                 |
 
 ### 7.3. get-context-id
 
@@ -460,7 +465,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-health-oneline`       | N/A                     | `{"status":"[1]●●●●"}`                                       |
+| `get-health-oneline`       | N/A                     | `{"status":"[0]●●●●"}`                                       |
 | `get-health`               | always JSON (no flag)   | `{"context_id","node_count","nodes":[...]}`                  |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.

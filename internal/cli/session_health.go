@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
 // RunGetSessionHealth prints the canonical session-health JSON payload (#220).
@@ -19,44 +20,76 @@ func RunGetSessionHealth(args []string) error {
 		return err
 	}
 
-	cfg, err := config.LoadConfig(*configPath)
+	result, ok, err := collectResolvedSessionHealth(*contextID, *sessionFlag, *configPath)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
-
-	baseDir := config.ResolveBaseDir(cfg.BaseDir)
-
-	sessionName := *sessionFlag
-	if sessionName == "" {
-		sessionName = config.GetTmuxSessionName()
-	}
-	if sessionName == "" {
+	if !ok {
 		return fmt.Errorf("session name required: run inside tmux or pass --session")
-	}
-	sessionName, err = config.ValidateSessionName(sessionName)
-	if err != nil {
-		return err
-	}
-
-	var resolvedContextID string
-	if *contextID != "" {
-		resolvedContextID, err = config.ResolveContextID(*contextID)
-		if err != nil {
-			return err
-		}
-	} else {
-		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
-		if err != nil {
-			return err
-		}
-	}
-
-	result, err := collectSessionHealth(baseDir, resolvedContextID, sessionName, cfg)
-	if err != nil {
-		return err
 	}
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(result)
+}
+
+type sessionHealthTarget struct {
+	cfg         *config.Config
+	baseDir     string
+	contextID   string
+	sessionName string
+}
+
+func resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath string) (sessionHealthTarget, bool, error) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return sessionHealthTarget{}, false, fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := sessionFlag
+	if sessionName == "" {
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return sessionHealthTarget{}, false, nil
+	}
+	sessionName, err = config.ValidateSessionName(sessionName)
+	if err != nil {
+		return sessionHealthTarget{}, false, err
+	}
+
+	resolvedContextID := contextIDFlag
+	if resolvedContextID != "" {
+		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		if err != nil {
+			return sessionHealthTarget{}, false, err
+		}
+	} else {
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return sessionHealthTarget{}, false, err
+		}
+	}
+
+	return sessionHealthTarget{
+		cfg:         cfg,
+		baseDir:     baseDir,
+		contextID:   resolvedContextID,
+		sessionName: sessionName,
+	}, true, nil
+}
+
+func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string) (status.SessionHealth, bool, error) {
+	target, ok, err := resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath)
+	if err != nil || !ok {
+		return status.SessionHealth{}, ok, err
+	}
+
+	result, err := collectSessionHealth(target.baseDir, target.contextID, target.sessionName, target.cfg)
+	if err != nil {
+		return status.SessionHealth{}, true, err
+	}
+	return result, true, nil
 }

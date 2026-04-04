@@ -163,6 +163,43 @@ func collectWaitingFacts(sessionDir, sessionName string) (map[string]string, map
 	return states, counts
 }
 
+func waitingFrontmatterBool(content, key string) bool {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return false
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return false
+	}
+	for _, line := range strings.Split(rest[:second], "\n") {
+		if strings.TrimSpace(line) == key+": true" {
+			return true
+		}
+	}
+	return false
+}
+
+func waitingFileVisibleState(content string) string {
+	if strings.Contains(content, "state: user_input") {
+		return "user_input"
+	}
+	if !waitingFrontmatterBool(content, "expects_reply") {
+		return ""
+	}
+	switch {
+	case strings.Contains(content, "state: stalled"), strings.Contains(content, "state: stuck"):
+		return "stalled"
+	case strings.Contains(content, "state: spinning"):
+		return "spinning"
+	case strings.Contains(content, "state: composing"):
+		return "composing"
+	default:
+		return ""
+	}
+}
+
 func countMarkdownFiles(dir string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

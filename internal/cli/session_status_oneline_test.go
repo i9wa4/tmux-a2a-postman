@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
 func TestRunGetSessionStatusOneline_JSONOutput_NoLiveContext(t *testing.T) {
@@ -82,115 +85,162 @@ func TestStatusDot_TTY(t *testing.T) {
 	}
 }
 
-func TestApplyWaitingOverlay(t *testing.T) {
+func TestWaitingFileVisibleState(t *testing.T) {
 	tests := []struct {
-		name                 string
-		waitingFiles         map[string]string
-		initialPaneActivity  map[string]string
-		sessionTitleToPaneID map[string]string
-		sessionSubdir        string
-		wantPaneActivity     map[string]string
+		name    string
+		content string
+		want    string
 	}{
 		{
-			name: "composing_overrides_active",
-			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: true\n---",
-			},
-			initialPaneActivity:  map[string]string{"%10": "active"},
-			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
-			sessionSubdir:        "mysession",
-			wantPaneActivity:     map[string]string{"%10": "composing"},
+			name:    "user_input_wins_without_reply_expectation",
+			content: "---\nstate: user_input\nexpects_reply: false\n---",
+			want:    "user_input",
 		},
 		{
-			name: "spinning_overrides_composing_multiple_files",
-			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: true\n---",
-				"20260101-000001-s0000-from-messenger-to-worker.md":    "---\nstate: spinning\nexpects_reply: true\n---",
-			},
-			initialPaneActivity:  map[string]string{"%10": "active"},
-			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
-			sessionSubdir:        "mysession",
-			wantPaneActivity:     map[string]string{"%10": "spinning"},
+			name:    "composing_requires_reply_expectation",
+			content: "---\nstate: composing\nexpects_reply: true\n---",
+			want:    "composing",
 		},
 		{
-			name: "session_prefixed_recipient_uses_explicit_session",
-			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-review-session:worker.md": "---\nstate: composing\nexpects_reply: true\n---",
-			},
-			initialPaneActivity:  map[string]string{"%20": "active"},
-			sessionTitleToPaneID: map[string]string{"review-session:worker": "%20"},
-			sessionSubdir:        "source-session",
-			wantPaneActivity:     map[string]string{"%20": "composing"},
+			name:    "composing_without_reply_expectation_is_ignored",
+			content: "---\nstate: composing\nexpects_reply: false\n---",
+			want:    "",
 		},
 		{
-			name: "composing_without_explicit_reply_tracking_is_ignored",
-			waitingFiles: map[string]string{
-				"20260101-000000-s0000-from-orchestrator-to-worker.md": "---\nstate: composing\nexpects_reply: false\n---",
-			},
-			initialPaneActivity:  map[string]string{"%10": "active"},
-			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
-			sessionSubdir:        "mysession",
-			wantPaneActivity:     map[string]string{"%10": "active"},
+			name:    "stuck_normalizes_to_stalled",
+			content: "---\nstate: stuck\nexpects_reply: true\n---",
+			want:    "stalled",
 		},
 		{
-			name:                 "no_waiting_files_unchanged",
-			waitingFiles:         map[string]string{},
-			initialPaneActivity:  map[string]string{"%10": "idle"},
-			sessionTitleToPaneID: map[string]string{"mysession:worker": "%10"},
-			sessionSubdir:        "mysession",
-			wantPaneActivity:     map[string]string{"%10": "idle"},
+			name:    "missing_frontmatter_is_ignored",
+			content: "state: spinning",
+			want:    "",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			ctxDir := filepath.Join(tmpDir, "session-test")
-			waitingDir := filepath.Join(ctxDir, tc.sessionSubdir, "waiting")
-			if err := os.MkdirAll(waitingDir, 0o755); err != nil {
-				t.Fatalf("creating waiting dir: %v", err)
-			}
-			for name, content := range tc.waitingFiles {
-				if err := os.WriteFile(filepath.Join(waitingDir, name), []byte(content), 0o644); err != nil {
-					t.Fatalf("writing waiting file %s: %v", name, err)
-				}
-			}
-
-			pairs := [][2]string{{ctxDir, tc.sessionSubdir}}
-			paneActivity := make(map[string]string)
-			for k, v := range tc.initialPaneActivity {
-				paneActivity[k] = v
-			}
-
-			applyWaitingOverlay(pairs, tc.sessionTitleToPaneID, paneActivity)
-
-			for paneID, wantState := range tc.wantPaneActivity {
-				if got := paneActivity[paneID]; got != wantState {
-					t.Errorf("paneActivity[%q] = %q, want %q", paneID, got, wantState)
-				}
+			if got := waitingFileVisibleState(tc.content); got != tc.want {
+				t.Fatalf("waitingFileVisibleState(%q) = %q, want %q", tc.content, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestApplyPendingOverlay(t *testing.T) {
+func TestFormatSessionHealthOneline(t *testing.T) {
+	health := status.SessionHealth{
+		Nodes: []status.NodeHealth{
+			{Name: "worker", VisibleState: "pending", CurrentCommand: "claude"},
+			{Name: "critic", VisibleState: "composing", CurrentCommand: "claude"},
+			{Name: "shell", VisibleState: "stale", CurrentCommand: "bash"},
+		},
+		Windows: []status.SessionWindow{
+			{
+				Index: "0",
+				Nodes: []status.WindowNode{
+					{Name: "worker"},
+					{Name: "critic"},
+					{Name: "shell"},
+				},
+			},
+		},
+	}
+
+	if got, want := formatSessionHealthOneline(health, false), "[0]🔷🔵"; got != want {
+		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
+	}
+}
+
+func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *testing.T) {
 	tmpDir := t.TempDir()
-	ctxDir := filepath.Join(tmpDir, "session-test")
-	inboxDir := filepath.Join(ctxDir, "mysession", "inbox", "worker")
-	if err := os.MkdirAll(inboxDir, 0o755); err != nil {
-		t.Fatalf("creating inbox dir: %v", err)
+	contextID := "20260404-ctx"
+	sessionName := "review"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(inboxDir, "20260101-000000-s0000-from-orchestrator-to-worker.md"), []byte("body"), 0o644); err != nil {
-		t.Fatalf("writing inbox file: %v", err)
+
+	for _, dir := range []string{
+		filepath.Join(sessionDir, "inbox", "worker"),
+		filepath.Join(sessionDir, "inbox", "critic"),
+		filepath.Join(sessionDir, "waiting"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", dir, err)
+		}
 	}
 
-	pairs := [][2]string{{ctxDir, "mysession"}}
-	sessionTitleToPaneID := map[string]string{"mysession:worker": "%10"}
-	paneActivity := map[string]string{"%10": "active"}
+	if err := os.WriteFile(
+		filepath.Join(tmpDir, contextID, "pane-activity.json"),
+		[]byte(`{
+  "%11": {"status":"active","lastChangeAt":"2026-04-04T00:00:00Z"},
+  "%12": {"status":"idle","lastChangeAt":"2026-04-04T00:00:00Z"}
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(pane-activity.json): %v", err)
+	}
 
-	applyPendingOverlay(pairs, sessionTitleToPaneID, paneActivity)
+	if err := os.WriteFile(
+		filepath.Join(sessionDir, "inbox", "worker", "20260404-000000-s0000-from-boss-to-worker.md"),
+		[]byte("body"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(worker inbox): %v", err)
+	}
 
-	if got := paneActivity["%10"]; got != "pending" {
-		t.Fatalf("paneActivity[%%10] = %q, want pending", got)
+	if err := os.WriteFile(
+		filepath.Join(sessionDir, "waiting", "20260404-000001-s0000-from-orchestrator-to-critic.md"),
+		[]byte("---\nstate: composing\nexpects_reply: true\n---\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(critic waiting): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2 $3\" in\n" +
+		"  \"list-panes -a -F\")\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + "\")\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout bytes.Buffer
+	if err := RunGetSessionStatusOneline(&stdout, []string{
+		"--config", configPath,
+		"--context-id", contextID,
+		"--session", sessionName,
+		"--json",
+	}); err != nil {
+		t.Fatalf("RunGetSessionStatusOneline: %v", err)
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "[0]🔷🔵" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵")
 	}
 }
