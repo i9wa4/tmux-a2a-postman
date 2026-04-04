@@ -55,6 +55,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Migration from older names") {
 		t.Fatalf("stdout missing migration section: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Print JSON Schema for config or supported command surfaces.") {
+		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
+	}
 }
 
 func TestRunHelp_UnknownTopicWritesGuidance(t *testing.T) {

@@ -23,6 +23,37 @@ func TestRunSchema_SendOutput(t *testing.T) {
 	}
 }
 
+func TestRunSchema_GetHealthOutput(t *testing.T) {
+	var stdout bytes.Buffer
+
+	if err := runSchema(&stdout, []string{"get-health"}); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"title": "get-health output"`) {
+		t.Fatalf("stdout missing get-health title: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"visible_state"`) {
+		t.Fatalf("stdout missing visible_state property: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"windows"`) {
+		t.Fatalf("stdout missing windows property: %q", stdout.String())
+	}
+}
+
+func TestRunSchema_GetHealthOnelineOptions(t *testing.T) {
+	var stdout bytes.Buffer
+
+	if err := runSchema(&stdout, []string{"get-health-oneline"}); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"title": "get-health-oneline options"`) {
+		t.Fatalf("stdout missing get-health-oneline title: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"json"`) {
+		t.Fatalf("stdout missing json option: %q", stdout.String())
+	}
+}
+
 func TestRunSchema_LegacyCommandNamesAreRejected(t *testing.T) {
 	cases := []string{"send-message", "get-session-health", "get-session-status-oneline"}
 	for _, command := range cases {

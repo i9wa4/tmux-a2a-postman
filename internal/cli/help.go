@@ -236,7 +236,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "  Drain supervisor dead-letters after rollback and annotate summary output.")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "schema [command]")
-		fmt.Fprintln(stdout, "  Print JSON Schema for config, send/pop params, or get-health output.")
+		fmt.Fprintln(stdout, "  Print JSON Schema for config or supported command surfaces.")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Migration from older names")
 		fmt.Fprintln(stdout, "")

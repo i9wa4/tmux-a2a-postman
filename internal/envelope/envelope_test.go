@@ -160,3 +160,25 @@ func TestBuildEnvelope_SentTimestamp(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildEnvelope_NormalizesLegacyReplyCommandToSend(t *testing.T) {
+	cfg := &config.Config{
+		TmuxTimeout:    5.0,
+		ReplyCommand:   "tmux-a2a-postman send-message --to orchestrator",
+		Nodes:          map[string]config.NodeConfig{},
+		CommonTemplate: "",
+	}
+	adjacency := map[string][]string{}
+	nodes := map[string]discovery.NodeInfo{}
+	livenessMap := map[string]bool{}
+
+	result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-123", "/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
+
+	if strings.Contains(result, "send-message") {
+		t.Fatalf("reply_command still contains legacy send-message: %q", result)
+	}
+	want := "tmux-a2a-postman send --context-id ctx-123 --to orchestrator"
+	if result != want {
+		t.Fatalf("reply_command = %q, want %q", result, want)
+	}
+}
