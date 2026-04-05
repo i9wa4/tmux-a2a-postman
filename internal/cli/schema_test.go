@@ -23,6 +23,41 @@ func TestRunSchema_SendOutput(t *testing.T) {
 	}
 }
 
+func TestRunSchema_ConfigShowsUnifiedModelPublicKnobs(t *testing.T) {
+	var stdout bytes.Buffer
+
+	if err := runSchema(&stdout, nil); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, `"title": "postman.toml public config surface"`) {
+		t.Fatalf("stdout missing config title: %q", got)
+	}
+	for _, want := range []string{
+		`"ui_node"`,
+		`"reminder_interval_messages"`,
+		`"inbox_unread_threshold"`,
+		`"[node].idle_timeout_seconds"`,
+		`"[node].dropped_ball_timeout_seconds"`,
+		`"node_spinning_seconds"`,
+		`"[heartbeat].enabled"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout missing %q: %q", want, got)
+		}
+	}
+	for _, stale := range []string{
+		`"scan_interval_seconds"`,
+		`"enter_delay_seconds"`,
+		`"tmux_timeout_seconds"`,
+		`"startup_delay_seconds"`,
+	} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("stdout still contains demoted internal knob %q: %q", stale, got)
+		}
+	}
+}
+
 func TestRunSchema_GetHealthOutput(t *testing.T) {
 	var stdout bytes.Buffer
 

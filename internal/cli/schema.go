@@ -9,9 +9,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
-// RunSchema prints JSON Schema for the postman config or a specific command's options.
+// RunSchema prints JSON Schema for the curated public postman config surface or a specific command's options.
 //
-//	tmux-a2a-postman schema      # postman.toml config schema
+//	tmux-a2a-postman schema      # postman.toml public config surface
 //	tmux-a2a-postman schema send # send options schema
 func RunSchema(args []string) error {
 	return runSchema(os.Stdout, args)
@@ -66,17 +66,21 @@ func runSchema(stdout io.Writer, args []string) error {
 	case "":
 		return enc.Encode(jsonSchema{
 			Schema: "https://json-schema.org/draft/2020-12/schema",
-			Title:  "postman.toml config",
+			Title:  "postman.toml public config surface",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"scan_interval_seconds":      {Type: "integer", Description: "Inbox scan interval in seconds"},
-				"enter_delay_seconds":        {Type: "number", Description: "Delay before entering a pane in seconds"},
-				"tmux_timeout_seconds":       {Type: "integer", Description: "Timeout for tmux commands in seconds"},
-				"startup_delay_seconds":      {Type: "integer", Description: "Delay before starting the daemon in seconds"},
-				"reminder_interval_messages": {Type: "integer", Description: "Send reminder after N messages (0 = disabled)"},
-				"edges":                      {Type: "array", Description: "List of 'node-a,node-b' routing edges"},
-				"ui_node":                    {Type: "string", Description: "Node name for the postman TUI pane"},
-				"base_dir":                   {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
+				"base_dir":                            {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
+				"edges":                               {Type: "array", Description: "Bidirectional routing edges between named nodes"},
+				"ui_node":                             {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
+				"reminder_interval_messages":          {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
+				"inbox_unread_threshold":              {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
+				"[node].idle_timeout_seconds":         {Type: "integer", Description: "Per-node inactivity alert threshold (0 = disabled)"},
+				"[node].dropped_ball_timeout_seconds": {Type: "integer", Description: "Per-node late-reply and dropped-ball threshold (0 = disabled)"},
+				"node_spinning_seconds":               {Type: "integer", Description: "Reply-tracked composing-to-spinning threshold (0 = disabled)"},
+				"[heartbeat].enabled":                 {Type: "boolean", Description: "Enable periodic heartbeat messages"},
+				"[heartbeat].interval_seconds":        {Type: "number", Description: "Heartbeat interval in seconds"},
+				"[heartbeat].llm_node":                {Type: "string", Description: "Heartbeat recipient node"},
+				"[heartbeat].prompt":                  {Type: "string", Description: "Heartbeat prompt inserted into the shared daemon envelope"},
 			},
 		})
 	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)
