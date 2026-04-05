@@ -466,10 +466,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p":
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
-				if !sess.Enabled {
-					m.sessionStatus[sess.Name] = fmt.Sprintf("Session %s is OFF", sess.Name)
-					return m, nil
-				}
 				m.sessionStatus[sess.Name] = "Sending ping..."
 				log.Printf("[PING] keypress received for session %q\n", sess.Name)
 				if m.tuiCommands != nil {
@@ -875,9 +871,6 @@ func sessionHealthUnavailable(health status.SessionHealth) bool {
 }
 
 func (m Model) defaultSessionIndicator(session SessionInfo) string {
-	if !session.Enabled {
-		return "⚫"
-	}
 	health, ok := m.sessionHealthFor(session.Name)
 	if !ok {
 		return "⚪"

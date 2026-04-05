@@ -272,6 +272,14 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 		{Name: "main", Enabled: true},
 		{Name: "review", Enabled: false},
 	}
+	m.sessionHealth["main"] = status.SessionHealth{
+		SessionName:  "main",
+		VisibleState: "ready",
+	}
+	m.sessionHealth["review"] = status.SessionHealth{
+		SessionName:  "review",
+		VisibleState: "ready",
+	}
 	m.selectedSession = 0
 
 	newModel, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -285,8 +293,8 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 	if m.selectedSession != 1 {
 		t.Fatalf("selectedSession = %d, want 1", m.selectedSession)
 	}
-	if !strings.Contains(view, "> [1] review ⚫") {
-		t.Fatalf("view missing selected disabled session row: %q", view)
+	if !strings.Contains(view, "> [1] review 🟢") {
+		t.Fatalf("view missing selected session row with canonical indicator: %q", view)
 	}
 }
 
@@ -297,7 +305,7 @@ func TestTUI_Update_DefaultSurfacePingDispatchesCommand(t *testing.T) {
 
 	m := InitialModel(ch, commands, config.DefaultConfig(), "")
 	m.sessions = []SessionInfo{
-		{Name: "main", Enabled: true},
+		{Name: "main", Enabled: false},
 	}
 	m.selectedSession = 0
 
