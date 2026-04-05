@@ -235,13 +235,8 @@ func clampSelectedSession(sessions []SessionInfo, selected int) int {
 	if len(sessions) == 0 {
 		return 0
 	}
-	if selected >= 0 && selected < len(sessions) && sessions[selected].Enabled {
+	if selected >= 0 && selected < len(sessions) {
 		return selected
-	}
-	for i, session := range sessions {
-		if session.Enabled {
-			return i
-		}
 	}
 	if selected >= len(sessions) {
 		return len(sessions) - 1
@@ -258,10 +253,9 @@ func moveSelectedSession(sessions []SessionInfo, selected, delta int) int {
 	}
 
 	candidate := clampSelectedSession(sessions, selected)
-	for next := candidate + delta; next >= 0 && next < len(sessions); next += delta {
-		if sessions[next].Enabled {
-			return next
-		}
+	next := candidate + delta
+	if next >= 0 && next < len(sessions) {
+		return next
 	}
 
 	return candidate

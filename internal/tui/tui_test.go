@@ -219,51 +219,74 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 }
 
 func TestTUI_Update_DefaultSurfaceSessionNavigationKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		start     int
+		key       tea.KeyPressMsg
+		wantIndex int
+	}{
+		{name: "j moves down", start: 0, key: tea.KeyPressMsg{Text: "j", Code: 'j'}, wantIndex: 1},
+		{name: "down arrow moves down", start: 0, key: tea.KeyPressMsg{Code: tea.KeyDown}, wantIndex: 1},
+		{name: "k moves up", start: 1, key: tea.KeyPressMsg{Text: "k", Code: 'k'}, wantIndex: 0},
+		{name: "up arrow moves up", start: 1, key: tea.KeyPressMsg{Code: tea.KeyUp}, wantIndex: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := make(chan DaemonEvent, 10)
+			defer close(ch)
+			commands := make(chan TUICommand, 10)
+			m := InitialModel(ch, commands, config.DefaultConfig(), "")
+			m.currentView = ViewRouting
+			m.layoutMode = true
+			m.startupGuardEnabled = true
+			m.sessions = []SessionInfo{
+				{Name: "main", Enabled: true},
+				{Name: "review", Enabled: false},
+				{Name: "idle", Enabled: false},
+			}
+			m.selectedSession = tt.start
+
+			newModel, cmd := m.Update(tt.key)
+			if cmd != nil {
+				t.Fatalf("Update(%q) returned cmd %v, want nil", tt.key.String(), cmd)
+			}
+			m = newModel.(Model)
+
+			if m.selectedSession != tt.wantIndex {
+				t.Fatalf("selectedSession after %q = %d, want %d", tt.key.String(), m.selectedSession, tt.wantIndex)
+			}
+			if len(commands) != 0 {
+				t.Fatalf("navigation key %q emitted %d command(s), want 0", tt.key.String(), len(commands))
+			}
+		})
+	}
+}
+
+func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
-	commands := make(chan TUICommand, 10)
-	m := InitialModel(ch, commands, config.DefaultConfig(), "")
-	m.currentView = ViewRouting
-	m.layoutMode = true
-	m.startupGuardEnabled = true
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	m.sessions = []SessionInfo{
 		{Name: "main", Enabled: true},
-		{Name: "review", Enabled: true},
-		{Name: "idle", Enabled: false},
+		{Name: "review", Enabled: false},
 	}
 	m.selectedSession = 0
 
-	for _, key := range []tea.KeyPressMsg{
-		{Text: "j", Code: 'j'},
-		{Code: tea.KeyDown},
-	} {
-		newModel, cmd := m.Update(key)
-		if cmd != nil {
-			t.Fatalf("Update(%q) returned cmd %v, want nil", key.Text, cmd)
-		}
-		m = newModel.(Model)
+	newModel, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd != nil {
+		t.Fatalf("Update(down) returned cmd %v, want nil", cmd)
 	}
+	m = newModel.(Model)
+
+	view := m.View().Content
 
 	if m.selectedSession != 1 {
-		t.Fatalf("selectedSession after down movement = %d, want %d", m.selectedSession, 1)
+		t.Fatalf("selectedSession = %d, want 1", m.selectedSession)
 	}
-
-	for _, key := range []tea.KeyPressMsg{
-		{Text: "k", Code: 'k'},
-		{Code: tea.KeyUp},
-	} {
-		newModel, cmd := m.Update(key)
-		if cmd != nil {
-			t.Fatalf("Update(%q) returned cmd %v, want nil", key.Text, cmd)
-		}
-		m = newModel.(Model)
-	}
-
-	if m.selectedSession != 0 {
-		t.Fatalf("selectedSession after up movement = %d, want %d", m.selectedSession, 0)
-	}
-	if len(commands) != 0 {
-		t.Fatalf("navigation keys emitted %d command(s), want 0", len(commands))
+	if !strings.Contains(view, "> [1] review ⚫") {
+		t.Fatalf("view missing selected disabled session row: %q", view)
 	}
 }
 
