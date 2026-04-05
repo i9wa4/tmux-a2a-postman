@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -104,7 +103,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		}
 	}
 
-	healths, cfg, ok, err := collectAllSessionHealth(*contextID, *sessionFlag, *configPath)
+	healths, _, ok, err := collectAllSessionHealth(*contextID, *sessionFlag, *configPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
 			if *jsonOut {
@@ -130,7 +129,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		isTerminal = term.IsTerminal(file.Fd())
 	}
 
-	statusStr := formatAllSessionHealthOneline(healths, cfg.OrderedNodeNames(), isTerminal)
+	statusStr := formatAllSessionHealthOneline(healths, isTerminal)
 	if statusStr != "" {
 		if *jsonOut {
 			return json.NewEncoder(stdout).Encode(struct {
@@ -166,10 +165,10 @@ func sessionStatusDot(visibleState string, isTerminal bool) string {
 	}
 }
 
-func formatAllSessionHealthOneline(healths []status.SessionHealth, nodeOrder []string, isTerminal bool) string {
+func formatAllSessionHealthOneline(healths []status.SessionHealth, isTerminal bool) string {
 	var sessionStatuses []string
 	for i, health := range healths {
-		sessionStatus := formatSessionHealthOneline(health, nodeOrder, isTerminal)
+		sessionStatus := formatSessionHealthOneline(health, isTerminal)
 		if sessionStatus == "" {
 			visibleState := health.VisibleState
 			if visibleState == "" {
@@ -182,7 +181,7 @@ func formatAllSessionHealthOneline(healths []status.SessionHealth, nodeOrder []s
 	return strings.Join(sessionStatuses, " ")
 }
 
-func formatSessionHealthOneline(health status.SessionHealth, nodeOrder []string, isTerminal bool) string {
+func formatSessionHealthOneline(health status.SessionHealth, isTerminal bool) string {
 	nodeByName := make(map[string]status.NodeHealth, len(health.Nodes))
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
@@ -191,7 +190,8 @@ func formatSessionHealthOneline(health status.SessionHealth, nodeOrder []string,
 	var windowStatuses []string
 	for _, window := range health.Windows {
 		var paneStatuses strings.Builder
-		for _, nodeName := range orderedWindowNodeNames(window, nodeOrder) {
+		for _, windowNode := range window.Nodes {
+			nodeName := windowNode.Name
 			node, ok := nodeByName[nodeName]
 			if !ok {
 				continue
@@ -210,29 +210,4 @@ func formatSessionHealthOneline(health status.SessionHealth, nodeOrder []string,
 		return ""
 	}
 	return strings.Join(windowStatuses, ":")
-}
-
-func orderedWindowNodeNames(window status.SessionWindow, nodeOrder []string) []string {
-	present := make(map[string]bool, len(window.Nodes))
-	for _, windowNode := range window.Nodes {
-		present[windowNode.Name] = true
-	}
-
-	ordered := make([]string, 0, len(window.Nodes))
-	for _, name := range nodeOrder {
-		if present[name] {
-			ordered = append(ordered, name)
-			delete(present, name)
-		}
-	}
-
-	var extras []string
-	for _, windowNode := range window.Nodes {
-		if present[windowNode.Name] {
-			extras = append(extras, windowNode.Name)
-			delete(present, windowNode.Name)
-		}
-	}
-	sort.Strings(extras)
-	return append(ordered, extras...)
 }

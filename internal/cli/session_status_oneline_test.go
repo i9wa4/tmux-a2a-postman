@@ -155,7 +155,7 @@ func TestFormatSessionHealthOneline(t *testing.T) {
 		},
 	}
 
-	if got, want := formatSessionHealthOneline(health, []string{"critic", "worker", "shell"}, false), "🔵🔷"; got != want {
+	if got, want := formatSessionHealthOneline(health, false), "🔷🔵"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
@@ -189,13 +189,13 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 		},
 	}
 
-	got := formatAllSessionHealthOneline(healths, []string{"messenger", "critic", "worker"}, false)
-	if got != "[0]⚪ [1]🔵🔷:🟢" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]⚪ [1]🔵🔷:🟢")
+	got := formatAllSessionHealthOneline(healths, false)
+	if got != "[0]⚪ [1]🔷🔵:🟢" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]⚪ [1]🔷🔵:🟢")
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_FormatsAllSessionHealthInConfigOrder(t *testing.T) {
+func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
 	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
@@ -305,7 +305,7 @@ func TestRunGetSessionStatusOneline_JSONOutput_FormatsAllSessionHealthInConfigOr
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔵🔷:🟢 [1]🔷🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔵🔷:🟢 [1]🔷🟢")
+	if payload.Status != "[0]🔷🔵:🟢 [1]🟢🔷" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🟢🔷")
 	}
 }

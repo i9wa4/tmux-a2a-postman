@@ -324,8 +324,8 @@ tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [-
 
 One-line status string suitable for embedding in a tmux status-bar. It first
 collects canonical health for all tmux sessions and all windows, then renders
-compact session tokens in config-file node order. It is not a single-session
-wrapper around `get-health`.
+compact session tokens in the canonical `windows` order from `get-health`. It
+is not a single-session wrapper around `get-health`.
 
 | Flag           | Type   | Default | --params? | Description                                         |
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
