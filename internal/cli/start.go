@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -582,14 +583,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 						// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
 						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
-						filterNodes := func(nodes map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
-							for nodeName := range nodes {
-								parts := strings.SplitN(nodeName, ":", 2)
-								rawName := parts[len(parts)-1]
-								if !edgeNodesFilter[rawName] {
-									delete(nodes, nodeName)
-								}
-							}
+						filterTargetNodes := func(nodes map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
 							target := make(map[string]discovery.NodeInfo)
 							for k, v := range nodes {
 								if v.SessionName == cmd.Target {
@@ -598,19 +592,51 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							}
 							return target
 						}
-						targetNodes := filterNodes(freshNodes)
+						targetNodes := filterTargetNodes(freshNodes)
 						if cachedPtr == nil || len(targetNodes) == 0 {
+							activationBlocked := false
 							// Attempt a fresh discovery before giving up (catches panes
 							// that set titles after startup or after the last scan).
 							freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 							if discErr == nil && len(freshDiscovered) > 0 {
-								// filterNodes modifies the map in-place (removes non-edge nodes)
-								// and returns the session-filtered subset.
-								targetNodes = filterNodes(freshDiscovered)
-								sharedNodes.Store(&freshDiscovered)
-								freshNodes = freshDiscovered // update for activeNodes loop below
+								freshNodes = filterDiscoveredEdgeNodes(freshDiscovered, edgeNodesFilter)
+								sharedNodes.Store(&freshNodes)
+								targetNodes = filterTargetNodes(freshNodes)
 							}
 							if len(targetNodes) == 0 {
+								activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
+								switch {
+								case activationErr == nil:
+									freshNodes = activatedNodes
+									sharedNodes.Store(&freshNodes)
+									targetNodes = filterTargetNodes(freshNodes)
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "status_update",
+										Message: fmt.Sprintf("Activated session %s for ping", cmd.Target),
+										Details: map[string]interface{}{"session": cmd.Target},
+									}
+								case errors.Is(activationErr, errPingSessionOwned):
+									activationBlocked = true
+									log.Printf("postman: PING blocked for session %s — %v\n", cmd.Target, activationErr)
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "status_update",
+										Message: fmt.Sprintf("Session %s is owned by another daemon", cmd.Target),
+										Details: map[string]interface{}{"session": cmd.Target},
+									}
+								default:
+									activationBlocked = true
+									log.Printf("postman: session activation for PING failed on %s: %v\n", cmd.Target, activationErr)
+									daemonEvents <- tui.DaemonEvent{
+										Type:    "status_update",
+										Message: fmt.Sprintf("Failed to activate session %s", cmd.Target),
+										Details: map[string]interface{}{"session": cmd.Target},
+									}
+								}
+							}
+							if len(targetNodes) == 0 {
+								if activationBlocked {
+									break
+								}
 								if cachedPtr == nil {
 									log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
 								} else {
