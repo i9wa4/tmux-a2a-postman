@@ -218,7 +218,7 @@ func TestTUI_View_ShowsVersion(t *testing.T) {
 	}
 }
 
-func TestTUI_Update_DefaultSurfaceIgnoresRemovedKeys(t *testing.T) {
+func TestTUI_Update_DefaultSurfaceSessionNavigationKeys(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 	commands := make(chan TUICommand, 10)
@@ -228,7 +228,56 @@ func TestTUI_Update_DefaultSurfaceIgnoresRemovedKeys(t *testing.T) {
 	m.startupGuardEnabled = true
 	m.sessions = []SessionInfo{
 		{Name: "main", Enabled: true},
-		{Name: "review", Enabled: false},
+		{Name: "review", Enabled: true},
+		{Name: "idle", Enabled: false},
+	}
+	m.selectedSession = 0
+
+	for _, key := range []tea.KeyPressMsg{
+		{Text: "j", Code: 'j'},
+		{Code: tea.KeyDown},
+	} {
+		newModel, cmd := m.Update(key)
+		if cmd != nil {
+			t.Fatalf("Update(%q) returned cmd %v, want nil", key.Text, cmd)
+		}
+		m = newModel.(Model)
+	}
+
+	if m.selectedSession != 1 {
+		t.Fatalf("selectedSession after down movement = %d, want %d", m.selectedSession, 1)
+	}
+
+	for _, key := range []tea.KeyPressMsg{
+		{Text: "k", Code: 'k'},
+		{Code: tea.KeyUp},
+	} {
+		newModel, cmd := m.Update(key)
+		if cmd != nil {
+			t.Fatalf("Update(%q) returned cmd %v, want nil", key.Text, cmd)
+		}
+		m = newModel.(Model)
+	}
+
+	if m.selectedSession != 0 {
+		t.Fatalf("selectedSession after up movement = %d, want %d", m.selectedSession, 0)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("navigation keys emitted %d command(s), want 0", len(commands))
+	}
+}
+
+func TestTUI_Update_DefaultSurfaceStillIgnoresRemovedKeys(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	commands := make(chan TUICommand, 10)
+	m := InitialModel(ch, commands, config.DefaultConfig(), "")
+	m.currentView = ViewRouting
+	m.layoutMode = true
+	m.startupGuardEnabled = true
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+		{Name: "review", Enabled: true},
 	}
 	m.selectedSession = 0
 
@@ -236,8 +285,6 @@ func TestTUI_Update_DefaultSurfaceIgnoresRemovedKeys(t *testing.T) {
 		{Text: "tab"},
 		{Text: "1", Code: '1'},
 		{Text: "2", Code: '2'},
-		{Text: "j", Code: 'j'},
-		{Text: "k", Code: 'k'},
 		{Text: "g", Code: 'g'},
 		{Text: "l", Code: 'l'},
 		{Text: " ", Code: ' '},

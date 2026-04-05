@@ -252,6 +252,21 @@ func clampSelectedSession(sessions []SessionInfo, selected int) int {
 	return selected
 }
 
+func moveSelectedSession(sessions []SessionInfo, selected, delta int) int {
+	if len(sessions) == 0 || delta == 0 {
+		return 0
+	}
+
+	candidate := clampSelectedSession(sessions, selected)
+	for next := candidate + delta; next >= 0 && next < len(sessions); next += delta {
+		if sessions[next].Enabled {
+			return next
+		}
+	}
+
+	return candidate
+}
+
 func (m *Model) pruneSessionHealth() {
 	if len(m.sessionHealth) == 0 {
 		return
@@ -448,6 +463,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "j", "down":
+			m.selectedSession = moveSelectedSession(m.sessions, m.selectedSession, 1)
+			return m, nil
+		case "k", "up":
+			m.selectedSession = moveSelectedSession(m.sessions, m.selectedSession, -1)
+			return m, nil
 		case "p":
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
