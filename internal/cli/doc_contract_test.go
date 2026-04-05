@@ -63,6 +63,23 @@ func TestReducedSurfaceDocContract_DaemonModelAndAlertGuide(t *testing.T) {
 	assertContainsNormalized(t, alertGuide, "pane_notify_cooldown_seconds")
 }
 
+func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
+	notificationDoc := readRepoFile(t, "docs/design/notification.md")
+	assertContainsNormalized(t, notificationDoc, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract.")
+	assertContainsNormalized(t, notificationDoc, "This document starts from that unified operator model, then maps the notification surfaces, delivery paths, and guard policy in the current tree.")
+	assertContainsNormalized(t, notificationDoc, "## 2. Notification Surfaces in the Unified Model")
+
+	if strings.Contains(notificationDoc, "There are eight distinct notification mechanisms") {
+		t.Fatal("notification design doc still opens with the old mechanism-first framing")
+	}
+	if strings.Contains(notificationDoc, "This document explains all eight mechanisms") {
+		t.Fatal("notification design doc still teaches the old mechanism-first summary")
+	}
+	if strings.Contains(notificationDoc, "## 2. Notification Mechanisms") {
+		t.Fatal("notification design doc still uses the old mechanism-first section heading")
+	}
+}
+
 func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	assertContainsNormalized(t, readme, "Unified state + notification model")

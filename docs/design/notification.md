@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-tmux-a2a-postman delivers messages between AI agents running in tmux panes. When
-a message arrives or a problem is detected, the daemon "taps the agent on the
-shoulder" — this is a notification. There are eight distinct notification
-mechanisms, each designed for a different situation.
+tmux-a2a-postman exposes one operator model for session health and
+notification policy. get-health, get-health-oneline, and the default TUI are
+three views over the same canonical contract. Notification policy sits
+around that contract and decides when pane hints, alert messages, dropped-ball
+notices, and heartbeat traffic are emitted.
 
-This document explains all eight mechanisms: when each fires, how it reaches its
-target, which configuration fields control it, and how the guard/throttle system
-prevents notification floods.
+This document starts from that unified operator model, then maps the
+notification surfaces, delivery paths, and guard policy in the current tree.
 
 ### 1.1. Glossary
 
@@ -63,7 +63,7 @@ Opt-out knobs for these project-shipped defaults are summarized in
 
 ---
 
-## 2. Notification Mechanisms
+## 2. Notification Surfaces in the Unified Model
 
 ### 2.1. Summary Table
 
