@@ -1351,7 +1351,7 @@ func isContextDaemonAlive(baseDir, contextName string) bool {
 	return false
 }
 
-func enabledSessionOwner(sessionName string) string {
+func enabledSessionOwner(baseDir, sessionName string) string {
 	if sessionName == "" {
 		return ""
 	}
@@ -1364,7 +1364,14 @@ func enabledSessionOwner(sessionName string) string {
 		return ""
 	}
 	owner, _, _ := strings.Cut(value, ":")
-	return strings.TrimSpace(owner)
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return ""
+	}
+	if !isContextDaemonAlive(baseDir, owner) {
+		return ""
+	}
+	return owner
 }
 
 // ContextOwnsSession reports whether contextName currently owns sessionName.
@@ -1383,7 +1390,7 @@ func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
 	if !isContextDaemonAlive(baseDir, contextName) {
 		return false
 	}
-	if owner := enabledSessionOwner(sessionName); owner != "" {
+	if owner := enabledSessionOwner(baseDir, sessionName); owner != "" {
 		return owner == contextName
 	}
 	return FindContextSessionName(baseDir, contextName) == sessionName

@@ -102,3 +102,31 @@ func TestContextOwnsSession_LiveDaemonSessionRemainsOwnedWithoutMarker(t *testin
 		t.Fatal("expected live daemon session to remain owned without explicit marker")
 	}
 }
+
+func TestContextOwnsSession_IgnoresStaleEnabledMarkerForLiveDaemonSession(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLivePID(t, baseDir, "ctx-live", "daemon-session")
+	installSessionOwnerTmux(t, map[string]string{
+		"daemon-session": "ctx-stale:12345",
+	})
+
+	if !ContextOwnsSession(baseDir, "ctx-live", "daemon-session") {
+		t.Fatal("expected live daemon session to remain owned when enabled marker points to a dead context")
+	}
+}
+
+func TestResolveContextIDFromSession_IgnoresStaleEnabledMarkerForLiveDaemonSession(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLivePID(t, baseDir, "ctx-live", "daemon-session")
+	installSessionOwnerTmux(t, map[string]string{
+		"daemon-session": "ctx-stale:12345",
+	})
+
+	got, err := ResolveContextIDFromSession(baseDir, "daemon-session")
+	if err != nil {
+		t.Fatalf("ResolveContextIDFromSession() error = %v", err)
+	}
+	if got != "ctx-live" {
+		t.Fatalf("ResolveContextIDFromSession() = %q, want %q", got, "ctx-live")
+	}
+}

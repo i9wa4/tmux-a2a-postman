@@ -290,6 +290,61 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 	}
 }
 
+func TestTUI_Update_DefaultSurfacePingDispatchesCommand(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	commands := make(chan TUICommand, 1)
+
+	m := InitialModel(ch, commands, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+	}
+	m.selectedSession = 0
+
+	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "p", Code: 'p'})
+	if cmd != nil {
+		t.Fatalf("Update(p) returned cmd %v, want nil", cmd)
+	}
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["main"]; got != "Sending ping..." {
+		t.Fatalf("sessionStatus[main] = %q, want %q", got, "Sending ping...")
+	}
+
+	select {
+	case sent := <-commands:
+		if sent.Type != "send_ping" {
+			t.Fatalf("sent.Type = %q, want %q", sent.Type, "send_ping")
+		}
+		if sent.Target != "main" {
+			t.Fatalf("sent.Target = %q, want %q", sent.Target, "main")
+		}
+	default:
+		t.Fatal("expected send_ping command after pressing p")
+	}
+}
+
+func TestTUI_Update_DefaultSurfacePingRequiresDaemonForStatus(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+	}
+	m.selectedSession = 0
+
+	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "p", Code: 'p'})
+	if cmd != nil {
+		t.Fatalf("Update(p) returned cmd %v, want nil", cmd)
+	}
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["main"]; got != "Ping: daemon unavailable" {
+		t.Fatalf("sessionStatus[main] = %q, want %q", got, "Ping: daemon unavailable")
+	}
+}
+
 func TestTUI_Update_DefaultSurfaceStillIgnoresRemovedKeys(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
