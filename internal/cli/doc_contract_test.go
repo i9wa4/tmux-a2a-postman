@@ -50,6 +50,7 @@ func TestReducedSurfaceDocContract_DaemonModelAndAlertGuide(t *testing.T) {
 	daemonModelDoc := readRepoFile(t, "docs/design/daemon-session-model.md")
 	assertContainsNormalized(t, daemonModelDoc, "Multiple daemons may run simultaneously, but startup is still serialized per tmux session name.")
 	assertContainsNormalized(t, daemonModelDoc, "two contexts cannot start daemons against the same tmux session at the same time")
+	assertContainsNormalized(t, daemonModelDoc, "Cross-context ownership follows the live enabled-session marker, not leftover session directories.")
 
 	alertGuide := readRepoFile(t, "docs/guides/alert-config.md")
 	assertContainsNormalized(t, alertGuide, "Use the daemon log as the reliable startup signal; the reduced default TUI does not expose a separate event-log pane.")

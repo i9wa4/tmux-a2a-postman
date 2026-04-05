@@ -26,6 +26,12 @@ collisions when a session is enabled, so only one live daemon may actively own
 a given tmux session at a time. The simplified default TUI no longer serves as
 the ownership-transfer control surface.
 
+Cross-context ownership follows the live enabled-session marker, not leftover
+session directories. A foreign context counts as owner only when its daemon is
+still live and the session's `@a2a_session_on_<session>` marker names that
+context. The daemon's own tmux session still counts as owned while it is
+running, even before any later cross-session discovery.
+
 ### 4. Cross-Daemon Node Discovery
 
 Nodes in a tmux session are discoverable by any daemon regardless of where that

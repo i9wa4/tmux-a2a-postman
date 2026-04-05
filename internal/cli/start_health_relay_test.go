@@ -288,6 +288,13 @@ func TestRelayDaemonEventsToTUI_SkipsCanonicalHealthForForeignOwnedSession(t *te
 		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
+		"    if [ \"$1 $2\" = \"show-options -gqv\" ] && [ \"$3\" = \"@a2a_session_on_" + sessionName + "\" ]; then\n" +
+		"      printf '%s\\n' '" + ownerContextID + ":43210'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$1 $2\" = \"show-options -gqv\" ]; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    exit 1\n" +
 		"    ;;\n" +
 		"esac\n"

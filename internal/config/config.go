@@ -1351,9 +1351,27 @@ func isContextDaemonAlive(baseDir, contextName string) bool {
 	return false
 }
 
+func enabledSessionOwner(sessionName string) string {
+	if sessionName == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "show-options", "-gqv", "@a2a_session_on_"+sessionName).Output()
+	if err != nil {
+		return ""
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" {
+		return ""
+	}
+	owner, _, _ := strings.Cut(value, ":")
+	return strings.TrimSpace(owner)
+}
+
 // ContextOwnsSession reports whether contextName currently owns sessionName.
-// Ownership means the context has a subdirectory for sessionName and at least
-// one live daemon PID somewhere under that context.
+// Ownership means the context has a subdirectory for sessionName, has a live
+// daemon PID somewhere under that context, and either:
+//   - the live enabled-session marker names that context, or
+//   - the queried session is the daemon's own tmux session.
 func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
 	if baseDir == "" || contextName == "" || sessionName == "" {
 		return false
@@ -1362,7 +1380,13 @@ func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
 	if _, err := os.Stat(sessionDir); err != nil {
 		return false
 	}
-	return isContextDaemonAlive(baseDir, contextName)
+	if !isContextDaemonAlive(baseDir, contextName) {
+		return false
+	}
+	if owner := enabledSessionOwner(sessionName); owner != "" {
+		return owner == contextName
+	}
+	return FindContextSessionName(baseDir, contextName) == sessionName
 }
 
 // ResolveContextIDFromSession scans baseDir for context directories that

@@ -1429,7 +1429,7 @@ func TestResolveContextIDFromSession(t *testing.T) {
 		}
 	})
 
-	t.Run("cross-session — PID under daemon session, query from managed session", func(t *testing.T) {
+	t.Run("cross-session — enabled marker under daemon session, query from managed session", func(t *testing.T) {
 		baseDir := t.TempDir()
 		// Daemon runs in session "0", PID file is under "0"
 		writeLivePID(t, baseDir, "session-ctx", "0")
@@ -1438,6 +1438,9 @@ func TestResolveContextIDFromSession(t *testing.T) {
 		if err := os.MkdirAll(otherDir, 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		installSessionOwnerTmux(t, map[string]string{
+			"other-session": "session-ctx:12345",
+		})
 		// Query from "other-session" should find the context via the live PID in "0"
 		got, err := ResolveContextIDFromSession(baseDir, "other-session")
 		if err != nil {
@@ -1702,28 +1705,33 @@ func TestIsSessionPIDAlive(t *testing.T) {
 }
 
 func TestContextOwnsSession(t *testing.T) {
-	t.Run("live daemon plus session subdir returns true", func(t *testing.T) {
+	t.Run("live daemon session itself returns true without marker", func(t *testing.T) {
 		baseDir := t.TempDir()
-		writeLivePID(t, baseDir, "ctx-live", "0")
-		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-live", "other-session"), 0o755); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
-		if !ContextOwnsSession(baseDir, "ctx-live", "other-session") {
-			t.Fatal("expected true for live context owning other-session, got false")
+		writeLivePID(t, baseDir, "ctx-live", "daemon-session")
+		installSessionOwnerTmux(t, map[string]string{})
+		if !ContextOwnsSession(baseDir, "ctx-live", "daemon-session") {
+			t.Fatal("expected true for live context owning its own daemon session, got false")
 		}
 	})
 
-	t.Run("live daemon without session subdir returns false", func(t *testing.T) {
+	t.Run("live daemon plus foreign session subdir returns false without enabled marker", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeLivePID(t, baseDir, "ctx-live", "0")
+		installSessionOwnerTmux(t, map[string]string{})
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-live", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 		if ContextOwnsSession(baseDir, "ctx-live", "other-session") {
-			t.Fatal("expected false when session subdir is absent, got true")
+			t.Fatal("expected false when enabled-session marker is absent, got true")
 		}
 	})
 
 	t.Run("stale context with session subdir returns false", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeStalePID(t, baseDir, "ctx-stale", "0")
+		installSessionOwnerTmux(t, map[string]string{
+			"other-session": "ctx-stale:0",
+		})
 		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-stale", "other-session"), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -1734,9 +1742,12 @@ func TestContextOwnsSession(t *testing.T) {
 }
 
 func TestFindSessionOwner(t *testing.T) {
-	t.Run("returns other live owner for managed session", func(t *testing.T) {
+	t.Run("returns other live owner for managed session with enabled marker", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeLivePID(t, baseDir, "ctx-owner", "0")
+		installSessionOwnerTmux(t, map[string]string{
+			"other-session": "ctx-owner:12345",
+		})
 		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "other-session"), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -1749,6 +1760,9 @@ func TestFindSessionOwner(t *testing.T) {
 	t.Run("skips own context", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeLivePID(t, baseDir, "ctx-owner", "0")
+		installSessionOwnerTmux(t, map[string]string{
+			"other-session": "ctx-owner:12345",
+		})
 		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "other-session"), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -1758,9 +1772,13 @@ func TestFindSessionOwner(t *testing.T) {
 		}
 	})
 
-	t.Run("live context without session subdir is not owner", func(t *testing.T) {
+	t.Run("live context without enabled marker is not owner", func(t *testing.T) {
 		baseDir := t.TempDir()
 		writeLivePID(t, baseDir, "ctx-live", "0")
+		installSessionOwnerTmux(t, map[string]string{})
+		if err := os.MkdirAll(filepath.Join(baseDir, "ctx-live", "other-session"), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
 		got := FindSessionOwner(baseDir, "other-session", "ctx-self")
 		if got != "" {
 			t.Fatalf("got %q, want empty", got)

@@ -120,8 +120,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
 		// Issue #249: Startup guard — detect duplicate daemon for this context+session.
-		// Scope check to contextID only: multi-session support allows independent daemons
-		// in separate contexts sharing the same tmux session name.
+		// Scope check to contextID only: same-context duplicates are rejected via postman.pid,
+		// and a tmux-session-wide lock below blocks cross-context same-session startups.
 		if config.IsSessionPIDAlive(baseDir, contextID, tmuxSessionName) {
 			return fmt.Errorf(
 				"a postman daemon is already running in tmux session %q (context: %s).\n"+

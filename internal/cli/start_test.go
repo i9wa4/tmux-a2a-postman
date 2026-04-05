@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 )
 
 func TestResolveWatchedConfigPath(t *testing.T) {
@@ -172,5 +174,57 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("RunStartWithFlags() error = %q, want duplicate-daemon wording", err)
+	}
+}
+
+func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "state")
+	contextID := "20260405-ctx-b"
+	sessionName := "main"
+
+	configPath := filepath.Join(root, "postman.toml")
+	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
+		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	lockDir := filepath.Join(baseDir, "lock")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(lockDir): %v", err)
+	}
+	lockObj, err := lock.NewSessionLock(filepath.Join(lockDir, sessionName+".lock"))
+	if err != nil {
+		t.Fatalf("NewSessionLock(pre-acquire): %v", err)
+	}
+	defer func() { _ = lockObj.Release() }()
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2 $3 $4 $5\" = \"display-message -t %11 -p #{session_name}\" ]; then\n" +
+		"  printf '%s\\n' '" + sessionName + "'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Setenv("POSTMAN_HOME", baseDir)
+	t.Setenv("TMUX_PANE", "%11")
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err = RunStartWithFlags(contextID, configPath, "", true)
+	if err == nil {
+		t.Fatal("RunStartWithFlags() error = nil, want same-session lock rejection")
+	}
+	if !strings.Contains(err.Error(), "acquiring lock") {
+		t.Fatalf("RunStartWithFlags() error = %q, want acquiring lock wording", err)
+	}
+	if !strings.Contains(err.Error(), "lock already held") {
+		t.Fatalf("RunStartWithFlags() error = %q, want lock already held wording", err)
 	}
 }
