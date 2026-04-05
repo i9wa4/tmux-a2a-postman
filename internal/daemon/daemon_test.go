@@ -457,6 +457,81 @@ func TestAdvanceWaitingState_NonReplyTrackedComposingDoesNotTransition(t *testin
 	}
 }
 
+func TestAdvanceWaitingState_ReplyTrackedActiveBecomesSpinning(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 12, 11, 0, 0, time.UTC)
+	content := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-03-30T12:00:00Z\nstate: composing\nstate_updated_at: 2026-03-30T12:00:00Z\nexpects_reply: true\n---\n"
+
+	got, changed := advanceWaitingState(content, "active", now, 5*time.Minute, 10*time.Minute, true)
+	if !changed {
+		t.Fatal("advanceWaitingState did not transition reply-tracked composing state to spinning")
+	}
+	if !strings.Contains(got, "state: spinning") {
+		t.Fatalf("advanceWaitingState missing spinning state:\n%s", got)
+	}
+}
+
+func TestSendSpinningAlertForWaitingFile_IncludesRoutingContext(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "ctx-alert", "review")
+	postDir := filepath.Join(sessionDir, "post")
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll post: %v", err)
+	}
+
+	cfg := &config.Config{
+		UINode:                "messenger",
+		DaemonMessageTemplate: "{message}",
+		SpinningAlertTemplate: "Expected reply overdue: requester={requester} awaited={awaited_node} context={context_id} age={age} threshold={threshold} message={message_id}",
+	}
+	waitingFilename := "20260405-120000-r1234-from-orchestrator-to-worker.md"
+	waitingContent := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-04-05T12:00:00Z\nstate: spinning\nstate_updated_at: 2026-04-05T12:10:01Z\nexpects_reply: true\n---\n"
+
+	err := sendSpinningAlertForWaitingFile(
+		sessionDir,
+		"ctx-alert",
+		waitingFilename,
+		waitingContent,
+		time.Date(2026, time.April, 5, 12, 11, 0, 0, time.UTC),
+		10*time.Minute,
+		cfg,
+		nil,
+		map[string]discovery.NodeInfo{
+			"review:messenger": {
+				SessionDir:  sessionDir,
+				SessionName: "review",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("sendSpinningAlertForWaitingFile: %v", err)
+	}
+
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+
+	alertContent, err := os.ReadFile(filepath.Join(postDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile alert: %v", err)
+	}
+	got := string(alertContent)
+	for _, want := range []string{
+		"requester=orchestrator",
+		"awaited=worker",
+		"context=ctx-alert",
+		"age=11m0s",
+		"threshold=10m0s",
+		"message=20260405-120000-r1234-from-orchestrator-to-worker.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("alert content missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestScanLiveInboxCounts_CountsUnreadInboxMarkdownFiles(t *testing.T) {
 	sessionDir := t.TempDir()
 	workerInbox := filepath.Join(sessionDir, "inbox", "worker")

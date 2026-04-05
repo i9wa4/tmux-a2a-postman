@@ -110,6 +110,25 @@ func frontmatterBool(content, key string) bool {
 	return false
 }
 
+func frontmatterValue(content, key string) string {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return ""
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return ""
+	}
+	for _, line := range strings.Split(rest[:second], "\n") {
+		prefix := key + ": "
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
 func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {
 	waitingSince := now.UTC().Format(time.RFC3339)
 	if cfg != nil && cfg.UINode != "" && info.To == cfg.UINode {
@@ -191,6 +210,37 @@ func visibleWaitingState(content string) string {
 	default:
 		return ""
 	}
+}
+
+func sendSpinningAlertForWaitingFile(sessionDir, contextID, waitingFilename, waitingContent string, now time.Time, spinningThreshold time.Duration, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	if cfg == nil || cfg.UINode == "" || cfg.SpinningAlertTemplate == "" {
+		return nil
+	}
+
+	requester := frontmatterValue(waitingContent, "from")
+	awaitedNode := frontmatterValue(waitingContent, "to")
+	waitingSince := waitingSinceFromContent(waitingContent)
+	if requester == "" || awaitedNode == "" || waitingSince.IsZero() {
+		return nil
+	}
+
+	age := now.Sub(waitingSince).Round(time.Second)
+	threshold := spinningThreshold.Round(time.Second)
+	alertVars := map[string]string{
+		"node":               awaitedNode,
+		"from":               requester,
+		"requester":          requester,
+		"to":                 awaitedNode,
+		"awaited_node":       awaitedNode,
+		"context_id":         contextID,
+		"spinning_duration":  age.String(),
+		"age":                age.String(),
+		"threshold":          threshold.String(),
+		"message_id":         waitingFilename,
+		"message_identifier": waitingFilename,
+	}
+	body := template.ExpandVariables(cfg.SpinningAlertTemplate, alertVars)
+	return sendAlertToUINode(sessionDir, contextID, cfg.UINode, body, "spinning", cfg, adjacency, nodes)
 }
 
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
@@ -1207,6 +1257,9 @@ func RunDaemonLoop(
 					paneState := paneStatus[recipientInfo.PaneID]
 					if updated, changed := advanceWaitingState(contentStr, paneState, now, idleThreshold, spinningThreshold, spinningEnabled); changed {
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
+						if strings.Contains(contentStr, "state: composing") && strings.Contains(updated, "state: spinning") {
+							_ = sendSpinningAlertForWaitingFile(sessionDir, contextID, entry.Name(), updated, now, spinningThreshold, cfg, adjacency, nodes)
+						}
 					}
 				}
 			}

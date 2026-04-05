@@ -38,7 +38,7 @@ the current shipped defaults are:
 | Node inactivity alert | ON with per-node timers: `boss=3600`, `critic=1800`, `guardian=1800`, `messenger=1800`, `orchestrator=1800`, `worker=900`, `worker-alt=900` |
 | Unreplied message alert | ON with the same per-node timers |
 | Dropped ball detection | ON with the same per-node timers, with default delivery kept at `tui` |
-| Spinning alert | OFF |
+| Expected-reply overdue alert (`spinning`) | OFF (`node_spinning_seconds = 0`) |
 | Heartbeat | OFF |
 
 The deployed XDG profile currently gets `ui_node: messenger` from
@@ -69,7 +69,7 @@ overrides in either `~/.config/tmux-a2a-postman/postman.toml` or
 | Disable all daemon alerts routed to the UI node | unset `ui_node` |
 | Disable node inactivity alert for a node | `idle_timeout_seconds = 0` |
 | Disable dropped-ball detection and unreplied-message alert for a node | `dropped_ball_timeout_seconds = 0` |
-| Keep spinning alert disabled | `node_spinning_seconds = 0` |
+| Disable expected-reply overdue alert | `node_spinning_seconds = 0` |
 | Keep heartbeat disabled | `[heartbeat] enabled = false` |
 
 Repo-local config loads after XDG config with non-zero-wins semantics, so a
