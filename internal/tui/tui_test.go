@@ -154,7 +154,7 @@ func TestTUI_View(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "tmux-a2a-postman "+version.Version+"   [p:ping] [q:quit]") {
+	if !strings.Contains(view, "tmux-a2a-postman "+version.Version+"   [up/down:move] [p:ping] [q:quit]") {
 		t.Fatalf("view missing simplified header: %q", view)
 	}
 	if !strings.Contains(view, "[sessions]") {

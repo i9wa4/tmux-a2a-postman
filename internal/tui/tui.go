@@ -1034,7 +1034,7 @@ func (m Model) View() tea.View {
 	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 
 	var b strings.Builder
-	b.WriteString("tmux-a2a-postman " + version.Version + "   [p:ping] [q:quit]\n\n")
+	b.WriteString("tmux-a2a-postman " + version.Version + "   [up/down:move] [p:ping] [q:quit]\n\n")
 	b.WriteString(m.renderSessionsSection())
 	b.WriteString("\n")
 	b.WriteString(m.renderNodesSection())
