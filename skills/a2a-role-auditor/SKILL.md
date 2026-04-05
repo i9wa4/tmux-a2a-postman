@@ -8,6 +8,7 @@ description: |
   - Nodes can't see each other in talks_to_line (after confirming session/PING issue is ruled out)
   - Adding a new node and need to verify its template is complete and consistent
   - User wants to review or improve role definitions for any node
+  - unread backlog, quiet node, or late reply behavior looks wrong after config/state causes are ruled out
   Do NOT use for daemon-level failures (dead-letter from routing/edge misconfiguration);
   run triage first to determine if the issue is template-level.
 ---
@@ -28,6 +29,11 @@ patches):
 - Wrong or missing edges in `postman.toml` or `postman.md`
 - Node not defined in `postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`
 - Session not currently owned or enabled by the running daemon
+- Unread backlog or quiet node behavior explained by `ui_node`,
+  `inbox_unread_threshold`, `idle_timeout_seconds`, or other alert-policy
+  settings rather than by role instructions
+- Late reply escalation explained by `dropped_ball_timeout_seconds` or
+  `node_spinning_seconds` policy rather than by a template bug
 
 **Template-level confirmed** (node exists, edges correct, but behavior is
 wrong):
@@ -113,15 +119,21 @@ Applies only to nodes that define a `draft_template` field.
   may assume all nodes listed in the template are contactable, leading to
   dead-lettered messages
 
-### 2.9. Check 8 — Dropped Ball Timeout Configured
+### 2.9. Check 8 — Late Reply Policy Alignment
 
 Applies to all non-observer nodes (nodes whose role does NOT contain
 "observer").
 
-- PASS: `dropped_ball_timeout_seconds` is greater than 0
-- FAIL: `dropped_ball_timeout_seconds` is 0 or absent — the node can hold the
-  ball indefinitely without triggering a dropped-ball alert, causing silent
-  stalls
+- PASS: the node's role, `dropped_ball_timeout_seconds`, and
+  `node_spinning_seconds` tell a consistent story about late reply handling
+- PASS: an intentionally quiet node or background observer is allowed to keep
+  `dropped_ball_timeout_seconds = 0` when that choice is explicit and aligned
+  with the role
+- FAIL: the role expects timely handoff or escalation, but both
+  `dropped_ball_timeout_seconds` and `node_spinning_seconds` leave late reply
+  behavior undefined
+- FAIL: the config enables noisy late reply escalation for a node whose role is
+  intentionally quiet or non-responsive by design
 
 ### 2.10. Check B-I8 — Protocol Reminder Presence
 
@@ -174,8 +186,8 @@ All files are read from the user's XDG config directory:
   (last wins for overlapping fields).
 - `postman.default.toml` is a canonical reference listing all configurable
   values with their defaults and comments. Consult it when auditing
-  `dropped_ball_timeout_seconds` defaults and other per-node configurable fields
-  (#249 policy: all values must appear explicitly here).
+  `dropped_ball_timeout_seconds`, `node_spinning_seconds`, and other per-node
+  configurable fields (#249 policy: all values must appear explicitly here).
 
 ## 5. System-Provided Context (Do Not Duplicate in Role Templates)
 

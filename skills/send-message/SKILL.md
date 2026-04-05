@@ -68,11 +68,14 @@ To discover any command's options and required fields at point of use:
 ```text
 tmux-a2a-postman schema send           # required: ["to","body"]
 tmux-a2a-postman schema pop            # pop --params scope
-tmux-a2a-postman schema               # postman.toml config schema
+tmux-a2a-postman schema               # postman.toml public config surface
 ```
 
 Do NOT hardcode JSON output shapes or flag lists in role templates when
 `tmux-a2a-postman schema <command>` provides them on demand.
+
+State and alert policy authority lives in README.md plus
+docs/guides/alert-config.md and docs/design/node-state-machine.md.
 
 ## 4. JSON Output
 

@@ -19,7 +19,7 @@ JSON Schema for a command's `--params`-settable options.
 | `get-context-id`           | Print the active context ID                          |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
 | `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
-| `schema`                   | Print JSON Schema for a command or config            |
+| `schema`                   | Print JSON Schema for a command or the curated public config surface |
 | `help`                     | Print help topics                                    |
 
 The default operator surface is `send`, `pop`, `bind`, `get-health`, and
@@ -371,7 +371,7 @@ Can be combined with a command argument or used alone.
 
 | Argument                   | Describes                                     |
 | -------------------------- | --------------------------------------------- |
-| (none)                     | `postman.toml` config properties              |
+| (none)                     | Curated `postman.toml` public config surface  |
 | `send`                     | `send` `--params` scope                       |
 | `pop`                      | `pop` `--params` scope                        |
 | `read`                     | `read` `--params` scope                       |
@@ -472,7 +472,7 @@ To see exactly which flags are settable via `--params` for any command:
 ```text
 tmux-a2a-postman schema send           # required: ["to","body"]
 tmux-a2a-postman schema pop            # no required fields
-tmux-a2a-postman schema               # postman.toml config schema
+tmux-a2a-postman schema               # postman.toml public config surface
 ```
 
 The `required` array in schema output lists flags that must be provided
@@ -510,5 +510,5 @@ tmux-a2a-postman help [TOPIC]
 | (none)                 | List available topics                    |
 | `messaging`            | Message flow and node communication      |
 | `directories`          | State directory layout                   |
-| `config`               | Configuration file structure             |
+| `config`               | Unified state + notification model       |
 | `commands`             | Command list with one-line descriptions  |

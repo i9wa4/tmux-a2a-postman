@@ -165,7 +165,28 @@ your-project/
 **Nix/home-manager users:** if your XDG config is read-only Nix store
 symlinks, use project-local overrides.
 
-### 4.5. Priority Order (highest to lowest)
+### 4.5. Unified state + notification model
+
+get-health, get-health-oneline, and the default TUI are three views over the
+same canonical contract. The per-node visible states are `ready`,
+`pending`, `user_input`, `composing`, `spinning`, and `stalled`. Session-level
+`unavailable` is a fallback that means the current daemon is not authoritative
+for canonical health; it is not a per-node state.
+
+Public knobs for this model live in `postman.toml`:
+
+- `ui_node`
+- `reminder_interval_messages`
+- `inbox_unread_threshold`
+- `[node].idle_timeout_seconds`
+- `[node].dropped_ball_timeout_seconds`
+- `node_spinning_seconds`
+- `[heartbeat].enabled`
+
+Advanced dampening and rendering-shaping fields remain documented in
+`docs/design/notification.md` and `docs/guides/alert-config.md`.
+
+### 4.6. Priority Order (highest to lowest)
 
 1. Project-local `postman.md`
 2. Project-local `nodes/*.md`
@@ -219,16 +240,15 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
       waiting/          # per-node waiting state files
 ```
 
-## 7. Deployment Topology
+## 7. Deployment Model
 
-| Topology                    | tmux servers | Daemons | Machines |
-| --------------------------- | ------------ | ------- | -------- |
-| Single daemon               | 1            | 1       | 1        |
-| Multi-daemon, same machine  | 1            | N       | 1        |
-| Multi-daemon, cross-machine | N            | N       | N        |
+The default operator model is one daemon per observed tmux session. Start the
+daemon for the session you are operating and treat that daemon as the canonical
+health and alert authority for the session.
 
-Each daemon maintains its own `{base_dir}/{contextId}/` state directory.
-Only one daemon may have a given tmux session set to ON at a time.
+Only one live daemon may own a given tmux session at a time. Running additional
+daemons elsewhere is an advanced/internal topology detail, not part of the
+normal operator workflow or the reduced beginner surface.
 
 See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
@@ -254,7 +274,7 @@ tmux-a2a-postman start
 tmux-a2a-postman stop
 tmux-a2a-postman get-context-id
 tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
-tmux-a2a-postman schema [COMMAND]   # JSON Schema for a command's --params-settable options
+tmux-a2a-postman schema [COMMAND]   # JSON Schema for the public config surface or a command's --params scope
 ```
 
 Migration from older names:
@@ -271,5 +291,6 @@ The `skills/` directory contains reusable agent skill files for AI coding
 assistants (Claude Code, Codex CLI, etc.). Each skill lives at
 `skills/{skill-name}/SKILL.md`.
 
-- **a2a-role-auditor**: Audits node role templates to diagnose and fix
+- send: Sends messages to another node using tmux-a2a-postman send.
+- a2a-role-auditor: Audits node role templates to diagnose and fix
   node-to-node interaction breakdowns.

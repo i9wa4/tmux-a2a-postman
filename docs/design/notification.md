@@ -4,10 +4,10 @@
 
 tmux-a2a-postman delivers messages between AI agents running in tmux panes. When
 a message arrives or a problem is detected, the daemon "taps the agent on the
-shoulder" — this is a notification. There are seven distinct notification
+shoulder" — this is a notification. There are eight distinct notification
 mechanisms, each designed for a different situation.
 
-This document explains all seven mechanisms: when each fires, how it reaches its
+This document explains all eight mechanisms: when each fires, how it reaches its
 target, which configuration fields control it, and how the guard/throttle system
 prevents notification floods.
 
@@ -191,8 +191,8 @@ pass:
 
 **Delivery:** `sendAlertToUINode` writes an envelope to `post/`, which the
 daemon then routes to `ui_node`'s inbox and pane-notifies normally. The alert
-body is rendered from `alert_message_template` and
-`inbox_unread_summary_alert_template`.
+body is rendered from `inbox_unread_summary_alert_template`, then wrapped by
+the shared `daemon_message_template`.
 
 **Config fields:**
 
@@ -203,7 +203,7 @@ body is rendered from `alert_message_template` and
 | `alert_cooldown_seconds`           | `600`   | Min interval between alerts to same recipient    |
 | `alert_delivery_window_seconds`    | `60`    | Suppress if `ui_node` received recently          |
 | `inbox_unread_summary_alert_template` | (see default config) | Alert body text               |
-| `alert_message_template`           | (see default config) | Envelope wrapping the alert body |
+| `daemon_message_template`          | (see default config) | Shared envelope for alerts, heartbeat, and PING |
 | `alert_action_reachable_template`  | (see default config) | Appended when node is reachable |
 | `alert_action_unreachable_template` | (see default config) | Appended when node is not reachable |
 
@@ -343,7 +343,8 @@ than `2 * interval` are recycled to `dead-letter/`.
 
 **When it fires:** Every `interval_seconds`. Fires only when `llm_node`'s inbox
 is empty (prevents flooding an unresponsive LLM). Requires
-`heartbeat_message_template` to be set; otherwise the trigger is a no-op.
+`[heartbeat].enabled = true`, `llm_node`, and `prompt`; the resulting message is
+wrapped by the shared `daemon_message_template`.
 
 **Delivery:** `os.WriteFile` to `post/` — then normal daemon routing delivers it
 to `llm_node`'s inbox and sends a pane notification.
@@ -352,10 +353,11 @@ to `llm_node`'s inbox and sends a pane notification.
 
 | Field                       | Default | Description                                      |
 | --------------------------- | ------- | ------------------------------------------------ |
+| `enabled`                   | `false` | Turn heartbeat delivery on or off                |
 | `llm_node`                  | `""`    | Target node for heartbeat messages               |
 | `interval_seconds`          | (none)  | Interval between triggers                         |
 | `prompt`                    | (none)  | Prompt text (supports `{context_id}`)            |
-| `heartbeat_message_template` | (see default config) | Envelope template for heartbeat messages |
+| `daemon_message_template`   | (see default config) | Shared envelope used for heartbeat delivery |
 
 **Source:** `internal/heartbeat/trigger.go` — `SendHeartbeatTrigger`
 
@@ -564,13 +566,13 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `ui_node`                          | `""`     | Global  | §2.3, §2.4, §2.5          |
 | `alert_cooldown_seconds`           | `600`    | Global  | §2.3, §2.4, §2.5          |
 | `alert_delivery_window_seconds`    | `60`     | Global  | §2.3, §2.4, §2.5          |
-| `alert_message_template`           | (envelope) | Global | §2.3, §2.4, §2.5         |
 | `inbox_unread_summary_alert_template` | (see config) | Global | §2.3              |
 | `node_inactivity_alert_template`   | (see config) | Global | §2.4                   |
 | `unreplied_message_alert_template` | (see config) | Global | §2.5                   |
 | `spinning_alert_template`          | (see config) | Global | §3.1                       |
 | `alert_action_reachable_template`  | (see config) | Global | §2.3, §2.4, §2.5       |
 | `alert_action_unreachable_template` | (see config) | Global | §2.3, §2.4, §2.5     |
+| `daemon_message_template`          | (envelope) | Global | §2.3, §2.4, §2.5, §2.7, §3.3 |
 | `dropped_ball_timeout_seconds`     | `0`      | Per-node | §2.5, §2.6               |
 | `dropped_ball_cooldown_seconds`    | `0`      | Per-node | §2.6                     |
 | `dropped_ball_notification`        | `"tui"`  | Per-node | §2.6                     |
@@ -580,7 +582,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `node_idle_seconds`                | `900`    | Global  | §3.1, §3.4               |
 | `node_spinning_seconds`            | `0`      | Global  | §3.1                      |
 | `node_stale_seconds`               | `900`    | Global  | §3.1, §3.4 (cleanup)      |
-| `heartbeat_message_template`       | (envelope) | Global | §2.7                    |
+| `[heartbeat].enabled`              | `false`  | Global  | §2.7                      |
 | `[heartbeat].llm_node`             | `""`     | Global  | §2.7                      |
 | `[heartbeat].interval_seconds`     | (none)   | Global  | §2.7                      |
 | `[heartbeat].prompt`               | (none)   | Global  | §2.7                      |

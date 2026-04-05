@@ -9,13 +9,15 @@ Design document clarifying the intended daemon/session architecture.
 A daemon can run from ANY tmux pane or session. There is no requirement for the
 daemon to reside in the same tmux session as the agent nodes it serves.
 
-### 2. Multiple Daemons Allowed
+### 2. Single-Daemon Operator Model
 
-Multiple daemons may run simultaneously, but startup is still serialized per
-tmux session name. The start path first rejects a duplicate daemon for the
-same `contextID` plus tmux session via `postman.pid`, then acquires a
-tmux-session-wide lock, so two contexts cannot start daemons against the same
-tmux session at the same time. Daemons in other tmux sessions remain allowed.
+The default operator workflow assumes one daemon per observed tmux session.
+Startup is still serialized per tmux session name: the start path first rejects
+a duplicate daemon for the same `contextID` plus tmux session via
+`postman.pid`, then acquires a tmux-session-wide lock, so two contexts cannot
+start daemons against the same tmux session at the same time. Running
+additional daemons elsewhere is an advanced/internal topology detail, not part
+of the reduced default operator surface.
 
 ### 3. Exclusive Session Ownership
 
@@ -40,5 +42,7 @@ daemon runs from. Discovery is based on tmux pane metadata, not daemon locality.
 ## Design Intent
 
 These principles correct stale documentation that implied a same-session
-constraint between daemon and agent nodes. The daemon is a routing process that
-reads tmux state; it has no topological dependency on the session it observes.
+constraint between daemon and agent nodes while keeping the default operator
+story simple: run one daemon for the tmux session you are operating. The daemon
+is still a routing process that reads tmux state; it has no topological
+dependency on the session it observes.

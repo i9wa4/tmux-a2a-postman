@@ -46,17 +46,45 @@ The deployed XDG profile currently gets `ui_node: messenger` from
 in TOML. Either surface is valid as long as the loaded config resolves
 `ui_node`.
 
-## 3. What Each Field Controls
+## 3. Unified State + Notification Boundary
 
-| Field                         | Alert type affected                | Default    |
-| ----------------------------- | ---------------------------------- | ---------- |
-| `ui_node`                     | All alerts (required global gate)  | `""` (disabled)|
-| `idle_timeout_seconds`        | Node-inactivity alert (§2.4)       | `0` (disabled)|
-| `dropped_ball_timeout_seconds`| Dropped-ball detection (§2.6) and unreplied-message alert (§2.5) | `0` (disabled)|
+`get-health`, `get-health-oneline`, and the default TUI share one canonical
+health contract. This guide covers the policy knobs layered on top of that
+contract:
+
+- state/view authority: canonical `visible_state`, per-node `pane_state`, and
+  `waiting_state`
+- policy knobs: `ui_node`, reminder thresholds, per-node inactivity and
+  late-reply thresholds, `node_spinning_seconds`, and heartbeat enablement
+- dampening knobs: `alert_cooldown_seconds`,
+  `alert_delivery_window_seconds`, `pane_notify_cooldown_seconds`, and
+  `dropped_ball_cooldown_seconds`
+
+The current visible states are `ready`, `pending`, `user_input`, `composing`,
+`spinning`, and `stalled`. Session-level `unavailable` is a fallback for
+non-authoritative health views, not a per-node alert state.
+
+## 4. What Each Field Controls
+
+| Field                           | Surface / mechanism                                 | Default              |
+| ------------------------------- | --------------------------------------------------- | -------------------- |
+| `ui_node`                       | Global gate for daemon alerts and `user_input` waits | `""` (disabled)     |
+| `reminder_interval_messages`    | Pane reminder cadence after archived reads          | `20`                 |
+| `inbox_unread_threshold`        | `ui_node` unread-summary alert                      | `3`                  |
+| `idle_timeout_seconds`          | Per-node inactivity alert threshold                 | `0` (disabled)       |
+| `dropped_ball_timeout_seconds`  | Per-node unreplied-message and dropped-ball threshold | `0` (disabled)     |
+| `node_spinning_seconds`         | Reply-tracked `composing -> spinning` threshold     | `0` (disabled)       |
+| `alert_cooldown_seconds`        | Shared alert rate limiter for `ui_node`             | `600`                |
+| `alert_delivery_window_seconds` | Recent-delivery suppression for `ui_node`           | `60`                 |
+| `pane_notify_cooldown_seconds`  | Reminder / pane-send cooldown                       | `600`                |
+| `dropped_ball_cooldown_seconds` | Per-node dropped-ball resend dampener               | `0` -> timeout value |
+| `dropped_ball_notification`     | Dropped-ball delivery channel (`tui`, `display`, `all`) | `"tui"`         |
+| `[heartbeat].enabled`           | Turns heartbeat automation on or off                | `false`              |
+| `[heartbeat].interval_seconds`  | Heartbeat cadence                                   | `1800`               |
 
 See `docs/design/notification.md` for full details on each alert mechanism.
 
-## 4. Opt-Out Path
+## 5. Opt-Out Path
 
 You can disable or soften each notification class with ordinary config
 overrides in either `~/.config/tmux-a2a-postman/postman.toml` or
@@ -75,7 +103,7 @@ overrides in either `~/.config/tmux-a2a-postman/postman.toml` or
 Repo-local config loads after XDG config with non-zero-wins semantics, so a
 repo-local override will win inside this repo.
 
-## 5. Requirement: ui_node Must Be Discoverable
+## 6. Requirement: ui_node Must Be Discoverable
 
 The `ui_node` value must match a tmux pane title in the active session.
 If the pane is absent, alert messages route to `dead-letter/` silently.
@@ -95,7 +123,7 @@ tmux-a2a-postman get-health
 The `messenger` node must appear in `nodes[*]`, with the canonical
 `visible_state` plus the live `inbox_count` and `waiting_count` facts.
 
-## 6. Daemon Startup Warning
+## 7. Daemon Startup Warning
 
 If the daemon detects a misconfigured alert system it logs:
 

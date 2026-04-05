@@ -13,6 +13,9 @@ Design document for the per-node state machine introduced in Issue #286.
 | stalled     | Red    | 196  | ●   | 🔴      | Reply-tracked work went stale while composing or spinning |
 | user_input  | Purple | 141  | ●   | 🟣      | Node waiting for human input                       |
 
+`unavailable` is not a per-node state. It is the session-level fallback used
+when the current daemon does not own the canonical health snapshot.
+
 ## State Transitions
 
 ```mermaid
