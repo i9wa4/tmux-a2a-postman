@@ -26,6 +26,42 @@ type sessionPane struct {
 	currentCommand string
 }
 
+func orderedEdgeNodeNames(edges []string) []string {
+	seen := make(map[string]struct{})
+	var ordered []string
+
+	for _, edge := range edges {
+		edge = strings.TrimSpace(edge)
+		if edge == "" {
+			continue
+		}
+
+		var parts []string
+		switch {
+		case strings.Contains(edge, "-->"):
+			parts = strings.Split(edge, "-->")
+		case strings.Contains(edge, "--"):
+			parts = strings.Split(edge, "--")
+		default:
+			continue
+		}
+
+		for _, part := range parts {
+			nodeName := strings.TrimSpace(part)
+			if nodeName == "" {
+				continue
+			}
+			if _, ok := seen[nodeName]; ok {
+				continue
+			}
+			seen[nodeName] = struct{}{}
+			ordered = append(ordered, nodeName)
+		}
+	}
+
+	return ordered
+}
+
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
 	result := status.SessionHealth{
 		ContextID:   contextID,
@@ -41,7 +77,13 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 		return result, fmt.Errorf("discovering nodes: %w", err)
 	}
 
-	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
+	orderedEdgeNodes := orderedEdgeNodeNames(cfg.Edges)
+	edgeNodes := make(map[string]bool, len(orderedEdgeNodes))
+	edgeNodeRank := make(map[string]int, len(orderedEdgeNodes))
+	for idx, nodeName := range orderedEdgeNodes {
+		edgeNodes[nodeName] = true
+		edgeNodeRank[nodeName] = idx
+	}
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneStates := loadPaneActivityStatus(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	waitingStates, waitingCounts := collectWaitingFacts(sessionDir, sessionName)
@@ -82,6 +124,14 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	}
 
 	sort.Slice(result.Nodes, func(i, j int) bool {
+		leftRank, leftOK := edgeNodeRank[result.Nodes[i].Name]
+		rightRank, rightOK := edgeNodeRank[result.Nodes[j].Name]
+		if leftOK && rightOK && leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
 		return result.Nodes[i].Name < result.Nodes[j].Name
 	})
 	result.NodeCount = len(result.Nodes)
@@ -281,16 +331,19 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 }
 
 func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []status.SessionWindow {
-	nodeByName := make(map[string]status.NodeHealth, len(nodes))
-	for _, node := range nodes {
-		nodeByName[node.Name] = node
+	paneByName := make(map[string]sessionPane, len(panes))
+	for _, pane := range panes {
+		paneByName[pane.title] = pane
 	}
 
 	windowByIndex := make(map[string]int)
 	var windows []status.SessionWindow
-	for _, pane := range panes {
-		node, ok := nodeByName[pane.title]
-		if !ok || node.PaneID == "" || node.PaneID != pane.paneID {
+	for _, node := range nodes {
+		if node.PaneID == "" {
+			continue
+		}
+		pane, ok := paneByName[node.Name]
+		if !ok || node.PaneID != pane.paneID {
 			continue
 		}
 
@@ -300,7 +353,7 @@ func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []statu
 			index = len(windows) - 1
 			windowByIndex[pane.windowIndex] = index
 		}
-		windows[index].Nodes = append(windows[index].Nodes, status.WindowNode{Name: pane.title})
+		windows[index].Nodes = append(windows[index].Nodes, status.WindowNode{Name: node.Name})
 	}
 
 	return windows

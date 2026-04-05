@@ -224,3 +224,120 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 		t.Fatalf("critic visible_state = %#v, want %q", got, "composing")
 	}
 }
+
+func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndWindows(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "20260406-ctx"
+	sessionName := "review"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	for _, dir := range []string{
+		filepath.Join(sessionDir, "inbox", "worker"),
+		filepath.Join(sessionDir, "inbox", "critic"),
+		filepath.Join(sessionDir, "waiting"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", dir, err)
+		}
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(tmpDir, contextID, "pane-activity.json"),
+		[]byte(`{
+  "%11": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
+  "%12": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"}
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(pane-activity.json): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2 $3\" in\n" +
+		"  \"list-panes -a -F\")\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + "\")\n" +
+		"    printf '%s\\n' '0\t0\t%12\tcritic\tclaude' '1\t0\t%11\tworker\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	runErr := RunGetSessionHealth([]string{
+		"--config", configPath,
+		"--context-id", contextID,
+		"--session", sessionName,
+	})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer.Close: %v", err)
+	}
+	if runErr != nil {
+		t.Fatalf("RunGetSessionHealth: %v", runErr)
+	}
+
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll(stdout): %v", err)
+	}
+
+	var payload struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+		Windows []struct {
+			Index string `json:"index"`
+			Nodes []struct {
+				Name string `json:"name"`
+			} `json:"nodes"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", string(out), err)
+	}
+
+	if len(payload.Nodes) != 2 {
+		t.Fatalf("nodes = %#v, want 2 nodes", payload.Nodes)
+	}
+	if payload.Nodes[0].Name != "worker" || payload.Nodes[1].Name != "critic" {
+		t.Fatalf("nodes order = %#v, want worker then critic", payload.Nodes)
+	}
+
+	if len(payload.Windows) != 2 {
+		t.Fatalf("windows = %#v, want 2 windows", payload.Windows)
+	}
+	if payload.Windows[0].Index != "1" || len(payload.Windows[0].Nodes) != 1 || payload.Windows[0].Nodes[0].Name != "worker" {
+		t.Fatalf("first window = %#v, want window 1 with worker", payload.Windows[0])
+	}
+	if payload.Windows[1].Index != "0" || len(payload.Windows[1].Nodes) != 1 || payload.Windows[1].Nodes[0].Name != "critic" {
+		t.Fatalf("second window = %#v, want window 0 with critic", payload.Windows[1])
+	}
+}
