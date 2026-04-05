@@ -209,7 +209,7 @@ var reservedH2Names = map[string]string{
 // is also accepted for backward compatibility.
 // Section body is the text from the heading line (exclusive) until the next
 // h2 heading or end of content.
-func extractH2Sections(content string) map[string]string {
+func extractH2Sections(content string) ([]string, map[string]string) {
 	sections := make(map[string]string)
 	lines := strings.Split(content, "\n")
 
@@ -241,6 +241,7 @@ func extractH2Sections(content string) map[string]string {
 		}
 	}
 
+	var nodeOrder []string
 	for i, sec := range found {
 		end := len(lines)
 		if i+1 < len(found) {
@@ -250,8 +251,11 @@ func extractH2Sections(content string) map[string]string {
 		}
 		body := strings.Join(lines[sec.start:end], "\n")
 		sections[sec.key] = strings.TrimSpace(body)
+		if _, reserved := reservedH2Names[sec.key]; !reserved {
+			nodeOrder = appendUniqueNodeNames(nodeOrder, sec.key)
+		}
 	}
-	return sections
+	return nodeOrder, sections
 }
 
 // stripFrontmatter returns content with the leading --- block removed.
@@ -289,7 +293,7 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	content := string(raw)
-	cfg := &Config{Nodes: make(map[string]NodeConfig)}
+	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
 
 	// Parse global frontmatter
 	fm := parseFrontmatter(content)
@@ -302,7 +306,8 @@ func loadMarkdownConfig(path string) (*Config, error) {
 
 	// Parse h2 sections (without frontmatter interfering with h2 detection)
 	bodyContent := stripFrontmatter(content)
-	sections := extractH2Sections(bodyContent)
+	nodeOrder, sections := extractH2Sections(bodyContent)
+	cfg.recordNodeNames(nodeOrder...)
 
 	// Edges section
 	if edgesBody, ok := sections["edges"]; ok {

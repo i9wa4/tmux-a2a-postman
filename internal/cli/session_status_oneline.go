@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -68,8 +69,8 @@ func isShellCommand(cmd string) bool {
 	return shellCommands[cmd]
 }
 
-// RunGetSessionStatusOneline formats one resolved session-health payload in one line.
-// Output format: [0]window0_panes:window1_panes:...
+// RunGetSessionStatusOneline formats the compact all-session health view in one line.
+// Output format: [0]window0_panes:window1_panes [1]window0_panes:window1_panes ...
 // TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
 // Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
 // Pane status: active/idle=green, composing=blue, spinning=yellow, stale=red
@@ -103,7 +104,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		}
 	}
 
-	health, ok, err := collectResolvedSessionHealth(*contextID, *sessionFlag, *configPath)
+	healths, cfg, ok, err := collectAllSessionHealth(*contextID, *sessionFlag, *configPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
 			if *jsonOut {
@@ -129,7 +130,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		isTerminal = term.IsTerminal(file.Fd())
 	}
 
-	statusStr := formatSessionHealthOneline(health, isTerminal)
+	statusStr := formatAllSessionHealthOneline(healths, cfg.OrderedNodeNames(), isTerminal)
 	if statusStr != "" {
 		if *jsonOut {
 			return json.NewEncoder(stdout).Encode(struct {
@@ -147,7 +148,41 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	return nil
 }
 
-func formatSessionHealthOneline(health status.SessionHealth, isTerminal bool) string {
+func sessionStatusDot(visibleState string, isTerminal bool) string {
+	if isTerminal {
+		unavailableStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+		switch visibleState {
+		case "unavailable", "unowned":
+			return unavailableStyle.Render("●")
+		default:
+			return statusDot(visibleState, true)
+		}
+	}
+	switch visibleState {
+	case "unavailable", "unowned":
+		return "⚪"
+	default:
+		return statusDot(visibleState, false)
+	}
+}
+
+func formatAllSessionHealthOneline(healths []status.SessionHealth, nodeOrder []string, isTerminal bool) string {
+	var sessionStatuses []string
+	for i, health := range healths {
+		sessionStatus := formatSessionHealthOneline(health, nodeOrder, isTerminal)
+		if sessionStatus == "" {
+			visibleState := health.VisibleState
+			if visibleState == "" {
+				visibleState = status.SessionVisibleState(health.Nodes)
+			}
+			sessionStatus = sessionStatusDot(visibleState, isTerminal)
+		}
+		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
+	}
+	return strings.Join(sessionStatuses, " ")
+}
+
+func formatSessionHealthOneline(health status.SessionHealth, nodeOrder []string, isTerminal bool) string {
 	nodeByName := make(map[string]status.NodeHealth, len(health.Nodes))
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
@@ -156,8 +191,8 @@ func formatSessionHealthOneline(health status.SessionHealth, isTerminal bool) st
 	var windowStatuses []string
 	for _, window := range health.Windows {
 		var paneStatuses strings.Builder
-		for _, windowNode := range window.Nodes {
-			node, ok := nodeByName[windowNode.Name]
+		for _, nodeName := range orderedWindowNodeNames(window, nodeOrder) {
+			node, ok := nodeByName[nodeName]
 			if !ok {
 				continue
 			}
@@ -174,5 +209,30 @@ func formatSessionHealthOneline(health status.SessionHealth, isTerminal bool) st
 	if len(windowStatuses) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("[0]%s", strings.Join(windowStatuses, ":"))
+	return strings.Join(windowStatuses, ":")
+}
+
+func orderedWindowNodeNames(window status.SessionWindow, nodeOrder []string) []string {
+	present := make(map[string]bool, len(window.Nodes))
+	for _, windowNode := range window.Nodes {
+		present[windowNode.Name] = true
+	}
+
+	ordered := make([]string, 0, len(window.Nodes))
+	for _, name := range nodeOrder {
+		if present[name] {
+			ordered = append(ordered, name)
+			delete(present, name)
+		}
+	}
+
+	var extras []string
+	for _, windowNode := range window.Nodes {
+		if present[windowNode.Name] {
+			extras = append(extras, windowNode.Name)
+			delete(present, windowNode.Name)
+		}
+	}
+	sort.Strings(extras)
+	return append(ordered, extras...)
 }

@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -92,4 +94,57 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 		return status.SessionHealth{}, true, err
 	}
 	return result, true, nil
+}
+
+func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) ([]status.SessionHealth, *config.Config, bool, error) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	resolvedContextID := contextIDFlag
+	if resolvedContextID != "" {
+		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		if err != nil {
+			return nil, nil, false, err
+		}
+	} else {
+		sessionName := sessionFlag
+		if sessionName == "" {
+			sessionName = config.GetTmuxSessionName()
+		}
+		if sessionName == "" {
+			return nil, cfg, false, nil
+		}
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			return nil, nil, false, err
+		}
+	}
+
+	sessionNames, err := discovery.DiscoverAllSessions()
+	if err != nil {
+		return nil, nil, true, err
+	}
+	sort.Strings(sessionNames)
+
+	results := make([]status.SessionHealth, 0, len(sessionNames))
+	for _, sessionName := range sessionNames {
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		health, err := collectSessionHealth(baseDir, resolvedContextID, sessionName, cfg)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		results = append(results, health)
+	}
+
+	return results, cfg, true, nil
 }

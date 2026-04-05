@@ -85,6 +85,15 @@ func TestStatusDot_TTY(t *testing.T) {
 	}
 }
 
+func TestSessionStatusDot_NonTTY(t *testing.T) {
+	if got := sessionStatusDot("unavailable", false); got != "⚪" {
+		t.Fatalf("sessionStatusDot(%q, false) = %q, want %q", "unavailable", got, "⚪")
+	}
+	if got := sessionStatusDot("pending", false); got != "🔷" {
+		t.Fatalf("sessionStatusDot(%q, false) = %q, want %q", "pending", got, "🔷")
+	}
+}
+
 func TestWaitingFileVisibleState(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -146,32 +155,72 @@ func TestFormatSessionHealthOneline(t *testing.T) {
 		},
 	}
 
-	if got, want := formatSessionHealthOneline(health, false), "[0]🔷🔵"; got != want {
+	if got, want := formatSessionHealthOneline(health, []string{"critic", "worker", "shell"}, false), "🔵🔷"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *testing.T) {
+func TestFormatAllSessionHealthOneline(t *testing.T) {
+	healths := []status.SessionHealth{
+		{
+			VisibleState: "unavailable",
+		},
+		{
+			Nodes: []status.NodeHealth{
+				{Name: "worker", VisibleState: "pending", CurrentCommand: "claude"},
+				{Name: "critic", VisibleState: "composing", CurrentCommand: "claude"},
+				{Name: "messenger", VisibleState: "ready", CurrentCommand: "claude"},
+			},
+			Windows: []status.SessionWindow{
+				{
+					Index: "0",
+					Nodes: []status.WindowNode{
+						{Name: "worker"},
+						{Name: "critic"},
+					},
+				},
+				{
+					Index: "1",
+					Nodes: []status.WindowNode{
+						{Name: "messenger"},
+					},
+				},
+			},
+		},
+	}
+
+	got := formatAllSessionHealthOneline(healths, []string{"messenger", "critic", "worker"}, false)
+	if got != "[0]⚪ [1]🔵🔷:🟢" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]⚪ [1]🔵🔷:🟢")
+	}
+}
+
+func TestRunGetSessionStatusOneline_JSONOutput_FormatsAllSessionHealthInConfigOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
-	sessionName := "review"
-	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
+	reviewSessionDir := filepath.Join(tmpDir, contextID, "review")
 
 	t.Setenv("POSTMAN_HOME", tmpDir)
 
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		[]byte("[postman]\nedges = [\"messenger -- critic -- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
 	}
 
 	for _, dir := range []string{
-		filepath.Join(sessionDir, "inbox", "worker"),
-		filepath.Join(sessionDir, "inbox", "critic"),
-		filepath.Join(sessionDir, "waiting"),
+		filepath.Join(mainSessionDir, "inbox", "messenger"),
+		filepath.Join(mainSessionDir, "inbox", "critic"),
+		filepath.Join(mainSessionDir, "inbox", "worker"),
+		filepath.Join(mainSessionDir, "waiting"),
+		filepath.Join(reviewSessionDir, "inbox", "messenger"),
+		filepath.Join(reviewSessionDir, "inbox", "critic"),
+		filepath.Join(reviewSessionDir, "inbox", "worker"),
+		filepath.Join(reviewSessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -182,7 +231,10 @@ func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *t
 		filepath.Join(tmpDir, contextID, "pane-activity.json"),
 		[]byte(`{
   "%11": {"status":"active","lastChangeAt":"2026-04-04T00:00:00Z"},
-  "%12": {"status":"idle","lastChangeAt":"2026-04-04T00:00:00Z"}
+  "%12": {"status":"idle","lastChangeAt":"2026-04-04T00:00:00Z"},
+  "%13": {"status":"active","lastChangeAt":"2026-04-04T00:00:00Z"},
+  "%21": {"status":"active","lastChangeAt":"2026-04-04T00:00:00Z"},
+  "%22": {"status":"idle","lastChangeAt":"2026-04-04T00:00:00Z"}
 }`),
 		0o644,
 	); err != nil {
@@ -190,30 +242,44 @@ func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *t
 	}
 
 	if err := os.WriteFile(
-		filepath.Join(sessionDir, "inbox", "worker", "20260404-000000-s0000-from-boss-to-worker.md"),
+		filepath.Join(mainSessionDir, "inbox", "worker", "20260404-000000-s0000-from-boss-to-worker.md"),
 		[]byte("body"),
 		0o644,
 	); err != nil {
-		t.Fatalf("WriteFile(worker inbox): %v", err)
+		t.Fatalf("WriteFile(main worker inbox): %v", err)
 	}
 
 	if err := os.WriteFile(
-		filepath.Join(sessionDir, "waiting", "20260404-000001-s0000-from-orchestrator-to-critic.md"),
+		filepath.Join(mainSessionDir, "waiting", "20260404-000001-s0000-from-orchestrator-to-critic.md"),
 		[]byte("---\nstate: composing\nexpects_reply: true\n---\n"),
 		0o644,
 	); err != nil {
-		t.Fatalf("WriteFile(critic waiting): %v", err)
+		t.Fatalf("WriteFile(main critic waiting): %v", err)
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(reviewSessionDir, "inbox", "critic", "20260404-000002-s0000-from-boss-to-critic.md"),
+		[]byte("body"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(review critic inbox): %v", err)
 	}
 
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2 $3\" in\n" +
-		"  \"list-panes -a -F\")\n" +
-		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
+		"  \"list-sessions -F #{session_name}\")\n" +
+		"    printf '%s\\n' 'review' 'main'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + "\")\n" +
-		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
+		"  \"list-panes -a -F\")\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t main\")\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude' '1\t0\t%13\tmessenger\tclaude'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t review\")\n" +
+		"    printf '%s\\n' '0\t0\t%22\tworker\tclaude' '0\t1\t%21\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
 		"    exit 1\n" +
@@ -228,7 +294,6 @@ func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *t
 	if err := RunGetSessionStatusOneline(&stdout, []string{
 		"--config", configPath,
 		"--context-id", contextID,
-		"--session", sessionName,
 		"--json",
 	}); err != nil {
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
@@ -240,7 +305,7 @@ func TestRunGetSessionStatusOneline_JSONOutput_FormatsResolvedSessionHealth(t *t
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔷🔵" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵")
+	if payload.Status != "[0]🔵🔷:🟢 [1]🔷🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔵🔷:🟢 [1]🔷🟢")
 	}
 }

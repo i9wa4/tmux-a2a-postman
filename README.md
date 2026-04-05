@@ -283,7 +283,7 @@ Migration from older names:
 | ------------------------------- | ------------------------- | ---- |
 | `send-message`                  | `send`                    | Use `send` in the default operator loop |
 | `get-session-health`            | `get-health`              | `get-health` is the canonical JSON payload |
-| `get-session-status-oneline`    | `get-health-oneline`      | `get-health-oneline` is the one-line formatter over `get-health` |
+| `get-session-status-oneline`    | `get-health-oneline`      | `get-health-oneline` is the compact all-session formatter over canonical health |
 
 ## 9. Skills
 

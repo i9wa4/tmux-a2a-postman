@@ -331,19 +331,19 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 }
 
 func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []status.SessionWindow {
-	paneByName := make(map[string]sessionPane, len(panes))
-	for _, pane := range panes {
-		paneByName[pane.title] = pane
-	}
-
-	windowByIndex := make(map[string]int)
-	var windows []status.SessionWindow
+	nodeByPaneID := make(map[string]status.NodeHealth, len(nodes))
 	for _, node := range nodes {
 		if node.PaneID == "" {
 			continue
 		}
-		pane, ok := paneByName[node.Name]
-		if !ok || node.PaneID != pane.paneID {
+		nodeByPaneID[node.PaneID] = node
+	}
+
+	windowByIndex := make(map[string]int)
+	var windows []status.SessionWindow
+	for _, pane := range panes {
+		node, ok := nodeByPaneID[pane.paneID]
+		if !ok {
 			continue
 		}
 

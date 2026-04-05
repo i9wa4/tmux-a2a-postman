@@ -90,6 +90,8 @@ type Config struct {
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
+	// NodeOrder preserves first-seen node definition order across merged config files.
+	NodeOrder []string `toml:"-"`
 
 	// Node-level defaults applied to all nodes (loaded from [node_defaults] section)
 	NodeDefaults NodeConfig
@@ -160,9 +162,73 @@ func BoolVal(p *bool, defaultVal bool) bool {
 // Only structural fields (Nodes map, Edges slice) are initialized here.
 func DefaultConfig() *Config {
 	return &Config{
-		Edges: []string{},
-		Nodes: make(map[string]NodeConfig),
+		Edges:     []string{},
+		Nodes:     make(map[string]NodeConfig),
+		NodeOrder: []string{},
 	}
+}
+
+func appendUniqueNodeNames(order []string, names ...string) []string {
+	seen := make(map[string]bool, len(order))
+	for _, name := range order {
+		seen[name] = true
+	}
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		order = append(order, name)
+		seen[name] = true
+	}
+	return order
+}
+
+func isReservedNodeSection(name string) bool {
+	return name == "postman" || name == "heartbeat" || name == "node_defaults"
+}
+
+func orderedTOMLNodeNames(md toml.MetaData) []string {
+	var order []string
+	for _, key := range md.Keys() {
+		if len(key) == 0 {
+			continue
+		}
+		name := key[0]
+		if isReservedNodeSection(name) {
+			continue
+		}
+		order = appendUniqueNodeNames(order, name)
+	}
+	return order
+}
+
+func (cfg *Config) recordNodeNames(names ...string) {
+	cfg.NodeOrder = appendUniqueNodeNames(cfg.NodeOrder, names...)
+}
+
+func (cfg *Config) OrderedNodeNames() []string {
+	if cfg == nil {
+		return nil
+	}
+
+	order := append([]string{}, cfg.NodeOrder...)
+	var extras []string
+	for name := range cfg.Nodes {
+		if !containsString(order, name) {
+			extras = append(extras, name)
+		}
+	}
+	sort.Strings(extras)
+	return append(order, extras...)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
@@ -194,16 +260,14 @@ func loadEmbeddedConfig() (*Config, error) {
 
 	// Decode [nodename] sections (everything except postman and heartbeat)
 	cfg.Nodes = make(map[string]NodeConfig)
-	for name, prim := range rootSections {
-		if name == "postman" || name == "heartbeat" || name == "node_defaults" {
-			continue
-		}
-
+	for _, name := range orderedTOMLNodeNames(md) {
+		prim := rootSections[name]
 		var node NodeConfig
 		if err := md.PrimitiveDecode(prim, &node); err != nil {
 			return nil, fmt.Errorf("decoding embedded [%s] section: %w", name, err)
 		}
 		cfg.Nodes[name] = node
+		cfg.recordNodeNames(name)
 	}
 
 	// Decode [heartbeat] section if exists
@@ -365,7 +429,7 @@ func loadConfigFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing project-local config %s: %w", path, err)
 	}
 
-	cfg := &Config{Nodes: make(map[string]NodeConfig)}
+	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
 
 	if postmanPrim, ok := rootSections["postman"]; ok {
 		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
@@ -373,15 +437,14 @@ func loadConfigFile(path string) (*Config, error) {
 		}
 	}
 
-	for name, prim := range rootSections {
-		if name == "postman" || name == "heartbeat" || name == "node_defaults" {
-			continue
-		}
+	for _, name := range orderedTOMLNodeNames(md) {
+		prim := rootSections[name]
 		var node NodeConfig
 		if err := md.PrimitiveDecode(prim, &node); err != nil {
 			return nil, fmt.Errorf("decoding [%s] in %s: %w", name, path, err)
 		}
 		cfg.Nodes[name] = node
+		cfg.recordNodeNames(name)
 	}
 
 	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
@@ -739,6 +802,7 @@ func mergeConfig(base, override *Config) {
 	if len(override.Edges) > 0 {
 		base.Edges = override.Edges
 	}
+	base.recordNodeNames(override.NodeOrder...)
 
 	// Nodes: field-level merge per node
 	for name, overNode := range override.Nodes {
@@ -887,16 +951,15 @@ func LoadConfig(path string) (*Config, error) {
 
 		// Decode [nodename] sections (everything except postman and heartbeat)
 		cfg.Nodes = make(map[string]NodeConfig)
-		for name, prim := range rootSections {
-			if name == "postman" || name == "heartbeat" || name == "node_defaults" {
-				continue
-			}
-
+		cfg.NodeOrder = []string{}
+		for _, name := range orderedTOMLNodeNames(md) {
+			prim := rootSections[name]
 			var node NodeConfig
 			if err := md.PrimitiveDecode(prim, &node); err != nil {
 				return nil, fmt.Errorf("decoding [%s] section: %w", name, err)
 			}
 			cfg.Nodes[name] = node
+			cfg.recordNodeNames(name)
 		}
 
 		// Decode [heartbeat] section if exists
@@ -932,16 +995,15 @@ func LoadConfig(path string) (*Config, error) {
 					log.Printf("warning: skipping %s: %v", nodeFile, err)
 					continue
 				}
-				for name, prim := range sections {
-					if name == "postman" || name == "heartbeat" || name == "node_defaults" {
-						continue // skip reserved sections
-					}
+				for _, name := range orderedTOMLNodeNames(md2) {
+					prim := sections[name]
 					var node NodeConfig
 					if err := md2.PrimitiveDecode(prim, &node); err != nil {
 						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
 						continue
 					}
 					cfg.Nodes[name] = node // override if exists in postman.toml
+					cfg.recordNodeNames(name)
 				}
 			}
 		}
@@ -974,6 +1036,7 @@ func LoadConfig(path string) (*Config, error) {
 					node.Role = nc.Role
 				}
 				cfg.Nodes[nodeName] = node
+				cfg.recordNodeNames(nodeName)
 			}
 		}
 	}
@@ -1017,10 +1080,8 @@ func LoadConfig(path string) (*Config, error) {
 					log.Printf("warning: skipping %s: %v", nodeFile, err)
 					continue
 				}
-				for name, prim := range sections {
-					if name == "postman" || name == "heartbeat" || name == "node_defaults" {
-						continue // skip reserved sections
-					}
+				for _, name := range orderedTOMLNodeNames(md2) {
+					prim := sections[name]
 					var node NodeConfig
 					if err := md2.PrimitiveDecode(prim, &node); err != nil {
 						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
@@ -1030,6 +1091,7 @@ func LoadConfig(path string) (*Config, error) {
 						cfg.directTemplateRootTrust[reminderTemplateRoot(name)] = false
 					}
 					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
+					cfg.recordNodeNames(name)
 				}
 			}
 		}
@@ -1064,6 +1126,7 @@ func LoadConfig(path string) (*Config, error) {
 					node.Role = nc.Role
 				}
 				cfg.Nodes[nodeName] = node
+				cfg.recordNodeNames(nodeName)
 			}
 		}
 	}

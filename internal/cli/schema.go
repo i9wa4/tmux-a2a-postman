@@ -136,7 +136,7 @@ func runSchema(stdout io.Writer, args []string) error {
 			Title:  "get-health-oneline options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[0]●●●●\"}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[0]●●●● [1]●●\"}"},
 			},
 		})
 	case "get-health":

@@ -190,7 +190,10 @@ GRAPH TD
 func TestExtractH2Sections(t *testing.T) {
 	t.Run("BacktickName: worker-alt extracted", func(t *testing.T) {
 		content := "## `worker-alt` Node\n\nbody text"
-		sections := extractH2Sections(content)
+		order, sections := extractH2Sections(content)
+		if len(order) != 1 || order[0] != "worker-alt" {
+			t.Fatalf("order = %v, want %v", order, []string{"worker-alt"})
+		}
 		if v, ok := sections["worker-alt"]; !ok {
 			t.Error("key 'worker-alt' missing")
 		} else if v != "body text" {
@@ -200,7 +203,7 @@ func TestExtractH2Sections(t *testing.T) {
 
 	t.Run("NoBacktick: heading skipped", func(t *testing.T) {
 		content := "## Worker Node\n\nbody text"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if len(sections) != 0 {
 			t.Errorf("expected empty, got %v", sections)
 		}
@@ -208,7 +211,7 @@ func TestExtractH2Sections(t *testing.T) {
 
 	t.Run("Edges plain text", func(t *testing.T) {
 		content := "## Edges\n\n```mermaid\ngraph LR\n    a -- b\n```"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if _, ok := sections["edges"]; !ok {
 			t.Error("key 'edges' missing")
 		}
@@ -216,7 +219,7 @@ func TestExtractH2Sections(t *testing.T) {
 
 	t.Run("edges backtick", func(t *testing.T) {
 		content := "## 1. `edges`\n\n```mermaid\ngraph LR\n    a -- b\n```"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if _, ok := sections["edges"]; !ok {
 			t.Error("key 'edges' missing for backtick format")
 		}
@@ -224,7 +227,10 @@ func TestExtractH2Sections(t *testing.T) {
 
 	t.Run("multiple sections body boundaries", func(t *testing.T) {
 		content := "## `worker` Node\n\nworker body\n\n## `boss` Node\n\nboss body"
-		sections := extractH2Sections(content)
+		order, sections := extractH2Sections(content)
+		if strings.Join(order, ",") != "worker,boss" {
+			t.Fatalf("order = %v, want %v", order, []string{"worker", "boss"})
+		}
 		if v := sections["worker"]; v != "worker body" {
 			t.Errorf("worker body: got %q, want %q", v, "worker body")
 		}
@@ -257,7 +263,7 @@ func TestStripHeadingNumber(t *testing.T) {
 func TestExtractH2Sections_Numbered(t *testing.T) {
 	t.Run("Edges with number", func(t *testing.T) {
 		content := "## 1. Edges\n\nedges body"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if _, ok := sections["edges"]; !ok {
 			t.Error("key 'edges' missing for numbered heading")
 		}
@@ -265,7 +271,7 @@ func TestExtractH2Sections_Numbered(t *testing.T) {
 
 	t.Run("common_template backtick", func(t *testing.T) {
 		content := "## `common_template`\n\nshared instructions"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if v, ok := sections["common_template"]; !ok {
 			t.Error("key 'common_template' missing")
 		} else if v != "shared instructions" {
@@ -275,7 +281,7 @@ func TestExtractH2Sections_Numbered(t *testing.T) {
 
 	t.Run("common_template with number and suffix", func(t *testing.T) {
 		content := "## 2.1 `common_template` yay!\n\nshared\n\n## `boss`\n\nboss body"
-		sections := extractH2Sections(content)
+		_, sections := extractH2Sections(content)
 		if v := sections["common_template"]; v != "shared" {
 			t.Errorf("common_template: got %q, want %q", v, "shared")
 		}

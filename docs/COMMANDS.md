@@ -15,7 +15,7 @@ JSON Schema for a command's `--params`-settable options.
 | `pop`                      | Read and archive the next inbox message              |
 | `read`                     | List inbox messages, archived messages, or dead-letters |
 | `get-health`               | Canonical JSON health report for all nodes in the session |
-| `get-health-oneline`       | One-line formatter over the canonical health payload |
+| `get-health-oneline`       | Compact all-session formatter over the canonical health sweep |
 | `get-context-id`           | Print the active context ID                          |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
 | `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
@@ -37,7 +37,7 @@ Older default-path names are now historical only:
 | ---------------------------- | ---------------------- | --------------------------- |
 | `send-message`               | `send`                 | Default operator command |
 | `get-session-health`         | `get-health`           | Canonical JSON status payload |
-| `get-session-status-oneline` | `get-health-oneline`   | Pure one-line formatter over `get-health` |
+| `get-session-status-oneline` | `get-health-oneline`   | Compact all-session formatter over canonical health |
 
 ## 2. Daemon Management
 
@@ -322,13 +322,14 @@ for per-node status, and `windows` for the canonical node ordering consumed by
 tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [--session NAME] [--config PATH]
 ```
 
-One-line status string suitable for embedding in a tmux status-bar. Formats the
-resolved `get-health` payload for one session; it does not do independent
-session discovery or separate overlay derivation.
+One-line status string suitable for embedding in a tmux status-bar. It first
+collects canonical health for all tmux sessions and all windows, then renders
+compact session tokens in config-file node order. It is not a single-session
+wrapper around `get-health`.
 
 | Flag           | Type   | Default | --params? | Description                                         |
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
-| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]●●●●"}`                |
+| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]●●●● [1]●●"}`          |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
 | `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
 | `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
@@ -492,7 +493,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-health-oneline`       | N/A                     | `{"status":"[0]●●●●"}`                                       |
+| `get-health-oneline`       | N/A                     | `{"status":"[0]●●●● [1]●●"}`                                 |
 | `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.

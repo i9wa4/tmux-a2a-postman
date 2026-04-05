@@ -225,7 +225,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 }
 
-func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndWindows(t *testing.T) {
+func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	sessionName := "review"
@@ -334,10 +334,10 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndWindows(t *testing.T)
 	if len(payload.Windows) != 2 {
 		t.Fatalf("windows = %#v, want 2 windows", payload.Windows)
 	}
-	if payload.Windows[0].Index != "1" || len(payload.Windows[0].Nodes) != 1 || payload.Windows[0].Nodes[0].Name != "worker" {
-		t.Fatalf("first window = %#v, want window 1 with worker", payload.Windows[0])
+	if payload.Windows[0].Index != "0" || len(payload.Windows[0].Nodes) != 1 || payload.Windows[0].Nodes[0].Name != "critic" {
+		t.Fatalf("first window = %#v, want window 0 with critic", payload.Windows[0])
 	}
-	if payload.Windows[1].Index != "0" || len(payload.Windows[1].Nodes) != 1 || payload.Windows[1].Nodes[0].Name != "critic" {
-		t.Fatalf("second window = %#v, want window 0 with critic", payload.Windows[1])
+	if payload.Windows[1].Index != "1" || len(payload.Windows[1].Nodes) != 1 || payload.Windows[1].Nodes[0].Name != "worker" {
+		t.Fatalf("second window = %#v, want window 1 with worker", payload.Windows[1])
 	}
 }
