@@ -261,6 +261,30 @@ func moveSelectedSession(sessions []SessionInfo, selected, delta int) int {
 	return candidate
 }
 
+func sessionHasCanonicalNodes(sessionName string, sessionNodes map[string][]string, sessionHealth map[string]status.SessionHealth) bool {
+	if len(sessionNodes[sessionName]) > 0 {
+		return true
+	}
+
+	health, ok := sessionHealth[sessionName]
+	if !ok {
+		return false
+	}
+
+	return len(health.Nodes) > 0 || len(health.Windows) > 0
+}
+
+func filterCanonicalSessions(sessions []SessionInfo, sessionNodes map[string][]string, sessionHealth map[string]status.SessionHealth) []SessionInfo {
+	filtered := make([]SessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		if !sessionHasCanonicalNodes(session.Name, sessionNodes, sessionHealth) {
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	return filtered
+}
+
 func (m *Model) pruneSessionHealth() {
 	if len(m.sessionHealth) == 0 {
 		return
@@ -523,18 +547,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if count, ok := msg.Details["node_count"].(int); ok {
 				m.nodeCount = count
 			}
-			// Issue #36: Bug 2 - update sessions from Details
-			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = sessionList
-				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
-				m.pruneSessionHealth()
-			}
-			// Issue #59: Update session-node mapping
+			// Canonical default-surface indexing follows sessions with A2A nodes only.
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
 			}
+			// Issue #36: Bug 2 - update sessions from Details
+			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
+				m.sessions = filterCanonicalSessions(sessionList, m.sessionNodes, m.sessionHealth)
+				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
+				m.pruneSessionHealth()
+			}
 		// Issue #45: Removed "inbox_update" handler
 		case "config_update":
+			// Canonical default-surface indexing follows sessions with A2A nodes only.
+			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
+				m.sessionNodes = sessionNodesRaw
+			}
 			// Update edges from Details
 			if edgeList, ok := msg.Details["edges"].([]Edge); ok {
 				m.edges = edgeList
@@ -548,13 +576,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = sessionList
+				m.sessions = filterCanonicalSessions(sessionList, m.sessionNodes, m.sessionHealth)
 				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 				m.pruneSessionHealth()
-			}
-			// Issue #59: Update session-node mapping
-			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
-				m.sessionNodes = sessionNodesRaw
 			}
 		case "session_health_update":
 			if health, ok := msg.Details["health"].(status.SessionHealth); ok && health.SessionName != "" {

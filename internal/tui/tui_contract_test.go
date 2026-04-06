@@ -118,3 +118,70 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 		t.Fatalf("view missing unavailable session text: %q", view)
 	}
 }
+
+func TestTUI_Update_StatusUpdate_FiltersSessionsWithoutCanonicalNodes(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	event := DaemonEventMsg{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []SessionInfo{
+				{Name: "ghost", Enabled: true},
+				{Name: "main", Enabled: true},
+			},
+			"session_nodes": map[string][]string{
+				"main": {"worker", "messenger"},
+			},
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	view := m.View().Content
+
+	if strings.Contains(view, "ghost") {
+		t.Fatalf("view unexpectedly shows session without canonical nodes: %q", view)
+	}
+	if !strings.Contains(view, "> [0] main ⚪") {
+		t.Fatalf("view missing renumbered canonical session row: %q", view)
+	}
+}
+
+func TestTUI_Update_StatusUpdate_PreservesCanonicalTmuxIndexIdentity(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	event := DaemonEventMsg{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []SessionInfo{
+				{Name: "ghost", Enabled: true},
+				{Name: "review", Enabled: true},
+				{Name: "main", Enabled: true},
+			},
+			"session_nodes": map[string][]string{
+				"review": {"critic", "worker"},
+				"main":   {"messenger"},
+			},
+		},
+	}
+
+	newModel, _ := m.Update(event)
+	m = newModel.(Model)
+
+	view := m.View().Content
+
+	if strings.Contains(view, "ghost") {
+		t.Fatalf("view unexpectedly shows non-canonical tmux session: %q", view)
+	}
+	if !strings.Contains(view, "> [0] review ⚪") {
+		t.Fatalf("view missing canonical tmux-first session index: %q", view)
+	}
+	if !strings.Contains(view, "  [1] main") || !strings.Contains(view, "⚪") {
+		t.Fatalf("view missing canonical tmux-second session index: %q", view)
+	}
+}

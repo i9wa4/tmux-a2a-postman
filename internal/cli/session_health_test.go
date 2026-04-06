@@ -475,14 +475,14 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayload(t *testing.T) 
 	if len(payload.Sessions) != 2 {
 		t.Fatalf("sessions = %#v, want 2 sessions", payload.Sessions)
 	}
-	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "review" {
-		t.Fatalf("session order = %#v, want main then review", payload.Sessions)
+	if payload.Sessions[0].SessionName != "review" || payload.Sessions[1].SessionName != "main" {
+		t.Fatalf("session order = %#v, want review then main to match tmux session order", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🔷🔵:🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🔵:🟢")
+	if payload.Sessions[0].Compact != "🔷🟢" {
+		t.Fatalf("review compact = %q, want %q", payload.Sessions[0].Compact, "🔷🟢")
 	}
-	if payload.Sessions[1].Compact != "🔷🟢" {
-		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🔷🟢")
+	if payload.Sessions[1].Compact != "🔷🔵:🟢" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[1].Compact, "🔷🔵:🟢")
 	}
 }
 

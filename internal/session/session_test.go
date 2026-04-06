@@ -79,7 +79,7 @@ func TestBuildSessionList_EnabledStatus(t *testing.T) {
 	}
 }
 
-func TestBuildSessionList_SortedByName(t *testing.T) {
+func TestBuildSessionList_PreservesTmuxSessionOrder(t *testing.T) {
 	allSessions := []string{"zebra", "apple", "mango"}
 	got := BuildSessionList(nil, allSessions, alwaysEnabled)
 
@@ -87,7 +87,7 @@ func TestBuildSessionList_SortedByName(t *testing.T) {
 		t.Fatalf("expected 3 sessions, got %d", len(got))
 	}
 
-	want := []string{"apple", "mango", "zebra"}
+	want := []string{"zebra", "apple", "mango"}
 	for i, s := range got {
 		if s.Name != want[i] {
 			t.Errorf("position %d: expected %q, got %q", i, want[i], s.Name)

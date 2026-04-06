@@ -263,8 +263,8 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔷🔵:🟢 [1]🔷🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🔷🟢")
+	if payload.Status != "[0]🔷🟢 [1]🔷🔵:🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🟢 [1]🔷🔵:🟢")
 	}
 }
 

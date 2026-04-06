@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -131,7 +130,6 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (sta
 	if err != nil {
 		return status.AllSessionHealth{}, nil, true, err
 	}
-	sort.Strings(sessionNames)
 
 	result := status.AllSessionHealth{
 		ContextID: resolvedContextID,

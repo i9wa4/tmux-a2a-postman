@@ -1,7 +1,6 @@
 package session
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -23,14 +22,18 @@ func BuildSessionList(nodes map[string]discovery.NodeInfo, allSessions []string,
 		}
 	}
 
-	// Issue #117: Merge all sessions (include sessions with 0 nodes)
+	// Preserve tmux list-sessions order and include sessions with 0 nodes.
 	sessionSet := make(map[string]bool)
 	for _, sessionName := range allSessions {
 		sessionSet[sessionName] = true
 	}
 
 	sessionList := make([]tui.SessionInfo, 0, len(sessionSet))
-	for sessionName := range sessionSet {
+	for _, sessionName := range allSessions {
+		if !sessionSet[sessionName] {
+			continue
+		}
+		delete(sessionSet, sessionName)
 		nodeCount := sessionNodeCount[sessionName] // Defaults to 0 if not in map
 		sessionList = append(sessionList, tui.SessionInfo{
 			Name:      sessionName,
@@ -39,10 +42,15 @@ func BuildSessionList(nodes map[string]discovery.NodeInfo, allSessions []string,
 		})
 	}
 
-	// Sort session list by name to maintain consistent order
-	sort.Slice(sessionList, func(i, j int) bool {
-		return sessionList[i].Name < sessionList[j].Name
-	})
+	// Append any A2A sessions missing from tmux list-sessions output.
+	for sessionName := range sessionSet {
+		nodeCount := sessionNodeCount[sessionName]
+		sessionList = append(sessionList, tui.SessionInfo{
+			Name:      sessionName,
+			NodeCount: nodeCount,
+			Enabled:   isSessionEnabled(sessionName),
+		})
+	}
 
 	return sessionList
 }
