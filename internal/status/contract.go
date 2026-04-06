@@ -30,6 +30,11 @@ type SessionHealth struct {
 	Windows      []SessionWindow `json:"windows"`
 }
 
+type AllSessionHealth struct {
+	ContextID string          `json:"context_id"`
+	Sessions  []SessionHealth `json:"sessions"`
+}
+
 var stateRank = map[string]int{
 	"user_input": 0,
 	"ready":      0,

@@ -58,6 +58,12 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Migration from older names") {
 		t.Fatalf("stdout missing migration section: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Shape: [0](window0,window1,)🔷🔵:🟢 [1]🔴") {
+		t.Fatalf("stdout missing emoji oneline shape: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `Output JSON: {"status":"[0](window0,)🟣 [1]🟢"}`) {
+		t.Fatalf("stdout missing emoji oneline json example: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Print JSON Schema for the curated public config surface or supported command surfaces.") {
 		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
 	}

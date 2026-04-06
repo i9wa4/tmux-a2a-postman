@@ -26,6 +26,32 @@ type sessionPane struct {
 	currentCommand string
 }
 
+func compactStatusMark(state string) string {
+	switch status.NormalizeWaitingState(state) {
+	case "ready", "active", "idle":
+		return "🟢"
+	case "pending":
+		return "🔷"
+	case "composing":
+		return "🔵"
+	case "spinning":
+		return "🟡"
+	case "user_input":
+		return "🟣"
+	default:
+		return "🔴"
+	}
+}
+
+func compactSessionStatusMark(visibleState string) string {
+	switch visibleState {
+	case "unavailable", "unowned":
+		return "🔴"
+	default:
+		return compactStatusMark(visibleState)
+	}
+}
+
 func orderedEdgeNodeNames(edges []string) []string {
 	seen := make(map[string]struct{})
 	var ordered []string
@@ -69,7 +95,7 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	}
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		result.VisibleState = "unavailable"
-		result.Compact = sessionStatusMark(result.VisibleState)
+		result.Compact = compactSessionStatusMark(result.VisibleState)
 		return result, nil
 	}
 
@@ -390,7 +416,7 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 			if isShellCommand(node.CurrentCommand) {
 				continue
 			}
-			marks.WriteString(statusMark(node.VisibleState))
+			marks.WriteString(compactStatusMark(node.VisibleState))
 		}
 		if marks.Len() == 0 {
 			continue
@@ -402,7 +428,7 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 	}
 
 	if len(windows) == 0 {
-		return sessionStatusMark(health.VisibleState)
+		return compactSessionStatusMark(health.VisibleState)
 	}
 
 	var labels []string

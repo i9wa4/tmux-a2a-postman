@@ -96,10 +96,10 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 	return result, true, nil
 }
 
-func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) ([]status.SessionHealth, *config.Config, bool, error) {
+func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (status.AllSessionHealth, *config.Config, bool, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("loading config: %w", err)
+		return status.AllSessionHealth{}, nil, false, fmt.Errorf("loading config: %w", err)
 	}
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
@@ -107,7 +107,7 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) ([]s
 	if resolvedContextID != "" {
 		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
 		if err != nil {
-			return nil, nil, false, err
+			return status.AllSessionHealth{}, nil, false, err
 		}
 	} else {
 		sessionName := sessionFlag
@@ -115,36 +115,39 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) ([]s
 			sessionName = config.GetTmuxSessionName()
 		}
 		if sessionName == "" {
-			return nil, cfg, false, nil
+			return status.AllSessionHealth{}, cfg, false, nil
 		}
 		sessionName, err = config.ValidateSessionName(sessionName)
 		if err != nil {
-			return nil, nil, false, err
+			return status.AllSessionHealth{}, nil, false, err
 		}
 		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
 		if err != nil {
-			return nil, nil, false, err
+			return status.AllSessionHealth{}, nil, false, err
 		}
 	}
 
 	sessionNames, err := discovery.DiscoverAllSessions()
 	if err != nil {
-		return nil, nil, true, err
+		return status.AllSessionHealth{}, nil, true, err
 	}
 	sort.Strings(sessionNames)
 
-	results := make([]status.SessionHealth, 0, len(sessionNames))
+	result := status.AllSessionHealth{
+		ContextID: resolvedContextID,
+		Sessions:  make([]status.SessionHealth, 0, len(sessionNames)),
+	}
 	for _, sessionName := range sessionNames {
 		sessionName, err = config.ValidateSessionName(sessionName)
 		if err != nil {
-			return nil, nil, true, err
+			return status.AllSessionHealth{}, nil, true, err
 		}
 		health, err := collectSessionHealth(baseDir, resolvedContextID, sessionName, cfg)
 		if err != nil {
-			return nil, nil, true, err
+			return status.AllSessionHealth{}, nil, true, err
 		}
-		results = append(results, health)
+		result.Sessions = append(result.Sessions, health)
 	}
 
-	return results, cfg, true, nil
+	return result, cfg, true, nil
 }

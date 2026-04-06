@@ -293,7 +293,7 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
   "session_name": "review",
   "node_count": 4,
   "visible_state": "composing",
-  "compact": "(window0,)pc",
+  "compact": "(window0,)🟣",
   "nodes": [
     {
       "name": "worker",
@@ -331,7 +331,7 @@ single-session wrapper around `get-health`.
 
 | Flag           | Type   | Default | --params? | Description                                         |
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
-| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0](window0,)pc [1]x"}`   |
+| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0](window0,)🟣 [1]🟢"}`   |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
 | `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
 | `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
@@ -495,7 +495,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-health-oneline`       | N/A                     | `{"status":"[0](window0,)pc [1]x"}`                          |
+| `get-health-oneline`       | N/A                     | `{"status":"[0](window0,)🟣 [1]🟢"}`                          |
 | `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.

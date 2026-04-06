@@ -39,37 +39,37 @@ func TestIsShellCommand(t *testing.T) {
 	}
 }
 
-func TestStatusMark(t *testing.T) {
+func TestCompactStatusMark(t *testing.T) {
 	cases := []struct {
 		status string
 		want   string
 	}{
-		{"active", "a"},
-		{"ready", "a"},
-		{"user_input", "u"},
-		{"pending", "p"},
-		{"composing", "c"},
-		{"idle", "a"},
-		{"spinning", "s"},
-		{"stale", "x"},
-		{"stalled", "x"},
-		{"stuck", "x"},
-		{"", "x"},
+		{"active", "🟢"},
+		{"ready", "🟢"},
+		{"user_input", "🟣"},
+		{"pending", "🔷"},
+		{"composing", "🔵"},
+		{"idle", "🟢"},
+		{"spinning", "🟡"},
+		{"stale", "🔴"},
+		{"stalled", "🔴"},
+		{"stuck", "🔴"},
+		{"", "🔴"},
 	}
 	for _, c := range cases {
-		got := statusMark(c.status)
+		got := compactStatusMark(c.status)
 		if got != c.want {
-			t.Errorf("statusMark(%q) = %q; want %q", c.status, got, c.want)
+			t.Errorf("compactStatusMark(%q) = %q; want %q", c.status, got, c.want)
 		}
 	}
 }
 
-func TestSessionStatusMark(t *testing.T) {
-	if got := sessionStatusMark("unavailable"); got != "x" {
-		t.Fatalf("sessionStatusMark(%q) = %q, want %q", "unavailable", got, "x")
+func TestCompactSessionStatusMark(t *testing.T) {
+	if got := compactSessionStatusMark("unavailable"); got != "🔴" {
+		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "unavailable", got, "🔴")
 	}
-	if got := sessionStatusMark("pending"); got != "p" {
-		t.Fatalf("sessionStatusMark(%q) = %q, want %q", "pending", got, "p")
+	if got := compactSessionStatusMark("pending"); got != "🔷" {
+		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "pending", got, "🔷")
 	}
 }
 
@@ -117,27 +117,30 @@ func TestWaitingFileVisibleState(t *testing.T) {
 
 func TestFormatSessionHealthOneline(t *testing.T) {
 	health := status.SessionHealth{
-		Compact: "(window0,)pc",
+		Compact: "(window0,)🔷🔵",
 	}
 
-	if got, want := formatSessionHealthOneline(health), "(window0,)pc"; got != want {
+	if got, want := formatSessionHealthOneline(health), "(window0,)🔷🔵"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
 
 func TestFormatAllSessionHealthOneline(t *testing.T) {
-	healths := []status.SessionHealth{
-		{
-			Compact: "x",
-		},
-		{
-			Compact: "(window0,window1,)pc:a",
+	healths := status.AllSessionHealth{
+		ContextID: "20260406-ctx",
+		Sessions: []status.SessionHealth{
+			{
+				Compact: "🔴",
+			},
+			{
+				Compact: "(window0,window1,)🔷🔵:🟢",
+			},
 		},
 	}
 
 	got := formatAllSessionHealthOneline(healths)
-	if got != "[0]x [1](window0,window1,)pc:a" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]x [1](window0,window1,)pc:a")
+	if got != "[0]🔴 [1](window0,window1,)🔷🔵:🟢" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1](window0,window1,)🔷🔵:🟢")
 	}
 }
 
@@ -251,7 +254,7 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0](window0,window1,)pc:a [1](window0,)pa" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0](window0,window1,)pc:a [1](window0,)pa")
+	if payload.Status != "[0](window0,window1,)🔷🔵:🟢 [1](window0,)🔷🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0](window0,window1,)🔷🔵:🟢 [1](window0,)🔷🟢")
 	}
 }

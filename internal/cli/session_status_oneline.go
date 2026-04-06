@@ -11,32 +11,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func statusMark(state string) string {
-	switch state {
-	case "ready", "active", "idle":
-		return "a"
-	case "pending":
-		return "p"
-	case "composing":
-		return "c"
-	case "spinning":
-		return "s"
-	case "user_input":
-		return "u"
-	default:
-		return "x"
-	}
-}
-
-func sessionStatusMark(visibleState string) string {
-	switch visibleState {
-	case "unavailable", "unowned":
-		return "x"
-	default:
-		return statusMark(visibleState)
-	}
-}
-
 // isShellCommand returns true if cmd is a known interactive shell name.
 // Used by RunGetSessionStatusOneline to exclude panes with no AI running (Issue #312).
 var shellCommands = map[string]bool{
@@ -49,7 +23,7 @@ func isShellCommand(cmd string) bool {
 }
 
 // RunGetSessionStatusOneline formats the compact all-session health view in one line.
-// Output format: [0](window0,window1,)pc:a [1]x
+// Output format: [0](window0,window1,)🔷🔵:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	// Options struct fields (--params scope): json
@@ -119,9 +93,9 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	return nil
 }
 
-func formatAllSessionHealthOneline(healths []status.SessionHealth) string {
+func formatAllSessionHealthOneline(healths status.AllSessionHealth) string {
 	var sessionStatuses []string
-	for i, health := range healths {
+	for i, health := range healths.Sessions {
 		sessionStatus := formatSessionHealthOneline(health)
 		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
 	}
@@ -129,8 +103,5 @@ func formatAllSessionHealthOneline(healths []status.SessionHealth) string {
 }
 
 func formatSessionHealthOneline(health status.SessionHealth) string {
-	if health.Compact != "" {
-		return health.Compact
-	}
-	return sessionStatusMark(health.VisibleState)
+	return health.Compact
 }
