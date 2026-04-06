@@ -302,47 +302,71 @@ func countMarkdownFiles(dir string) int {
 }
 
 func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
-	out, err := exec.Command(
+	windowListOut, err := exec.Command(
 		"tmux",
-		"list-panes",
+		"list-windows",
 		"-t",
 		sessionName,
 		"-F",
-		"#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
+		"#{window_index}",
 	).CombinedOutput()
 	if err != nil {
-		if strings.Contains(string(out), "no server running") {
+		if strings.Contains(string(windowListOut), "no server running") || strings.Contains(string(windowListOut), "can't find session") {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("listing panes for session %s: %w", sessionName, err)
+		return nil, fmt.Errorf("listing windows for session %s: %w", sessionName, err)
 	}
 
 	var panes []sessionPane
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+	for _, windowIndex := range strings.Split(strings.TrimSpace(string(windowListOut)), "\n") {
+		if windowIndex == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 4 {
-			continue
+
+		out, err := exec.Command(
+			"tmux",
+			"list-panes",
+			"-t",
+			sessionName+":"+windowIndex,
+			"-F",
+			"#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
+		).CombinedOutput()
+		if err != nil {
+			if strings.Contains(string(out), "can't find window") {
+				continue
+			}
+			if strings.Contains(string(out), "no server running") {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("listing panes for session %s window %s: %w", sessionName, windowIndex, err)
 		}
-		windowOrder, _ := strconv.Atoi(parts[0])
-		paneOrder := 0
-		if len(parts) > 1 {
-			paneOrder, _ = strconv.Atoi(parts[1])
+
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line == "" {
+				continue
+			}
+			parts := strings.SplitN(line, "\t", 5)
+			if len(parts) < 4 {
+				continue
+			}
+			windowOrder, _ := strconv.Atoi(parts[0])
+			paneOrder := 0
+			if len(parts) > 1 {
+				paneOrder, _ = strconv.Atoi(parts[1])
+			}
+			currentCommand := ""
+			if len(parts) == 5 {
+				currentCommand = parts[4]
+			}
+			panes = append(panes, sessionPane{
+				windowIndex:    parts[0],
+				windowOrder:    windowOrder,
+				paneOrder:      paneOrder,
+				paneID:         parts[2],
+				title:          parts[3],
+				currentCommand: currentCommand,
+			})
 		}
-		currentCommand := ""
-		if len(parts) == 5 {
-			currentCommand = parts[4]
-		}
-		panes = append(panes, sessionPane{
-			windowIndex:    parts[0],
-			windowOrder:    windowOrder,
-			paneOrder:      paneOrder,
-			paneID:         parts[2],
-			title:          parts[3],
-			currentCommand: currentCommand,
-		})
 	}
 
 	sort.Slice(panes, func(i, j int) bool {
@@ -379,10 +403,7 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 		nodeByPaneID[node.PaneID] = node
 	}
 
-	type compactWindow struct {
-		index string
-		marks string
-	}
+	var windowMarks []string
 
 	windowSeen := make(map[string]struct{})
 	var windowOrder []string
@@ -399,7 +420,6 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 		windowNodes[pane.windowIndex] = append(windowNodes[pane.windowIndex], node)
 	}
 
-	var windows []compactWindow
 	for _, windowIndex := range windowOrder {
 		nodes := append([]status.NodeHealth(nil), windowNodes[windowIndex]...)
 		sort.Slice(nodes, func(i, j int) bool {
@@ -421,23 +441,14 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 		if marks.Len() == 0 {
 			continue
 		}
-		windows = append(windows, compactWindow{
-			index: windowIndex,
-			marks: marks.String(),
-		})
+		windowMarks = append(windowMarks, marks.String())
 	}
 
-	if len(windows) == 0 {
+	if len(windowMarks) == 0 {
 		return compactSessionStatusMark(health.VisibleState)
 	}
 
-	var labels []string
-	var marks []string
-	for _, window := range windows {
-		labels = append(labels, "window"+window.index)
-		marks = append(marks, window.marks)
-	}
-	return fmt.Sprintf("(%s)%s", strings.Join(labels, ",")+",", strings.Join(marks, ":"))
+	return strings.Join(windowMarks, ":")
 }
 
 func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []status.SessionWindow {

@@ -73,7 +73,10 @@ func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + "\")\n" +
+		"  \"list-windows -t " + sessionName + "\")\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + ":0\")\n" +
 		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
@@ -162,7 +165,10 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + "\")\n" +
+		"  \"list-windows -t " + sessionName + "\")\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + ":0\")\n" +
 		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
@@ -284,7 +290,10 @@ func TestRelayDaemonEventsToTUI_SkipsCanonicalHealthForForeignOwnedSession(t *te
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + ownerContextID + "\t" + sessionName + "\tworker' '%12\t" + ownerContextID + "\t" + sessionName + "\tcritic'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + "\")\n" +
+		"  \"list-windows -t " + sessionName + "\")\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + ":0\")\n" +
 		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +

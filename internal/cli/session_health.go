@@ -146,6 +146,9 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (sta
 		if err != nil {
 			return status.AllSessionHealth{}, nil, true, err
 		}
+		if len(health.Nodes) == 0 && len(health.Windows) == 0 {
+			continue
+		}
 		result.Sessions = append(result.Sessions, health)
 	}
 

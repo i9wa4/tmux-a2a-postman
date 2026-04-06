@@ -90,7 +90,7 @@ func TestRunSchema_GetHealthOnelineOptions(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"json"`) {
 		t.Fatalf("stdout missing json option: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `{\"status\": \"[0](window0,)🟣 [1]🟢\"}`) {
+	if !strings.Contains(stdout.String(), `{\"status\": \"[0]🟣 [1]🟢\"}`) {
 		t.Fatalf("stdout missing emoji json example: %q", stdout.String())
 	}
 }

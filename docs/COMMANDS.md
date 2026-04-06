@@ -293,7 +293,7 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
   "session_name": "review",
   "node_count": 4,
   "visible_state": "composing",
-  "compact": "(window0,)🟣",
+  "compact": "🟣",
   "nodes": [
     {
       "name": "worker",
@@ -327,11 +327,12 @@ tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [-
 One-line status string suitable for embedding in a tmux status-bar. It first
 collects canonical health for all tmux sessions and all windows, then joins the
 canonical `compact` token from each session-health payload. It is not a
-single-session wrapper around `get-health`.
+single-session wrapper around `get-health`. Each compact token uses
+colon-separated window groups with no literal `windowN` labels.
 
 | Flag           | Type   | Default | --params? | Description                                         |
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
-| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0](window0,)🟣 [1]🟢"}`   |
+| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]🟣 [1]🟢"}`             |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
 | `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
 | `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
@@ -495,7 +496,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-health-oneline`       | N/A                     | `{"status":"[0](window0,)🟣 [1]🟢"}`                          |
+| `get-health-oneline`       | N/A                     | `{"status":"[0]🟣 [1]🟢"}`                                    |
 | `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.

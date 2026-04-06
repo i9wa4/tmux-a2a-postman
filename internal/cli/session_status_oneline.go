@@ -23,7 +23,7 @@ func isShellCommand(cmd string) bool {
 }
 
 // RunGetSessionStatusOneline formats the compact all-session health view in one line.
-// Output format: [0](window0,window1,)🔷🔵:🟢 [1]🔴
+// Output format: [0]🔷🔵:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	// Options struct fields (--params scope): json

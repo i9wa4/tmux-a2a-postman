@@ -117,10 +117,10 @@ func TestWaitingFileVisibleState(t *testing.T) {
 
 func TestFormatSessionHealthOneline(t *testing.T) {
 	health := status.SessionHealth{
-		Compact: "(window0,)🔷🔵",
+		Compact: "🔷🔵",
 	}
 
-	if got, want := formatSessionHealthOneline(health), "(window0,)🔷🔵"; got != want {
+	if got, want := formatSessionHealthOneline(health), "🔷🔵"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
@@ -133,14 +133,14 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 				Compact: "🔴",
 			},
 			{
-				Compact: "(window0,window1,)🔷🔵:🟢",
+				Compact: "🔷🔵:🟢",
 			},
 		},
 	}
 
 	got := formatAllSessionHealthOneline(healths)
-	if got != "[0]🔴 [1](window0,window1,)🔷🔵:🟢" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1](window0,window1,)🔷🔵:🟢")
+	if got != "[0]🔴 [1]🔷🔵:🟢" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1]🔷🔵:🟢")
 	}
 }
 
@@ -224,10 +224,19 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t main\")\n" +
-		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude' '1\t0\t%13\tmessenger\tclaude'\n" +
+		"  \"list-windows -t main\")\n" +
+		"    printf '%s\\n' '0' '1'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t review\")\n" +
+		"  \"list-panes -t main:0\")\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t main:1\")\n" +
+		"    printf '%s\\n' '1\t0\t%13\tmessenger\tclaude'\n" +
+		"    ;;\n" +
+		"  \"list-windows -t review\")\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t review:0\")\n" +
 		"    printf '%s\\n' '0\t0\t%22\tworker\tclaude' '0\t1\t%21\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
@@ -254,7 +263,96 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0](window0,window1,)🔷🔵:🟢 [1](window0,)🔷🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0](window0,window1,)🔷🔵:🟢 [1](window0,)🔷🟢")
+	if payload.Status != "[0]🔷🔵:🟢 [1]🔷🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🔷🟢")
+	}
+}
+
+func TestRunGetSessionStatusOneline_JSONOutput_SkipsSessionsWithoutCanonicalPanes(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "20260406-ctx"
+	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
+	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
+
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"messenger -- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	for _, dir := range []string{
+		filepath.Join(ghostSessionDir, "inbox", "messenger"),
+		filepath.Join(ghostSessionDir, "inbox", "worker"),
+		filepath.Join(ghostSessionDir, "waiting"),
+		filepath.Join(mainSessionDir, "inbox", "messenger"),
+		filepath.Join(mainSessionDir, "inbox", "worker"),
+		filepath.Join(mainSessionDir, "waiting"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", dir, err)
+		}
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(tmpDir, contextID, "pane-activity.json"),
+		[]byte(`{
+  "%11": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
+  "%12": {"status":"idle","lastChangeAt":"2026-04-06T00:00:00Z"}
+}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(pane-activity.json): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2 $3\" in\n" +
+		"  \"list-sessions -F #{session_name}\")\n" +
+		"    printf '%s\\n' 'ghost' 'main'\n" +
+		"    ;;\n" +
+		"  \"list-panes -a -F\")\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tmessenger'\n" +
+		"    ;;\n" +
+		"  \"list-windows -t ghost\")\n" +
+		"    printf ''\n" +
+		"    ;;\n" +
+		"  \"list-windows -t main\")\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t main:0\")\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tmessenger\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout bytes.Buffer
+	if err := RunGetSessionStatusOneline(&stdout, []string{
+		"--config", configPath,
+		"--context-id", contextID,
+		"--json",
+	}); err != nil {
+		t.Fatalf("RunGetSessionStatusOneline: %v", err)
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "[0]🟢🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🟢🟢")
 	}
 }
