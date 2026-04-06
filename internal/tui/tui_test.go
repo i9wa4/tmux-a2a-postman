@@ -194,6 +194,19 @@ func TestTUI_View(t *testing.T) {
 	}
 }
 
+func TestTUI_View_UsesAltScreen(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	view := m.View()
+
+	if !view.AltScreen {
+		t.Fatal("View().AltScreen = false, want true so the dashboard stays isolated from tmux redraws")
+	}
+}
+
 func TestTUI_View_Quitting(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

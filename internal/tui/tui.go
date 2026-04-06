@@ -1009,13 +1009,17 @@ func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string 
 
 // View renders the simplified default operator surface for #363.
 func (m Model) View() tea.View {
+	view := tea.View{AltScreen: true}
+
 	if m.quitting {
-		return tea.View{Content: "Shutting down...\n"}
+		view.Content = "Shutting down...\n"
+		return view
 	}
 
 	if m.width < minWidth || m.height < minHeight {
 		warning := warningStyle.Render(fmt.Sprintf("⚠️  Terminal too small (min: %dx%d, current: %dx%d)", minWidth, minHeight, m.width, m.height))
-		return tea.View{Content: warning + "\n"}
+		view.Content = warning + "\n"
+		return view
 	}
 
 	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
@@ -1025,7 +1029,8 @@ func (m Model) View() tea.View {
 	b.WriteString(m.renderSessionsSection())
 	b.WriteString("\n")
 	b.WriteString(m.renderNodesSection())
-	return tea.View{Content: b.String()}
+	view.Content = b.String()
+	return view
 }
 
 // renderLeftPane renders the left pane (Sessions list).
