@@ -69,6 +69,7 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	}
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		result.VisibleState = "unavailable"
+		result.Compact = sessionStatusMark(result.VisibleState)
 		return result, nil
 	}
 
@@ -137,6 +138,7 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	result.NodeCount = len(result.Nodes)
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Windows = buildSessionWindows(result.Nodes, panes)
+	result.Compact = buildSessionCompact(result, panes)
 	return result, nil
 }
 
@@ -328,6 +330,88 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 	})
 
 	return panes, nil
+}
+
+func paneIDNumber(paneID string) int {
+	trimmed := strings.TrimPrefix(paneID, "%")
+	if trimmed == "" {
+		return 1 << 30
+	}
+	n, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 1 << 30
+	}
+	return n
+}
+
+func buildSessionCompact(health status.SessionHealth, panes []sessionPane) string {
+	nodeByPaneID := make(map[string]status.NodeHealth, len(health.Nodes))
+	for _, node := range health.Nodes {
+		if node.PaneID == "" {
+			continue
+		}
+		nodeByPaneID[node.PaneID] = node
+	}
+
+	type compactWindow struct {
+		index string
+		marks string
+	}
+
+	windowSeen := make(map[string]struct{})
+	var windowOrder []string
+	windowNodes := make(map[string][]status.NodeHealth)
+	for _, pane := range panes {
+		node, ok := nodeByPaneID[pane.paneID]
+		if !ok {
+			continue
+		}
+		if _, ok := windowSeen[pane.windowIndex]; !ok {
+			windowSeen[pane.windowIndex] = struct{}{}
+			windowOrder = append(windowOrder, pane.windowIndex)
+		}
+		windowNodes[pane.windowIndex] = append(windowNodes[pane.windowIndex], node)
+	}
+
+	var windows []compactWindow
+	for _, windowIndex := range windowOrder {
+		nodes := append([]status.NodeHealth(nil), windowNodes[windowIndex]...)
+		sort.Slice(nodes, func(i, j int) bool {
+			left := paneIDNumber(nodes[i].PaneID)
+			right := paneIDNumber(nodes[j].PaneID)
+			if left != right {
+				return left < right
+			}
+			return nodes[i].PaneID < nodes[j].PaneID
+		})
+
+		var marks strings.Builder
+		for _, node := range nodes {
+			if isShellCommand(node.CurrentCommand) {
+				continue
+			}
+			marks.WriteString(statusMark(node.VisibleState))
+		}
+		if marks.Len() == 0 {
+			continue
+		}
+		windows = append(windows, compactWindow{
+			index: windowIndex,
+			marks: marks.String(),
+		})
+	}
+
+	if len(windows) == 0 {
+		return sessionStatusMark(health.VisibleState)
+	}
+
+	var labels []string
+	var marks []string
+	for _, window := range windows {
+		labels = append(labels, "window"+window.index)
+		marks = append(marks, window.marks)
+	}
+	return fmt.Sprintf("(%s)%s", strings.Join(labels, ",")+",", strings.Join(marks, ":"))
 }
 
 func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []status.SessionWindow {

@@ -7,53 +7,33 @@ import (
 	"io"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/term"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-// statusDot returns the status indicator string for a pane.
-// When isTerminal is true, returns a lipgloss-styled ANSI dot.
-// When isTerminal is false, returns a plain emoji suitable for tmux #() output.
-// lipgloss's own color detection is intentionally bypassed here because #() contexts
-// require plain text regardless of color capability. (Issue #275)
-func statusDot(status string, isTerminal bool) string {
-	if isTerminal {
-		activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-		pendingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
-		composingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
-		spinningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
-		staleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-		userInputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
-		switch status {
-		case "ready", "active", "idle":
-			return activeStyle.Render("●")
-		case "pending":
-			return pendingStyle.Render("●")
-		case "composing":
-			return composingStyle.Render("●")
-		case "spinning":
-			return spinningStyle.Render("●")
-		case "user_input":
-			return userInputStyle.Render("●")
-		default:
-			return staleStyle.Render("●")
-		}
-	}
-	switch status {
+func statusMark(state string) string {
+	switch state {
 	case "ready", "active", "idle":
-		return "🟢"
+		return "a"
 	case "pending":
-		return "🔷"
+		return "p"
 	case "composing":
-		return "🔵"
+		return "c"
 	case "spinning":
-		return "🟡"
+		return "s"
 	case "user_input":
-		return "🟣"
+		return "u"
 	default:
-		return "🔴"
+		return "x"
+	}
+}
+
+func sessionStatusMark(visibleState string) string {
+	switch visibleState {
+	case "unavailable", "unowned":
+		return "x"
+	default:
+		return statusMark(visibleState)
 	}
 }
 
@@ -69,10 +49,7 @@ func isShellCommand(cmd string) bool {
 }
 
 // RunGetSessionStatusOneline formats the compact all-session health view in one line.
-// Output format: [0]window0_panes:window1_panes [1]window0_panes:window1_panes ...
-// TTY output (interactive terminal): ANSI-colored dots (● green/blue/yellow/red)
-// Non-TTY output (tmux #(), pipes): plain emoji (🟢/🔵/🟡/🔴)
-// Pane status: active/idle=green, composing=blue, spinning=yellow, stale=red
+// Output format: [0](window0,window1,)pc:a [1]x
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	// Options struct fields (--params scope): json
@@ -124,12 +101,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		return nil
 	}
 
-	isTerminal := false
-	if file, ok := stdout.(interface{ Fd() uintptr }); ok {
-		isTerminal = term.IsTerminal(file.Fd())
-	}
-
-	statusStr := formatAllSessionHealthOneline(healths, isTerminal)
+	statusStr := formatAllSessionHealthOneline(healths)
 	if statusStr != "" {
 		if *jsonOut {
 			return json.NewEncoder(stdout).Encode(struct {
@@ -147,67 +119,18 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	return nil
 }
 
-func sessionStatusDot(visibleState string, isTerminal bool) string {
-	if isTerminal {
-		unavailableStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-		switch visibleState {
-		case "unavailable", "unowned":
-			return unavailableStyle.Render("●")
-		default:
-			return statusDot(visibleState, true)
-		}
-	}
-	switch visibleState {
-	case "unavailable", "unowned":
-		return "⚪"
-	default:
-		return statusDot(visibleState, false)
-	}
-}
-
-func formatAllSessionHealthOneline(healths []status.SessionHealth, isTerminal bool) string {
+func formatAllSessionHealthOneline(healths []status.SessionHealth) string {
 	var sessionStatuses []string
 	for i, health := range healths {
-		sessionStatus := formatSessionHealthOneline(health, isTerminal)
-		if sessionStatus == "" {
-			visibleState := health.VisibleState
-			if visibleState == "" {
-				visibleState = status.SessionVisibleState(health.Nodes)
-			}
-			sessionStatus = sessionStatusDot(visibleState, isTerminal)
-		}
+		sessionStatus := formatSessionHealthOneline(health)
 		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
 	}
 	return strings.Join(sessionStatuses, " ")
 }
 
-func formatSessionHealthOneline(health status.SessionHealth, isTerminal bool) string {
-	nodeByName := make(map[string]status.NodeHealth, len(health.Nodes))
-	for _, node := range health.Nodes {
-		nodeByName[node.Name] = node
+func formatSessionHealthOneline(health status.SessionHealth) string {
+	if health.Compact != "" {
+		return health.Compact
 	}
-
-	var windowStatuses []string
-	for _, window := range health.Windows {
-		var paneStatuses strings.Builder
-		for _, windowNode := range window.Nodes {
-			nodeName := windowNode.Name
-			node, ok := nodeByName[nodeName]
-			if !ok {
-				continue
-			}
-			if isShellCommand(node.CurrentCommand) {
-				continue
-			}
-			paneStatuses.WriteString(statusDot(node.VisibleState, isTerminal))
-		}
-		if paneStatuses.Len() > 0 {
-			windowStatuses = append(windowStatuses, paneStatuses.String())
-		}
-	}
-
-	if len(windowStatuses) == 0 {
-		return ""
-	}
-	return strings.Join(windowStatuses, ":")
+	return sessionStatusMark(health.VisibleState)
 }

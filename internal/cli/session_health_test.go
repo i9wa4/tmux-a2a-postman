@@ -196,6 +196,9 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := payload["visible_state"]; got != "composing" {
 		t.Fatalf("visible_state = %#v, want %q", got, "composing")
 	}
+	if got := payload["compact"]; got != "(window0,)pc" {
+		t.Fatalf("compact = %#v, want %q", got, "(window0,)pc")
+	}
 
 	windows, ok := payload["windows"].([]any)
 	if !ok || len(windows) != 1 {
@@ -310,7 +313,8 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	}
 
 	var payload struct {
-		Nodes []struct {
+		Compact string `json:"compact"`
+		Nodes   []struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
 		Windows []struct {
@@ -329,6 +333,9 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	}
 	if payload.Nodes[0].Name != "worker" || payload.Nodes[1].Name != "critic" {
 		t.Fatalf("nodes order = %#v, want worker then critic", payload.Nodes)
+	}
+	if payload.Compact != "(window0,window1,)a:a" {
+		t.Fatalf("compact = %q, want %q", payload.Compact, "(window0,window1,)a:a")
 	}
 
 	if len(payload.Windows) != 2 {

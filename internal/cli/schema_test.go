@@ -70,6 +70,9 @@ func TestRunSchema_GetHealthOutput(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"visible_state"`) {
 		t.Fatalf("stdout missing visible_state property: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), `"compact"`) {
+		t.Fatalf("stdout missing compact property: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), `"windows"`) {
 		t.Fatalf("stdout missing windows property: %q", stdout.String())
 	}

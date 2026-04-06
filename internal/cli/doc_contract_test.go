@@ -39,7 +39,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsDoc := readRepoFile(t, "docs/COMMANDS.md")
 	assertContainsNormalized(t, commandsDoc, "The default operator surface is `send`, `pop`, `bind`, `get-health`, and `get-health-oneline`.")
 	assertContainsNormalized(t, commandsDoc, "Older name | Current path")
-	assertContainsNormalized(t, commandsDoc, "`get-session-status-oneline` | `get-health-oneline` | Compact all-session formatter over canonical health")
+	assertContainsNormalized(t, commandsDoc, "`get-session-status-oneline` | `get-health-oneline` | Compact all-session tokens over canonical health")
 	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive; it searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context without archiving.")
 
 	popSource := readRepoFile(t, "internal/cli/pop.go")

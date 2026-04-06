@@ -15,7 +15,7 @@ JSON Schema for a command's `--params`-settable options.
 | `pop`                      | Read and archive the next inbox message              |
 | `read`                     | List inbox messages, archived messages, or dead-letters |
 | `get-health`               | Canonical JSON health report for all nodes in the session |
-| `get-health-oneline`       | Compact all-session formatter over the canonical health sweep |
+| `get-health-oneline`       | Compact all-session tokens rendered from canonical health     |
 | `get-context-id`           | Print the active context ID                          |
 | `supervisor-drain`         | Drain dead-letter queue after session rollback       |
 | `bind`                     | Manage sidecar bindings (register/assign/deactivate/rebind) |
@@ -37,7 +37,7 @@ Older default-path names are now historical only:
 | ---------------------------- | ---------------------- | --------------------------- |
 | `send-message`               | `send`                 | Default operator command |
 | `get-session-health`         | `get-health`           | Canonical JSON status payload |
-| `get-session-status-oneline` | `get-health-oneline`   | Compact all-session formatter over canonical health |
+| `get-session-status-oneline` | `get-health-oneline`   | Compact all-session tokens over canonical health |
 
 ## 2. Daemon Management
 
@@ -293,6 +293,7 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
   "session_name": "review",
   "node_count": 4,
   "visible_state": "composing",
+  "compact": "(window0,)pc",
   "nodes": [
     {
       "name": "worker",
@@ -313,8 +314,9 @@ Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 ```
 
 Use top-level `visible_state` for the session summary, `nodes[*].visible_state`
-for per-node status, and `windows` for the canonical node ordering consumed by
-`get-health-oneline` and the default TUI.
+for per-node status, `compact` for the canonical compact token consumed by
+`get-health-oneline`, and `windows` for the canonical window topology consumed
+by the default TUI.
 
 ### 7.2. get-health-oneline
 
@@ -323,13 +325,13 @@ tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [-
 ```
 
 One-line status string suitable for embedding in a tmux status-bar. It first
-collects canonical health for all tmux sessions and all windows, then renders
-compact session tokens in the canonical `windows` order from `get-health`. It
-is not a single-session wrapper around `get-health`.
+collects canonical health for all tmux sessions and all windows, then joins the
+canonical `compact` token from each session-health payload. It is not a
+single-session wrapper around `get-health`.
 
 | Flag           | Type   | Default | --params? | Description                                         |
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
-| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]●●●● [1]●●"}`          |
+| `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0](window0,)pc [1]x"}`   |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
 | `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
 | `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
@@ -493,7 +495,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
-| `get-health-oneline`       | N/A                     | `{"status":"[0]●●●● [1]●●"}`                                 |
+| `get-health-oneline`       | N/A                     | `{"status":"[0](window0,)pc [1]x"}`                          |
 | `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |
 
 **Two-shape contract:** `pop` returns `{}` for the empty case.

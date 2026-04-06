@@ -136,7 +136,7 @@ func runSchema(stdout io.Writer, args []string) error {
 			Title:  "get-health-oneline options",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[0]●●●● [1]●●\"}"},
+				"json": {Type: "boolean", Description: "Output JSON: {\"status\": \"[0](window0,)pc [1]x\"}"},
 			},
 		})
 	case "get-health":
@@ -165,6 +165,7 @@ func runSchema(stdout io.Writer, args []string) error {
 				"session_name":  {Type: "string", Description: "tmux session name used for the health snapshot"},
 				"node_count":    {Type: "integer", Description: "Number of known nodes"},
 				"visible_state": {Type: "string", Description: "Worst visible state across the session"},
+				"compact":       {Type: "string", Description: "Canonical compact token consumed by get-health-oneline"},
 				"nodes": {
 					Type:        "array",
 					Description: "Per-node health and visible-state facts",

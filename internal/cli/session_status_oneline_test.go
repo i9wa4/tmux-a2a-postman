@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -40,57 +39,37 @@ func TestIsShellCommand(t *testing.T) {
 	}
 }
 
-func TestStatusDot_NonTTY(t *testing.T) {
+func TestStatusMark(t *testing.T) {
 	cases := []struct {
 		status string
 		want   string
 	}{
-		{"active", "🟢"},
-		{"ready", "🟢"},
-		{"user_input", "🟣"},
-		{"pending", "🔷"},
-		{"composing", "🔵"},
-		{"idle", "🟢"},
-		{"spinning", "🟡"},
-		{"stale", "🔴"},
-		{"stalled", "🔴"},
-		{"stuck", "🔴"},
-		{"", "🔴"},
+		{"active", "a"},
+		{"ready", "a"},
+		{"user_input", "u"},
+		{"pending", "p"},
+		{"composing", "c"},
+		{"idle", "a"},
+		{"spinning", "s"},
+		{"stale", "x"},
+		{"stalled", "x"},
+		{"stuck", "x"},
+		{"", "x"},
 	}
 	for _, c := range cases {
-		got := statusDot(c.status, false)
+		got := statusMark(c.status)
 		if got != c.want {
-			t.Errorf("statusDot(%q, false) = %q; want %q", c.status, got, c.want)
+			t.Errorf("statusMark(%q) = %q; want %q", c.status, got, c.want)
 		}
 	}
 }
 
-func TestStatusDot_TTY(t *testing.T) {
-	ttyCases := []string{"active", "user_input", "composing", "idle", "spinning", "stale"}
-	for _, status := range ttyCases {
-		got := statusDot(status, true)
-		if got == "" {
-			t.Errorf("statusDot(%q, true) returned empty string", status)
-		}
-		if !strings.Contains(got, "●") {
-			t.Errorf("statusDot(%q, true) = %q; want string containing ●", status, got)
-		}
+func TestSessionStatusMark(t *testing.T) {
+	if got := sessionStatusMark("unavailable"); got != "x" {
+		t.Fatalf("sessionStatusMark(%q) = %q, want %q", "unavailable", got, "x")
 	}
-
-	if got, want := statusDot("idle", true), statusDot("ready", true); got != want {
-		t.Fatalf("statusDot(%q, true) = %q; want same TTY rendering as ready %q", "idle", got, want)
-	}
-	if got, dontWant := statusDot("idle", true), statusDot("spinning", true); got == dontWant {
-		t.Fatalf("statusDot(%q, true) = %q; want different TTY rendering from spinning", "idle", got)
-	}
-}
-
-func TestSessionStatusDot_NonTTY(t *testing.T) {
-	if got := sessionStatusDot("unavailable", false); got != "⚪" {
-		t.Fatalf("sessionStatusDot(%q, false) = %q, want %q", "unavailable", got, "⚪")
-	}
-	if got := sessionStatusDot("pending", false); got != "🔷" {
-		t.Fatalf("sessionStatusDot(%q, false) = %q, want %q", "pending", got, "🔷")
+	if got := sessionStatusMark("pending"); got != "p" {
+		t.Fatalf("sessionStatusMark(%q) = %q, want %q", "pending", got, "p")
 	}
 }
 
@@ -138,24 +117,10 @@ func TestWaitingFileVisibleState(t *testing.T) {
 
 func TestFormatSessionHealthOneline(t *testing.T) {
 	health := status.SessionHealth{
-		Nodes: []status.NodeHealth{
-			{Name: "worker", VisibleState: "pending", CurrentCommand: "claude"},
-			{Name: "critic", VisibleState: "composing", CurrentCommand: "claude"},
-			{Name: "shell", VisibleState: "stale", CurrentCommand: "bash"},
-		},
-		Windows: []status.SessionWindow{
-			{
-				Index: "0",
-				Nodes: []status.WindowNode{
-					{Name: "worker"},
-					{Name: "critic"},
-					{Name: "shell"},
-				},
-			},
-		},
+		Compact: "(window0,)pc",
 	}
 
-	if got, want := formatSessionHealthOneline(health, false), "🔷🔵"; got != want {
+	if got, want := formatSessionHealthOneline(health), "(window0,)pc"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
@@ -163,35 +128,16 @@ func TestFormatSessionHealthOneline(t *testing.T) {
 func TestFormatAllSessionHealthOneline(t *testing.T) {
 	healths := []status.SessionHealth{
 		{
-			VisibleState: "unavailable",
+			Compact: "x",
 		},
 		{
-			Nodes: []status.NodeHealth{
-				{Name: "worker", VisibleState: "pending", CurrentCommand: "claude"},
-				{Name: "critic", VisibleState: "composing", CurrentCommand: "claude"},
-				{Name: "messenger", VisibleState: "ready", CurrentCommand: "claude"},
-			},
-			Windows: []status.SessionWindow{
-				{
-					Index: "0",
-					Nodes: []status.WindowNode{
-						{Name: "worker"},
-						{Name: "critic"},
-					},
-				},
-				{
-					Index: "1",
-					Nodes: []status.WindowNode{
-						{Name: "messenger"},
-					},
-				},
-			},
+			Compact: "(window0,window1,)pc:a",
 		},
 	}
 
-	got := formatAllSessionHealthOneline(healths, false)
-	if got != "[0]⚪ [1]🔷🔵:🟢" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]⚪ [1]🔷🔵:🟢")
+	got := formatAllSessionHealthOneline(healths)
+	if got != "[0]x [1](window0,window1,)pc:a" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]x [1](window0,window1,)pc:a")
 	}
 }
 
@@ -305,7 +251,7 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔷🔵:🟢 [1]🟢🔷" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🟢🔷")
+	if payload.Status != "[0](window0,window1,)pc:a [1](window0,)pa" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0](window0,window1,)pc:a [1](window0,)pa")
 	}
 }

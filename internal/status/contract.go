@@ -25,6 +25,7 @@ type SessionHealth struct {
 	SessionName  string          `json:"session_name"`
 	NodeCount    int             `json:"node_count"`
 	VisibleState string          `json:"visible_state"`
+	Compact      string          `json:"compact"`
 	Nodes        []NodeHealth    `json:"nodes"`
 	Windows      []SessionWindow `json:"windows"`
 }
