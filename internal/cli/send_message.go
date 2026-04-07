@@ -102,7 +102,7 @@ func RunSendMessage(args []string) error {
 		if entry.PaneNodeName == "" {
 			return fmt.Errorf("--from %q: binding has empty pane_node_name (unassigned)", *from)
 		}
-		if *to != entry.PaneNodeName {
+		if nodeaddr.Simple(*to) != entry.PaneNodeName {
 			return fmt.Errorf("--from %q: --to must be %q (binding's pane_node_name), got %q",
 				*from, entry.PaneNodeName, *to)
 		}
