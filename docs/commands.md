@@ -5,6 +5,17 @@ Full reference for all `tmux-a2a-postman` commands, flags, and behaviors.
 Run `tmux-a2a-postman schema <command>` at any time to get the machine-readable
 JSON Schema for a command's `--params`-settable options.
 
+## 0. How To Read This Page
+
+Use this page as the exact CLI reference, not as the first-time tutorial.
+
+1. Start in `README.md` if you need the operator model, the beginner command
+   loop, or the state-directory overview.
+2. Come here when you need exact flags, `--json` output shapes, `--params`
+   scope, or the current canonical command names.
+3. Prefer `tmux-a2a-postman schema <command>` when a script or agent needs the
+   live machine-readable flag surface instead of prose.
+
 ## 1. Command Overview
 
 | Command                    | Purpose                                              |

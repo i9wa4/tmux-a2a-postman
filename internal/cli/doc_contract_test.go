@@ -36,8 +36,9 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 }
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
-	commandsDoc := readRepoFile(t, "docs/COMMANDS.md")
+	commandsDoc := readRepoFile(t, "docs/commands.md")
 	assertContainsNormalized(t, commandsDoc, "The default operator surface is `send`, `pop`, `bind`, `get-health`, and `get-health-oneline`.")
+	assertContainsNormalized(t, commandsDoc, "Use this page as the exact CLI reference, not as the first-time tutorial.")
 	assertContainsNormalized(t, commandsDoc, "Older name | Current path")
 	assertContainsNormalized(t, commandsDoc, "`get-session-status-oneline` | `get-health-oneline` | Compact all-session tokens over canonical health")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
@@ -86,6 +87,8 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	readme := readRepoFile(t, "README.md")
 	assertContainsNormalized(t, readme, "Unified state + notification model")
 	assertContainsNormalized(t, readme, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract")
+	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
+	assertContainsNormalized(t, readme, "The README teaches the beginner/operator loop.")
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
 

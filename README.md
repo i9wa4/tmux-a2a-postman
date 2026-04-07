@@ -254,8 +254,9 @@ See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
 ## 8. CLI Reference
 
-See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference,
-including flag tables, `--json` output shapes, and `--params` usage.
+The README teaches the beginner/operator loop. Use
+[docs/commands.md](docs/commands.md) as the exact CLI reference for flag
+tables, `--json` output shapes, `--params` usage, and canonical command names.
 
 Default operator surface:
 
