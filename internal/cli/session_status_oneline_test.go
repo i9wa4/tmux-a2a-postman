@@ -144,7 +144,7 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testing.T) {
+func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
 	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
@@ -218,8 +218,8 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2 $3\" in\n" +
-		"  \"list-sessions -F #{session_name}\")\n" +
-		"    printf '%s\\n' 'review' 'main'\n" +
+		"  \"list-sessions -F \"*)\n" +
+		"    printf '%s\\n' 'review\t$210' 'main\t$173'\n" +
 		"    ;;\n" +
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
@@ -263,12 +263,12 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesCanonicalWindowOrder(t *testi
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔷🟢 [1]🔷🔵:🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🟢 [1]🔷🔵:🟢")
+	if payload.Status != "[0]🔷🔵:🟢 [1]🔷🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🔷🟢")
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_PreservesTmuxIndicesAcrossSessionsWithoutCanonicalPanes(t *testing.T) {
+func TestRunGetSessionStatusOneline_JSONOutput_PreservesSessionIDIndicesAcrossSessionsWithoutCanonicalPanes(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
@@ -313,8 +313,8 @@ func TestRunGetSessionStatusOneline_JSONOutput_PreservesTmuxIndicesAcrossSession
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2 $3\" in\n" +
-		"  \"list-sessions -F #{session_name}\")\n" +
-		"    printf '%s\\n' 'ghost' 'main'\n" +
+		"  \"list-sessions -F \"*)\n" +
+		"    printf '%s\\n' 'ghost\t$210' 'main\t$173'\n" +
 		"    ;;\n" +
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tmessenger'\n" +
@@ -352,7 +352,7 @@ func TestRunGetSessionStatusOneline_JSONOutput_PreservesTmuxIndicesAcrossSession
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🟢 [1]🟢🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🟢 [1]🟢🟢")
+	if payload.Status != "[0]🟢🟢 [1]🟢" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🟢🟢 [1]🟢")
 	}
 }

@@ -358,7 +358,7 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	}
 }
 
-func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayload(t *testing.T) {
+func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
@@ -432,8 +432,8 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayload(t *testing.T) 
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2 $3\" in\n" +
-		"  \"list-sessions -F #{session_name}\")\n" +
-		"    printf '%s\\n' 'review' 'main'\n" +
+		"  \"list-sessions -F \"*)\n" +
+		"    printf '%s\\n' 'review\t$210' 'main\t$173'\n" +
 		"    ;;\n" +
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
@@ -475,18 +475,18 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayload(t *testing.T) 
 	if len(payload.Sessions) != 2 {
 		t.Fatalf("sessions = %#v, want 2 sessions", payload.Sessions)
 	}
-	if payload.Sessions[0].SessionName != "review" || payload.Sessions[1].SessionName != "main" {
-		t.Fatalf("session order = %#v, want review then main to match tmux session order", payload.Sessions)
+	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "review" {
+		t.Fatalf("session order = %#v, want main then review to match numeric tmux session_id order", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🔷🟢" {
-		t.Fatalf("review compact = %q, want %q", payload.Sessions[0].Compact, "🔷🟢")
+	if payload.Sessions[0].Compact != "🔷🔵:🟢" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🔵:🟢")
 	}
-	if payload.Sessions[1].Compact != "🔷🔵:🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[1].Compact, "🔷🔵:🟢")
+	if payload.Sessions[1].Compact != "🔷🟢" {
+		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🔷🟢")
 	}
 }
 
-func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesToPreserveTmuxOrder(t *testing.T) {
+func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
@@ -531,8 +531,8 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesToPreserve
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2 $3\" in\n" +
-		"  \"list-sessions -F #{session_name}\")\n" +
-		"    printf '%s\\n' 'ghost' 'main'\n" +
+		"  \"list-sessions -F \"*)\n" +
+		"    printf '%s\\n' 'ghost\t$210' 'main\t$173'\n" +
 		"    ;;\n" +
 		"  \"list-panes -a -F\")\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tmessenger'\n" +
@@ -563,12 +563,15 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesToPreserve
 		t.Fatal("collectAllSessionHealth reported no active context")
 	}
 	if len(payload.Sessions) != 2 {
-		t.Fatalf("sessions = %#v, want ghost then main to preserve tmux session order", payload.Sessions)
+		t.Fatalf("sessions = %#v, want main then ghost to preserve numeric tmux session_id order", payload.Sessions)
 	}
-	if payload.Sessions[0].SessionName != "ghost" || payload.Sessions[1].SessionName != "main" {
-		t.Fatalf("session order = %#v, want ghost then main", payload.Sessions)
+	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "ghost" {
+		t.Fatalf("session order = %#v, want main then ghost", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🟢" {
-		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[0].Compact, "🟢")
+	if payload.Sessions[0].Compact != "🟢🟢" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🟢🟢")
+	}
+	if payload.Sessions[1].Compact != "🟢" {
+		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "🟢")
 	}
 }

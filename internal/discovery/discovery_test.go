@@ -101,6 +101,36 @@ func TestResolveNodeName_Unknown(t *testing.T) {
 	}
 }
 
+func TestDiscoverAllSessions_SortsByNumericSessionID(t *testing.T) {
+	runner := func(args ...string) ([]byte, error) {
+		if len(args) != 3 {
+			t.Fatalf("args len = %d, want 3", len(args))
+		}
+		if args[0] != "list-sessions" || args[1] != "-F" {
+			t.Fatalf("args = %#v, want list-sessions -F ...", args)
+		}
+		if args[2] != "#{session_name}\t#{session_id}" {
+			t.Fatalf("format = %q, want %q", args[2], "#{session_name}\t#{session_id}")
+		}
+		return []byte("review\t$210\nmain\t$173\ndotfiles\t$211\n"), nil
+	}
+
+	got, err := discoverAllSessionsUsing(runner)
+	if err != nil {
+		t.Fatalf("discoverAllSessionsUsing: %v", err)
+	}
+
+	want := []string{"main", "review", "dotfiles"}
+	if len(got) != len(want) {
+		t.Fatalf("len(got) = %d, want %d (%#v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %q, want %q (full=%#v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestReduceCollisions_TwoPanes verifies that the higher numeric pane ID wins
 // in a two-pane collision (e.g., %26 vs %31 → %31 wins).
 func TestReduceCollisions_TwoPanes(t *testing.T) {

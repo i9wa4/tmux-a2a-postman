@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -253,7 +254,17 @@ func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]N
 // DiscoverAllSessions returns all tmux session names.
 // Issue #117: Returns ALL sessions (not just those with A2A nodes).
 func DiscoverAllSessions() ([]string, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	return discoverAllSessionsUsing(defaultTmuxRunner)
+}
+
+type discoveredSession struct {
+	name  string
+	id    int
+	hasID bool
+}
+
+func discoverAllSessionsUsing(runner tmuxRunner) ([]string, error) {
+	out, err := runner("list-sessions", "-F", "#{session_name}\t#{session_id}")
 	if err != nil {
 		// If no server running, return empty list (not an error)
 		if strings.Contains(string(out), "no server running") {
@@ -261,12 +272,35 @@ func DiscoverAllSessions() ([]string, error) {
 		}
 		return nil, fmt.Errorf("tmux list-sessions: %w: %s", err, out)
 	}
-
-	sessions := []string{}
+	sessions := []discoveredSession{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			sessions = append(sessions, line)
+		if line == "" {
+			continue
 		}
+		parts := strings.SplitN(line, "\t", 2)
+		session := discoveredSession{name: parts[0]}
+		if len(parts) == 2 && len(parts[1]) > 1 && strings.HasPrefix(parts[1], "$") {
+			if sessionID, parseErr := strconv.Atoi(parts[1][1:]); parseErr == nil {
+				session.id = sessionID
+				session.hasID = true
+			}
+		}
+		sessions = append(sessions, session)
 	}
-	return sessions, nil
+
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].hasID != sessions[j].hasID {
+			return sessions[i].hasID
+		}
+		if !sessions[i].hasID {
+			return false
+		}
+		return sessions[i].id < sessions[j].id
+	})
+
+	names := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		names = append(names, session.name)
+	}
+	return names, nil
 }
