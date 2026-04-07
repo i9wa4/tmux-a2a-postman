@@ -188,8 +188,9 @@ func RunSendMessage(args []string) error {
 
 	if len(talksToList) > 0 {
 		recipientAllowed := false
+		recipientSimpleName := nodeaddr.Simple(*to)
 		for _, n := range talksToList {
-			if n == *to {
+			if n == *to || n == recipientSimpleName {
 				recipientAllowed = true
 				break
 			}
