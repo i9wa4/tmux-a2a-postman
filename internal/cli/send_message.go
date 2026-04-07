@@ -15,6 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
@@ -224,7 +225,24 @@ func RunSendMessage(args []string) error {
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 
 	if cfg.MessageFooter != "" {
-		footer := template.ExpandTemplate(cfg.MessageFooter, vars, timeout, cfg.AllowShellForMessageFooter())
+		footerVars := make(map[string]string, len(vars))
+		for k, v := range vars {
+			footerVars[k] = v
+		}
+		footerTalksToList := config.GetTalksTo(adjacency, *to)
+		if len(footerTalksToList) == 0 {
+			recipientSimpleName := nodeaddr.Simple(*to)
+			if recipientSimpleName != *to {
+				footerTalksToList = config.GetTalksTo(adjacency, recipientSimpleName)
+			}
+		}
+		footerVars["can_talk_to"] = strings.Join(footerTalksToList, ", ")
+		footerVars["reply_command"] = strings.ReplaceAll(
+			envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, sender),
+			"<recipient>",
+			sender,
+		)
+		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
 
