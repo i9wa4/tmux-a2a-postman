@@ -287,7 +287,8 @@ func filterCanonicalSessions(sessions []SessionInfo, sessionNodes map[string][]s
 }
 
 func (m *Model) refreshVisibleSessions() {
-	m.sessions = filterCanonicalSessions(m.knownSessions, m.sessionNodes, m.sessionHealth)
+	// Default TUI session rows mirror tmux list-sessions order exactly.
+	m.sessions = append([]SessionInfo(nil), m.knownSessions...)
 	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 	m.pruneSessionHealth()
 }
@@ -296,8 +297,8 @@ func (m *Model) pruneSessionHealth() {
 	if len(m.sessionHealth) == 0 || len(m.knownSessions) == 0 {
 		return
 	}
-	liveSessions := make(map[string]struct{}, len(m.sessions))
-	for _, session := range m.sessions {
+	liveSessions := make(map[string]struct{}, len(m.knownSessions))
+	for _, session := range m.knownSessions {
 		liveSessions[session.Name] = struct{}{}
 	}
 	for sessionName := range m.sessionHealth {
@@ -555,7 +556,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if count, ok := msg.Details["node_count"].(int); ok {
 				m.nodeCount = count
 			}
-			// Canonical default-surface indexing follows sessions with A2A nodes only.
+			// Default TUI session rows mirror the full tmux session list.
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
 				m.refreshVisibleSessions()
@@ -567,7 +568,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		// Issue #45: Removed "inbox_update" handler
 		case "config_update":
-			// Canonical default-surface indexing follows sessions with A2A nodes only.
+			// Default TUI session rows mirror the full tmux session list.
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
 				m.refreshVisibleSessions()
@@ -906,6 +907,7 @@ func sessionHealthUnavailable(health status.SessionHealth) bool {
 func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	health, ok := m.sessionHealthFor(session.Name)
 	if !ok {
+		// Session exists in tmux, but canonical health has not arrived yet.
 		return "⚪"
 	}
 	if sessionHealthUnavailable(health) {
@@ -916,6 +918,7 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 		state = status.SessionVisibleState(health.Nodes)
 	}
 	if state == "" {
+		// Session exists, but there are no canonical panes to classify yet.
 		return "⚪"
 	}
 	return sessionIndicator(state, true)
