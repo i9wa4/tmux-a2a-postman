@@ -486,7 +486,7 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayload(t *testing.T) 
 	}
 }
 
-func TestCollectAllSessionHealth_SkipsSessionsWithoutCanonicalPanes(t *testing.T) {
+func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesToPreserveTmuxOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
@@ -562,10 +562,13 @@ func TestCollectAllSessionHealth_SkipsSessionsWithoutCanonicalPanes(t *testing.T
 	if !ok {
 		t.Fatal("collectAllSessionHealth reported no active context")
 	}
-	if len(payload.Sessions) != 1 {
-		t.Fatalf("sessions = %#v, want only main session", payload.Sessions)
+	if len(payload.Sessions) != 2 {
+		t.Fatalf("sessions = %#v, want ghost then main to preserve tmux session order", payload.Sessions)
 	}
-	if payload.Sessions[0].SessionName != "main" {
-		t.Fatalf("session name = %q, want %q", payload.Sessions[0].SessionName, "main")
+	if payload.Sessions[0].SessionName != "ghost" || payload.Sessions[1].SessionName != "main" {
+		t.Fatalf("session order = %#v, want ghost then main", payload.Sessions)
+	}
+	if payload.Sessions[0].Compact != "🟢" {
+		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[0].Compact, "🟢")
 	}
 }
