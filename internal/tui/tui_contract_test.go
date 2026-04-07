@@ -119,6 +119,55 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+
+	statusUpdate := DaemonEventMsg{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []SessionInfo{
+				{Name: "ghost", Enabled: true},
+				{Name: "review", Enabled: true},
+			},
+		},
+	}
+
+	newModel, _ := m.Update(statusUpdate)
+	m = newModel.(Model)
+
+	if view := m.View().Content; !strings.Contains(view, "(no sessions)") {
+		t.Fatalf("pre-health view unexpectedly shows sessions: %q", view)
+	}
+
+	healthUpdate := DaemonEventMsg{
+		Type: "session_health_update",
+		Details: map[string]interface{}{
+			"health": status.SessionHealth{
+				SessionName:  "review",
+				VisibleState: "unavailable",
+			},
+		},
+	}
+
+	newModel, _ = m.Update(healthUpdate)
+	m = newModel.(Model)
+
+	view := m.View().Content
+
+	if strings.Contains(view, "ghost") {
+		t.Fatalf("view unexpectedly shows session without canonical health: %q", view)
+	}
+	if !strings.Contains(view, "> [0] review ⚪") {
+		t.Fatalf("view missing rehydrated unavailable session row: %q", view)
+	}
+	if !strings.Contains(view, "(session unavailable)") {
+		t.Fatalf("view missing unavailable session text after health update: %q", view)
+	}
+}
+
 func TestTUI_Update_StatusUpdate_FiltersSessionsWithoutCanonicalNodes(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

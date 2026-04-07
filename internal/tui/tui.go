@@ -179,6 +179,7 @@ type Model struct {
 
 	// Session list view (Issue #35: Requirement 3, Issue #45: left pane)
 	sessions        []SessionInfo
+	knownSessions   []SessionInfo
 	selectedSession int
 	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
 	sessionHealth   map[string]status.SessionHealth
@@ -271,7 +272,7 @@ func sessionHasCanonicalNodes(sessionName string, sessionNodes map[string][]stri
 		return false
 	}
 
-	return len(health.Nodes) > 0 || len(health.Windows) > 0
+	return health.VisibleState != "" || len(health.Nodes) > 0 || len(health.Windows) > 0
 }
 
 func filterCanonicalSessions(sessions []SessionInfo, sessionNodes map[string][]string, sessionHealth map[string]status.SessionHealth) []SessionInfo {
@@ -285,8 +286,14 @@ func filterCanonicalSessions(sessions []SessionInfo, sessionNodes map[string][]s
 	return filtered
 }
 
+func (m *Model) refreshVisibleSessions() {
+	m.sessions = filterCanonicalSessions(m.knownSessions, m.sessionNodes, m.sessionHealth)
+	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
+	m.pruneSessionHealth()
+}
+
 func (m *Model) pruneSessionHealth() {
-	if len(m.sessionHealth) == 0 {
+	if len(m.sessionHealth) == 0 || len(m.knownSessions) == 0 {
 		return
 	}
 	liveSessions := make(map[string]struct{}, len(m.sessions))
@@ -428,7 +435,8 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		height:              24, // Default height (Issue #35)
 		edges:               []Edge{},
 		selectedEdge:        0,
-		sessions:            []SessionInfo{},           // Issue #35: Requirement 3
+		sessions:            []SessionInfo{}, // Issue #35: Requirement 3
+		knownSessions:       []SessionInfo{},
 		selectedSession:     0,                         // Issue #35: Requirement 3
 		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
 		sessionHealth:       make(map[string]status.SessionHealth),
@@ -550,18 +558,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Canonical default-surface indexing follows sessions with A2A nodes only.
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
+				m.refreshVisibleSessions()
 			}
 			// Issue #36: Bug 2 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = filterCanonicalSessions(sessionList, m.sessionNodes, m.sessionHealth)
-				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
-				m.pruneSessionHealth()
+				m.knownSessions = sessionList
+				m.refreshVisibleSessions()
 			}
 		// Issue #45: Removed "inbox_update" handler
 		case "config_update":
 			// Canonical default-surface indexing follows sessions with A2A nodes only.
 			if sessionNodesRaw, ok := msg.Details["session_nodes"].(map[string][]string); ok {
 				m.sessionNodes = sessionNodesRaw
+				m.refreshVisibleSessions()
 			}
 			// Update edges from Details
 			if edgeList, ok := msg.Details["edges"].([]Edge); ok {
@@ -576,13 +585,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
-				m.sessions = filterCanonicalSessions(sessionList, m.sessionNodes, m.sessionHealth)
-				m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
-				m.pruneSessionHealth()
+				m.knownSessions = sessionList
+				m.refreshVisibleSessions()
 			}
 		case "session_health_update":
 			if health, ok := msg.Details["health"].(status.SessionHealth); ok && health.SessionName != "" {
 				m.sessionHealth[health.SessionName] = health
+				m.refreshVisibleSessions()
 			}
 		case "edge_update":
 			// Issue #40: Update edges from edge_update event
