@@ -173,6 +173,16 @@ same canonical contract. The per-node visible states are `ready`,
 `unavailable` is a fallback that means the current daemon is not authoritative
 for canonical health; it is not a per-node state.
 
+Quick reading guide:
+
+| If you see | It means | Tune / read next |
+| ---------- | -------- | ---------------- |
+| `pending`, `user_input`, `composing`, `spinning`, or `stalled` in `get-health`, `get-health-oneline`, or the TUI | Canonical visible state for a node right now | `docs/design/node-state-machine.md` |
+| A pane hint telling a node to run `tmux-a2a-postman pop` | Delivery reached that node's inbox; this is a pane notification, not a new state | `docs/design/notification.md` |
+| A daemon-generated message routed to `ui_node` | Policy alert such as unread summary, inactivity, unreplied message, or expected-reply overdue | `docs/guides/alert-config.md` and `docs/design/notification.md` |
+| A dropped-ball event in the TUI or tmux status bar | Coordination warning based on `LastReceived > LastSent`; by default it is not an inbox alert | `docs/guides/alert-config.md` |
+| PING or heartbeat mail | Control-plane traffic that is still operator-visible in the current tree | `docs/design/notification.md` |
+
 Public knobs for this model live in `postman.toml`:
 
 - `ui_node`

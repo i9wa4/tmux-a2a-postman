@@ -64,6 +64,18 @@ The current visible states are `ready`, `pending`, `user_input`, `composing`,
 `spinning`, and `stalled`. Session-level `unavailable` is a fallback for
 non-authoritative health views, not a per-node alert state.
 
+### 3.1. Operator Triage Map
+
+Use this quick split before changing config:
+
+| If you see | Read it as | First knob / doc to check |
+| ---------- | ---------- | ------------------------- |
+| `pending`, `user_input`, `composing`, `spinning`, `stalled` in `get-health`, `get-health-oneline`, or the TUI | Canonical visible state, not a daemon alert by itself | `docs/design/node-state-machine.md` |
+| A pane hint telling the recipient to run `tmux-a2a-postman pop` | Delivery-side notification for that recipient pane | `notification_template`, `pane_notify_cooldown_seconds`, `docs/design/notification.md` |
+| A daemon-generated inbox message to `ui_node` | Policy alert routed to the human-facing node | `ui_node`, `inbox_unread_threshold`, `idle_timeout_seconds`, `dropped_ball_timeout_seconds`, `node_spinning_seconds` |
+| A dropped-ball message in the TUI or status bar | Coordination signal separate from `ui_node` inbox alerts | `dropped_ball_timeout_seconds`, `dropped_ball_notification` |
+| Visible `spinning` with no inbox alert | Reply-tracked wait crossed the display threshold, but the alert path is disabled or suppressed | `node_spinning_seconds`, `ui_node`, `alert_cooldown_seconds`, `alert_delivery_window_seconds` |
+
 ## 4. What Each Field Controls
 
 | Field                           | Surface / mechanism                                 | Default              |

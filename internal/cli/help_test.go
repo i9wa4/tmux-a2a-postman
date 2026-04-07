@@ -86,6 +86,11 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	for _, want := range []string{
 		"Unified state + notification model:",
 		"Core visible states: ready, pending, user_input, composing, spinning, stalled",
+		"Quick reading guide:",
+		"visible_state in get-health/TUI/oneline answers what the node looks like now",
+		"pane hints answer that delivery reached a recipient inbox",
+		"ui_node alerts answer that policy thresholds fired",
+		"dropped-ball is a coordination signal, not the same thing as a ui_node inbox alert",
 		"ui_node                          Human-facing inbox target for alerts and user_input waits",
 		"reminder_interval_messages       Reminder cadence after archived reads",
 		"inbox_unread_threshold           Unread-summary threshold for ui_node alerts",
