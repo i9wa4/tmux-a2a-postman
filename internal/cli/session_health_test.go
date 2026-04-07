@@ -393,8 +393,8 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	if err := os.WriteFile(
 		filepath.Join(tmpDir, contextID, "pane-activity.json"),
 		[]byte(`{
-  "%11": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
-  "%12": {"status":"idle","lastChangeAt":"2026-04-06T00:00:00Z"},
+  "%11": {"status":"idle","lastChangeAt":"2026-04-06T00:00:00Z"},
+  "%12": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
   "%13": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
   "%21": {"status":"active","lastChangeAt":"2026-04-06T00:00:00Z"},
   "%22": {"status":"idle","lastChangeAt":"2026-04-06T00:00:00Z"}
@@ -436,13 +436,13 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 		"    printf '%s\\n' 'review\t$210' 'main\t$173'\n" +
 		"    ;;\n" +
 		"  \"list-panes -a -F\")\n" +
-		"    printf '%s\\n' '%11\t" + contextID + "\tmain\tworker' '%12\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
+		"    printf '%s\\n' '%12\t" + contextID + "\tmain\tworker' '%11\t" + contextID + "\tmain\tcritic' '%13\t" + contextID + "\tmain\tmessenger' '%21\t" + contextID + "\treview\tcritic' '%22\t" + contextID + "\treview\tworker'\n" +
 		"    ;;\n" +
 		"  \"list-windows -t main\")\n" +
 		"    printf '%s\\n' '0' '1'\n" +
 		"    ;;\n" +
 		"  \"list-panes -t main:0\")\n" +
-		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
+		"    printf '%s\\n' '0\t0\t%12\tworker\tclaude' '0\t1\t%11\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  \"list-panes -t main:1\")\n" +
 		"    printf '%s\\n' '1\t0\t%13\tmessenger\tclaude'\n" +
@@ -481,8 +481,8 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	if payload.Sessions[0].Compact != "🔷🔵:🟢" {
 		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🔵:🟢")
 	}
-	if payload.Sessions[1].Compact != "🔷🟢" {
-		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🔷🟢")
+	if payload.Sessions[1].Compact != "🟢🔷" {
+		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🟢🔷")
 	}
 }
 

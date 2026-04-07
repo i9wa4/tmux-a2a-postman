@@ -382,18 +382,6 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 	return panes, nil
 }
 
-func paneIDNumber(paneID string) int {
-	trimmed := strings.TrimPrefix(paneID, "%")
-	if trimmed == "" {
-		return 1 << 30
-	}
-	n, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return 1 << 30
-	}
-	return n
-}
-
 func buildSessionCompact(health status.SessionHealth, panes []sessionPane) string {
 	nodeByPaneID := make(map[string]status.NodeHealth, len(health.Nodes))
 	for _, node := range health.Nodes {
@@ -421,18 +409,8 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 	}
 
 	for _, windowIndex := range windowOrder {
-		nodes := append([]status.NodeHealth(nil), windowNodes[windowIndex]...)
-		sort.Slice(nodes, func(i, j int) bool {
-			left := paneIDNumber(nodes[i].PaneID)
-			right := paneIDNumber(nodes[j].PaneID)
-			if left != right {
-				return left < right
-			}
-			return nodes[i].PaneID < nodes[j].PaneID
-		})
-
 		var marks strings.Builder
-		for _, node := range nodes {
+		for _, node := range windowNodes[windowIndex] {
 			if isShellCommand(node.CurrentCommand) {
 				continue
 			}
