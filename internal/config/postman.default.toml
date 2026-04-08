@@ -117,7 +117,8 @@ auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessi
 #       {template} expands to "" and SendToPane is called with empty content (spurious Enter).
 #       Ensure all nodes have a template when using this pattern.
 #
-reminder_message = "{inbox_path}"
+# Default stays path-free so reminder pane hints do not expose inbox directories.
+reminder_message = "Unread messages pending. Run `tmux-a2a-postman pop` to read them."
 
 # Alert action templates (appended to daemon alert messages sent to ui_node)
 # NOTE: These templates are rendered for inbox_unread_summary, node_inactivity, and

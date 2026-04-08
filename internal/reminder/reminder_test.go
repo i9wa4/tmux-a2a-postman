@@ -1,6 +1,7 @@
 package reminder
 
 import (
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -260,5 +261,30 @@ func TestReminderPhaseThreeLookup(t *testing.T) {
 	state.mu.Unlock()
 	if count != 0 {
 		t.Errorf("Phase 3 lookup: after threshold, counter = %d, want 0", count)
+	}
+}
+
+func TestDefaultReminderMessageDoesNotExposeInboxPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(\"\"): %v", err)
+	}
+
+	inboxPath := filepath.Join(tmpDir, "ctx-123", "internal", "inbox", "messenger")
+	msg := template.ExpandTemplate(cfg.ReminderMessage, map[string]string{
+		"count":      "3",
+		"inbox_path": inboxPath,
+	}, 5*time.Second, false)
+
+	if strings.Contains(msg, inboxPath) {
+		t.Fatalf("default reminder leaked inbox path: %q", msg)
+	}
+	if !strings.Contains(msg, "tmux-a2a-postman pop") {
+		t.Fatalf("default reminder should stay actionable, got %q", msg)
 	}
 }
