@@ -6,8 +6,8 @@
 2. Create and push annotated tag (must match `v[0-9]*`):
 
    ```bash
-   git tag -a vX.Y.Z -m "Release vX.Y.Z"
-   git push origin vX.Y.Z
+   git tag vX.Y.Z
+   git push origin main --tags
    ```
 
 3. GitHub Actions automatically creates release with goreleaser
