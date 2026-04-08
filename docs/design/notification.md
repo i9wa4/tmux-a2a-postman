@@ -155,7 +155,7 @@ recently notified the reminder is silently skipped.
 | Field                        | Default         | Scope          |
 | ---------------------------- | --------------- | -------------- |
 | `reminder_interval_messages` | `20`            | Global         |
-| `reminder_message`           | `"{inbox_path}"` | Global        |
+| `reminder_message`           | `"Unread messages pending. Run \`tmux-a2a-postman pop\` to read them."` | Global        |
 | `pane_notify_cooldown_seconds` | `600`         | Global         |
 
 Node-level overrides (under `[nodes.{name}]`):
@@ -561,7 +561,7 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `enter_delay_seconds`              | `3.0`    | Global  | §2.1, §2.2                |
 | `pane_notify_cooldown_seconds`     | `600`    | Global  | §2.2                      |
 | `reminder_interval_messages`       | `20`     | Global + per-node | §2.2             |
-| `reminder_message`                 | `"{inbox_path}"` | Global + per-node | §2.2   |
+| `reminder_message`                 | `"Unread messages pending. Run \`tmux-a2a-postman pop\` to read them."` | Global + per-node | §2.2   |
 | `inbox_unread_threshold`           | `3`      | Global  | §2.3                      |
 | `ui_node`                          | `""`     | Global  | §2.3, §2.4, §2.5          |
 | `alert_cooldown_seconds`           | `600`    | Global  | §2.3, §2.4, §2.5          |
