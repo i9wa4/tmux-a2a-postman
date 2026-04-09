@@ -160,20 +160,23 @@ func TestTUI_View(t *testing.T) {
 	if !strings.Contains(view, "[sessions]") {
 		t.Error("view missing [sessions] section")
 	}
-	if !strings.Contains(view, "> [0] main") {
-		t.Error("view missing selected numbered session row")
+	if !strings.Contains(view, "> 🟢 [0] main") {
+		t.Error("view missing selected emoji-first session row")
 	}
-	if !strings.Contains(view, "  [1] review") {
-		t.Error("view missing secondary numbered session row")
+	if !strings.Contains(view, "  🟣 [1] review") {
+		t.Error("view missing secondary emoji-first session row")
 	}
 	if !strings.Contains(view, "[nodes]") {
 		t.Error("view missing [nodes] section")
 	}
-	if !strings.Contains(view, "boss") || !strings.Contains(view, "messenger") {
-		t.Error("view missing selected-session node rows")
+	if !strings.Contains(view, "  🟢 boss") || !strings.Contains(view, "  🟢 messenger") {
+		t.Error("view missing emoji-first selected-session node rows")
 	}
 	if strings.Contains(view, "critic") || strings.Contains(view, "worker") {
 		t.Error("view leaked nodes from an unselected session")
+	}
+	if strings.Contains(view, "ready") || strings.Contains(view, "input") || strings.Contains(view, "stalled") {
+		t.Error("view still contains removed node state labels")
 	}
 	for _, forbidden := range []string{
 		"1:Events",
@@ -306,7 +309,7 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 	if m.selectedSession != 1 {
 		t.Fatalf("selectedSession = %d, want 1", m.selectedSession)
 	}
-	if !strings.Contains(view, "> [1] review 🟢") {
+	if !strings.Contains(view, "> 🟢 [1] review") {
 		t.Fatalf("view missing selected session row with canonical indicator: %q", view)
 	}
 }

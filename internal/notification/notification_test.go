@@ -2,6 +2,7 @@ package notification
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -587,5 +588,49 @@ func TestSendToPane_EnterCountNegative(t *testing.T) {
 	}
 	if sendKeyCount != 1 {
 		t.Errorf("expected 1 send-keys call for negative enterCount, got %d; lines: %v", sendKeyCount, lines)
+	}
+}
+
+func TestSendToPane_EnterVerifyRetryDoesNotWriteWarningToStderr(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := `#!/bin/sh
+case "$1" in
+  capture-pane)
+    printf 'unchanged snapshot\n'
+    ;;
+  *)
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	origStderr := os.Stderr
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stderr = stderrW
+	defer func() {
+		os.Stderr = origStderr
+	}()
+
+	err = SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true, 1*time.Millisecond, 2)
+	if err != nil {
+		t.Fatalf("SendToPane failed: %v", err)
+	}
+	if err := stderrW.Close(); err != nil {
+		t.Fatalf("stderrW.Close failed: %v", err)
+	}
+	stderrBytes, err := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatalf("io.ReadAll(stderrR) failed: %v", err)
+	}
+	if strings.Contains(string(stderrBytes), "enter verify") {
+		t.Fatalf("SendToPane leaked enter-verify warning to stderr: %q", string(stderrBytes))
 	}
 }

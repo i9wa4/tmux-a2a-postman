@@ -946,20 +946,13 @@ func (m Model) renderSessionsSection() string {
 		return b.String()
 	}
 
-	nameWidth := 0
-	for _, session := range m.sessions {
-		if len(session.Name) > nameWidth {
-			nameWidth = len(session.Name)
-		}
-	}
-
 	for i, session := range m.sessions {
 		cursor := "  "
 		if i == m.selectedSession {
 			cursor = "> "
 		}
 		indicator := m.defaultSessionIndicator(session)
-		b.WriteString(fmt.Sprintf("%s[%d] %-*s %s\n", cursor, i, nameWidth, session.Name, indicator))
+		b.WriteString(fmt.Sprintf("%s%s [%d] %s\n", cursor, indicator, i, session.Name))
 	}
 
 	return b.String()
@@ -1024,20 +1017,12 @@ func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string 
 		return "(no nodes)\n"
 	}
 
-	nameWidth := 0
-	for _, nodeName := range nodeNames {
-		if len(nodeName) > nameWidth {
-			nameWidth = len(nodeName)
-		}
-	}
-
 	var b strings.Builder
 	for _, nodeName := range nodeNames {
 		node := nodeByName[nodeName]
 		visibleState := visibleStateLabel(node)
 		indicator := sessionIndicator(visibleState, true)
-		label := nodeStateLabel(visibleState)
-		b.WriteString(fmt.Sprintf("%-*s  %s  %s\n", nameWidth, nodeName, indicator, label))
+		b.WriteString(fmt.Sprintf("  %s %s\n", indicator, nodeName))
 	}
 
 	return b.String()

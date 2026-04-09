@@ -10,13 +10,13 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func sessionRowPattern(cursor string, index int, name string) string {
-	return regexp.QuoteMeta(cursor) + `\[` + regexp.QuoteMeta(strconv.Itoa(index)) + `\] ` + regexp.QuoteMeta(name) + `\s+⚪`
+func sessionRowPattern(cursor string, indicator string, index int, name string) string {
+	return regexp.QuoteMeta(cursor + indicator + " [" + strconv.Itoa(index) + "] " + name)
 }
 
-func requireSessionRow(t *testing.T, view string, cursor string, index int, name string) {
+func requireSessionRow(t *testing.T, view string, cursor string, indicator string, index int, name string) {
 	t.Helper()
-	pattern := sessionRowPattern(cursor, index, name)
+	pattern := sessionRowPattern(cursor, indicator, index, name)
 	matched, err := regexp.MatchString(pattern, view)
 	if err != nil {
 		t.Fatalf("regexp.MatchString(%q) failed: %v", pattern, err)
@@ -77,14 +77,17 @@ func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review 🟡") {
+	if !strings.Contains(view, "> 🟡 [0] review") {
 		t.Fatalf("view missing canonical session indicator: %q", view)
 	}
-	if !strings.Contains(view, "critic  🔵  composing") {
+	if !strings.Contains(view, "  🔵 critic") {
 		t.Fatalf("view missing composing node row: %q", view)
 	}
-	if !strings.Contains(view, "worker  🟡  spinning") {
+	if !strings.Contains(view, "  🟡 worker") {
 		t.Fatalf("view missing spinning node row: %q", view)
+	}
+	if strings.Contains(view, "composing") || strings.Contains(view, "spinning") {
+		t.Fatalf("view still contains removed node state labels: %q", view)
 	}
 }
 
@@ -103,7 +106,7 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review ⚪") {
+	if !strings.Contains(view, "> ⚪ [0] review") {
 		t.Fatalf("view missing loading session indicator: %q", view)
 	}
 	if !strings.Contains(view, "(loading canonical health)") {
@@ -129,7 +132,7 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review ⚪") {
+	if !strings.Contains(view, "> ⚪ [0] review") {
 		t.Fatalf("view missing unavailable session indicator: %q", view)
 	}
 	if !strings.Contains(view, "(session unavailable)") {
@@ -158,8 +161,8 @@ func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *tes
 
 	view := m.View().Content
 
-	requireSessionRow(t, view, "> ", 0, "ghost")
-	requireSessionRow(t, view, "  ", 1, "review")
+	requireSessionRow(t, view, "> ", "⚪", 0, "ghost")
+	requireSessionRow(t, view, "  ", "⚪", 1, "review")
 
 	healthUpdate := DaemonEventMsg{
 		Type: "session_health_update",
@@ -176,8 +179,8 @@ func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *tes
 
 	view = m.View().Content
 
-	requireSessionRow(t, view, "> ", 0, "ghost")
-	requireSessionRow(t, view, "  ", 1, "review")
+	requireSessionRow(t, view, "> ", "⚪", 0, "ghost")
+	requireSessionRow(t, view, "  ", "⚪", 1, "review")
 	if !strings.Contains(view, "(loading canonical health)") {
 		t.Fatalf("view missing loading state for selected tmux session without health: %q", view)
 	}
@@ -210,7 +213,7 @@ func TestTUI_Update_SessionHealthUpdate_ShowsUnavailableSelectedSessionText(t *t
 
 	view := m.View().Content
 
-	requireSessionRow(t, view, "> ", 1, "review")
+	requireSessionRow(t, view, "> ", "⚪", 1, "review")
 	if !strings.Contains(view, "(session unavailable)") {
 		t.Fatalf("view missing unavailable session text for selected session: %q", view)
 	}
@@ -239,8 +242,8 @@ func TestTUI_Update_StatusUpdate_PreservesTmuxSessionRowsWithoutCanonicalNodes(t
 
 	view := m.View().Content
 
-	requireSessionRow(t, view, "> ", 0, "ghost")
-	requireSessionRow(t, view, "  ", 1, "main")
+	requireSessionRow(t, view, "> ", "⚪", 0, "ghost")
+	requireSessionRow(t, view, "  ", "⚪", 1, "main")
 }
 
 func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
@@ -269,9 +272,9 @@ func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
 	view := m.View().Content
 
 	wantPatterns := []string{
-		sessionRowPattern("> ", 0, "ghost"),
-		sessionRowPattern("  ", 1, "review"),
-		sessionRowPattern("  ", 2, "main"),
+		sessionRowPattern("> ", "⚪", 0, "ghost"),
+		sessionRowPattern("  ", "⚪", 1, "review"),
+		sessionRowPattern("  ", "⚪", 2, "main"),
 	}
 	for _, pattern := range wantPatterns {
 		matched, err := regexp.MatchString(pattern, view)
@@ -287,5 +290,53 @@ func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
 	mainPos := strings.Index(view, "[2] main")
 	if !(ghostPos >= 0 && reviewPos > ghostPos && mainPos > reviewPos) {
 		t.Fatalf("view order does not match tmux session order: %q", view)
+	}
+}
+
+func TestTUI_View_NodeRowsAlignWithSessionRows(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+	}
+	m.sessionHealth["main"] = status.SessionHealth{
+		SessionName:  "main",
+		VisibleState: "ready",
+		Nodes: []status.NodeHealth{
+			{Name: "boss", VisibleState: "ready"},
+			{Name: "messenger", VisibleState: "ready"},
+		},
+		Windows: []status.SessionWindow{
+			{
+				Index: "0",
+				Nodes: []status.WindowNode{
+					{Name: "boss"},
+					{Name: "messenger"},
+				},
+			},
+		},
+	}
+
+	view := m.View().Content
+	lines := strings.Split(view, "\n")
+
+	var sessionLine string
+	var nodeLine string
+	for _, line := range lines {
+		if strings.Contains(line, "> 🟢 [0] main") {
+			sessionLine = line
+		}
+		if strings.Contains(line, "🟢 boss") {
+			nodeLine = line
+		}
+	}
+
+	if sessionLine == "" || nodeLine == "" {
+		t.Fatalf("view missing target lines: %q", view)
+	}
+	if strings.Index(sessionLine, "🟢") != strings.Index(nodeLine, "🟢") {
+		t.Fatalf("session/node emoji columns differ: session=%q node=%q", sessionLine, nodeLine)
 	}
 }

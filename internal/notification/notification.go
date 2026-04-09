@@ -126,8 +126,7 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 			if snapA != snapB {
 				break // pane content changed; Enter was accepted
 			}
-			// Pane unchanged — retry C-m
-			fmt.Fprintf(os.Stderr, "⚠️  postman: enter verify: pane %s unchanged, retrying C-m (attempt %d/%d)\n", paneID, retry+1, maxRetries)
+			// Pane unchanged — retry C-m silently so alt-screen TUI panes stay clean.
 			cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
 			_ = cmd.Run()
 		}
