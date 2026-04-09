@@ -1,6 +1,7 @@
 package reminder
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -240,7 +242,7 @@ func TestTemplateExpandTemplate(t *testing.T) {
 	}
 }
 
-func TestReminderPhaseThreeLookup(t *testing.T) {
+func TestReminderDoesNotFallbackAcrossSessionsWithoutSessionName(t *testing.T) {
 	state := NewReminderState()
 	nodes := map[string]discovery.NodeInfo{
 		"test-session:worker": {
@@ -259,8 +261,88 @@ func TestReminderPhaseThreeLookup(t *testing.T) {
 	state.mu.Lock()
 	count := state.counters["worker"]
 	state.mu.Unlock()
-	if count != 0 {
-		t.Errorf("Phase 3 lookup: after threshold, counter = %d, want 0", count)
+	if count != 2 {
+		t.Errorf("cross-session fallback should not reset counter, got %d want 2", count)
+	}
+}
+
+func TestReminderIncrement_BlocksShellExpansionForUntrustedReminderTemplate(t *testing.T) {
+	root := t.TempDir()
+	homeDir := filepath.Join(root, "home")
+	projectDir := filepath.Join(root, "project")
+	xdgConfigHome := filepath.Join(root, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	markerPath := filepath.Join(root, "shell-marker")
+
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(homeDir): %v", err)
+	}
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(xdgConfigDir): %v", err)
+	}
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(localConfigDir): %v", err)
+	}
+
+	xdgConfig := "[postman]\nallow_shell_templates = true\n\n[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o600); err != nil {
+		t.Fatalf("WriteFile(xdg postman.toml): %v", err)
+	}
+
+	localConfig := "[postman]\nreminder_interval_messages = 1\nreminder_message = \"REM $(printf x > " + markerPath + ")\"\n"
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(localConfig), 0o600); err != nil {
+		t.Fatalf("WriteFile(local postman.toml): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	logPath := filepath.Join(root, "tmux.log")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"LOGFILE='" + logPath + "'\n" +
+		"if [ \"$1\" = 'display-message' ]; then\n" +
+		"  printf '%s\\n' 'bash'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'set-buffer' ] || [ \"$1\" = 'paste-buffer' ] || [ \"$1\" = 'send-keys' ]; then\n" +
+		"  printf '%s\\n' \"$*\" >> \"$LOGFILE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Chdir(projectDir)
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(\"\"): %v", err)
+	}
+	if cfg.AllowShellForReminderMessage("worker") {
+		t.Fatal("AllowShellForReminderMessage(worker) = true, want false for project-local override")
+	}
+
+	notification.InitPaneCooldown(0)
+	t.Cleanup(func() {
+		notification.InitPaneCooldown(10 * time.Minute)
+	})
+
+	state := NewReminderState()
+	nodes := map[string]discovery.NodeInfo{
+		"worker": {
+			PaneID:      "%100",
+			SessionName: "test-session",
+			SessionDir:  filepath.Join(root, "ctx-01", "test-session"),
+		},
+	}
+	state.Increment("worker", "test-session", nodes, cfg)
+
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("untrusted reminder template executed shell command: %v", err)
 	}
 }
 

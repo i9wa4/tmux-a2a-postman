@@ -174,16 +174,44 @@ func TestFilterToUINode(t *testing.T) {
 	}
 }
 
+func TestSplitCommand_RequiresExplicitSubcommand(t *testing.T) {
+	command, args, ok := splitCommand(nil)
+	if ok {
+		t.Fatalf("splitCommand(nil) ok = true, want false (command=%q args=%v)", command, args)
+	}
+
+	command, args, ok = splitCommand([]string{"send", "--to", "worker"})
+	if !ok {
+		t.Fatal("splitCommand returned ok = false, want true")
+	}
+	if command != "send" {
+		t.Fatalf("command = %q, want send", command)
+	}
+	if len(args) != 2 || args[0] != "--to" || args[1] != "worker" {
+		t.Fatalf("args = %v, want [--to worker]", args)
+	}
+}
+
 func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
 	var stderr bytes.Buffer
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
 
 	printUsage(&stderr, fs)
 
-	if !strings.Contains(stderr.String(), "Print JSON Schema for config or supported command surfaces") {
-		t.Fatalf("usage missing neutral schema description: %q", stderr.String())
+	got := stderr.String()
+	if !strings.Contains(got, "Usage: tmux-a2a-postman [options] <command>") {
+		t.Fatalf("usage missing explicit-command form: %q", got)
 	}
-	if strings.Contains(stderr.String(), "Print JSON Schema for config or command options") {
-		t.Fatalf("usage still contains stale schema wording: %q", stderr.String())
+	if !strings.Contains(got, "Use an explicit subcommand; bare `tmux-a2a-postman` prints usage.") {
+		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
+	}
+	if !strings.Contains(got, "Print JSON Schema for config or supported command surfaces") {
+		t.Fatalf("usage missing neutral schema description: %q", got)
+	}
+	if strings.Contains(got, "Print JSON Schema for config or command options") {
+		t.Fatalf("usage still contains stale schema wording: %q", got)
+	}
+	if strings.Contains(got, "Start tmux-a2a-postman daemon (default)") {
+		t.Fatalf("usage still claims start is the default: %q", got)
 	}
 }

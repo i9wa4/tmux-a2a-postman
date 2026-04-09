@@ -228,3 +228,17 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 		t.Fatalf("RunStartWithFlags() error = %q, want lock already held wording", err)
 	}
 }
+
+func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if strings.Contains(source, "if err := cleanupStaleInbox(inboxDir, readDir); err != nil") {
+		t.Fatal("start.go still archives unread inbox messages during startup")
+	}
+	if !strings.Contains(source, "config.ContextOwnsSession(baseDir, claimedContext, paneSessionName)") {
+		t.Fatal("start.go no longer uses the session ownership contract when reclaiming pane claims")
+	}
+	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName)") {
+		t.Fatal("start.go still clears foreign pane claims from a raw PID check")
+	}
+}

@@ -148,12 +148,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	defer func() { _ = os.Remove(pidPath) }()
 
-	// Cleanup stale inbox messages (move to read/)
 	inboxDir := filepath.Join(sessionDir, "inbox")
 	readDir := filepath.Join(sessionDir, "read")
-	if err := cleanupStaleInbox(inboxDir, readDir); err != nil {
-		log.Printf("⚠️  postman: stale inbox cleanup failed: %v\n", err)
-	}
 
 	// Drain stale post/ messages (Issue #207)
 	if drained := message.DrainStalePost(sessionDir, cfg.MessageTTLSeconds); drained > 0 {
@@ -199,7 +195,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			if claimedContext == "" || claimedContext == contextID {
 				continue
 			}
-			if !config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName) {
+			if !config.ContextOwnsSession(baseDir, claimedContext, paneSessionName) {
 				_ = exec.Command("tmux", "set-option", "-p", "-u", "-t", paneID, "@a2a_context_id").Run()
 			}
 		}

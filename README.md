@@ -223,10 +223,11 @@ tmux-a2a-postman start --no-tui
 tmux-a2a-postman stop
 ```
 
-The default operator loop is `send`, `pop`, `bind`, `get-health`, and
+The default operator loop is `send`, `pop`, `get-health`, and
 `get-health-oneline`. Lifecycle and recovery commands such as `start`, `stop`,
 and `get-context-id` remain available, but they are no longer the main
-beginner/operator surface.
+beginner/operator surface. Use explicit subcommands; bare
+`tmux-a2a-postman` prints usage and does not start the daemon.
 
 ## 6. Directory Structure
 
@@ -273,7 +274,6 @@ Default operator surface:
 ```text
 tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
-tmux-a2a-postman bind <subcommand> ...
 tmux-a2a-postman get-health
 tmux-a2a-postman get-health-oneline --json
 ```

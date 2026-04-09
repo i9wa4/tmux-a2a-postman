@@ -78,9 +78,6 @@ func runSchema(stdout io.Writer, args []string) error {
 				"[node].dropped_ball_timeout_seconds": {Type: "integer", Description: "Per-node late-reply and dropped-ball threshold (0 = disabled)"},
 				"node_spinning_seconds":               {Type: "integer", Description: "Reply-tracked composing-to-spinning threshold (0 = disabled)"},
 				"[heartbeat].enabled":                 {Type: "boolean", Description: "Enable periodic heartbeat messages"},
-				"[heartbeat].interval_seconds":        {Type: "number", Description: "Heartbeat interval in seconds"},
-				"[heartbeat].llm_node":                {Type: "string", Description: "Heartbeat recipient node"},
-				"[heartbeat].prompt":                  {Type: "string", Description: "Heartbeat prompt inserted into the shared daemon envelope"},
 			},
 		})
 	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)

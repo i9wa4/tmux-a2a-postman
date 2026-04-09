@@ -51,6 +51,9 @@ func TestRunSchema_ConfigShowsUnifiedModelPublicKnobs(t *testing.T) {
 		`"enter_delay_seconds"`,
 		`"tmux_timeout_seconds"`,
 		`"startup_delay_seconds"`,
+		`"[heartbeat].interval_seconds"`,
+		`"[heartbeat].llm_node"`,
+		`"[heartbeat].prompt"`,
 	} {
 		if strings.Contains(got, stale) {
 			t.Fatalf("stdout still contains demoted internal knob %q: %q", stale, got)

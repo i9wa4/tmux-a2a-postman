@@ -232,14 +232,14 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 		return false
 	}
 	if registry == nil {
-		log.Printf("postman: WARNING: phony node %q matched but registry is nil; dropping\n", rawRecipient)
-		_ = os.Remove(postPath)
+		log.Printf("postman: WARNING: phony node %q matched but registry is nil; dead-lettering\n", rawRecipient)
+		deadLetterMatchedPhonyPost(postPath)
 		return true
 	}
 	body, err := os.ReadFile(postPath)
 	if err != nil {
 		log.Printf("postman: WARNING: phony dispatch: failed to read %s: %v\n", filepath.Base(postPath), err)
-		_ = os.Remove(postPath)
+		deadLetterMatchedPhonyPost(postPath)
 		return true
 	}
 	var originalAt time.Time
@@ -256,12 +256,7 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 	}
 	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, rawRecipient, sender, registry, msg); delErr != nil {
 		log.Printf("postman: WARNING: phony dispatch failed %s -> %s: %v\n", sender, rawRecipient, delErr)
-		dlDir := filepath.Join(filepath.Dir(filepath.Dir(postPath)), "dead-letter")
-		if mkErr := os.MkdirAll(dlDir, 0o755); mkErr == nil {
-			dst := filepath.Join(dlDir,
-				strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
-			_ = os.Rename(postPath, dst)
-		}
+		deadLetterMatchedPhonyPost(postPath)
 	} else {
 		log.Printf("postman: phony-delivered %s -> %s\n", sender, rawRecipient)
 		if events != nil {
@@ -273,6 +268,16 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 		_ = os.Remove(postPath)
 	}
 	return true
+}
+
+func deadLetterMatchedPhonyPost(postPath string) {
+	dlDir := filepath.Join(filepath.Dir(filepath.Dir(postPath)), "dead-letter")
+	if err := os.MkdirAll(dlDir, 0o755); err != nil {
+		return
+	}
+	dst := filepath.Join(dlDir,
+		strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
+	_ = os.Rename(postPath, dst)
 }
 
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.

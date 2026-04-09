@@ -22,6 +22,9 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "tmux-a2a-postman send --to <node> --body \"text\"") {
 		t.Fatalf("stdout missing send quick-start line: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
+		t.Fatalf("stdout missing explicit-command guidance: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery:") {
 		t.Fatalf("stdout missing lifecycle split: %q", stdout.String())
 	}
@@ -30,6 +33,12 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Print JSON Schema for the public config surface or a supported command") {
 		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "  bind                       ") {
+		t.Fatalf("stdout still exposes bind in the default overview: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "  supervisor-drain           ") {
+		t.Fatalf("stdout still exposes supervisor-drain in the default overview: %q", stdout.String())
 	}
 }
 
@@ -45,6 +54,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Default operator surface") {
 		t.Fatalf("stdout missing default operator section: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
+		t.Fatalf("stdout missing explicit-command guidance: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "get-health-oneline") {
 		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
@@ -69,6 +81,12 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Print JSON Schema for the curated public config surface or supported command surfaces.") {
 		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\nbind\n") {
+		t.Fatalf("stdout still exposes bind in command help: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\nsupervisor-drain\n") {
+		t.Fatalf("stdout still exposes supervisor-drain in command help: %q", stdout.String())
 	}
 }
 

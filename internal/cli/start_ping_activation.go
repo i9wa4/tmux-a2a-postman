@@ -27,12 +27,16 @@ func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetS
 	if err := config.CreateMultiSessionDirs(contextDir, targetSession); err != nil {
 		return nil, fmt.Errorf("creating session directories for %s: %w", targetSession, err)
 	}
+	if err := config.SetSessionEnabledMarker(contextID, targetSession, true); err != nil {
+		return nil, fmt.Errorf("publishing enabled-session marker for %s: %w", targetSession, err)
+	}
 	registerWatchedSessionDirs(watcher, watchedDirs, filepath.Join(contextDir, targetSession))
 
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
 	preClaimed := preclaimSessionEdgePanes(targetSession, contextID, edgeNodes)
 	refreshed, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 	if err != nil {
+		_ = config.SetSessionEnabledMarker(contextID, targetSession, false)
 		return nil, fmt.Errorf("discovering nodes for %s: %w", targetSession, err)
 	}
 	refreshed = filterDiscoveredEdgeNodes(refreshed, edgeNodes)

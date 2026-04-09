@@ -85,17 +85,6 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 					found = true
 				}
 			}
-			// Phase 3: generic suffix scan (fallback for other sessions)
-			if !found {
-				for key, info := range nodes {
-					parts := strings.SplitN(key, ":", 2)
-					if len(parts) == 2 && parts[1] == nodeName {
-						nodeInfo = info
-						found = true
-						break
-					}
-				}
-			}
 			if found && reminderMessage != "" {
 				// Resolve node's role template (mirrors notification.go BuildNotification)
 				// NOTE: reuses nodeConfig and hasNodeConfig declared at line 40
@@ -117,7 +106,7 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 					"inbox_path": filepath.Join(nodeInfo.SessionDir, "inbox", nodeName),
 				}
 				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				content := template.ExpandTemplate(reminderMessage, vars, timeout, cfg.AllowShellTemplates)
+				content := template.ExpandTemplate(reminderMessage, vars, timeout, cfg.AllowShellForReminderMessage(nodeName))
 
 				paneIDForProbe := nodeInfo.PaneID
 				enterCount := notification.ResolveEnterCount(
@@ -134,8 +123,10 @@ func (r *ReminderState) Increment(nodeName string, sessionName string, nodes map
 				}
 				_ = notification.SendToPane(nodeInfo.PaneID, content, enterDelay, timeout, enterCount, false, 0, 0)
 			}
-			// Reset counter after sending reminder
-			r.counters[key] = 0
+			if found {
+				// Reset only after resolving a session-local target.
+				r.counters[key] = 0
+			}
 		}
 	}
 }

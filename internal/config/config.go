@@ -1538,6 +1538,21 @@ func FindContextSessionName(baseDir, contextID string) string {
 	return ""
 }
 
+func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error {
+	if sessionName == "" {
+		return fmt.Errorf("session name is empty")
+	}
+	key := "@a2a_session_on_" + sessionName
+	if enabled {
+		if contextID == "" {
+			return fmt.Errorf("context ID is empty")
+		}
+		value := contextID + ":" + strconv.Itoa(os.Getpid())
+		return exec.Command("tmux", "set-option", "-g", key, value).Run()
+	}
+	return exec.Command("tmux", "set-option", "-gu", key).Run()
+}
+
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.

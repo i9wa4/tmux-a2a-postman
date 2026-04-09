@@ -47,6 +47,13 @@ func runGetContextID(args []string) error {
 	return cli.RunGetContextID(os.Stdout, *sessionFlag, *configPath, *jsonOut)
 }
 
+func splitCommand(args []string) (string, []string, bool) {
+	if len(args) == 0 {
+		return "", nil, false
+	}
+	return args[0], args[1:], true
+}
+
 func main() {
 	// Top-level flags
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
@@ -89,12 +96,10 @@ func main() {
 		return
 	}
 
-	// Determine command (default: start)
-	command := "start"
-	args := fs.Args()
-	if len(args) > 0 {
-		command = args[0]
-		args = args[1:]
+	command, args, ok := splitCommand(fs.Args())
+	if !ok {
+		fs.Usage()
+		return
 	}
 
 	result := cli.Dispatch(
@@ -136,7 +141,9 @@ func main() {
 }
 
 func printUsage(w io.Writer, fs *flag.FlagSet) {
-	fmt.Fprintln(w, "Usage: tmux-a2a-postman [options] [command]")
+	fmt.Fprintln(w, "Usage: tmux-a2a-postman [options] <command>")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Use an explicit subcommand; bare `tmux-a2a-postman` prints usage.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Options:")
 	cliutil.PrintDoubleDashDefaults(fs)
@@ -144,18 +151,16 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Default operator surface:")
 	fmt.Fprintln(w, "  send                       Send a message in one step (--to and --body required)")
 	fmt.Fprintln(w, "  pop                        Read and archive the oldest unread inbox message")
-	fmt.Fprintln(w, "  bind                       Manage sidecar bindings")
 	fmt.Fprintln(w, "  get-health                 Print the canonical JSON session-health payload")
 	fmt.Fprintln(w, "  get-health-oneline         Print a one-line formatter over get-health")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Lifecycle and recovery:")
-	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon (default)")
+	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon")
 	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
 	fmt.Fprintln(w, "  get-context-id             Print live context ID for current tmux session")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Additional tools:")
 	fmt.Fprintln(w, "  read                       List inbox messages or access archived/dead-letter messages")
-	fmt.Fprintln(w, "  supervisor-drain           Phase 3→2 rollback: annotate pending records and drain supervisor dead-letters")
 	fmt.Fprintln(w, "  schema [command]           Print JSON Schema for config or supported command surfaces")
 	fmt.Fprintln(w, "  help [topic]               Show help overview or topic-based help")
 	fmt.Fprintln(w, "")

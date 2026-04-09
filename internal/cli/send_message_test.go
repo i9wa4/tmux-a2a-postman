@@ -18,37 +18,15 @@ func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_FromFlagAccepted(t *testing.T) {
+func TestRunSendMessage_FromFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
 	err := RunSendMessage([]string{"--to", "worker", "--body", "hello", "--from", "orchestrator"})
-	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
-		t.Errorf("--from not defined in RunSendMessage: %v", err)
-	}
 	if err == nil {
-		t.Fatalf("expected error (--bindings required with --from), got nil")
+		t.Fatal("expected unknown-flag error for --from, got nil")
 	}
-	if err != nil && !strings.Contains(err.Error(), "bindings") {
-		t.Errorf("expected error mentioning 'bindings', got: %v", err)
-	}
-}
-
-func TestRunSendMessage_InvalidFromNodeName(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("POSTMAN_HOME", tmpDir)
-	bindingsFile := filepath.Join(tmpDir, "bindings.json")
-	if err := os.WriteFile(bindingsFile, []byte(`[]`), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	err := RunSendMessage([]string{
-		"--to", "worker", "--body", "hello",
-		"--from", "../escape", "--bindings", bindingsFile,
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid --from node name, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid node name") && !strings.Contains(err.Error(), "invalid value") {
-		t.Errorf("expected 'invalid node name' or 'invalid value', got: %v", err)
+	if !strings.Contains(err.Error(), "flag provided but not defined: -from") {
+		t.Fatalf("expected unknown --from flag error, got: %v", err)
 	}
 }
 
@@ -356,167 +334,5 @@ role = "boss"
 	}
 	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-prefixed-recipient --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)
-	}
-}
-
-func TestRunSendMessage_MessageFooterUsesRecipientReachabilityWithSidecarSender(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	t.Setenv("POSTMAN_HOME", tmpDir)
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	configContent := `[postman]
-reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
-draft_template = "# Content\n\n"
-message_footer = """You can talk to: {can_talk_to}
-Reply: {reply_command}
-"""
-edges = ["relay -- orchestrator -- boss"]
-
-[relay]
-role = "relay"
-
-[orchestrator]
-role = "orchestrator"
-
-[boss]
-role = "boss"
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
-		t.Fatalf("WriteFile config: %v", err)
-	}
-
-	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
-	bindingsContent := `[[binding]]
-channel_id        = "relay-ch"
-node_name         = "relay"
-context_id        = "ctx-footer-sidecar"
-session_name      = "test-session"
-pane_title        = ""
-pane_node_name    = "orchestrator"
-active            = true
-permitted_senders = ["worker"]
-`
-	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
-		t.Fatalf("WriteFile bindings: %v", err)
-	}
-
-	if err := RunSendMessage([]string{
-		"--config", configPath,
-		"--bindings", bindingsPath,
-		"--from", "relay",
-		"--context-id", "ctx-footer-sidecar",
-		"--session", "test-session",
-		"--to", "orchestrator",
-		"--body", "hello",
-	}); err != nil {
-		t.Fatalf("RunSendMessage: %v", err)
-	}
-
-	postDir := filepath.Join(tmpDir, "ctx-footer-sidecar", "test-session", "post")
-	entries, err := os.ReadDir(postDir)
-	if err != nil {
-		t.Fatalf("ReadDir post: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("post entry count = %d, want 1", len(entries))
-	}
-
-	draftPath := filepath.Join(postDir, entries[0].Name())
-	draftContent, err := os.ReadFile(draftPath)
-	if err != nil {
-		t.Fatalf("ReadFile draft: %v", err)
-	}
-	content := string(draftContent)
-	if !strings.Contains(content, "You can talk to: relay, boss") {
-		t.Fatalf("footer missing recipient reachability for sidecar sender:\n%s", content)
-	}
-	if strings.Contains(content, "You can talk to: orchestrator") {
-		t.Fatalf("footer still contains sender reachability for sidecar sender:\n%s", content)
-	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-sidecar --to relay") {
-		t.Fatalf("footer missing reply command back to sidecar sender:\n%s", content)
-	}
-}
-
-func TestRunSendMessage_SidecarSenderAcceptsSessionPrefixedRecipient(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	t.Setenv("POSTMAN_HOME", tmpDir)
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	configContent := `[postman]
-reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
-draft_template = "# Content\n\n"
-message_footer = """You can talk to: {can_talk_to}
-Reply: {reply_command}
-"""
-edges = ["relay -- orchestrator -- boss"]
-
-[relay]
-role = "relay"
-
-[orchestrator]
-role = "orchestrator"
-
-[boss]
-role = "boss"
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
-		t.Fatalf("WriteFile config: %v", err)
-	}
-
-	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
-	bindingsContent := `[[binding]]
-channel_id        = "relay-ch"
-node_name         = "relay"
-context_id        = "ctx-footer-sidecar-prefixed"
-session_name      = "test-session"
-pane_title        = ""
-pane_node_name    = "orchestrator"
-active            = true
-permitted_senders = ["worker"]
-`
-	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
-		t.Fatalf("WriteFile bindings: %v", err)
-	}
-
-	if err := RunSendMessage([]string{
-		"--config", configPath,
-		"--bindings", bindingsPath,
-		"--from", "relay",
-		"--context-id", "ctx-footer-sidecar-prefixed",
-		"--session", "test-session",
-		"--to", "review-session:orchestrator",
-		"--body", "hello",
-	}); err != nil {
-		t.Fatalf("RunSendMessage: %v", err)
-	}
-
-	postDir := filepath.Join(tmpDir, "ctx-footer-sidecar-prefixed", "test-session", "post")
-	entries, err := os.ReadDir(postDir)
-	if err != nil {
-		t.Fatalf("ReadDir post: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("post entry count = %d, want 1", len(entries))
-	}
-	if !strings.Contains(entries[0].Name(), "-to-review-session:orchestrator.md") {
-		t.Fatalf("post filename missing session-prefixed recipient: %q", entries[0].Name())
-	}
-
-	draftPath := filepath.Join(postDir, entries[0].Name())
-	draftContent, err := os.ReadFile(draftPath)
-	if err != nil {
-		t.Fatalf("ReadFile draft: %v", err)
-	}
-	content := string(draftContent)
-	if !strings.Contains(content, "You can talk to: relay, boss") {
-		t.Fatalf("footer missing recipient reachability for session-prefixed sidecar send:\n%s", content)
-	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-sidecar-prefixed --to relay") {
-		t.Fatalf("footer missing reply command back to sidecar sender:\n%s", content)
 	}
 }

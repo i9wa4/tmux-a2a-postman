@@ -1036,6 +1036,43 @@ func TestDeliverToPhonyNode_FilenameInvariant(t *testing.T) {
 	}
 }
 
+func TestDispatchPhonyNode_NilRegistryDeadLettersMatchedMail(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "own-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	postPath := filepath.Join(sessionDir, "post", "20260201-030000-from-orchestrator-to-channel-a.md")
+	if err := os.WriteFile(postPath, []byte("phony message"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	handled := dispatchPhonyNode(
+		"channel-a",
+		"orchestrator",
+		"20260201-030000",
+		postPath,
+		"ctx-01",
+		&config.Config{BaseDir: t.TempDir()},
+		map[string]discovery.NodeInfo{
+			"channel-a": {IsPhony: true},
+		},
+		nil,
+		nil,
+	)
+	if !handled {
+		t.Fatal("dispatchPhonyNode() = false, want true for matched phony node")
+	}
+
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-030000-from-orchestrator-to-channel-a-dl-phony-delivery-failed.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Fatalf("matched phony mail not dead-lettered: %v", err)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still exists after dead-lettering: %v", err)
+	}
+}
+
 // TestDeliverMessage_PhonyDispatch verifies that DeliverMessage routes messages
 // to phony nodes via dispatchPhonyNode, before ResolveNodeName is called (#306).
 func TestDeliverMessage_PhonyDispatch(t *testing.T) {

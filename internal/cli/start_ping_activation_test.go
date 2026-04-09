@@ -41,6 +41,10 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 		"  printf '%s\\n' '%704\t\tdotfiles\tmessenger' '%705\t\tdotfiles\torchestrator'\n" +
 		"  exit 0\n" +
 		"fi\n" +
+		"if [ \"$1\" = 'set-option' ] && [ \"$2\" = '-g' ]; then\n" +
+		"  printf '%s\\n' \"$*\" >> \"$LOGFILE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
 		"if [ \"$1\" = 'set-option' ] && [ \"$2\" = '-p' ]; then\n" +
 		"  printf '%s\\n' \"$*\" >> \"$LOGFILE\"\n" +
 		"  exit 0\n" +
@@ -72,6 +76,7 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 	}
 	logText := string(logBytes)
 	for _, want := range []string{
+		"set-option -g @a2a_session_on_dotfiles ctx-self:",
 		"set-option -p -t %704 @a2a_context_id ctx-self",
 		"set-option -p -t %705 @a2a_context_id ctx-self",
 	} {

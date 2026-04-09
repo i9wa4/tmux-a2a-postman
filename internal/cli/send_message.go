@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -33,8 +32,6 @@ func RunSendMessage(args []string) error {
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
-	from := fs.String("from", "", "phony node name (sidecar use only; skips tmux sender detection)")
-	bindingsPath := fs.String("bindings", "", "path to bindings.toml (required with --from)")
 	commandName := fs.Name()
 	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
@@ -80,40 +77,12 @@ func RunSendMessage(args []string) error {
 	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	if *from != "" && *bindingsPath == "" {
-		return fmt.Errorf("--bindings is required with --from")
+	sender := config.GetTmuxPaneName()
+	if sender == "" {
+		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
 	}
-
-	var entry *binding.Binding
-	var sender string
-	if *from != "" {
-		if !binding.ValidateNodeName(*from) {
-			return fmt.Errorf("--from %q: invalid node name (must match %s)", *from, binding.NodeNamePattern)
-		}
-		sender = *from
-		reg, err := binding.Load(*bindingsPath)
-		if err != nil {
-			return fmt.Errorf("loading bindings: %w", err)
-		}
-		entry = reg.FindByNodeName(*from)
-		if entry == nil {
-			return fmt.Errorf("--from %q: no active binding found in registry", *from)
-		}
-		if entry.PaneNodeName == "" {
-			return fmt.Errorf("--from %q: binding has empty pane_node_name (unassigned)", *from)
-		}
-		if nodeaddr.Simple(*to) != entry.PaneNodeName {
-			return fmt.Errorf("--from %q: --to must be %q (binding's pane_node_name), got %q",
-				*from, entry.PaneNodeName, *to)
-		}
-	} else {
-		sender = config.GetTmuxPaneName()
-		if sender == "" {
-			return fmt.Errorf("sender auto-detection failed: set tmux pane title")
-		}
-		if err := cliutil.ValidateOutboundNodeName("auto-detected pane title", sender); err != nil {
-			return err
-		}
+	if err := cliutil.ValidateOutboundNodeName("auto-detected pane title", sender); err != nil {
+		return err
 	}
 
 	sessionName := *session
@@ -127,7 +96,7 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid session name: %w", err)
 	}
-	if *from == "" && config.GetTmuxSessionName() != "" {
+	if config.GetTmuxSessionName() != "" {
 		tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 		output, err := tmuxCmd.Output()
 		if err == nil {
@@ -155,10 +124,6 @@ func RunSendMessage(args []string) error {
 		if err != nil {
 			return err
 		}
-	}
-	if entry != nil && (entry.SessionName != sessionName || entry.ContextID != resolvedContextID) {
-		return fmt.Errorf("--from %q: binding is for %s/%s, not %s/%s",
-			*from, entry.ContextID, entry.SessionName, resolvedContextID, sessionName)
 	}
 
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
