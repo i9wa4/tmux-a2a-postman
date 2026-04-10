@@ -67,6 +67,28 @@ func deadLetterDst(sessionDir, filename, suffix string) string {
 	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
 }
 
+func moveToDeadLetter(srcPath, dstPath string) error {
+	deadLetterDir := filepath.Dir(dstPath)
+	dirInfo, err := os.Lstat(deadLetterDir)
+	if err != nil {
+		return fmt.Errorf("lstat dead-letter dir: %w", err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("dead-letter target dir is symlink: %s", deadLetterDir)
+	}
+
+	dstInfo, err := os.Lstat(dstPath)
+	if err == nil {
+		if dstInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("dead-letter target is symlink: %s", dstPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("lstat dead-letter target: %w", err)
+	}
+
+	return os.Rename(srcPath, dstPath)
+}
+
 // StripDeadLetterSuffix removes the -dl-{reason} suffix from a dead-letter filename.
 // Transforms "msg-dl-routing-denied.md" → "msg.md".
 func StripDeadLetterSuffix(filename string) string {
@@ -277,7 +299,7 @@ func deadLetterMatchedPhonyPost(postPath string) {
 	}
 	dst := filepath.Join(dlDir,
 		strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
-	_ = os.Rename(postPath, dst)
+	_ = moveToDeadLetter(postPath, dst)
 }
 
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
@@ -314,7 +336,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s (parse error)", filename),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 	senderSimpleName := nodeaddr.Simple(info.From)
 	recipientSimpleName := nodeaddr.Simple(info.To)
@@ -341,7 +363,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 
 	// Guard: "daemon" remains a reserved sender name only valid for messages
@@ -356,7 +378,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 
 	// Issue #161: Validate frontmatter envelope (skip only for daemon-origin messages)
@@ -378,7 +400,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 						Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, deadLetterReasonEnvelopeMismatch),
 					}
 				}
-				return os.Rename(postPath, dst)
+				return moveToDeadLetter(postPath, dst)
 			}
 		}
 	}
@@ -401,7 +423,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown recipient)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 	nodeInfo := knownNodes[recipientFullName]
 
@@ -418,7 +440,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (foreign session)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
@@ -433,7 +455,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown sender)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 
 	// Check routing permissions (DEFAULT DENY)
@@ -524,7 +546,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (routing denied)", info.From, info.To),
 				}
 			}
-			return os.Rename(postPath, dst)
+			return moveToDeadLetter(postPath, dst)
 		}
 	}
 
@@ -546,7 +568,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (sender session disabled)", info.From, info.To),
 				}
 			}
-			return os.Rename(postPath, dst)
+			return moveToDeadLetter(postPath, dst)
 		}
 	}
 	if info.From != "daemon" {
@@ -561,7 +583,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (recipient session disabled)", info.From, info.To),
 				}
 			}
-			return os.Rename(postPath, dst)
+			return moveToDeadLetter(postPath, dst)
 		}
 	}
 
@@ -584,7 +606,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (inbox queue full)", info.From, info.To),
 			}
 		}
-		return os.Rename(postPath, dst)
+		return moveToDeadLetter(postPath, dst)
 	}
 
 	dst := filepath.Join(recipientInbox, filename)
@@ -820,7 +842,7 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		if time.Since(fi.ModTime()) > ttl {
 			src := filepath.Join(postDir, entry.Name())
 			dst := deadLetterDst(sessionDir, entry.Name(), DlSuffixTTLExpired)
-			if err := os.Rename(src, dst); err == nil {
+			if err := moveToDeadLetter(src, dst); err == nil {
 				log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
 				count++
 			}

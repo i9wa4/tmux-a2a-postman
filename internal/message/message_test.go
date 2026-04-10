@@ -580,6 +580,94 @@ func TestDeliverMessage_ParseError(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_ParseErrorRejectsSymlinkedDeadLetterDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	escapedDir := filepath.Join(tmpDir, "escaped-dead-letter")
+	if err := os.MkdirAll(escapedDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll escapedDir failed: %v", err)
+	}
+
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if err := os.Remove(deadLetterDir); err != nil {
+		t.Fatalf("Remove dead-letter dir failed: %v", err)
+	}
+	if err := os.Symlink(escapedDir, deadLetterDir); err != nil {
+		t.Fatalf("Symlink dead-letter dir failed: %v", err)
+	}
+
+	filename := "badname.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	err := DeliverMessage(postPath, "test-ctx", map[string]discovery.NodeInfo{}, nil, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	if err == nil {
+		t.Fatal("expected symlink rejection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection error, got: %v", err)
+	}
+
+	if _, err := os.Stat(postPath); err != nil {
+		t.Fatalf("post file should remain in place after rejection: %v", err)
+	}
+
+	escapedPath := filepath.Join(escapedDir, "badname-dl-parse-error.md")
+	if _, err := os.Stat(escapedPath); !os.IsNotExist(err) {
+		t.Fatalf("unexpected escaped dead-letter artifact: %v", err)
+	}
+}
+
+func TestMoveToDeadLetterRejectsSymlinkDestination(t *testing.T) {
+	tmpDir := t.TempDir()
+	deadLetterDir := filepath.Join(tmpDir, "dead-letter")
+	if err := os.MkdirAll(deadLetterDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll deadLetterDir failed: %v", err)
+	}
+
+	srcPath := filepath.Join(tmpDir, "message.md")
+	if err := os.WriteFile(srcPath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile srcPath failed: %v", err)
+	}
+
+	escapedTarget := filepath.Join(tmpDir, "escaped.md")
+	dstPath := filepath.Join(deadLetterDir, "message-dl-parse-error.md")
+	if err := os.Symlink(escapedTarget, dstPath); err != nil {
+		t.Fatalf("Symlink dstPath failed: %v", err)
+	}
+
+	err := moveToDeadLetter(srcPath, dstPath)
+	if err == nil {
+		t.Fatal("expected symlink rejection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection error, got: %v", err)
+	}
+
+	if _, err := os.Stat(srcPath); err != nil {
+		t.Fatalf("source file should remain after rejection: %v", err)
+	}
+
+	info, err := os.Lstat(dstPath)
+	if err != nil {
+		t.Fatalf("Lstat dstPath failed: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("destination symlink was replaced unexpectedly: mode=%v", info.Mode())
+	}
+
+	if _, err := os.Stat(escapedTarget); !os.IsNotExist(err) {
+		t.Fatalf("unexpected escaped target artifact: %v", err)
+	}
+}
+
 func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 	// After F2, cross-session bare-name routing is removed. This test verifies that a recipient
 	// whose NodeInfo.SessionName is disabled gets dead-lettered. alice sends to bob; both keys
