@@ -241,4 +241,19 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName)") {
 		t.Fatal("start.go still clears foreign pane claims from a raw PID check")
 	}
+	markerIndex := strings.Index(source, `config.SetSessionEnabledMarker(contextID, sessionName, true)`)
+	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
+	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
+	if markerIndex == -1 {
+		t.Fatal("start.go no longer publishes the enabled-session marker during cold start")
+	}
+	if reclaimIndex == -1 || discoveryIndex == -1 {
+		t.Fatal("start.go startup ordering markers changed; update the source contract test")
+	}
+	if markerIndex > reclaimIndex {
+		t.Fatal("start.go still publishes the enabled-session marker after pane-claim reclaim begins")
+	}
+	if markerIndex > discoveryIndex {
+		t.Fatal("start.go still publishes the enabled-session marker after startup discovery begins")
+	}
 }

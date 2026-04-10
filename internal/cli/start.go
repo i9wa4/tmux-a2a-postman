@@ -147,6 +147,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
+	if err := config.SetSessionEnabledMarker(contextID, sessionName, true); err != nil {
+		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
+	}
 
 	inboxDir := filepath.Join(sessionDir, "inbox")
 	readDir := filepath.Join(sessionDir, "read")
