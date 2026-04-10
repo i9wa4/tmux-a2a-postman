@@ -2,10 +2,12 @@ package message
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
@@ -668,6 +670,64 @@ func TestMoveToDeadLetterRejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
+func TestDeliverSystemMessageDirectRejectsSymlinkedDeadLetterDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
+		t.Fatalf("MkdirAll recipientInbox failed: %v", err)
+	}
+	for i := range inboxQueueCap {
+		name := filepath.Join(recipientInbox, fmt.Sprintf("20260201-0300%02d-from-daemon-to-worker.md", i))
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile inbox fixture %d failed: %v", i, err)
+		}
+	}
+
+	escapedDir := filepath.Join(tmpDir, "escaped-dead-letter")
+	if err := os.MkdirAll(escapedDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll escapedDir failed: %v", err)
+	}
+
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if err := os.Remove(deadLetterDir); err != nil {
+		t.Fatalf("Remove dead-letter dir failed: %v", err)
+	}
+	if err := os.Symlink(escapedDir, deadLetterDir); err != nil {
+		t.Fatalf("Symlink dead-letter dir failed: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{PaneID: "%1", SessionName: "test", SessionDir: sessionDir}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	err := DeliverSystemMessageDirect(
+		"20260201-040000-from-daemon-to-worker.md",
+		nodeInfo,
+		"worker",
+		"daemon",
+		"test-ctx",
+		"system content",
+		cfg,
+		map[string][]string{},
+		map[string]discovery.NodeInfo{},
+		map[string]bool{},
+	)
+	if err == nil {
+		t.Fatal("expected symlink rejection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection error, got: %v", err)
+	}
+
+	escapedPath := filepath.Join(escapedDir, "20260201-040000-from-daemon-to-worker-dl-queue-full.md")
+	if _, err := os.Stat(escapedPath); !os.IsNotExist(err) {
+		t.Fatalf("unexpected escaped dead-letter artifact: %v", err)
+	}
+}
+
 func TestDeliverMessage_RecipientSessionDisabled(t *testing.T) {
 	// After F2, cross-session bare-name routing is removed. This test verifies that a recipient
 	// whose NodeInfo.SessionName is disabled gets dead-lettered. alice sends to bob; both keys
@@ -1022,6 +1082,47 @@ func TestDeliverToPhonyNode_RoutingDenied(t *testing.T) {
 	}
 	if rec.SchemaVersion != 1 {
 		t.Errorf("schema_version: got %d, want 1", rec.SchemaVersion)
+	}
+}
+
+func TestWritePhonyDeadLetterRejectsSymlinkedDeadLetterDir(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-01"
+	nodeName := "worker"
+	parentDir := filepath.Join(baseDir, contextID, "phony", nodeName)
+	if err := os.MkdirAll(parentDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll parentDir failed: %v", err)
+	}
+
+	escapedDir := filepath.Join(baseDir, "escaped-dead-letter")
+	if err := os.MkdirAll(escapedDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll escapedDir failed: %v", err)
+	}
+
+	deadLetterDir := filepath.Join(parentDir, "dead-letter")
+	if err := os.Symlink(escapedDir, deadLetterDir); err != nil {
+		t.Fatalf("Symlink dead-letter dir failed: %v", err)
+	}
+
+	err := writePhonyDeadLetter(baseDir, contextID, nodeName, "chan-01", phonyDeadLetterReasonRoutingDenied, Message{
+		Body:       "hello",
+		MessageID:  "msg-1",
+		SenderID:   "orchestrator",
+		OriginalAt: time.Now(),
+	})
+	if err == nil {
+		t.Fatal("expected symlink rejection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection error, got: %v", err)
+	}
+
+	entries, err := os.ReadDir(escapedDir)
+	if err != nil {
+		t.Fatalf("ReadDir escapedDir failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unexpected escaped dead-letter artifacts: %d", len(entries))
 	}
 }
 

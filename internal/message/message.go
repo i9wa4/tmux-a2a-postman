@@ -67,7 +67,7 @@ func deadLetterDst(sessionDir, filename, suffix string) string {
 	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
 }
 
-func moveToDeadLetter(srcPath, dstPath string) error {
+func validateDeadLetterTarget(dstPath string) error {
 	deadLetterDir := filepath.Dir(dstPath)
 	dirInfo, err := os.Lstat(deadLetterDir)
 	if err != nil {
@@ -85,8 +85,21 @@ func moveToDeadLetter(srcPath, dstPath string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("lstat dead-letter target: %w", err)
 	}
+	return nil
+}
 
+func moveToDeadLetter(srcPath, dstPath string) error {
+	if err := validateDeadLetterTarget(dstPath); err != nil {
+		return err
+	}
 	return os.Rename(srcPath, dstPath)
+}
+
+func writeDeadLetterFile(dstPath string, content []byte) error {
+	if err := validateDeadLetterTarget(dstPath); err != nil {
+		return err
+	}
+	return os.WriteFile(dstPath, content, 0o600)
 }
 
 // StripDeadLetterSuffix removes the -dl-{reason} suffix from a dead-letter filename.
@@ -694,7 +707,7 @@ func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, re
 			return fmt.Errorf("creating dead-letter dir: %w", err)
 		}
 		dst := deadLetterDst(nodeInfo.SessionDir, filename, dlSuffixQueueFull)
-		if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
+		if err := writeDeadLetterFile(dst, []byte(content)); err != nil {
 			return fmt.Errorf("writing queue-full dead-letter: %w", err)
 		}
 		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", recipient, inboxQueueCap, count, filename)
@@ -906,7 +919,7 @@ func writePhonyDeadLetter(baseDir, contextID, nodeName, channelID, reason string
 	if err != nil {
 		return fmt.Errorf("marshaling phony dead-letter: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dir, filename), data, 0o600)
+	return writeDeadLetterFile(filepath.Join(dir, filename), data)
 }
 
 // DeliverToPhonyNode delivers an outbound message from a session pane to a phony
