@@ -102,6 +102,9 @@ func RunRead(args []string) error {
 				return nil
 			}
 			baseName := filepath.Base(found)
+			if err := validateDeadLetterResendable(baseName); err != nil {
+				return err
+			}
 			cleanName := message.StripDeadLetterSuffix(baseName)
 			dst := filepath.Join(postDir, cleanName)
 			if err := os.Rename(found, dst); err != nil {
@@ -117,6 +120,9 @@ func RunRead(args []string) error {
 			absFile := filepath.Join(deadLetterDir, *fileFlag)
 			if _, err := os.Stat(absFile); err != nil {
 				return fmt.Errorf("dead-letter file not found: %w", err)
+			}
+			if err := validateDeadLetterResendable(*fileFlag); err != nil {
+				return err
 			}
 			postDir := filepath.Join(sessionDir, "post")
 			if err := os.MkdirAll(postDir, 0o700); err != nil {
@@ -301,6 +307,23 @@ type deadLetterMessageJSON struct {
 	From      string `json:"from,omitempty"`
 	To        string `json:"to,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
+}
+
+func validateDeadLetterResendable(filename string) error {
+	for _, blocked := range []struct {
+		suffix string
+		reason string
+	}{
+		{suffix: "-dl-parse-error.md", reason: "parse-error"},
+		{suffix: "-dl-envelope-mismatch.md", reason: "envelope-mismatch"},
+		{suffix: "-dl-routing-denied.md", reason: "routing-denied"},
+		{suffix: "-dl-forged-sender.md", reason: "forged-sender"},
+	} {
+		if strings.HasSuffix(filename, blocked.suffix) {
+			return fmt.Errorf("dead-letter file %q is not resendable (permanent failure: %s)", filename, blocked.reason)
+		}
+	}
+	return nil
 }
 
 // findOldestDeadLetterFile returns the path of the lexicographically first .md
