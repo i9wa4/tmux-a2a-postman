@@ -226,14 +226,110 @@ func TestLoadConfig_Default(t *testing.T) {
 	if !strings.HasPrefix(cfg.NotificationTemplate, "Hello, {node}!") {
 		t.Errorf("default NotificationTemplate: got %q, want prefix Hello, {node}!", cfg.NotificationTemplate)
 	}
+	if cfg.UINode != "messenger" {
+		t.Errorf("default UINode: got %q, want %q", cfg.UINode, "messenger")
+	}
+	if cfg.HasExplicitUINodeSetting() {
+		t.Error("default UINode should not be treated as an explicit operator setting")
+	}
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
 	}
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
+	if cfg.StalledAlertTemplate == "" {
+		t.Error("default StalledAlertTemplate: got empty, want non-empty")
+	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestLoadConfig_ProjectLocal_EmptyUINodeOverridesEmbeddedDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte("[postman]\nui_node = \"\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile local postman.toml: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Setenv("HOME", fakeHome)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.UINode != "" {
+		t.Fatalf("UINode: got %q, want empty", cfg.UINode)
+	}
+	if !cfg.HasExplicitUINodeSetting() {
+		t.Fatal("project-local empty ui_node should remain an explicit setting")
+	}
+}
+
+func TestLoadConfig_ExplicitConfig_MarksUINodeAsExplicit(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+
+	tests := []struct {
+		name    string
+		uiNode  string
+		wantSet bool
+	}{
+		{
+			name:    "explicit non-empty",
+			uiNode:  `ui_node = "messenger"`,
+			wantSet: true,
+		},
+		{
+			name:    "explicit empty",
+			uiNode:  `ui_node = ""`,
+			wantSet: true,
+		},
+		{
+			name:    "unset",
+			uiNode:  "",
+			wantSet: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(tmpDir, tc.name+".toml")
+			content := "[postman]\n"
+			if tc.uiNode != "" {
+				content += tc.uiNode + "\n"
+			}
+			content += "edges = [\"worker -- orchestrator\"]\n\n[worker]\n[orchestrator]\n"
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if got := cfg.HasExplicitUINodeSetting(); got != tc.wantSet {
+				t.Fatalf("HasExplicitUINodeSetting() = %v, want %v", got, tc.wantSet)
+			}
+		})
 	}
 }
 

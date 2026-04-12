@@ -52,9 +52,9 @@ Example: orchestrator delegates a task to worker.
 
 ### 3.2. ui_node
 
-Set `ui_node` to designate a node as the human-facing interface.
-The daemon sends alerts (inbox stagnation, node inactivity, etc.)
-to this node automatically.
+`ui_node` designates the human-facing interface. The embedded defaults route
+daemon alerts to `messenger`; override `ui_node` if you want a different
+recipient, or set it to an empty string to turn the alert path off.
 
 ```toml
 [postman]
@@ -179,7 +179,7 @@ Quick reading guide:
 | ---------- | -------- | ---------------- |
 | `pending`, `user_input`, `composing`, `spinning`, or `stalled` in `get-health`, `get-health-oneline`, or the TUI | Canonical visible state for a node right now | `docs/design/node-state-machine.md` |
 | A pane hint telling a node to run `tmux-a2a-postman pop` | Delivery reached that node's inbox; this is a pane notification, not a new state | `docs/design/notification.md` |
-| A daemon-generated message routed to `ui_node` | Policy alert such as unread summary, inactivity, unreplied message, or expected-reply overdue | `docs/guides/alert-config.md` and `docs/design/notification.md` |
+| A daemon-generated message routed to `ui_node` | Policy alert such as unread summary, inactivity, unreplied message, expected-reply overdue, or a stalled reply-tracked wait | `docs/guides/alert-config.md` and `docs/design/notification.md` |
 | A dropped-ball event in the TUI or tmux status bar | Coordination warning based on `LastReceived > LastSent`; by default it is not an inbox alert | `docs/guides/alert-config.md` |
 | PING or heartbeat mail | Control-plane traffic that is still operator-visible in the current tree | `docs/design/notification.md` |
 
@@ -195,6 +195,8 @@ Public knobs for this model live in `postman.toml`:
 
 Advanced dampening and rendering-shaping fields remain documented in
 `docs/design/notification.md` and `docs/guides/alert-config.md`.
+The embedded defaults in `internal/config/postman.default.toml` currently route
+alerts to `messenger`.
 
 ### 4.6. Priority Order (highest to lowest)
 

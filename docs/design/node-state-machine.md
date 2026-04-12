@@ -42,8 +42,8 @@ stateDiagram-v2
 | `pending --> ready`    | Unread file is archived and the node returns to `ready`               | inbox + TUI / oneline   | No dedicated follow-up message is emitted; the visible change is the cleared unread state |
 | `pending --> composing` | Waiting state enters `composing` only when the archived message explicitly carries `expects_reply: true` | TUI / oneline | No separate daemon alert is emitted by the transition itself                          |
 | `composing --> spinning` | Node crosses the spinning threshold, turns `spinning`, and emits an expected-reply overdue alert | inbox + pane + TUI / oneline | The alert is routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery, while the yellow overlay stays visible on the awaited node |
-| `composing --> stalled` | Node goes stale while composing and turns `stalled`                  | TUI / oneline           | No dedicated inbox alert is emitted by this transition alone                          |
-| `spinning --> stalled` | Node goes stale after spinning and stays visible as `stalled`         | TUI / oneline           | The stalled transition itself is only a surface change; no dedicated inbox alert is emitted |
+| `composing --> stalled` | Node goes stale while composing, turns `stalled`, and emits a stalled alert | inbox + pane + TUI / oneline | The alert is routed to `ui_node` inbox on the first stalled transition, so the usual pane notification also fires while the red overlay stays visible on the awaited node |
+| `spinning --> stalled` | Node goes stale after spinning, stays visible as `stalled`, and emits a stalled alert | inbox + pane + TUI / oneline | The stalled alert is routed to `ui_node` inbox on the first stalled transition; the visible node remains red until later send activity clears the wait |
 | `spinning --> ready`   | Later send activity clears `spinning` and returns the node to `ready` | TUI / oneline          | The send may create inbox-visible effects elsewhere, but this transition emits no separate notification |
 | `stalled --> ready`    | Later send activity clears `stalled` and returns the node to `ready` | TUI / oneline           | No dedicated recovery alert is emitted by the transition itself                       |
 | `pending --> user_input` | Human-facing prompt is active and the node turns `user_input`       | inbox + pane + TUI / oneline | Current overlap is intentional: the prompting message is inbox-visible while the purple dot suppresses inactivity alerts |
@@ -66,7 +66,7 @@ stateDiagram-v2
 | Daemon       | internal/daemon/daemon.go       | replaceWaitingState, worstStatePriority, collectPendingStates |
 | TUI          | internal/tui/tui.go             | shared visible-state consumption, session worst-state rendering, updateNodeStatesFromActivity |
 | Oneline      | internal/cli/session_status_oneline.go | statusDot plus pure formatting over the shared health payload |
-| Config       | internal/config/config.go       | NodeSpinningSeconds                               |
+| Config       | internal/config/config.go       | NodeSpinningSeconds, UINode, StalledAlertTemplate |
 
 ## Design Decisions
 

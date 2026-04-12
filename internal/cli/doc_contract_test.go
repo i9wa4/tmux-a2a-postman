@@ -105,7 +105,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract")
 	assertContainsNormalized(t, readme, "Quick reading guide")
 	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
-	assertContainsNormalized(t, readme, "Policy alert such as unread summary, inactivity, unreplied message, or expected-reply overdue")
+	assertContainsNormalized(t, readme, "Policy alert such as unread summary, inactivity, unreplied message, expected-reply overdue, or a stalled reply-tracked wait")
 	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
 	assertContainsNormalized(t, readme, "The README teaches the beginner/operator loop.")
 	assertContainsNormalized(t, readme, "Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start the daemon.")

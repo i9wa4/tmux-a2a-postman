@@ -101,7 +101,7 @@ edges = []
 
 # Global settings
 reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
-# ui_node = "messenger"            # TUI target node for daemon alerts
+ui_node = "messenger"            # TUI target node for daemon alerts
 auto_enable_new_sessions = false   # Auto-enable newly discovered sessions (default: false)
 auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
@@ -135,6 +135,8 @@ node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive 
 unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has message in read/ for {time_since_read} without reply (from: {from}, threshold: {threshold})"
 # Used when a reply-tracked waiting marker crosses composing -> spinning.
 spinning_alert_template = "Expected reply overdue [WARNING]: {requester} is waiting on {awaited_node} in {context_id} for {age} (threshold: {threshold}, message: {message_id})"
+# Used when a reply-tracked waiting marker crosses composing/spinning -> stalled.
+stalled_alert_template = "Reply stalled [WARNING]: {requester} is waiting on {awaited_node} in {context_id}; the pane went stale after {age} (previous state: {previous_state}, threshold: {threshold}, message: {message_id})"
 
 # Common template (prepended to all node templates)
 # common_template = ""

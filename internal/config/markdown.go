@@ -297,8 +297,9 @@ func loadMarkdownConfig(path string) (*Config, error) {
 
 	// Parse global frontmatter
 	fm := parseFrontmatter(content)
-	if v, ok := fm["ui_node"]; ok && v != "" {
+	if v, ok := fm["ui_node"]; ok {
 		cfg.UINode = v
+		cfg.uiNodeSet = true
 	}
 	if v, ok := fm["reply_command"]; ok && v != "" {
 		cfg.ReplyCommand = v

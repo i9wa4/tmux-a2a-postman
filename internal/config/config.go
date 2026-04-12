@@ -75,6 +75,7 @@ type Config struct {
 	NodeInactivityAlertTemplate     string `toml:"node_inactivity_alert_template"`      // Alert message body for node inactivity
 	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
 	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
+	StalledAlertTemplate            string `toml:"stalled_alert_template"`              // Alert body for stalled waiting-state detection
 	MessageFooter                   string `toml:"message_footer"`                      // Footer appended by `next` command after message content
 
 	// Global settings
@@ -104,6 +105,7 @@ type Config struct {
 
 	directTemplateRootTrust  map[string]bool
 	projectLocalExplicitZero localExplicitZeroInventory
+	uiNodeSet                bool
 }
 
 // NodeConfig holds per-node configuration.
@@ -202,6 +204,18 @@ func orderedTOMLNodeNames(md toml.MetaData) []string {
 	return order
 }
 
+func tomlHasField(md toml.MetaData, section, field string) bool {
+	for _, key := range md.Keys() {
+		if len(key) != 2 {
+			continue
+		}
+		if key[0] == section && key[1] == field {
+			return true
+		}
+	}
+	return false
+}
+
 func (cfg *Config) recordNodeNames(names ...string) {
 	cfg.NodeOrder = appendUniqueNodeNames(cfg.NodeOrder, names...)
 }
@@ -229,6 +243,13 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (cfg *Config) HasExplicitUINodeSetting() bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.uiNodeSet
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
@@ -460,6 +481,7 @@ func loadConfigFile(path string) (*Config, error) {
 		}
 	}
 
+	cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
 	markLocalExplicitZeroInventory(cfg, md)
 
 	return cfg, nil
@@ -703,14 +725,18 @@ func mergeConfig(base, override *Config) {
 	if override.SpinningAlertTemplate != "" {
 		base.SpinningAlertTemplate = override.SpinningAlertTemplate
 	}
+	if override.StalledAlertTemplate != "" {
+		base.StalledAlertTemplate = override.StalledAlertTemplate
+	}
 	if override.MessageFooter != "" {
 		base.MessageFooter = override.MessageFooter
 	}
 	if override.ReplyCommand != "" {
 		base.ReplyCommand = override.ReplyCommand
 	}
-	if override.UINode != "" {
+	if override.UINode != "" || override.uiNodeSet {
 		base.UINode = override.UINode
+		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
 	}
 	// *bool merge: bidirectional override — nil = unset (use base), non-nil = explicit (#219)
 	if override.AutoEnableNewSessions != nil {
@@ -947,6 +973,7 @@ func LoadConfig(path string) (*Config, error) {
 			if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
+			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
 		}
 
 		// Decode [nodename] sections (everything except postman and heartbeat)
@@ -1148,6 +1175,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.EdgeActivitySeconds > 3600 {
 		cfg.EdgeActivitySeconds = 3600 // Force maximum
+	}
+
+	// Embedded defaults intentionally allow an empty topology. Preserve that
+	// behavior only when there is no XDG or explicit TOML base and overlays only
+	// tweak global settings such as ui_node.
+	if path == "" && xdgPath == "" && len(cfg.Nodes) == 0 && len(cfg.Edges) == 0 {
+		return cfg, nil
 	}
 
 	// Issue #70: Validate configuration

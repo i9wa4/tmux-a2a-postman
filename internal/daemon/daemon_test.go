@@ -22,20 +22,36 @@ func TestWarnAlertConfig(t *testing.T) {
 	tests := []struct {
 		name        string
 		cfg         *config.Config
+		nodes       map[string]discovery.NodeInfo
 		wantWarning bool
 		wantContain string
 	}{
 		{
-			name:        "UINodeUnset",
-			cfg:         &config.Config{UINode: ""},
+			name: "UINodeUndiscoverable",
+			cfg:  &config.Config{UINode: "messenger"},
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {SessionName: "review"},
+			},
 			wantWarning: true,
-			wantContain: "ui_node is not set",
+			wantContain: `ui_node "messenger" is not discoverable`,
+		},
+		{
+			name: "UINodeUnset",
+			cfg:  &config.Config{UINode: ""},
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {SessionName: "review"},
+			},
+			wantWarning: false,
 		},
 		{
 			name: "UINodeSetAllZeroTimeouts",
 			cfg: &config.Config{
 				UINode: "messenger",
 				Nodes:  map[string]config.NodeConfig{"worker": {}},
+			},
+			nodes: map[string]discovery.NodeInfo{
+				"review:messenger": {SessionName: "review"},
+				"review:worker":    {SessionName: "review"},
 			},
 			wantWarning: true,
 			wantContain: "partially disabled",
@@ -46,6 +62,10 @@ func TestWarnAlertConfig(t *testing.T) {
 				UINode: "messenger",
 				Nodes:  map[string]config.NodeConfig{"worker": {IdleTimeoutSeconds: 900}},
 			},
+			nodes: map[string]discovery.NodeInfo{
+				"review:messenger": {SessionName: "review"},
+				"review:worker":    {SessionName: "review"},
+			},
 			wantWarning: false,
 		},
 		{
@@ -55,13 +75,17 @@ func TestWarnAlertConfig(t *testing.T) {
 				NodeDefaults: config.NodeConfig{DroppedBallTimeoutSeconds: 900},
 				Nodes:        map[string]config.NodeConfig{"worker": {}},
 			},
+			nodes: map[string]discovery.NodeInfo{
+				"review:messenger": {SessionName: "review"},
+				"review:worker":    {SessionName: "review"},
+			},
 			wantWarning: false,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			events := make(chan tui.DaemonEvent, 5)
-			warnAlertConfig(tc.cfg, events)
+			warnAlertConfig(tc.cfg, tc.nodes, events)
 			if tc.wantWarning {
 				if len(events) == 0 {
 					t.Fatal("expected a warning event but channel is empty")
@@ -470,6 +494,32 @@ func TestAdvanceWaitingState_ReplyTrackedActiveBecomesSpinning(t *testing.T) {
 	}
 }
 
+func TestAdvanceWaitingState_ReplyTrackedStaleBecomesStalled(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 12, 11, 0, 0, time.UTC)
+	content := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-03-30T12:00:00Z\nstate: composing\nstate_updated_at: 2026-03-30T12:00:00Z\nexpects_reply: true\n---\n"
+
+	got, changed := advanceWaitingState(content, "stale", now, 5*time.Minute, 10*time.Minute, false)
+	if !changed {
+		t.Fatal("advanceWaitingState did not transition reply-tracked composing state to stalled")
+	}
+	if !strings.Contains(got, "state: stalled") {
+		t.Fatalf("advanceWaitingState missing stalled state:\n%s", got)
+	}
+}
+
+func TestAdvanceWaitingState_ReplyTrackedSpinningStaleBecomesStalled(t *testing.T) {
+	now := time.Date(2026, time.March, 30, 12, 11, 0, 0, time.UTC)
+	content := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-03-30T12:00:00Z\nstate: spinning\nstate_updated_at: 2026-03-30T12:10:00Z\nexpects_reply: true\n---\n"
+
+	got, changed := advanceWaitingState(content, "stale", now, 5*time.Minute, 10*time.Minute, true)
+	if !changed {
+		t.Fatal("advanceWaitingState did not transition reply-tracked spinning state to stalled")
+	}
+	if !strings.Contains(got, "state: stalled") {
+		t.Fatalf("advanceWaitingState missing stalled state:\n%s", got)
+	}
+}
+
 func TestSendSpinningAlertForWaitingFile_IncludesRoutingContext(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "ctx-alert", "review")
 	postDir := filepath.Join(sessionDir, "post")
@@ -524,6 +574,70 @@ func TestSendSpinningAlertForWaitingFile_IncludesRoutingContext(t *testing.T) {
 		"context=ctx-alert",
 		"age=11m0s",
 		"threshold=10m0s",
+		"message=20260405-120000-r1234-from-orchestrator-to-worker.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("alert content missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSendStalledAlertForWaitingFile_IncludesRoutingContext(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "ctx-alert", "review")
+	postDir := filepath.Join(sessionDir, "post")
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll post: %v", err)
+	}
+
+	cfg := &config.Config{
+		UINode:                "messenger",
+		DaemonMessageTemplate: "{message}",
+		StalledAlertTemplate:  "Reply stalled: requester={requester} awaited={awaited_node} context={context_id} previous={previous_state} age={age} threshold={threshold} message={message_id}",
+	}
+	waitingFilename := "20260405-120000-r1234-from-orchestrator-to-worker.md"
+	waitingContent := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-04-05T12:00:00Z\nstate: stalled\nstate_updated_at: 2026-04-05T12:10:01Z\nexpects_reply: true\n---\n"
+
+	err := sendStalledAlertForWaitingFile(
+		sessionDir,
+		"ctx-alert",
+		waitingFilename,
+		"composing",
+		waitingContent,
+		time.Date(2026, time.April, 5, 12, 11, 0, 0, time.UTC),
+		5*time.Minute,
+		cfg,
+		nil,
+		map[string]discovery.NodeInfo{
+			"review:messenger": {
+				SessionDir:  sessionDir,
+				SessionName: "review",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("sendStalledAlertForWaitingFile: %v", err)
+	}
+
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+
+	alertContent, err := os.ReadFile(filepath.Join(postDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile alert: %v", err)
+	}
+	got := string(alertContent)
+	for _, want := range []string{
+		"requester=orchestrator",
+		"awaited=worker",
+		"context=ctx-alert",
+		"previous=composing",
+		"age=11m0s",
+		"threshold=5m0s",
 		"message=20260405-120000-r1234-from-orchestrator-to-worker.md",
 	} {
 		if !strings.Contains(got, want) {

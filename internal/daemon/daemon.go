@@ -243,6 +243,38 @@ func sendSpinningAlertForWaitingFile(sessionDir, contextID, waitingFilename, wai
 	return sendAlertToUINode(sessionDir, contextID, cfg.UINode, body, "spinning", cfg, adjacency, nodes)
 }
 
+func sendStalledAlertForWaitingFile(sessionDir, contextID, waitingFilename, previousState, waitingContent string, now time.Time, idleThreshold time.Duration, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	if cfg == nil || cfg.UINode == "" || cfg.StalledAlertTemplate == "" {
+		return nil
+	}
+
+	requester := frontmatterValue(waitingContent, "from")
+	awaitedNode := frontmatterValue(waitingContent, "to")
+	waitingSince := waitingSinceFromContent(waitingContent)
+	if requester == "" || awaitedNode == "" || waitingSince.IsZero() {
+		return nil
+	}
+
+	age := now.Sub(waitingSince).Round(time.Second)
+	threshold := idleThreshold.Round(time.Second)
+	alertVars := map[string]string{
+		"node":               awaitedNode,
+		"from":               requester,
+		"requester":          requester,
+		"to":                 awaitedNode,
+		"awaited_node":       awaitedNode,
+		"context_id":         contextID,
+		"previous_state":     previousState,
+		"stalled_duration":   age.String(),
+		"age":                age.String(),
+		"threshold":          threshold.String(),
+		"message_id":         waitingFilename,
+		"message_identifier": waitingFilename,
+	}
+	body := template.ExpandVariables(cfg.StalledAlertTemplate, alertVars)
+	return sendAlertToUINode(sessionDir, contextID, cfg.UINode, body, "stalled", cfg, adjacency, nodes)
+}
+
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
 type EdgeActivity struct {
 	LastForwardAt  time.Time // A -> B last communication time
@@ -507,7 +539,7 @@ func RunDaemonLoop(
 	}
 
 	// Issue #352: Warn if alert system is effectively disabled at startup.
-	warnAlertConfig(cfg, events)
+	warnAlertConfig(cfg, nodes, events)
 
 	// #306: Load binding registry for phony node dispatch; nil = disabled.
 	var registry *binding.BindingRegistry
@@ -1257,8 +1289,13 @@ func RunDaemonLoop(
 					paneState := paneStatus[recipientInfo.PaneID]
 					if updated, changed := advanceWaitingState(contentStr, paneState, now, idleThreshold, spinningThreshold, spinningEnabled); changed {
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
-						if strings.Contains(contentStr, "state: composing") && strings.Contains(updated, "state: spinning") {
+						previousState := visibleWaitingState(contentStr)
+						updatedState := visibleWaitingState(updated)
+						if previousState == "composing" && updatedState == "spinning" {
 							_ = sendSpinningAlertForWaitingFile(sessionDir, contextID, entry.Name(), updated, now, spinningThreshold, cfg, adjacency, nodes)
+						}
+						if (previousState == "composing" || previousState == "spinning") && updatedState == "stalled" {
+							_ = sendStalledAlertForWaitingFile(sessionDir, contextID, entry.Name(), previousState, updated, now, idleThreshold, cfg, adjacency, nodes)
 						}
 					}
 				}
@@ -1374,14 +1411,31 @@ func collectPendingStates(nodes map[string]discovery.NodeInfo, priority map[stri
 	return result
 }
 
+func uiNodeDiscovered(nodes map[string]discovery.NodeInfo, uiNode string) bool {
+	if uiNode == "" {
+		return false
+	}
+	for nodeName := range nodes {
+		parts := strings.SplitN(nodeName, ":", 2)
+		if parts[len(parts)-1] == uiNode {
+			return true
+		}
+	}
+	return false
+}
+
 // warnAlertConfig emits a log warning and TUI event when the alert system is
-// effectively disabled due to missing ui_node or zero timeout values.
+// effectively degraded by an undiscoverable ui_node or zero timeout values.
 // This is observability-only: no behavior is changed. Issue #352.
-func warnAlertConfig(cfg *config.Config, events chan<- tui.DaemonEvent) {
-	if cfg.UINode == "" {
-		msg := "postman: WARNING: alert system disabled: ui_node is not set. " +
-			"Set ui_node in postman.toml or postman.md to enable inbox-stagnation, " +
-			"node-inactivity, and unreplied-message alerts."
+func warnAlertConfig(cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) {
+	if cfg == nil || cfg.UINode == "" {
+		return
+	}
+	if cfg.UINode != "" && !uiNodeDiscovered(nodes, cfg.UINode) {
+		msg := fmt.Sprintf(
+			"postman: WARNING: alert system partially disabled: ui_node %q is not discoverable in this session. Alerts routed to %q may dead-letter until that pane is present.",
+			cfg.UINode, cfg.UINode,
+		)
 		log.Print(msg)
 		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
 		return

@@ -31,34 +31,31 @@ notification surfaces, delivery paths, and guard policy in the current tree.
 | dropped ball          | A node received a message but has not sent any message since             |
 | contextId             | Unique session identifier shared by all nodes in one daemon invocation   |
 
-### 1.2. Project-Shipped Low-Noise Defaults
+### 1.2. Embedded Defaults and Optional Local Profiles
 
 The field tables later in this document describe embedded product defaults from
-`internal/config/postman.default.toml`. In this project, the shipped config
-surfaces loaded from `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/`
-intentionally go further and enable a low-noise notification policy by default.
+`internal/config/postman.default.toml`. Those defaults now route alerts to
+`messenger` and emit stalled reply-tracking alerts out of the box, but they do
+not enable the per-node timeout families.
 
-For the current repo-local sample and deployed XDG profile:
+Embedded product defaults behave like this:
 
-| Mechanism | Current project-shipped default |
-| --------- | ------------------------------- |
+| Mechanism | Current embedded default |
+| --------- | ------------------------ |
 | Reminder | ON at `20` messages |
 | Inbox unread summary | ON at `3+` unread via `ui_node = messenger` |
-| Node inactivity alert | ON with per-node timers: `boss=3600`, `critic=1800`, `guardian=1800`, `messenger=1800`, `orchestrator=1800`, `worker=900`, `worker-alt=900` |
-| Unreplied message alert | ON with the same per-node timers |
-| Dropped ball detection | ON with the same per-node timers, with default delivery kept at `tui` |
+| Reply stalled alert | ON on `composing -> stalled` and `spinning -> stalled` via `ui_node = messenger` |
+| Node inactivity alert | OFF (all `idle_timeout_seconds = 0`) |
+| Unreplied message alert | OFF (all `dropped_ball_timeout_seconds = 0`) |
+| Dropped ball detection | OFF (all `dropped_ball_timeout_seconds = 0`) |
 | Expected-reply overdue alert (`spinning`) | OFF (`node_spinning_seconds = 0`) |
 | Heartbeat | OFF (`[heartbeat].enabled = false`) |
 
-Authority note:
+Local `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/` config can still
+layer a fuller operator profile on top. Treat those choices as
+environment-specific; they are not implied by the embedded file alone.
 
-- In the deployed XDG profile, `ui_node: messenger` currently comes from
-  `postman.md` frontmatter.
-- In the repo-local sample, `ui_node = "messenger"` is declared in
-  `.tmux-a2a-postman/postman.toml`.
-- The effective behavior is the same even though the file type differs.
-
-Opt-out knobs for these project-shipped defaults are summarized in
+Opt-out knobs for the embedded defaults and any local profile are summarized in
 `docs/guides/alert-config.md`.
 
 ---
@@ -75,8 +72,9 @@ Opt-out knobs for these project-shipped defaults are summarized in
 | 4 | Node inactivity alert            | Node idle > timeout (30 s tick)                                | `post/` routing      | `ui_node`  |
 | 5 | Unreplied message alert          | Message in `read/` > timeout (30 s tick)                       | `post/` routing      | `ui_node`  |
 | 6 | Expected-reply overdue alert     | Reply-tracked wait exceeds `node_spinning_seconds` while active | `post/` routing      | `ui_node`  |
-| 7 | Dropped ball detection           | `LastReceived > LastSent` > timeout                            | TUI event + optional `tmux display-message` | TUI / status bar |
-| 8 | Heartbeat trigger                | Periodic interval                                              | Write to `post/`     | `llm_node` |
+| 7 | Reply stalled alert              | Reply-tracked wait crosses `composing/spinning -> stalled`     | `post/` routing      | `ui_node`  |
+| 8 | Dropped ball detection           | `LastReceived > LastSent` > timeout                            | TUI event + optional `tmux display-message` | TUI / status bar |
+| 9 | Heartbeat trigger                | Periodic interval                                              | Write to `post/`     | `llm_node` |
 
 ### 2.1.1. Message Classification (Current Tree)
 
@@ -88,7 +86,9 @@ Opt-out knobs for these project-shipped defaults are summarized in
 | Node inactivity alert         | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
 | Unreplied message alert       | inbox-visible        | operator-visible              | Same `ui_node` inbox + pane overlap as other alert envelopes                          |
 | Expected-reply overdue alert  | inbox-visible        | operator-visible              | Emitted once when a reply-tracked wait crosses `composing -> spinning`; routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery |
+| Reply stalled alert           | inbox-visible        | operator-visible              | Emitted once when a reply-tracked wait crosses into `stalled`; routed to `ui_node` inbox and therefore also causes the usual pane notification on delivery |
 | Spinning waiting state        | TUI / oneline        | operator-visible              | The overlay still reflects the same reply-tracked wait even when the alert is disabled |
+| Stalled waiting state         | TUI / oneline        | operator-visible              | The red overlay reflects the same reply-tracked wait even when the stalled alert is disabled |
 | Dropped ball detection        | TUI-only             | operator-visible              | Default `dropped_ball_notification = "tui"` keeps it off the inbox path; `display` / `all` adds a tmux status-bar side channel |
 | PING                          | inbox-visible        | control-plane + operator-visible | The current tree uses PING beyond startup: first discovery, pane restarts, and manual TUI rechecks still surface as readable daemon mail |
 | Heartbeat trigger             | inbox-visible        | control-plane + operator-visible | Written to `post/` for `llm_node`, then routed like normal mail; single-slot guard keeps it from flooding |
@@ -198,7 +198,7 @@ the shared `daemon_message_template`.
 
 | Field                              | Default | Description                                     |
 | ---------------------------------- | ------- | ----------------------------------------------- |
-| `ui_node`                          | `""`    | Recipient node for all alerts (required)         |
+| `ui_node`                          | `"messenger"` | Recipient node for all alerts |
 | `inbox_unread_threshold`           | `3`     | Minimum unread count to trigger alert            |
 | `alert_cooldown_seconds`           | `600`   | Min interval between alerts to same recipient    |
 | `alert_delivery_window_seconds`    | `60`    | Suppress if `ui_node` received recently          |
@@ -233,7 +233,7 @@ its `idle_timeout_seconds`, an alert is sent to `ui_node`.
 
 | Field                           | Default | Scope   |
 | ------------------------------- | ------- | ------- |
-| `ui_node`                       | `""`    | Global  |
+| `ui_node`                       | `"messenger"` | Global  |
 | `alert_cooldown_seconds`        | `600`   | Global  |
 | `alert_delivery_window_seconds` | `60`    | Global  |
 | `node_inactivity_alert_template` | (see default config) | Global |
@@ -270,7 +270,7 @@ repeat alerts for the same message.
 
 | Field                           | Default | Scope    |
 | ------------------------------- | ------- | -------- |
-| `ui_node`                       | `""`    | Global   |
+| `ui_node`                       | `"messenger"` | Global   |
 | `alert_cooldown_seconds`        | `600`   | Global   |
 | `alert_delivery_window_seconds` | `60`    | Global   |
 | `unreplied_message_alert_template` | (see default config) | Global |
@@ -400,8 +400,11 @@ States:
 When `spinning` is detected for a reply-tracked marker, the current tree
 changes the visible waiting overlay and, when `node_spinning_seconds > 0`,
 emits an expected-reply overdue alert to `ui_node` if `ui_node` and
-`spinning_alert_template` are configured. The `node_inactivity` alert
-suppresses nodes with `state: user_input` files (Guard 3).
+`spinning_alert_template` are configured. When `stalled` is detected, the
+current tree changes the visible waiting overlay and emits a reply-stalled
+alert to `ui_node` if `ui_node` and `stalled_alert_template` are configured.
+The `node_inactivity` alert suppresses nodes with `state: user_input` files
+(Guard 3).
 
 **Config fields:**
 
@@ -411,10 +414,16 @@ suppresses nodes with `state: user_input` files (Guard 3).
 | `node_idle_seconds`       | `900`   | Pane-activity threshold for internal `stale`; after `node_active_seconds` and before this the pane remains internally `idle` |
 | `node_spinning_seconds`   | `0`     | Spinning threshold (0 = disabled)                |
 | `spinning_alert_template` | (see default config) | Template for the expected-reply overdue alert emitted on the `composing -> spinning` transition |
+| `stalled_alert_template`  | (see default config) | Template for the stalled alert emitted on the first `... -> stalled` transition |
 
 **Template variables for `spinning_alert_template`:** `{node}` /
 `{awaited_node}`, `{requester}` / `{from}`, `{context_id}`, `{age}` /
 `{spinning_duration}`, `{threshold}`, `{message_id}` / `{message_identifier}`.
+
+**Template variables for `stalled_alert_template`:** `{node}` /
+`{awaited_node}`, `{requester}` / `{from}`, `{context_id}`, `{age}` /
+`{stalled_duration}`, `{threshold}`, `{previous_state}`, `{message_id}` /
+`{message_identifier}`.
 
 These waiting facts now flow into the shared health contract rather than being
 re-derived separately per renderer. The canonical per-node payload carries
@@ -438,10 +447,11 @@ the sender's inbox, bypassing `post/` routing. The edge violation warning uses
 
 The daemon sends PING as a direct system message when it needs to confirm
 liveness. In the current tree that includes first discovery, pane-restart
-rechecks, and manual TUI-triggered PING. When `ui_node` is configured, a given
-PING pass is restricted to that node; otherwise it is sent to all discovered
-nodes in the target session (`main.go` — `// If ui_node is configured, restrict
-PING to that node only.`).
+rechecks, and manual TUI-triggered PING. Manual PING is restricted to
+`ui_node` only when the operator explicitly configured a non-empty `ui_node`
+in TOML or Markdown. The embedded default `ui_node = "messenger"` does not
+narrow manual PING; without an explicit `ui_node` override, the pass still
+fans out to all discovered nodes in the target session.
 
 Liveness is confirmed via two independent paths:
 
@@ -563,16 +573,17 @@ All notification-related fields from `internal/config/postman.default.toml`:
 | `reminder_interval_messages`       | `20`     | Global + per-node | §2.2             |
 | `reminder_message`                 | `"Unread messages pending. Run \`tmux-a2a-postman pop\` to read them."` | Global + per-node | §2.2   |
 | `inbox_unread_threshold`           | `3`      | Global  | §2.3                      |
-| `ui_node`                          | `""`     | Global  | §2.3, §2.4, §2.5          |
+| `ui_node`                          | `"messenger"` | Global  | §2.3, §2.4, §2.5, §3.1 |
 | `alert_cooldown_seconds`           | `600`    | Global  | §2.3, §2.4, §2.5          |
 | `alert_delivery_window_seconds`    | `60`     | Global  | §2.3, §2.4, §2.5          |
 | `inbox_unread_summary_alert_template` | (see config) | Global | §2.3              |
 | `node_inactivity_alert_template`   | (see config) | Global | §2.4                   |
 | `unreplied_message_alert_template` | (see config) | Global | §2.5                   |
 | `spinning_alert_template`          | (see config) | Global | §3.1                       |
+| `stalled_alert_template`           | (see config) | Global | §3.1                       |
 | `alert_action_reachable_template`  | (see config) | Global | §2.3, §2.4, §2.5       |
 | `alert_action_unreachable_template` | (see config) | Global | §2.3, §2.4, §2.5     |
-| `daemon_message_template`          | (envelope) | Global | §2.3, §2.4, §2.5, §2.7, §3.3 |
+| `daemon_message_template`          | (envelope) | Global | §2.3, §2.4, §2.5, §2.7, §3.1, §3.3 |
 | `dropped_ball_timeout_seconds`     | `0`      | Per-node | §2.5, §2.6               |
 | `dropped_ball_cooldown_seconds`    | `0`      | Per-node | §2.6                     |
 | `dropped_ball_notification`        | `"tui"`  | Per-node | §2.6                     |

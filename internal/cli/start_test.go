@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 )
 
@@ -227,6 +229,114 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	if !strings.Contains(err.Error(), "lock already held") {
 		t.Fatalf("RunStartWithFlags() error = %q, want lock already held wording", err)
 	}
+}
+
+func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:messenger": {},
+		"review:worker":    {},
+	}
+
+	t.Run("embedded default does not narrow", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+		t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+		t.Chdir(tmpDir)
+
+		cfg, err := config.LoadConfig("")
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
+		if !ok {
+			t.Fatal("embedded default should not report a missing ui_node target")
+		}
+		if len(filtered) != len(nodes) {
+			t.Fatalf("embedded default filtered %d nodes, want %d", len(filtered), len(nodes))
+		}
+	})
+
+	t.Run("explicit ui_node narrows to that node", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
+		if !ok {
+			t.Fatal("explicit ui_node should be discoverable in the target set")
+		}
+		if len(filtered) != 1 {
+			t.Fatalf("explicit ui_node filtered %d nodes, want 1", len(filtered))
+		}
+		if _, exists := filtered["review:messenger"]; !exists {
+			t.Fatal("explicit ui_node filter did not keep messenger")
+		}
+	})
+
+	t.Run("explicit missing ui_node blocks narrowing", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\nui_node = \"critic\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
+		if ok {
+			t.Fatal("missing explicit ui_node should report failure")
+		}
+		if len(filtered) != 0 {
+			t.Fatalf("missing explicit ui_node filtered %d nodes, want 0", len(filtered))
+		}
+	})
+
+	t.Run("explicit empty ui_node keeps fanout", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\nui_node = \"\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
+		if !ok {
+			t.Fatal("explicit empty ui_node should not report a missing ui_node target")
+		}
+		if len(filtered) != len(nodes) {
+			t.Fatalf("explicit empty ui_node filtered %d nodes, want %d", len(filtered), len(nodes))
+		}
+	})
 }
 
 func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *testing.T) {

@@ -3,48 +3,50 @@
 This guide explains how the alert system is enabled in this project and how to
 turn individual notification classes down or off.
 
-## 1. Embedded Defaults vs Project Defaults
+## 1. Embedded Defaults vs Optional Local Profiles
 
 Three alert functions (`checkInboxStagnation`, `checkNodeInactivity`,
 `checkUnrepliedMessages`) guard on `ui_node` being set and on per-node timeout
-values being non-zero.
+values being non-zero. The waiting-state ticker separately emits a stalled alert
+when a reply-tracked wait crosses into `stalled`.
 
-Embedded product defaults alone still leave `ui_node` unset and per-node alert
-timeouts at zero, so alert delivery stays disabled until config enables it.
+Embedded product defaults in `internal/config/postman.default.toml` now set
+`ui_node = "messenger"` and ship a non-empty `stalled_alert_template`, so
+reply-tracked `composing -> stalled` and `spinning -> stalled` transitions
+notify the human-facing node by default.
 
-This project's shipped config surfaces now enable a low-noise profile by
-default:
+Embedded product defaults still keep all per-node `idle_timeout_seconds` and
+`dropped_ball_timeout_seconds` at `0`, and keep `node_spinning_seconds = 0`, so
+node-inactivity, unreplied-message, dropped-ball, and spinning alerts remain
+off until local or XDG config enables them.
 
-- repo-local sample:
-  `/home/daiki.mawatari/ghq/github.com/i9wa4/tmux-a2a-postman/.tmux-a2a-postman/postman.toml`
-- deployed XDG profile:
-  `~/.config/tmux-a2a-postman/postman.toml`
-- deployed XDG `ui_node` frontmatter:
-  `~/.config/tmux-a2a-postman/postman.md`
+Local `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/` config can still
+layer a fuller operator profile on top, but that is separate from the embedded
+file and should be explained as an environment-specific choice.
 
 Starting with the version that includes fix `#352`, the daemon also emits a
-visible startup warning in the daemon log when `ui_node` is missing or when
-all per-node timeouts are zero at startup.
+visible startup warning in the daemon log when the effective `ui_node` is not
+discoverable in the current session or when all per-node timeouts are zero at
+startup.
 
-## 2. Current Project Default Behavior
+## 2. Current Embedded Default Behavior
 
-For config loaded from `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/`,
-the current shipped defaults are:
+Without any local or XDG override, the embedded defaults behave like this:
 
-| Mechanism | Current project-shipped default |
-| --------- | ------------------------------- |
+| Mechanism | Current embedded default |
+| --------- | ------------------------ |
 | Reminder | ON at `20` messages |
 | Inbox unread summary | ON at `3+` unread via `ui_node = messenger` |
-| Node inactivity alert | ON with per-node timers: `boss=3600`, `critic=1800`, `guardian=1800`, `messenger=1800`, `orchestrator=1800`, `worker=900`, `worker-alt=900` |
-| Unreplied message alert | ON with the same per-node timers |
-| Dropped ball detection | ON with the same per-node timers, with default delivery kept at `tui` |
+| Reply-tracked stalled alert | ON when a reply-tracked wait crosses into `stalled`, routed to `messenger` |
+| Node inactivity alert | OFF (all `idle_timeout_seconds = 0`) |
+| Unreplied message alert | OFF (all `dropped_ball_timeout_seconds = 0`) |
+| Dropped ball detection | OFF (all `dropped_ball_timeout_seconds = 0`) |
 | Expected-reply overdue alert (`spinning`) | OFF (`node_spinning_seconds = 0`) |
 | Heartbeat | OFF |
 
-The deployed XDG profile currently gets `ui_node: messenger` from
-`postman.md` frontmatter, while the repo-local sample declares the same value
-in TOML. Either surface is valid as long as the loaded config resolves
-`ui_node`.
+If your local or XDG profile also defines per-node timeouts, that environment
+can enable node-inactivity, unreplied-message, and dropped-ball alerts even
+though the embedded file keeps them off.
 
 ## 3. Unified State + Notification Boundary
 
@@ -72,20 +74,22 @@ Use this quick split before changing config:
 | ---------- | ---------- | ------------------------- |
 | `pending`, `user_input`, `composing`, `spinning`, `stalled` in `get-health`, `get-health-oneline`, or the TUI | Canonical visible state, not a daemon alert by itself | `docs/design/node-state-machine.md` |
 | A pane hint telling the recipient to run `tmux-a2a-postman pop` | Delivery-side notification for that recipient pane | `notification_template`, `pane_notify_cooldown_seconds`, `docs/design/notification.md` |
-| A daemon-generated inbox message to `ui_node` | Policy alert routed to the human-facing node | `ui_node`, `inbox_unread_threshold`, `idle_timeout_seconds`, `dropped_ball_timeout_seconds`, `node_spinning_seconds` |
+| A daemon-generated inbox message to `ui_node` | Policy alert routed to the human-facing node | `ui_node`, `inbox_unread_threshold`, `idle_timeout_seconds`, `dropped_ball_timeout_seconds`, `node_spinning_seconds`, `stalled_alert_template` |
 | A dropped-ball message in the TUI or status bar | Coordination signal separate from `ui_node` inbox alerts | `dropped_ball_timeout_seconds`, `dropped_ball_notification` |
 | Visible `spinning` with no inbox alert | Reply-tracked wait crossed the display threshold, but the alert path is disabled or suppressed | `node_spinning_seconds`, `ui_node`, `alert_cooldown_seconds`, `alert_delivery_window_seconds` |
+| Visible `stalled` with no inbox alert | Reply-tracked wait went stale, but the stalled alert path is disabled or suppressed | `ui_node`, `stalled_alert_template`, `alert_cooldown_seconds`, `alert_delivery_window_seconds` |
 
 ## 4. What Each Field Controls
 
 | Field                           | Surface / mechanism                                 | Default              |
 | ------------------------------- | --------------------------------------------------- | -------------------- |
-| `ui_node`                       | Global gate for daemon alerts and `user_input` waits | `""` (disabled)     |
+| `ui_node`                       | Global gate for daemon alerts and `user_input` waits | `"messenger"`       |
 | `reminder_interval_messages`    | Pane reminder cadence after archived reads          | `20`                 |
 | `inbox_unread_threshold`        | `ui_node` unread-summary alert                      | `3`                  |
 | `idle_timeout_seconds`          | Per-node inactivity alert threshold                 | `0` (disabled)       |
 | `dropped_ball_timeout_seconds`  | Per-node unreplied-message and dropped-ball threshold | `0` (disabled)     |
 | `node_spinning_seconds`         | Reply-tracked `composing -> spinning` threshold     | `0` (disabled)       |
+| `stalled_alert_template`        | Reply-tracked `... -> stalled` alert body           | (see config)         |
 | `alert_cooldown_seconds`        | Shared alert rate limiter for `ui_node`             | `600`                |
 | `alert_delivery_window_seconds` | Recent-delivery suppression for `ui_node`           | `60`                 |
 | `pane_notify_cooldown_seconds`  | Reminder / pane-send cooldown                       | `600`                |
@@ -106,19 +110,26 @@ overrides in either `~/.config/tmux-a2a-postman/postman.toml` or
 | ---- | -------- |
 | Disable reminders | `reminder_interval_messages = 0` |
 | Disable inbox unread summary only | `inbox_unread_threshold = 0` |
-| Disable all daemon alerts routed to the UI node | unset `ui_node` |
+| Disable all daemon alerts routed to the UI node | `ui_node = ""` |
 | Disable node inactivity alert for a node | `idle_timeout_seconds = 0` |
 | Disable dropped-ball detection and unreplied-message alert for a node | `dropped_ball_timeout_seconds = 0` |
 | Disable expected-reply overdue alert | `node_spinning_seconds = 0` |
 | Keep heartbeat disabled | `[heartbeat] enabled = false` |
 
 Repo-local config loads after XDG config with non-zero-wins semantics, so a
-repo-local override will win inside this repo.
+repo-local override will win inside this repo. `ui_node = ""` is treated as an
+explicit override, so a project-local TOML or Markdown file can clear the
+embedded `messenger` default.
 
 ## 6. Requirement: ui_node Must Be Discoverable
 
-The `ui_node` value must match a tmux pane title in the active session.
-If the pane is absent, alert messages route to `dead-letter/` silently.
+The effective `ui_node` value must match a tmux pane title in the active
+session. With the embedded defaults, that effective value is `messenger`
+unless local or XDG config overrides it.
+
+If the pane is absent, alert messages can route to `dead-letter/` until that
+pane appears. The daemon now warns at startup when the effective `ui_node` is
+not discoverable in the current session.
 
 Set the pane title before starting the daemon:
 
@@ -140,7 +151,7 @@ The `messenger` node must appear in `nodes[*]`, with the canonical
 If the daemon detects a misconfigured alert system it logs:
 
 ```text
-postman: WARNING: alert system disabled: ui_node is not set. ...
+postman: WARNING: alert system partially disabled: ui_node "messenger" is not discoverable in this session. ...
 ```
 
 or:

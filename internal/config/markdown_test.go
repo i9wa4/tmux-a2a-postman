@@ -718,6 +718,28 @@ role = "worker"
 	}
 }
 
+func TestLoadConfig_ProjectLocalMarkdown_EmptyUINodeOverridesEmbeddedDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	_, fakeHome := setupXDGAndHome(t, tmpDir)
+
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	writeFile(t, filepath.Join(localConfigDir, "postman.md"), "---\nui_node:\n---\n")
+
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.UINode != "" {
+		t.Fatalf("UINode: got %q, want empty", cfg.UINode)
+	}
+	if !cfg.HasExplicitUINodeSetting() {
+		t.Fatal("project-local Markdown empty ui_node should remain an explicit setting")
+	}
+}
+
 func TestLoadConfig_TrustedXDGMarkdownMessageFooterShellExpansionAllowed(t *testing.T) {
 	tmpDir := t.TempDir()
 	xdgDir, _ := setupXDGAndHome(t, tmpDir)

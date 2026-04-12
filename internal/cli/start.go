@@ -54,6 +54,15 @@ func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 	}()
 }
 
+func restrictPingTargetsToConfiguredUINode(nodes map[string]discovery.NodeInfo, cfg *config.Config) (map[string]discovery.NodeInfo, bool) {
+	if cfg == nil || !cfg.HasExplicitUINodeSetting() || cfg.UINode == "" {
+		return cliutil.FilterToUINode(nodes, ""), true
+	}
+
+	filtered := cliutil.FilterToUINode(nodes, cfg.UINode)
+	return filtered, len(filtered) > 0
+}
+
 func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {
@@ -650,8 +659,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							}
 						}
 						// Restrict ping to ui_node only (if configured).
-						targetNodes = cliutil.FilterToUINode(targetNodes, cfg.UINode)
-						if len(targetNodes) == 0 {
+						uiNodeFound := true
+						targetNodes, uiNodeFound = restrictPingTargetsToConfiguredUINode(targetNodes, cfg)
+						if !uiNodeFound {
 							log.Printf("postman: PING skipped for session %s — ui_node %q not found\n", cmd.Target, cfg.UINode)
 							daemonEvents <- tui.DaemonEvent{
 								Type:    "status_update",
