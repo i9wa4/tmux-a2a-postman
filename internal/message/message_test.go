@@ -14,6 +14,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -1579,5 +1580,125 @@ func TestDeliverSystemMessageDirect_AppendsShadowJournalDeliveredEvent(t *testin
 	}
 	if payload["from"] != "postman" || payload["to"] != "worker" {
 		t.Fatalf("payload = %#v, want from=postman to=worker", payload)
+	}
+}
+
+func TestApprovalDecisionFromContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    journal.ApprovalDecision
+		ok      bool
+	}{
+		{
+			name: "approved",
+			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
+				"  thread_id: thread-review-01\n---\n\nAPPROVED: looks good\n",
+			want: journal.ApprovalDecisionApproved,
+			ok:   true,
+		},
+		{
+			name: "not approved",
+			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
+				"  thread_id: thread-review-01\n---\n\nNOT APPROVED: missing verification\n",
+			want: journal.ApprovalDecisionRejected,
+			ok:   true,
+		},
+		{
+			name: "plain body is not a decision",
+			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
+				"  thread_id: thread-review-01\n---\n\nPlease revise this.\n",
+			ok: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := approvalDecisionFromContent(tt.content)
+			if ok != tt.ok {
+				t.Fatalf("approvalDecisionFromContent() ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("approvalDecisionFromContent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeliverMessage_AppendsReplayableApprovalEventsForCrossSessionThread(t *testing.T) {
+	mainSessionDir := filepath.Join(t.TempDir(), "main")
+	if err := config.CreateSessionDirs(mainSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(main) failed: %v", err)
+	}
+	reviewSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(reviewSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(review) failed: %v", err)
+	}
+
+	manager := journal.NewManager("test-ctx", 31337)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	nodes := map[string]discovery.NodeInfo{
+		"main:orchestrator":     {PaneID: "%1", SessionName: "main", SessionDir: mainSessionDir},
+		"review-session:critic": {PaneID: "%2", SessionName: "review-session", SessionDir: reviewSessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator":          {"review-session:critic"},
+		"review-session:critic": {"main:orchestrator"},
+	}
+	cfg := &config.Config{}
+	threadID := "thread-review-01"
+
+	requestFilename := "20260414-173500-r1234-from-orchestrator-to-review-session:critic.md"
+	requestPath := filepath.Join(mainSessionDir, "post", requestFilename)
+	requestContent := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: review-session:critic\n  thread_id: " + threadID + "\n  timestamp: 2026-04-14T17:35:00Z\n---\n\nPlease review the implementation.\n"
+	if err := os.WriteFile(requestPath, []byte(requestContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(requestPath) failed: %v", err)
+	}
+
+	if err := DeliverMessage(requestPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage(request) failed: %v", err)
+	}
+
+	decisionFilename := "20260414-173501-r5678-from-review-session:critic-to-main:orchestrator.md"
+	decisionPath := filepath.Join(reviewSessionDir, "post", decisionFilename)
+	decisionContent := "---\nparams:\n  contextId: test-ctx\n  from: review-session:critic\n  to: main:orchestrator\n  thread_id: " + threadID + "\n  timestamp: 2026-04-14T17:35:01Z\n---\n\nAPPROVED: verification passed.\n"
+	if err := os.WriteFile(decisionPath, []byte(decisionContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(decisionPath) failed: %v", err)
+	}
+
+	if err := DeliverMessage(decisionPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage(decision) failed: %v", err)
+	}
+
+	for _, sessionDir := range []string{mainSessionDir, reviewSessionDir} {
+		projected, ok, err := projection.ProjectThreadApproval(sessionDir)
+		if err != nil {
+			t.Fatalf("ProjectThreadApproval(%s) error = %v", sessionDir, err)
+		}
+		if !ok {
+			t.Fatalf("ProjectThreadApproval(%s) ok = false, want true", sessionDir)
+		}
+
+		thread, ok := projected.Threads[threadID]
+		if !ok {
+			t.Fatalf("ProjectThreadApproval(%s) missing thread %q in %#v", sessionDir, threadID, projected.Threads)
+		}
+		if thread.Requester != "orchestrator" {
+			t.Fatalf("thread requester = %q, want orchestrator", thread.Requester)
+		}
+		if thread.Reviewer != "critic" {
+			t.Fatalf("thread reviewer = %q, want critic", thread.Reviewer)
+		}
+		if thread.Status != projection.ApprovalStatusApproved {
+			t.Fatalf("thread status = %q, want %q", thread.Status, projection.ApprovalStatusApproved)
+		}
+		if thread.RequestMessageID != requestFilename {
+			t.Fatalf("thread request message = %q, want %q", thread.RequestMessageID, requestFilename)
+		}
+		if thread.DecisionMessageID != decisionFilename {
+			t.Fatalf("thread decision message = %q, want %q", thread.DecisionMessageID, decisionFilename)
+		}
 	}
 }

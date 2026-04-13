@@ -127,6 +127,110 @@ func mailboxThreadIDFromContent(content string) string {
 	return metadata.ThreadID
 }
 
+func messageBodyFromContent(content string) string {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return strings.TrimSpace(content)
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return strings.TrimSpace(content)
+	}
+	return strings.TrimSpace(rest[second+4:])
+}
+
+func approvalDecisionFromContent(content string) (journal.ApprovalDecision, bool) {
+	body := messageBodyFromContent(content)
+	if body == "" {
+		return "", false
+	}
+	firstLine := body
+	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
+		firstLine = firstLine[:idx]
+	}
+	firstLine = strings.TrimSpace(firstLine)
+	switch {
+	case strings.HasPrefix(firstLine, "APPROVED:"):
+		return journal.ApprovalDecisionApproved, true
+	case strings.HasPrefix(firstLine, "NOT APPROVED:"):
+		return journal.ApprovalDecisionRejected, true
+	default:
+		return "", false
+	}
+}
+
+type approvalDeliveryEvent struct {
+	EventType string
+	Payload   interface{}
+	ThreadID  string
+}
+
+func approvalEventForDelivery(messageID, from, to, content string) (approvalDeliveryEvent, bool) {
+	threadID := mailboxThreadIDFromContent(content)
+	if threadID == "" {
+		return approvalDeliveryEvent{}, false
+	}
+
+	sender := nodeaddr.Simple(from)
+	recipient := nodeaddr.Simple(to)
+
+	switch {
+	case sender == "orchestrator" && recipient == "critic":
+		return approvalDeliveryEvent{
+			EventType: journal.ApprovalRequestedEventType,
+			Payload: journal.ApprovalRequestPayload{
+				Requester: sender,
+				Reviewer:  recipient,
+				MessageID: messageID,
+			},
+			ThreadID: threadID,
+		}, true
+	case sender == "critic" && recipient == "orchestrator":
+		decision, ok := approvalDecisionFromContent(content)
+		if !ok {
+			return approvalDeliveryEvent{}, false
+		}
+		return approvalDeliveryEvent{
+			EventType: journal.ApprovalDecidedEventType,
+			Payload: journal.ApprovalDecisionPayload{
+				Reviewer:  sender,
+				Decision:  decision,
+				MessageID: messageID,
+			},
+			ThreadID: threadID,
+		}, true
+	default:
+		return approvalDeliveryEvent{}, false
+	}
+}
+
+func recordApprovalEvent(sessionDir, sessionName string, event approvalDeliveryEvent, now time.Time) {
+	if err := journal.RecordProcessEventWithOptions(
+		sessionDir,
+		sessionName,
+		event.EventType,
+		journal.VisibilityOperatorVisible,
+		event.Payload,
+		journal.AppendOptions{ThreadID: event.ThreadID},
+		now,
+	); err != nil {
+		log.Printf("postman: WARNING: journal approval append failed for %s: %v\n", event.EventType, err)
+	}
+}
+
+func recordApprovalEventForDelivery(sourceSessionDir, sourceSessionName, recipientSessionDir, recipientSessionName, messageID, from, to, content string, now time.Time) {
+	event, ok := approvalEventForDelivery(messageID, from, to, content)
+	if !ok {
+		return
+	}
+
+	recordApprovalEvent(sourceSessionDir, sourceSessionName, event, now)
+	if recipientSessionDir != sourceSessionDir {
+		recordApprovalEvent(recipientSessionDir, recipientSessionName, event, now)
+	}
+}
+
 func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
@@ -730,6 +834,18 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		Path:      shadowRelativePath(recipientSessionDir, dst),
 		Content:   messageContent,
 	})
+	now := time.Now()
+	recordApprovalEventForDelivery(
+		sourceSessionDir,
+		sourceSessionName,
+		recipientSessionDir,
+		recipientSessionName,
+		filename,
+		info.From,
+		info.To,
+		messageContent,
+		now,
+	)
 	syncCompatibilityMailbox(sourceSessionDir)
 	if recipientSessionDir != sourceSessionDir {
 		syncCompatibilityMailbox(recipientSessionDir)

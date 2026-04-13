@@ -145,6 +145,16 @@ func RecordProcessEvent(sessionDir, tmuxSessionName, eventType string, visibilit
 	return manager.RecordEvent(sessionDir, tmuxSessionName, eventType, visibility, payload, now)
 }
 
+func RecordProcessEventWithOptions(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time) error {
+	processManager.RLock()
+	manager := processManager.manager
+	processManager.RUnlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.RecordEventWithOptions(sessionDir, tmuxSessionName, eventType, visibility, payload, options, now)
+}
+
 func (m *Manager) Bootstrap(sessionDir, tmuxSessionName string, now time.Time) error {
 	_, err := m.writerFor(sessionDir, tmuxSessionName, now)
 	return err
@@ -172,6 +182,15 @@ func (m *Manager) RecordEvent(sessionDir, tmuxSessionName, eventType string, vis
 		return err
 	}
 	_, err = writer.AppendEvent(eventType, visibility, payload, now)
+	return err
+}
+
+func (m *Manager) RecordEventWithOptions(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time) error {
+	writer, err := m.writerFor(sessionDir, tmuxSessionName, now)
+	if err != nil {
+		return err
+	}
+	_, err = writer.AppendEventWithOptions(eventType, visibility, payload, options, now)
 	return err
 }
 
