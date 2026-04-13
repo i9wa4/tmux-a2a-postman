@@ -1,62 +1,89 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// parseFrontmatter extracts key:value pairs from a YAML-style --- delimited
-// block at the start of content. Parse rules:
+// parseFrontmatter parses the supported Markdown frontmatter syntax subset.
+// This is intentionally not real YAML. Supported syntax is a leading ---
+// delimited block with one single-line key: value pair per non-empty line.
+// Parse rules:
 //   - Splits on the FIRST colon only; values may contain colons
-//   - Multi-line values are NOT supported (each line is one entry or ignored)
+//   - Multi-line values are NOT supported
 //   - Quoted strings are NOT supported (quotes are literal characters)
 //   - Leading/trailing whitespace on key and value is trimmed
-//   - Lines without a colon are ignored
+//   - Blank lines are allowed
 //
 // Returns a map of lowercase keys to string values.
-func parseFrontmatter(content string) map[string]string {
+func parseFrontmatter(content string) (map[string]string, error) {
 	result := make(map[string]string)
 	lines := strings.Split(content, "\n")
+	start, end, ok, err := frontmatterBounds(lines)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return result, nil
+	}
 
-	// Find opening ---
-	start := -1
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "---" {
-			start = i
-			break
+	previousEmptyValue := false
+	for i, line := range lines[start+1 : end] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
 		}
-	}
-	if start == -1 {
-		return result
-	}
-
-	// Find closing ---
-	end := -1
-	for i := start + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
+		if previousEmptyValue && hasIndentPrefix(line) {
+			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
 		}
-	}
-	if end == -1 {
-		return result
-	}
-
-	// Parse key:value pairs between the delimiters
-	for _, line := range lines[start+1 : end] {
+		if strings.HasPrefix(trimmed, "- ") {
+			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
+		}
 		idx := strings.Index(line, ":")
 		if idx == -1 {
-			continue
+			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
 		}
 		key := strings.TrimSpace(strings.ToLower(line[:idx]))
 		value := strings.TrimSpace(line[idx+1:])
-		if key != "" {
-			result[key] = value
+		if key == "" {
+			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
+		}
+		result[key] = value
+		previousEmptyValue = value == ""
+	}
+	return result, nil
+}
+
+func frontmatterBounds(lines []string) (int, int, bool, error) {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start >= len(lines) || strings.TrimSpace(lines[start]) != "---" {
+		return 0, 0, false, nil
+	}
+
+	for i := start + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return start, i, true, nil
 		}
 	}
-	return result
+	return 0, 0, true, fmt.Errorf("unclosed markdown frontmatter starting at line %d", start+1)
+}
+
+func hasIndentPrefix(line string) bool {
+	return strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")
+}
+
+func unsupportedFrontmatterSyntaxError(lineNumber int, line string) error {
+	return fmt.Errorf(
+		"unsupported markdown frontmatter syntax at line %d: %q (supported syntax is one single-line key: value pair per non-empty line; lists, nesting, and multiline values are unsupported)",
+		lineNumber,
+		line,
+	)
 }
 
 // extractMermaidBlock finds the content of the first ```mermaid...``` fence.
@@ -261,22 +288,11 @@ func extractH2Sections(content string) ([]string, map[string]string) {
 // stripFrontmatter returns content with the leading --- block removed.
 func stripFrontmatter(content string) string {
 	lines := strings.Split(content, "\n")
-	start := -1
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "---" {
-			start = i
-			break
-		}
-	}
-	if start == -1 {
+	_, end, ok, err := frontmatterBounds(lines)
+	if err != nil || !ok {
 		return content
 	}
-	for i := start + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
-		}
-	}
-	return content
+	return strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
 }
 
 // loadMarkdownConfig parses a postman.md (single-file format) into a Config.
@@ -296,7 +312,10 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
 
 	// Parse global frontmatter
-	fm := parseFrontmatter(content)
+	fm, err := parseFrontmatter(content)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	if v, ok := fm["ui_node"]; ok {
 		cfg.UINode = v
 		cfg.uiNodeSet = true
@@ -339,7 +358,10 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		// Try h3 reserved sections first, fall back to frontmatter
 		role, tmpl := extractNodeFields(body)
 		if role == "" {
-			fm := parseFrontmatter(body)
+			fm, err := parseFrontmatter(body)
+			if err != nil {
+				return nil, fmt.Errorf("%s: node %q: %w", path, key, err)
+			}
 			role = fm["role"]
 		}
 		// Strip frontmatter from template (harmless if absent)
@@ -366,7 +388,10 @@ func loadNodeMarkdownFile(path string) (string, NodeConfig, error) {
 	// Try h3 reserved sections first, fall back to frontmatter
 	role, tmpl := extractNodeFields(content)
 	if role == "" {
-		fm := parseFrontmatter(content)
+		fm, err := parseFrontmatter(content)
+		if err != nil {
+			return "", NodeConfig{}, fmt.Errorf("%s: %w", path, err)
+		}
 		role = fm["role"]
 	}
 	// Strip frontmatter from template (harmless if absent)

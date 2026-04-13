@@ -137,6 +137,29 @@ Execute tasks from orchestrator. Report DONE or BLOCKED.
 
 Or as separate files in `nodes/worker.md`.
 
+Markdown frontmatter uses a small explicit subset. It is not real YAML.
+
+Supported syntax:
+
+- A leading `---` frontmatter block
+- One single-line `key: value` pair per non-empty line
+- Leading or trailing whitespace around a top-level `key: value` entry is
+  trimmed
+- Values may contain extra `:` characters because parsing splits on the first
+  `:`
+- Quotes are treated as literal characters
+
+Unsupported syntax:
+
+- List items such as `- worker`
+- Nested mappings or indented continuation lines
+- Multi-line values
+- Comment lines inside frontmatter
+- Unclosed frontmatter blocks
+
+Unsupported frontmatter fails at load time with a precise error instead of being
+silently ignored.
+
 ### 4.3. File Layout
 
 ```text

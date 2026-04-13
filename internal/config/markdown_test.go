@@ -21,9 +21,9 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// TestParseFrontmatter covers parse rules: first-colon split, whitespace trim,
-// no multi-line, no quotes, lines without colon ignored.
-func TestParseFrontmatter(t *testing.T) {
+// TestMarkdownFrontmatterAccept covers the supported syntax subset for
+// Markdown frontmatter.
+func TestMarkdownFrontmatterAccept(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -51,13 +51,15 @@ custom_key: You are: worker
 			},
 		},
 		{
-			name: "NoMultiline: second line not a continuation",
+			name: "BlankLinesAllowed",
 			content: `---
 role: assistant
-  continued line
+
+reply_command: send
 ---`,
 			want: map[string]string{
-				"role": "assistant",
+				"role":          "assistant",
+				"reply_command": "send",
 			},
 		},
 		{
@@ -79,25 +81,9 @@ custom_key: "You are worker"
 			},
 		},
 		{
-			name: "line without colon is ignored",
-			content: `---
-role: worker
-no_colon_here
----`,
-			want: map[string]string{
-				"role": "worker",
-			},
-		},
-		{
 			name:    "no frontmatter returns empty map",
 			content: "just body text",
 			want:    map[string]string{},
-		},
-		{
-			name: "unclosed frontmatter returns empty map",
-			content: `---
-role: worker`,
-			want: map[string]string{},
 		},
 		{
 			name: "keys are lowercased",
@@ -108,11 +94,25 @@ Role: executor
 				"role": "executor",
 			},
 		},
+		{
+			name: "leading blank lines before frontmatter are allowed",
+			content: `
+
+---
+role: executor
+---`,
+			want: map[string]string{
+				"role": "executor",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseFrontmatter(tt.content)
+			got, err := parseFrontmatter(tt.content)
+			if err != nil {
+				t.Fatalf("parseFrontmatter error: %v", err)
+			}
 			if len(got) != len(tt.want) {
 				t.Fatalf("len mismatch: got %d keys %v, want %d keys %v", len(got), got, len(tt.want), tt.want)
 			}
@@ -122,6 +122,57 @@ Role: executor
 				} else if gv != wv {
 					t.Errorf("key %q: got %q, want %q", k, gv, wv)
 				}
+			}
+		})
+	}
+}
+
+func TestMarkdownFrontmatterReject(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "ContinuationLine",
+			content: `---
+role: assistant
+  continued line
+---`,
+			want: `unsupported markdown frontmatter syntax at line 3: "  continued line"`,
+		},
+		{
+			name: "ListItem",
+			content: `---
+talks_to:
+  - worker
+---`,
+			want: `unsupported markdown frontmatter syntax at line 3: "  - worker"`,
+		},
+		{
+			name: "CommentLine",
+			content: `---
+role: worker
+# note
+---`,
+			want: `unsupported markdown frontmatter syntax at line 3: "# note"`,
+		},
+		{
+			name: "UnclosedFrontmatter",
+			content: `---
+role: worker`,
+			want: "unclosed markdown frontmatter starting at line 1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseFrontmatter(tt.content)
+			if err == nil {
+				t.Fatal("expected parseFrontmatter to fail")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error mismatch: got %q, want substring %q", err.Error(), tt.want)
 			}
 		})
 	}
@@ -348,7 +399,10 @@ func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
 		t.Fatalf("expected empty from extractNodeFields, got role=%q", role)
 	}
 	// Caller (loadMarkdownConfig) falls back to frontmatter
-	fm := parseFrontmatter(body)
+	fm, err := parseFrontmatter(body)
+	if err != nil {
+		t.Fatalf("parseFrontmatter error: %v", err)
+	}
 	if fm["role"] != "executor" {
 		t.Errorf("frontmatter role: got %q", fm["role"])
 	}
@@ -551,6 +605,49 @@ func TestLoadNodeMarkdownFile(t *testing.T) {
 		}
 		if nc.Template != "Body." {
 			t.Errorf("template: got %q", nc.Template)
+		}
+	})
+}
+
+func TestMarkdownLoadReject(t *testing.T) {
+	t.Run("single-file node frontmatter", func(t *testing.T) {
+		content := `## ` + "`worker`" + `
+
+---
+role:
+  nested: nope
+---
+
+Template body.
+`
+		dir := t.TempDir()
+		path := filepath.Join(dir, "postman.md")
+		writeFile(t, path, content)
+
+		_, err := loadMarkdownConfig(path)
+		if err == nil {
+			t.Fatal("expected loadMarkdownConfig to fail")
+		}
+		want := `node "worker": unsupported markdown frontmatter syntax at line 3: "  nested: nope"`
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error mismatch: got %q, want substring %q", err.Error(), want)
+		}
+	})
+
+	t.Run("split-file node frontmatter", func(t *testing.T) {
+		content := `---
+role: worker`
+		dir := t.TempDir()
+		path := filepath.Join(dir, "worker.md")
+		writeFile(t, path, content)
+
+		_, _, err := loadNodeMarkdownFile(path)
+		if err == nil {
+			t.Fatal("expected loadNodeMarkdownFile to fail")
+		}
+		want := "unclosed markdown frontmatter starting at line 1"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error mismatch: got %q, want substring %q", err.Error(), want)
 		}
 	})
 }
