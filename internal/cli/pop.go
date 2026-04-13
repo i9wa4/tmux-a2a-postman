@@ -12,6 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
@@ -91,6 +92,41 @@ func RunPop(args []string) error {
 	inboxPath, err := cliutil.ResolveInboxPath(inboxArgs)
 	if err != nil {
 		return err
+	}
+	sessionDir := filepath.Dir(filepath.Dir(inboxPath))
+	contextDir := filepath.Dir(sessionDir)
+	resolvedContextID := filepath.Base(contextDir)
+	baseDir := filepath.Dir(contextDir)
+	sessionName := filepath.Base(sessionDir)
+	nodeName := filepath.Base(inboxPath)
+
+	if !*peek && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+		cfg, err := config.LoadConfig(*configPath)
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
+			Command: projection.CompatibilitySubmitPop,
+			Node:    nodeName,
+		}, compatibilitySubmitTimeout(cfg.TmuxTimeout))
+		if err != nil {
+			return fmt.Errorf("compatibility submit pop: %w", err)
+		}
+		if response.Empty {
+			if *jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(struct{}{})
+			}
+			fmt.Fprintln(os.Stderr, "No unread messages.")
+			return nil
+		}
+		if *jsonOut {
+			parsed := parseMessageContent(response.Content, response.Filename)
+			return json.NewEncoder(os.Stdout).Encode(parsed)
+		}
+		fmt.Fprintf(os.Stderr, "[1/%d unread]\n", response.UnreadBefore)
+		fmt.Print(response.Content)
+		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", response.UnreadBefore-1)
+		return nil
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
@@ -199,23 +235,7 @@ func findInboxFileByName(baseDir, sessionName, contextID, filename string) (stri
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
-	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(absPath))), "read")
-	if err := os.MkdirAll(readDir, 0o700); err != nil {
-		return "", fmt.Errorf("creating read directory: %w", err)
-	}
-	dst := filepath.Join(readDir, filename)
-	if _, err := os.Stat(dst); err == nil {
-		if err := os.Remove(absPath); err != nil {
-			return "", fmt.Errorf("archiving message: %w", err)
-		}
-		return dst, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("archiving message: %w", err)
-	}
-	if err := os.Rename(absPath, dst); err != nil {
-		return "", fmt.Errorf("archiving message: %w", err)
-	}
-	return dst, nil
+	return message.ArchiveInboxMessage(absPath, filename)
 }
 
 // messageJSON holds JSON-serializable fields for a message (used by pop --json).

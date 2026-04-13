@@ -27,6 +27,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
@@ -128,6 +129,163 @@ func frontmatterValue(content, key string) string {
 		}
 	}
 	return ""
+}
+
+func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		log.Printf("postman: WARNING: compatibility mailbox append failed for %s: %v\n", eventType, err)
+	}
+}
+
+func syncCompatibilityMailboxProjection(sessionDir string) {
+	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
+		log.Printf("postman: WARNING: compatibility mailbox sync failed for %s: %v\n", sessionDir, err)
+	}
+}
+
+func compatibilitySubmitSessionDir(requestPath string) (string, bool) {
+	requestDir := filepath.Dir(requestPath)
+	if filepath.Base(requestDir) != "requests" {
+		return "", false
+	}
+	submitDir := filepath.Dir(requestDir)
+	if filepath.Base(submitDir) != "compatibility-submit" {
+		return "", false
+	}
+	snapshotDir := filepath.Dir(submitDir)
+	if filepath.Base(snapshotDir) != "snapshot" {
+		return "", false
+	}
+	sessionDir := filepath.Dir(snapshotDir)
+	if sessionDir == "." || sessionDir == string(filepath.Separator) {
+		return "", false
+	}
+	return sessionDir, true
+}
+
+func handleCompatibilitySubmitSend(sessionDir string, request projection.CompatibilitySubmitRequest) (projection.CompatibilitySubmitResponse, error) {
+	if request.RequestID == "" {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing request_id")
+	}
+	if request.Filename == "" {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing filename")
+	}
+	if strings.ContainsAny(request.Filename, "/\\") {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send filename must not contain path separators")
+	}
+	if request.Content == "" {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing content")
+	}
+	postDir := filepath.Join(sessionDir, "post")
+	if err := os.MkdirAll(postDir, 0o700); err != nil {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
+	}
+	postPath := filepath.Join(postDir, request.Filename)
+	if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("writing post message: %w", err)
+	}
+	return projection.CompatibilitySubmitResponse{
+		RequestID: request.RequestID,
+		Command:   request.Command,
+		HandledAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  request.Filename,
+	}, nil
+}
+
+func handleCompatibilitySubmitPop(sessionDir string, request projection.CompatibilitySubmitRequest) (projection.CompatibilitySubmitResponse, error) {
+	if request.RequestID == "" {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit pop missing request_id")
+	}
+	if request.Node == "" {
+		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit pop missing node")
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", request.Node)
+	msgs := message.ScanInboxMessages(inboxDir)
+	if len(msgs) == 0 {
+		return projection.CompatibilitySubmitResponse{
+			RequestID:    request.RequestID,
+			Command:      request.Command,
+			HandledAt:    time.Now().UTC().Format(time.RFC3339),
+			Empty:        true,
+			UnreadBefore: 0,
+		}, nil
+	}
+	sort.Slice(msgs, func(i, j int) bool {
+		return msgs[i].Filename < msgs[j].Filename
+	})
+
+	abs := filepath.Join(inboxDir, msgs[0].Filename)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return projection.CompatibilitySubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+		}
+		msgs = message.ScanInboxMessages(inboxDir)
+		if len(msgs) == 0 {
+			return projection.CompatibilitySubmitResponse{
+				RequestID:    request.RequestID,
+				Command:      request.Command,
+				HandledAt:    time.Now().UTC().Format(time.RFC3339),
+				Empty:        true,
+				UnreadBefore: 0,
+			}, nil
+		}
+		sort.Slice(msgs, func(i, j int) bool {
+			return msgs[i].Filename < msgs[j].Filename
+		})
+		abs = filepath.Join(inboxDir, msgs[0].Filename)
+		data, err = os.ReadFile(abs)
+		if err != nil {
+			return projection.CompatibilitySubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+		}
+	}
+	if _, err := message.ArchiveInboxMessage(abs, msgs[0].Filename); err != nil {
+		return projection.CompatibilitySubmitResponse{}, err
+	}
+	return projection.CompatibilitySubmitResponse{
+		RequestID:    request.RequestID,
+		Command:      request.Command,
+		HandledAt:    time.Now().UTC().Format(time.RFC3339),
+		Filename:     msgs[0].Filename,
+		Content:      string(data),
+		UnreadBefore: len(msgs),
+	}, nil
+}
+
+func processCompatibilitySubmitRequest(requestPath string) error {
+	sessionDir, ok := compatibilitySubmitSessionDir(requestPath)
+	if !ok {
+		return nil
+	}
+	request, err := projection.ReadCompatibilitySubmitRequest(requestPath)
+	if err != nil {
+		return err
+	}
+
+	var response projection.CompatibilitySubmitResponse
+	switch request.Command {
+	case projection.CompatibilitySubmitSend:
+		response, err = handleCompatibilitySubmitSend(sessionDir, request)
+	case projection.CompatibilitySubmitPop:
+		response, err = handleCompatibilitySubmitPop(sessionDir, request)
+	default:
+		err = fmt.Errorf("unsupported compatibility submit command %q", request.Command)
+		response = projection.CompatibilitySubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	if err != nil {
+		response.Error = err.Error()
+	}
+	if _, writeErr := projection.WriteCompatibilitySubmitResponse(sessionDir, response); writeErr != nil {
+		return writeErr
+	}
+	if removeErr := os.Remove(requestPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		log.Printf("postman: WARNING: failed to remove compatibility submit request %s: %v\n", requestPath, removeErr)
+	}
+	return nil
 }
 
 func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {
@@ -638,12 +796,23 @@ func RunDaemonLoop(
 			// Path-based routing
 			eventPath := event.Name
 
-			// Handle post/ directory events (any session)
-			if strings.HasSuffix(filepath.Dir(eventPath), "post") {
+			// Handle owner-local compatibility submit requests before mailbox watchers.
+			if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == "compatibility-submit" {
+				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
+					if err := processCompatibilitySubmitRequest(eventPath); err != nil {
+						events <- tui.DaemonEvent{
+							Type:    "error",
+							Message: fmt.Sprintf("compatibility submit %s: %v", filepath.Base(eventPath), err),
+						}
+					}
+				}
+			} else if strings.HasSuffix(filepath.Dir(eventPath), "post") {
 				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, time.Now())
+						sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+						syncCompatibilityMailboxProjection(sourceSessionDir)
 						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
@@ -700,6 +869,14 @@ func RunDaemonLoop(
 									if !watchedDirs[nodeReadDir] {
 										if err := watcher.Add(nodeReadDir); err == nil {
 											watchedDirs[nodeReadDir] = true
+										}
+									}
+									submitRequestsDir := projection.CompatibilitySubmitRequestsDir(nodeInfo.SessionDir)
+									if err := projection.EnsureCompatibilitySubmitDirs(nodeInfo.SessionDir); err != nil {
+										log.Printf("postman: WARNING: failed to create compatibility submit dirs for %s: %v\n", nodeName, err)
+									} else if !watchedDirs[submitRequestsDir] {
+										if err := watcher.Add(submitRequestsDir); err == nil {
+											watchedDirs[submitRequestsDir] = true
 										}
 									}
 								}
@@ -772,6 +949,15 @@ func RunDaemonLoop(
 									Message: fmt.Sprintf("deliver %s: %v", filename, err),
 								}
 							} else {
+								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+								sourceSessionName := filepath.Base(sourceSessionDir)
+								syncCompatibilityMailboxProjection(sourceSessionDir)
+								if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+									recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
+									if nodeInfo, ok := nodes[recipientFullName]; ok {
+										syncCompatibilityMailboxProjection(nodeInfo.SessionDir)
+									}
+								}
 								// Issue #53: Only terminal message-layer events suppress
 								// the normal post-delivery bookkeeping and follow-up TUI
 								// updates. Advisory success events should still pass
@@ -805,16 +991,40 @@ func RunDaemonLoop(
 									// Remove waiting files for sender: successfully sent, no longer composing reply
 									{
 										senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
+										clearedWaiting := false
 										if senderInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 											waitingDir := filepath.Join(senderSessionDir, "waiting")
 											pattern := filepath.Join(waitingDir, "*-to-"+senderInfo.From+".md")
 											if matches, globErr := filepath.Glob(pattern); globErr == nil {
 												for _, match := range matches {
+													waitingInfo, waitingParseErr := message.ParseMessageFilename(filepath.Base(match))
+													waitingContent, readErr := os.ReadFile(match)
+													if readErr != nil && !os.IsNotExist(readErr) {
+														log.Printf("postman: WARNING: failed to read waiting file %s: %v\n", match, readErr)
+													}
 													if removeErr := os.Remove(match); removeErr != nil {
 														log.Printf("postman: WARNING: failed to remove waiting file %s: %v\n", match, removeErr)
+														continue
 													}
+													from := ""
+													to := senderInfo.From
+													if waitingParseErr == nil {
+														from = waitingInfo.From
+														to = waitingInfo.To
+													}
+													recordCompatibilityMailboxPayload(senderSessionDir, filepath.Base(senderSessionDir), "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+														MessageID: filepath.Base(match),
+														From:      from,
+														To:        to,
+														Path:      shadowRelativePath(senderSessionDir, match),
+														Content:   string(waitingContent),
+													})
+													clearedWaiting = true
 												}
 											}
+										}
+										if clearedWaiting {
+											syncCompatibilityMailboxProjection(senderSessionDir)
 										}
 									}
 									// Issue #59: Extract session name from eventPath
@@ -866,11 +1076,12 @@ func RunDaemonLoop(
 					if strings.HasSuffix(filename, ".md") {
 						if info, err := message.ParseMessageFilename(filename); err == nil {
 							recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, time.Now())
+							sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+							sourceSessionName := filepath.Base(sourceSessionDir)
+							syncCompatibilityMailboxProjection(sourceSessionDir)
 							// Skip files moved to read/ by daemon (To == "postman").
 							// Skip daemon-originated files.
 							if info.To != "postman" && info.To != "daemon" {
-								sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-								sourceSessionName := filepath.Base(sourceSessionDir)
 								prefixedKey := sourceSessionName + ":" + info.To
 								// Create waiting file only for explicit reply-tracked reads or ui_node prompts.
 								if info.From != "postman" && info.From != "daemon" {
@@ -882,6 +1093,15 @@ func RunDaemonLoop(
 									} else if waitingContent, ok := waitingFileContentForRead(info, readContent, cfg, time.Now()); ok {
 										if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o600); writeErr != nil {
 											log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
+										} else {
+											recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_waiting_created", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+												MessageID: filename,
+												From:      info.From,
+												To:        info.To,
+												Path:      shadowRelativePath(sourceSessionDir, waitingFile),
+												Content:   waitingContent,
+											})
+											syncCompatibilityMailboxProjection(sourceSessionDir)
 										}
 									}
 								}
@@ -1123,6 +1343,14 @@ func RunDaemonLoop(
 					if !watchedDirs[nodeReadDir] {
 						if err := watcher.Add(nodeReadDir); err == nil {
 							watchedDirs[nodeReadDir] = true
+						}
+					}
+					submitRequestsDir := projection.CompatibilitySubmitRequestsDir(nodeInfo.SessionDir)
+					if err := projection.EnsureCompatibilitySubmitDirs(nodeInfo.SessionDir); err != nil {
+						log.Printf("postman: WARNING: failed to create compatibility submit dirs for %s: %v\n", nodeName, err)
+					} else if !watchedDirs[submitRequestsDir] {
+						if err := watcher.Add(submitRequestsDir); err == nil {
+							watchedDirs[submitRequestsDir] = true
 						}
 					}
 				}

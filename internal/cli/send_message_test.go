@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
@@ -951,5 +954,80 @@ role = "orchestrator"
 	}
 	if strings.Contains(content, "Reply: tmux-a2a-postman send --to <receiver>") {
 		t.Fatalf("default footer still contains hard-coded placeholder reply command:\n%s", content)
+	}
+}
+
+func TestRunSendMessage_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-submit", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+
+	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	go func() {
+		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestSeen <- request
+		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+		}
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-submit",
+			"--to", "worker",
+			"--body", "hello through submit",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	request := <-requestSeen
+	if request.Command != projection.CompatibilitySubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	}
+	if !strings.Contains(request.Filename, "-to-worker.md") {
+		t.Fatalf("request filename missing recipient: %q", request.Filename)
+	}
+	if !strings.Contains(request.Content, "hello through submit") {
+		t.Fatalf("request content missing body:\n%s", request.Content)
+	}
+	if stdout != "Sent: "+request.Filename+"\n" {
+		t.Fatalf("stdout = %q, want %q", stdout, "Sent: "+request.Filename+"\n")
+	}
+	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
 	}
 }

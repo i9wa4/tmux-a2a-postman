@@ -29,6 +29,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -308,6 +309,16 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 				watchedDirs[nodeReadDir] = true
 			}
 		}
+		submitRequestsDir := projection.CompatibilitySubmitRequestsDir(nodeInfo.SessionDir)
+		if err := projection.EnsureCompatibilitySubmitDirs(nodeInfo.SessionDir); err != nil {
+			log.Printf("⚠️  postman: warning: could not create compatibility submit dirs for %s: %v\n", nodeName, err)
+		} else if !watchedDirs[submitRequestsDir] {
+			if err := watcher.Add(submitRequestsDir); err != nil {
+				log.Printf("⚠️  postman: warning: could not watch %s compatibility submit directory: %v\n", nodeName, err)
+			} else {
+				watchedDirs[submitRequestsDir] = true
+			}
+		}
 	}
 
 	// Also watch default session directories (for postman's own messages)
@@ -328,6 +339,16 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			log.Printf("⚠️  postman: warning: could not watch read directory: %v\n", err)
 		} else {
 			watchedDirs[readDir] = true
+		}
+	}
+	submitRequestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
+	if err := projection.EnsureCompatibilitySubmitDirs(sessionDir); err != nil {
+		log.Printf("⚠️  postman: warning: could not create compatibility submit dirs for %s: %v\n", sessionName, err)
+	} else if !watchedDirs[submitRequestsDir] {
+		if err := watcher.Add(submitRequestsDir); err != nil {
+			log.Printf("⚠️  postman: warning: could not watch compatibility submit directory: %v\n", err)
+		} else {
+			watchedDirs[submitRequestsDir] = true
 		}
 	}
 

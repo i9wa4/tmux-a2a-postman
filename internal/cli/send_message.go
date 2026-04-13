@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -192,7 +193,8 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("edge violation: %q cannot send to %q — not allowed; allowed recipients: %s",
 			sender, *to, canTalkTo)
 	}
-	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
+	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
+	draftDir := filepath.Join(sessionDir, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
 	}
@@ -263,6 +265,23 @@ func RunSendMessage(args []string) error {
 			return fmt.Errorf("draft content has no YAML frontmatter closing delimiter (---)")
 		}
 		content = content[:idx] + "\nidempotency_key: " + *idempotencyKey + content[idx:]
+	}
+
+	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+		if _, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
+			Command:  projection.CompatibilitySubmitSend,
+			Filename: filename,
+			Content:  content,
+		}, compatibilitySubmitTimeout(cfg.TmuxTimeout)); err != nil {
+			return fmt.Errorf("compatibility submit send: %w", err)
+		}
+		if *jsonOut {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				Sent string `json:"sent"`
+			}{Sent: filename})
+		}
+		fmt.Printf("Sent: %s\n", filename)
+		return nil
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {

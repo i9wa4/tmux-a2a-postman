@@ -1510,18 +1510,24 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("journal.Replay failed: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	if len(events) != 4 {
+		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
 	}
-	if events[2].Type != "compatibility_mailbox_delivered" {
-		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_delivered", events[2].Type)
+	if events[2].Type != "compatibility_mailbox_post_consumed" {
+		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_post_consumed", events[2].Type)
+	}
+	if events[3].Type != "compatibility_mailbox_delivered" {
+		t.Fatalf("events[3].Type = %q, want compatibility_mailbox_delivered", events[3].Type)
 	}
 	var payload map[string]string
-	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
 	}
 	if payload["path"] != filepath.Join("inbox", "worker", filename) {
 		t.Fatalf("payload[path] = %q, want %q", payload["path"], filepath.Join("inbox", "worker", filename))
+	}
+	if payload["content"] != content {
+		t.Fatalf("payload[content] = %q, want %q", payload["content"], content)
 	}
 }
 

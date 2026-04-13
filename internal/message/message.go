@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -101,6 +102,34 @@ func writeDeadLetterFile(dstPath string, content []byte) error {
 		return err
 	}
 	return os.WriteFile(dstPath, content, 0o600)
+}
+
+func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		log.Printf("postman: WARNING: journal compatibility append failed for %s: %v\n", eventType, err)
+	}
+}
+
+func syncCompatibilityMailbox(sessionDir string) {
+	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
+		log.Printf("postman: WARNING: compatibility mailbox sync failed for %s: %v\n", sessionDir, err)
+	}
+}
+
+func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
+	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
+		return err
+	}
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID:  messageID,
+		From:       from,
+		To:         to,
+		Path:       shadowRelativePath(sessionDir, dstPath),
+		SourcePath: shadowRelativePath(sessionDir, srcPath),
+		Content:    content,
+	})
+	syncCompatibilityMailbox(sessionDir)
+	return nil
 }
 
 // StripDeadLetterSuffix removes the -dl-{reason} suffix from a dead-letter filename.
@@ -307,6 +336,15 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 			}
 		}
 		_ = os.Remove(postPath)
+		sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
+		sourceSessionName := filepath.Base(sourceSessionDir)
+		recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+			MessageID: filepath.Base(postPath),
+			From:      sender,
+			To:        rawRecipient,
+			Path:      shadowRelativePath(sourceSessionDir, postPath),
+		})
+		syncCompatibilityMailbox(sourceSessionDir)
 	}
 	return true
 }
@@ -318,7 +356,18 @@ func deadLetterMatchedPhonyPost(postPath string) {
 	}
 	dst := filepath.Join(dlDir,
 		strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
-	_ = moveToDeadLetter(postPath, dst)
+	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
+	sourceSessionName := filepath.Base(sourceSessionDir)
+	info, err := ParseMessageFilename(filepath.Base(postPath))
+	if err != nil {
+		_ = moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filepath.Base(postPath), "", "", "")
+		return
+	}
+	content, readErr := os.ReadFile(postPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		log.Printf("postman: WARNING: failed to read phony dead-letter payload %s: %v\n", postPath, readErr)
+	}
+	_ = moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filepath.Base(postPath), info.From, info.To, string(content))
 }
 
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
@@ -338,6 +387,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// postPath format: /path/to/context-id/session-name/post/message.md
 	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
+	messageContent := ""
 
 	// Check if file still exists (handles duplicate fsnotify event)
 	if _, err := os.Stat(postPath); os.IsNotExist(err) {
@@ -348,6 +398,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		// Parse error: move to dead-letter/ in source session
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixParseError)
+		rawContent, readErr := os.ReadFile(postPath)
+		if readErr == nil {
+			messageContent = string(rawContent)
+		}
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
@@ -355,7 +409,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s (parse error)", filename),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, "", "", messageContent)
 	}
 	senderSimpleName := nodeaddr.Simple(info.From)
 	recipientSimpleName := nodeaddr.Simple(info.To)
@@ -382,7 +436,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	// Guard: "daemon" remains a reserved sender name only valid for messages
@@ -397,7 +451,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	// Issue #161: Validate frontmatter envelope (skip only for daemon-origin messages)
@@ -409,6 +463,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		if readErr != nil {
 			log.Printf("postman: WARNING: failed to read message for envelope validation %s: %v\n", filename, readErr)
 		} else {
+			messageContent = string(rawBytes)
 			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
 			if parseErr != nil || envFrom != info.From || envTo != info.To {
 				dst := deadLetterDst(sourceSessionDir, filename, dlSuffixEnvelopeMismatch)
@@ -419,8 +474,17 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 						Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, deadLetterReasonEnvelopeMismatch),
 					}
 				}
-				return moveToDeadLetter(postPath, dst)
+				return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 			}
+		}
+	}
+
+	if messageContent == "" {
+		rawBytes, readErr := os.ReadFile(postPath)
+		if readErr == nil {
+			messageContent = string(rawBytes)
+		} else if !os.IsNotExist(readErr) {
+			log.Printf("postman: WARNING: failed to read message content %s: %v\n", filename, readErr)
 		}
 	}
 
@@ -442,7 +506,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown recipient)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 	nodeInfo := knownNodes[recipientFullName]
 
@@ -459,7 +523,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (foreign session)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
@@ -474,7 +538,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown sender)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	// Check routing permissions (DEFAULT DENY)
@@ -565,7 +629,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (routing denied)", info.From, info.To),
 				}
 			}
-			return moveToDeadLetter(postPath, dst)
+			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 		}
 	}
 
@@ -587,7 +651,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (sender session disabled)", info.From, info.To),
 				}
 			}
-			return moveToDeadLetter(postPath, dst)
+			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 		}
 	}
 	if info.From != "daemon" {
@@ -602,7 +666,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					Message: fmt.Sprintf("Dead-letter: %s -> %s (recipient session disabled)", info.From, info.To),
 				}
 			}
-			return moveToDeadLetter(postPath, dst)
+			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 		}
 	}
 
@@ -625,25 +689,29 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				Message: fmt.Sprintf("Dead-letter: %s -> %s (inbox queue full)", info.From, info.To),
 			}
 		}
-		return moveToDeadLetter(postPath, dst)
+		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	dst := filepath.Join(recipientInbox, filename)
 	if err := os.Rename(postPath, dst); err != nil {
 		return fmt.Errorf("moving to inbox: %w", err)
 	}
-	if err := journal.RecordProcessMailboxEvent(
-		recipientSessionDir,
-		recipientSessionName,
-		"compatibility_mailbox_delivered",
-		journal.VisibilityCompatibilityMailbox,
-		filename,
-		info.From,
-		info.To,
-		shadowRelativePath(recipientSessionDir, dst),
-		time.Now(),
-	); err != nil {
-		log.Printf("postman: WARNING: journal shadow delivery append failed for %s: %v\n", filename, err)
+	recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      info.From,
+		To:        info.To,
+		Path:      shadowRelativePath(sourceSessionDir, postPath),
+	})
+	recordCompatibilityMailboxPayload(recipientSessionDir, recipientSessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      info.From,
+		To:        info.To,
+		Path:      shadowRelativePath(recipientSessionDir, dst),
+		Content:   messageContent,
+	})
+	syncCompatibilityMailbox(sourceSessionDir)
+	if recipientSessionDir != sourceSessionDir {
+		syncCompatibilityMailbox(recipientSessionDir)
 	}
 
 	// Send tmux notification to the recipient pane
@@ -729,6 +797,14 @@ func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, re
 		if err := writeDeadLetterFile(dst, []byte(content)); err != nil {
 			return fmt.Errorf("writing queue-full dead-letter: %w", err)
 		}
+		recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+			MessageID: filename,
+			From:      sender,
+			To:        recipient,
+			Path:      shadowRelativePath(nodeInfo.SessionDir, dst),
+			Content:   content,
+		})
+		syncCompatibilityMailbox(nodeInfo.SessionDir)
 		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", recipient, inboxQueueCap, count, filename)
 		return nil
 	}
@@ -737,19 +813,14 @@ func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, re
 	if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing to inbox: %w", err)
 	}
-	if err := journal.RecordProcessMailboxEvent(
-		nodeInfo.SessionDir,
-		nodeInfo.SessionName,
-		"compatibility_mailbox_delivered",
-		journal.VisibilityCompatibilityMailbox,
-		filename,
-		sender,
-		recipient,
-		shadowRelativePath(nodeInfo.SessionDir, dst),
-		time.Now(),
-	); err != nil {
-		log.Printf("postman: WARNING: journal shadow system delivery append failed for %s: %v\n", filename, err)
-	}
+	recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      sender,
+		To:        recipient,
+		Path:      shadowRelativePath(nodeInfo.SessionDir, dst),
+		Content:   content,
+	})
+	syncCompatibilityMailbox(nodeInfo.SessionDir)
 
 	notificationPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, recipient, sender, nodeInfo.SessionName, notificationPath, livenessMap)
@@ -895,7 +966,18 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		if time.Since(fi.ModTime()) > ttl {
 			src := filepath.Join(postDir, entry.Name())
 			dst := deadLetterDst(sessionDir, entry.Name(), DlSuffixTTLExpired)
-			if err := moveToDeadLetter(src, dst); err == nil {
+			info, _ := ParseMessageFilename(entry.Name())
+			content, readErr := os.ReadFile(src)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				log.Printf("postman: WARNING: failed to read stale post payload %s: %v\n", src, readErr)
+			}
+			from := ""
+			to := ""
+			if info != nil {
+				from = info.From
+				to = info.To
+			}
+			if err := moveToDeadLetterWithProjection(sessionDir, filepath.Base(sessionDir), src, dst, entry.Name(), from, to, string(content)); err == nil {
 				log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
 				count++
 			}
@@ -1036,4 +1118,24 @@ func ScanInboxMessages(inboxPath string) []MessageInfo {
 	}
 
 	return messages
+}
+
+func ArchiveInboxMessage(absPath, filename string) (string, error) {
+	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(absPath))), "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating read directory: %w", err)
+	}
+	dst := filepath.Join(readDir, filename)
+	if _, err := os.Stat(dst); err == nil {
+		if err := os.Remove(absPath); err != nil {
+			return "", fmt.Errorf("archiving message: %w", err)
+		}
+		return dst, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("archiving message: %w", err)
+	}
+	if err := os.Rename(absPath, dst); err != nil {
+		return "", fmt.Errorf("archiving message: %w", err)
+	}
+	return dst, nil
 }

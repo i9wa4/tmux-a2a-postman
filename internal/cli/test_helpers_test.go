@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func installFakeTmuxForCLI(t *testing.T, postmanHome, sessionName, paneTitle string) {
@@ -108,4 +111,30 @@ role = "worker"
 		t.Fatalf("WriteFile config: %v", err)
 	}
 	return configPath
+}
+
+func awaitCompatibilitySubmitRequest(t *testing.T, sessionDir string, timeout time.Duration) (string, projection.CompatibilitySubmitRequest) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	requestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
+	for {
+		entries, err := os.ReadDir(requestsDir)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+					continue
+				}
+				requestPath := filepath.Join(requestsDir, entry.Name())
+				request, readErr := projection.ReadCompatibilitySubmitRequest(requestPath)
+				if readErr != nil {
+					t.Fatalf("ReadCompatibilitySubmitRequest(%s): %v", requestPath, readErr)
+				}
+				return requestPath, request
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for compatibility submit request in %s", requestsDir)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

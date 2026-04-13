@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRunPop_ContextIDFlagAccepted(t *testing.T) {
@@ -252,5 +254,67 @@ func TestRunPop_DoesNotAppendHardCodedReplyHint(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, contextID, "test-session", "read", messageFile)); err != nil {
 		t.Fatalf("archived file missing: %v", err)
+	}
+}
+
+func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-submit"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	originalInboxPath := filepath.Join(inboxDir, filename)
+	if err := os.WriteFile(originalInboxPath, []byte(messageFixture("orchestrator", "worker", "original unread payload")), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	go func() {
+		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestSeen <- request
+		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+			RequestID:    request.RequestID,
+			Command:      request.Command,
+			HandledAt:    time.Now().UTC().Format(time.RFC3339),
+			Filename:     filename,
+			Content:      messageFixture("orchestrator", "worker", "compatibility pop payload"),
+			UnreadBefore: 1,
+		}); err != nil {
+			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+		}
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	request := <-requestSeen
+	if request.Command != projection.CompatibilitySubmitPop {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitPop)
+	}
+	if request.Node != "worker" {
+		t.Fatalf("request.Node = %q, want %q", request.Node, "worker")
+	}
+	if !strings.Contains(stdout, "compatibility pop payload") {
+		t.Fatalf("stdout %q does not contain compatibility payload", stdout)
+	}
+	if !strings.Contains(stderr, "[1/1 unread]") || !strings.Contains(stderr, "Remaining: 0 unread") {
+		t.Fatalf("stderr missing unread counters:\n%s", stderr)
+	}
+	if _, err := os.Stat(originalInboxPath); err != nil {
+		t.Fatalf("compatibility submit path should not mutate inbox directly in CLI test: %v", err)
 	}
 }
