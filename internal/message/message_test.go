@@ -1307,6 +1307,44 @@ func TestDeliverMessage_PhonyDispatch(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_PhonyDispatch_AllowsSessionPrefixedRecipient(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(t.TempDir(), "own-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260201-030000-from-orchestrator-to-review-session:channel-a.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: ctx-01\n  from: orchestrator\n  to: review-session:channel-a\n  timestamp: 2026-02-01T03:00:00Z\n---\n\nphony message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"channel-a": {IsPhony: true},
+	}
+	reg := makeRegistry("channel-a", true, []string{"orchestrator"})
+	cfg := &config.Config{
+		BaseDir:     baseDir,
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+
+	if err := DeliverMessage(postPath, "ctx-01", nodes, reg, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	inboxDir := filepath.Join(baseDir, "ctx-01", "phony", "channel-a", "inbox")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected 1 phony inbox file, got err=%v n=%d", err, len(entries))
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Error("post/ file should be removed after session-prefixed phony dispatch")
+	}
+}
+
 func TestDeliverMessage_ProjectLocalEdgeViolationWarningTemplateShellExpansionBlocked(t *testing.T) {
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")

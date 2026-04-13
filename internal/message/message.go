@@ -258,11 +258,16 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 // in knownNodes) and, if so, delivers the message via DeliverToPhonyNode and
 // removes the post/ file.
 // NOTE: Must be called with the raw to: value, before ResolveNodeName —
-// phony nodes use bare keys in knownNodes; session-prefixed keys produced by
-// ResolveNodeName would miss them.
+// phony nodes are stored under bare keys, but session-prefixed phony aliases
+// fall back to the same bare binding-backed node.
 // Returns true when the message was handled; the caller should return nil.
 func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID string, cfg *config.Config, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, events chan<- DaemonEvent) bool {
-	nodeInfo, ok := knownNodes[rawRecipient]
+	phonyRecipient := rawRecipient
+	nodeInfo, ok := knownNodes[phonyRecipient]
+	if (!ok || !nodeInfo.IsPhony) && nodeaddr.Simple(rawRecipient) != rawRecipient {
+		phonyRecipient = nodeaddr.Simple(rawRecipient)
+		nodeInfo, ok = knownNodes[phonyRecipient]
+	}
 	if !ok || !nodeInfo.IsPhony {
 		return false
 	}
@@ -289,7 +294,7 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 		SenderID:   sender,
 		OriginalAt: originalAt,
 	}
-	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, rawRecipient, sender, registry, msg); delErr != nil {
+	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, phonyRecipient, sender, registry, msg); delErr != nil {
 		log.Printf("postman: WARNING: phony dispatch failed %s -> %s: %v\n", sender, rawRecipient, delErr)
 		deadLetterMatchedPhonyPost(postPath)
 	} else {
