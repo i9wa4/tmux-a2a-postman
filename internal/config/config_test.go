@@ -2384,3 +2384,39 @@ role = "worker"
 		t.Fatalf("project-local Markdown footer unexpectedly executed shell command under explicit --config: %q", got)
 	}
 }
+
+func TestLoadConfig_MessageFooter_ProjectLocalPrecedence(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(fakeHome, "project")
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+
+	writeFile(t, filepath.Join(xdgConfigDir, "postman.toml"), `
+[postman]
+message_footer = "XDG TOML footer"
+
+[worker]
+role = "worker"
+`)
+	writeFile(t, filepath.Join(xdgConfigDir, "postman.md"), "## `message_footer`\n\nXDG Markdown footer\n")
+	writeFile(t, filepath.Join(projectDir, ".tmux-a2a-postman", "postman.md"), "## `message_footer`\n\nProject Markdown footer\n")
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	got := strings.TrimSpace(cfg.MessageFooter)
+	want := "XDG Markdown footer\nProject Markdown footer"
+	if got != want {
+		t.Fatalf("MessageFooter precedence: got %q, want %q", got, want)
+	}
+	if strings.Contains(cfg.MessageFooter, "XDG TOML footer") {
+		t.Fatalf("MessageFooter should not keep replaced XDG TOML footer: %q", cfg.MessageFooter)
+	}
+}
