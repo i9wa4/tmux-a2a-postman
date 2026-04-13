@@ -146,6 +146,85 @@ func TestAppendEvent_FailsWhenLeaseChanges(t *testing.T) {
 	}
 }
 
+func TestAppendEvent_FencesLeaseAuthorityThroughCommit(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 16, 0, 0, time.UTC)
+
+	writer, err := OpenShadowWriter(sessionDir, "ctx-main", "main", 111, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	beforeWrite := make(chan struct{}, 1)
+	acquired := make(chan Lease, 1)
+	acquireErr := make(chan error, 1)
+
+	appendEventBeforeWriteHook = func() error {
+		beforeWrite <- struct{}{}
+		go func() {
+			lease, err := AcquireLease(sessionDir, writer.session, "ctx-other", "main", 222, now.Add(2*time.Second))
+			if err != nil {
+				acquireErr <- err
+				return
+			}
+			acquired <- lease
+		}()
+
+		select {
+		case err := <-acquireErr:
+			return fmt.Errorf("AcquireLease() completed before append commit: %w", err)
+		case lease := <-acquired:
+			return fmt.Errorf("AcquireLease() completed before append commit with lease %s/%d", lease.LeaseID, lease.LeaseEpoch)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		current, err := readCurrentLease(sessionDir)
+		if err != nil {
+			return err
+		}
+		if current.LeaseID != writer.lease.LeaseID || current.LeaseEpoch != writer.lease.LeaseEpoch {
+			return fmt.Errorf("current lease changed before append commit: got %s/%d want %s/%d", current.LeaseID, current.LeaseEpoch, writer.lease.LeaseID, writer.lease.LeaseEpoch)
+		}
+		return nil
+	}
+	defer func() {
+		appendEventBeforeWriteHook = nil
+	}()
+
+	event, err := writer.AppendEvent("compatibility_mailbox_posted", VisibilityCompatibilityMailbox, map[string]string{"path": "post/test-fenced.md"}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+
+	select {
+	case <-beforeWrite:
+	default:
+		t.Fatal("AppendEvent() did not reach before-write hook")
+	}
+
+	select {
+	case err := <-acquireErr:
+		t.Fatalf("AcquireLease() error = %v", err)
+	case newLease := <-acquired:
+		if newLease.LeaseEpoch != writer.lease.LeaseEpoch+1 {
+			t.Fatalf("AcquireLease() lease epoch = %d, want %d", newLease.LeaseEpoch, writer.lease.LeaseEpoch+1)
+		}
+		current, err := readCurrentLease(sessionDir)
+		if err != nil {
+			t.Fatalf("readCurrentLease() error = %v", err)
+		}
+		if current.LeaseID != newLease.LeaseID || current.LeaseEpoch != newLease.LeaseEpoch {
+			t.Fatalf("current lease = %s/%d, want %s/%d", current.LeaseID, current.LeaseEpoch, newLease.LeaseID, newLease.LeaseEpoch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("AcquireLease() did not complete after append commit")
+	}
+
+	if event.LeaseID != writer.lease.LeaseID || event.LeaseEpoch != writer.lease.LeaseEpoch {
+		t.Fatalf("event lease = %s/%d, want writer lease %s/%d", event.LeaseID, event.LeaseEpoch, writer.lease.LeaseID, writer.lease.LeaseEpoch)
+	}
+}
+
 func TestReplay_FailsClosedOnSequenceAndLeaseDefects(t *testing.T) {
 	t.Run("sequence gap", func(t *testing.T) {
 		sessionDir := t.TempDir()
@@ -246,6 +325,14 @@ func mustMarshalPayload(t *testing.T, value interface{}) []byte {
 		t.Fatalf("json.Marshal(payload): %v", err)
 	}
 	return data
+}
+
+func readCurrentLease(sessionDir string) (Lease, error) {
+	var lease Lease
+	if err := readJSONFile(CurrentLeasePath(sessionDir), &lease); err != nil {
+		return Lease{}, err
+	}
+	return lease, nil
 }
 
 func recordName(sequence int) string {

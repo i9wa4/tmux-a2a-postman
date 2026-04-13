@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -96,6 +97,8 @@ var processManager struct {
 	sync.RWMutex
 	manager *Manager
 }
+
+var appendEventBeforeWriteHook func() error
 
 func NewManager(contextID string, holderPID int) *Manager {
 	return &Manager{
@@ -262,28 +265,34 @@ func AcquireLease(sessionDir string, session SessionState, contextID, holderSess
 	}
 
 	path := currentLeasePath(sessionDir)
-	var existing Lease
-	epoch := 1
-	if err := readJSONFile(path, &existing); err == nil {
-		if existing.LeaseEpoch < 1 {
-			return Lease{}, fmt.Errorf("existing lease epoch must be >= 1")
+	var lease Lease
+	if err := withAppendAuthorityFence(sessionDir, func() error {
+		var existing Lease
+		epoch := 1
+		if err := readJSONFile(path, &existing); err == nil {
+			if existing.LeaseEpoch < 1 {
+				return fmt.Errorf("existing lease epoch must be >= 1")
+			}
+			epoch = existing.LeaseEpoch + 1
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("reading current lease: %w", err)
 		}
-		epoch = existing.LeaseEpoch + 1
-	} else if !os.IsNotExist(err) {
-		return Lease{}, fmt.Errorf("reading current lease: %w", err)
-	}
 
-	lease := Lease{
-		SchemaVersion:     schemaVersion,
-		LeaseID:           randomHex(12),
-		LeaseEpoch:        epoch,
-		HolderContextID:   contextID,
-		HolderSessionName: holderSessionName,
-		HolderPID:         holderPID,
-		AcquiredAt:        now.UTC().Format(time.RFC3339),
-	}
-	if err := writeJSONAtomically(path, lease); err != nil {
-		return Lease{}, fmt.Errorf("writing current lease: %w", err)
+		lease = Lease{
+			SchemaVersion:     schemaVersion,
+			LeaseID:           randomHex(12),
+			LeaseEpoch:        epoch,
+			HolderContextID:   contextID,
+			HolderSessionName: holderSessionName,
+			HolderPID:         holderPID,
+			AcquiredAt:        now.UTC().Format(time.RFC3339),
+		}
+		if err := writeJSONAtomically(path, lease); err != nil {
+			return fmt.Errorf("writing current lease: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return Lease{}, err
 	}
 	return lease, nil
 }
@@ -295,38 +304,49 @@ func (w *Writer) AppendEvent(eventType string, visibility Visibility, payload in
 	if !isKnownVisibility(visibility) {
 		return Event{}, fmt.Errorf("unknown visibility %q", visibility)
 	}
-	if err := w.ensureActiveLease(); err != nil {
+	var event Event
+	if err := withAppendAuthorityFence(w.sessionDir, func() error {
+		if err := w.ensureActiveLease(); err != nil {
+			return err
+		}
+
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshaling payload: %w", err)
+		}
+
+		sequence, err := nextSequence(recordsDir(w.sessionDir))
+		if err != nil {
+			return err
+		}
+
+		event = Event{
+			SchemaVersion:   schemaVersion,
+			Sequence:        sequence,
+			EventID:         randomHex(10),
+			Type:            eventType,
+			Visibility:      visibility,
+			SessionKey:      w.session.SessionKey,
+			TmuxSessionName: w.session.TmuxSessionName,
+			Generation:      w.session.Generation,
+			LeaseID:         w.lease.LeaseID,
+			LeaseEpoch:      w.lease.LeaseEpoch,
+			OccurredAt:      now.UTC().Format(time.RFC3339),
+			Payload:         payloadBytes,
+		}
+		if appendEventBeforeWriteHook != nil {
+			if err := appendEventBeforeWriteHook(); err != nil {
+				return err
+			}
+		}
+
+		filename := fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID)
+		if err := writeJSONAtomically(filepath.Join(recordsDir(w.sessionDir), filename), event); err != nil {
+			return fmt.Errorf("writing event: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return Event{}, err
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return Event{}, fmt.Errorf("marshaling payload: %w", err)
-	}
-
-	sequence, err := nextSequence(recordsDir(w.sessionDir))
-	if err != nil {
-		return Event{}, err
-	}
-
-	event := Event{
-		SchemaVersion:   schemaVersion,
-		Sequence:        sequence,
-		EventID:         randomHex(10),
-		Type:            eventType,
-		Visibility:      visibility,
-		SessionKey:      w.session.SessionKey,
-		TmuxSessionName: w.session.TmuxSessionName,
-		Generation:      w.session.Generation,
-		LeaseID:         w.lease.LeaseID,
-		LeaseEpoch:      w.lease.LeaseEpoch,
-		OccurredAt:      now.UTC().Format(time.RFC3339),
-		Payload:         payloadBytes,
-	}
-
-	filename := fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID)
-	if err := writeJSONAtomically(filepath.Join(recordsDir(w.sessionDir), filename), event); err != nil {
-		return Event{}, fmt.Errorf("writing event: %w", err)
 	}
 	return event, nil
 }
@@ -462,6 +482,10 @@ func leaseDir(sessionDir string) string {
 	return filepath.Join(sessionDir, "lease")
 }
 
+func appendAuthorityFencePath(sessionDir string) string {
+	return filepath.Join(leaseDir(sessionDir), "append-authority.lock")
+}
+
 func directoryNameFromEventType(eventType string) string {
 	switch {
 	case strings.HasSuffix(eventType, "_posted"):
@@ -489,6 +513,31 @@ func ensureOwnerOnlyDir(path string) error {
 		return err
 	}
 	return os.Chmod(path, 0o700)
+}
+
+func withAppendAuthorityFence(sessionDir string, fn func() error) error {
+	if err := ensureOwnerOnlyDir(leaseDir(sessionDir)); err != nil {
+		return fmt.Errorf("ensuring lease dir: %w", err)
+	}
+
+	path := appendAuthorityFencePath(sessionDir)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening append authority fence: %w", err)
+	}
+	defer file.Close()
+
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod append authority fence: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("locking append authority fence: %w", err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	}()
+
+	return fn()
 }
 
 func nextSequence(dir string) (int, error) {
