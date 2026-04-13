@@ -76,7 +76,7 @@ type Config struct {
 	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
 	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
 	StalledAlertTemplate            string `toml:"stalled_alert_template"`              // Alert body for stalled waiting-state detection
-	MessageFooter                   string `toml:"message_footer"`                      // Footer appended by `next` command after message content
+	MessageFooter                   string `toml:"message_footer"`                      // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
 	Edges                      []string `toml:"edges"`

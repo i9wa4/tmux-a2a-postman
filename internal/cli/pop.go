@@ -156,15 +156,11 @@ func RunPop(args []string) error {
 		return nil
 	}
 
-	archivedPath, err := archivePoppedMessage(abs, msgs[0].Filename)
+	_, err = archivePoppedMessage(abs, msgs[0].Filename)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
-	sender := extractSenderFromFile(archivedPath)
-	if sender != "" {
-		fmt.Printf("Next steps: Reply with tmux-a2a-postman send --to %s --body \"<your message>\"\n", sender)
-	}
 	return nil
 }
 
@@ -262,32 +258,4 @@ func parseMessageContent(content, filename string) messageJSON {
 		result.Body = strings.TrimSpace(strings.Join(lines[fmEnd+1:], "\n"))
 	}
 	return result
-}
-
-// extractSenderFromFile reads the YAML front matter of a message file and returns
-// the value of the params.from field. Returns empty string on any error or if not found.
-func extractSenderFromFile(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(string(data), "\n")
-	inFrontMatter := false
-	for _, line := range lines {
-		if line == "---" {
-			if !inFrontMatter {
-				inFrontMatter = true
-				continue
-			}
-			break // second --- closes front matter
-		}
-		if !inFrontMatter {
-			continue
-		}
-		// Match "  from: <value>" (2-space indent under params:)
-		if strings.HasPrefix(line, "  from: ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
-		}
-	}
-	return ""
 }

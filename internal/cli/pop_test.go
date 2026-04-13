@@ -219,10 +219,10 @@ func TestRunPop_FileHonorsExplicitContextID(t *testing.T) {
 	}
 }
 
-func TestRunPop_NextStepsReplyUsesSenderFromArchivedEnvelope(t *testing.T) {
+func TestRunPop_DoesNotAppendHardCodedReplyHint(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
-	contextID := "ctx-pop-next-steps"
+	contextID := "ctx-pop-no-hardcoded-footer"
 	messageFile := "20260407-220000-from-review-session:orchestrator-to-worker.md"
 	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
 	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
@@ -244,8 +244,8 @@ func TestRunPop_NextStepsReplyUsesSenderFromArchivedEnvelope(t *testing.T) {
 	if !strings.Contains(stdout, "Cross-session payload") {
 		t.Fatalf("stdout %q does not contain popped payload", stdout)
 	}
-	if !strings.Contains(stdout, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
-		t.Fatalf("stdout missing reader-scoped next steps reply hint:\n%s", stdout)
+	if strings.Contains(stdout, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
+		t.Fatalf("stdout still contains hard-coded next steps reply hint:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "Remaining: 0 unread") {
 		t.Fatalf("stderr missing unread count update:\n%s", stderr)

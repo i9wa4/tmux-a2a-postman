@@ -146,10 +146,11 @@ notification_template = """Hello, {node}!
 You've got mail: {filename}
 Run `tmux-a2a-postman pop` to read it. """
 
-# Message footer (appended by `pop` command after message content)
+# Message footer (appended to outgoing messages by `send` after the message content)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
+#            {reply_command} - reply command for the current recipient context
 message_footer = """You can talk to: {can_talk_to}
-Reply: tmux-a2a-postman send --to <receiver> --body "<your message>"
+Reply: {reply_command}
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
 
 # Daemon message template (shared envelope for ping, alert, and heartbeat)
