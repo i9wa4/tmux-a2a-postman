@@ -24,6 +24,20 @@ func TestRunGetSessionStatusOneline_JSONOutput_NoLiveContext(t *testing.T) {
 	}
 }
 
+func TestSessionStatusOneline_JSONOutput_NoActivePostman(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	var stdout bytes.Buffer
+	if err := RunGetSessionStatusOneline(&stdout, []string{"--json", "--session", "review"}); err != nil {
+		t.Fatalf("RunGetSessionStatusOneline: %v", err)
+	}
+
+	if stdout.String() != "{\"status\":\"\"}\n" {
+		t.Fatalf("stdout = %q, want empty-status JSON", stdout.String())
+	}
+}
+
 func TestIsShellCommand(t *testing.T) {
 	shells := []string{"bash", "zsh", "sh", "fish", "dash", "ksh", "csh", "tcsh", "nu"}
 	for _, s := range shells {

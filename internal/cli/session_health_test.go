@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
 func TestRunGetSessionHealth(t *testing.T) {
@@ -85,6 +87,61 @@ func TestRunGetSessionHealth_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 	if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
 		strings.Contains(err.Error(), "session name required")) {
 		t.Fatalf("RunGetSessionHealth should use tmux session fallback, got: %v", err)
+	}
+}
+
+func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	runErr := RunGetSessionHealth([]string{"--session", "review"})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer.Close: %v", err)
+	}
+	if runErr != nil {
+		t.Fatalf("RunGetSessionHealth: %v", runErr)
+	}
+
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll(stdout): %v", err)
+	}
+
+	var payload status.SessionHealth
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", string(out), err)
+	}
+
+	if payload.ContextID != "" {
+		t.Fatalf("ContextID = %q, want empty", payload.ContextID)
+	}
+	if payload.SessionName != "review" {
+		t.Fatalf("SessionName = %q, want %q", payload.SessionName, "review")
+	}
+	if payload.NodeCount != 0 {
+		t.Fatalf("NodeCount = %d, want 0", payload.NodeCount)
+	}
+	if payload.VisibleState != "" {
+		t.Fatalf("VisibleState = %q, want empty", payload.VisibleState)
+	}
+	if payload.Compact != "" {
+		t.Fatalf("Compact = %q, want empty", payload.Compact)
+	}
+	if len(payload.Nodes) != 0 {
+		t.Fatalf("len(Nodes) = %d, want 0", len(payload.Nodes))
+	}
+	if len(payload.Windows) != 0 {
+		t.Fatalf("len(Windows) = %d, want 0", len(payload.Windows))
 	}
 }
 

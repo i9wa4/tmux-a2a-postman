@@ -5,11 +5,30 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
+
+func isNoActivePostmanError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no active postman found")
+}
+
+func emptySessionHealth(sessionName string) status.SessionHealth {
+	return status.SessionHealth{
+		SessionName: sessionName,
+		Nodes:       []status.NodeHealth{},
+		Windows:     []status.SessionWindow{},
+	}
+}
+
+func emptyAllSessionHealth() status.AllSessionHealth {
+	return status.AllSessionHealth{
+		Sessions: []status.SessionHealth{},
+	}
+}
 
 // RunGetSessionHealth prints the canonical session-health JSON payload (#220).
 func RunGetSessionHealth(args []string) error {
@@ -70,6 +89,13 @@ func resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath string) (
 	} else {
 		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
 		if err != nil {
+			if isNoActivePostmanError(err) {
+				return sessionHealthTarget{
+					cfg:         cfg,
+					baseDir:     baseDir,
+					sessionName: sessionName,
+				}, true, err
+			}
 			return sessionHealthTarget{}, false, err
 		}
 	}
@@ -84,6 +110,9 @@ func resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath string) (
 
 func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string) (status.SessionHealth, bool, error) {
 	target, ok, err := resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath)
+	if isNoActivePostmanError(err) {
+		return emptySessionHealth(target.sessionName), true, nil
+	}
 	if err != nil || !ok {
 		return status.SessionHealth{}, ok, err
 	}
@@ -122,6 +151,9 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (sta
 		}
 		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
 		if err != nil {
+			if isNoActivePostmanError(err) {
+				return emptyAllSessionHealth(), cfg, true, nil
+			}
 			return status.AllSessionHealth{}, nil, false, err
 		}
 	}
