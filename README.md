@@ -211,6 +211,7 @@ Public knobs for this model live in `postman.toml`:
 - `ui_node`
 - `reminder_interval_messages`
 - `inbox_unread_threshold`
+- `retention_period_days`
 - `message_footer`
 - `[node].idle_timeout_seconds`
 - `[node].dropped_ball_timeout_seconds`
@@ -275,8 +276,14 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
 
 ```text
 {baseDir}/
+  lock/                 # preserved: session locks for live-daemon ownership
   {contextId}/
+    postman.log         # disposable: startup retention may prune inactive contexts
+    pane-activity.json  # disposable: startup retention may prune inactive contexts
+    phony/              # preserved: binding-backed inbox and dead-letter state
+    supervisor-memory/  # preserved: supervisor memory store and dead-letters
     {sessionName}/
+      postman.pid       # live-daemon marker for this tmux session
       draft/            # internal: draft staging area (use send instead)
       post/             # internal: outbox queue managed by postman daemon
       inbox/{node}/     # daemon delivers messages here
@@ -284,6 +291,22 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
       dead-letter/      # unroutable messages land here
       waiting/          # per-node waiting state files
 ```
+
+Runtime lifecycle classes
+
+| Path | Lifecycle | Startup retention behavior |
+| ---- | --------- | -------------------------- |
+| `{baseDir}/lock/` | Active coordination state | Always preserved |
+| `{baseDir}/{contextId}/{sessionName}/` | Session runtime state | Eligible only when the context has no live `postman.pid` anywhere under it |
+| `{baseDir}/{contextId}/postman.log` | Context-local log | Eligible only when the context is inactive |
+| `{baseDir}/{contextId}/pane-activity.json` | Context-local pane snapshot cache | Eligible only when the context is inactive |
+| `{baseDir}/{contextId}/phony/` | Durable phony-node delivery state | Always preserved |
+| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory state | Always preserved |
+
+`retention_period_days` controls that startup cleanup window. The embedded
+default is `90`. Set it to `0` to disable the broader inactive-context sweep.
+Cleanup keeps base-dir and XDG resolution unchanged, skips any context with a
+live daemon, and preserves unknown entries by default instead of guessing.
 
 ## 7. Deployment Model
 

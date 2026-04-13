@@ -135,3 +135,15 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon alert/ping/heartbeat mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
 	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter re-send instructions (written by dead-letter notification code)")
 }
+
+func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+	assertContainsNormalized(t, readme, "`retention_period_days` controls that startup cleanup window. The embedded default is `90`.")
+	assertContainsNormalized(t, readme, "| `{baseDir}/lock/` | Active coordination state | Always preserved |")
+	assertContainsNormalized(t, readme, "| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory state | Always preserved |")
+
+	commandsDoc := readRepoFile(t, "docs/commands.md")
+	assertContainsNormalized(t, commandsDoc, "### 2.4. Runtime Directory Lifecycle and Retention")
+	assertContainsNormalized(t, commandsDoc, "`retention_period_days` is the startup cleanup control for inactive runtime state. The embedded default is `90`.")
+	assertContainsNormalized(t, commandsDoc, "| Unknown entries | Preserved by default instead of pruning by name guesswork |")
+}

@@ -89,6 +89,40 @@ tmux-a2a-postman stop [--session NAME] [--config PATH] [--timeout N]
 
 Sends SIGTERM and polls until the process exits or timeout expires.
 
+### 2.4. Runtime Directory Lifecycle and Retention
+
+Base directory resolution is unchanged:
+
+1. `$POSTMAN_HOME`
+2. `base_dir` in config
+3. `$XDG_STATE_HOME/tmux-a2a-postman`
+
+`retention_period_days` is the startup cleanup control for inactive runtime
+state. The embedded default is `90`. Set it to `0` to disable the broader
+retention sweep.
+
+At daemon startup, retention cleanup only targets inactive contexts. A context
+is treated as active if any session under `{baseDir}/{contextId}/` still has a
+live `postman.pid`. The current daemon writes its own `postman.pid` before this
+cleanup runs, so the active session is not pruned during startup.
+
+Eligible paths inside an inactive context:
+
+| Path | Notes |
+| ---- | ----- |
+| `{baseDir}/{contextId}/{sessionName}/` | Session runtime tree containing `draft/`, `post/`, `inbox/`, `read/`, `dead-letter/`, `waiting/`, and optional `postman.pid` |
+| `{baseDir}/{contextId}/postman.log` | Context-local daemon log |
+| `{baseDir}/{contextId}/pane-activity.json` | Context-local pane activity cache |
+
+Always-preserved paths:
+
+| Path | Reason |
+| ---- | ------ |
+| `{baseDir}/lock/` | Live session ownership locks |
+| `{baseDir}/{contextId}/phony/` | Binding-backed inbox and dead-letter state |
+| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory store |
+| Unknown entries | Preserved by default instead of pruning by name guesswork |
+
 ## 3. Messaging Commands
 
 ### 3.1. send
