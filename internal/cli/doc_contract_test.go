@@ -131,4 +131,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, roleAuditorSkill, "quiet node")
 	assertContainsNormalized(t, roleAuditorSkill, "late reply")
 	assertContainsNormalized(t, roleAuditorSkill, "node_spinning_seconds")
+	assertContainsNormalized(t, roleAuditorSkill, "`message_footer` | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}`")
+	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon alert/ping/heartbeat mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
+	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter re-send instructions (written by dead-letter notification code)")
 }
