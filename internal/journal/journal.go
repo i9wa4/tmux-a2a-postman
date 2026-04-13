@@ -92,12 +92,39 @@ type Manager struct {
 	writers   map[string]*Writer
 }
 
+var processManager struct {
+	sync.RWMutex
+	manager *Manager
+}
+
 func NewManager(contextID string, holderPID int) *Manager {
 	return &Manager{
 		contextID: contextID,
 		holderPID: holderPID,
 		writers:   make(map[string]*Writer),
 	}
+}
+
+func InstallProcessManager(manager *Manager) {
+	processManager.Lock()
+	processManager.manager = manager
+	processManager.Unlock()
+}
+
+func ClearProcessManager() {
+	processManager.Lock()
+	processManager.manager = nil
+	processManager.Unlock()
+}
+
+func RecordProcessMailboxEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, messageID, from, to, relativePath string, now time.Time) error {
+	processManager.RLock()
+	manager := processManager.manager
+	processManager.RUnlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.RecordMailboxEvent(sessionDir, tmuxSessionName, eventType, visibility, messageID, from, to, relativePath, now)
 }
 
 func (m *Manager) Bootstrap(sessionDir, tmuxSessionName string, now time.Time) error {

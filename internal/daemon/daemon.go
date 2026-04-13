@@ -24,6 +24,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
@@ -609,6 +610,8 @@ func RunDaemonLoop(
 		}
 	}
 	mergePhonyNodes(nodes, registry)
+	installShadowJournalManager(sessionDir, contextID, selfSession, time.Now())
+	defer journal.ClearProcessManager()
 
 	for {
 		select {
@@ -640,6 +643,7 @@ func RunDaemonLoop(
 				if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
+						recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, time.Now())
 						// Re-discover nodes before each delivery (edge-filtered)
 						if freshNodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); err == nil {
 							filterNodesByEdges(freshNodes, cfg.Edges)
@@ -861,6 +865,7 @@ func RunDaemonLoop(
 					filename := filepath.Base(eventPath)
 					if strings.HasSuffix(filename, ".md") {
 						if info, err := message.ParseMessageFilename(filename); err == nil {
+							recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, time.Now())
 							// Skip files moved to read/ by daemon (To == "postman").
 							// Skip daemon-originated files.
 							if info.To != "postman" && info.To != "daemon" {

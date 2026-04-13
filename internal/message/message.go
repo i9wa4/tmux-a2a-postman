@@ -18,6 +18,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
@@ -631,6 +632,19 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err := os.Rename(postPath, dst); err != nil {
 		return fmt.Errorf("moving to inbox: %w", err)
 	}
+	if err := journal.RecordProcessMailboxEvent(
+		recipientSessionDir,
+		recipientSessionName,
+		"compatibility_mailbox_delivered",
+		journal.VisibilityCompatibilityMailbox,
+		filename,
+		info.From,
+		info.To,
+		shadowRelativePath(recipientSessionDir, dst),
+		time.Now(),
+	); err != nil {
+		log.Printf("postman: WARNING: journal shadow delivery append failed for %s: %v\n", filename, err)
+	}
 
 	// Send tmux notification to the recipient pane
 	// Issue #84: Get liveness map for talks_to_line filtering
@@ -723,6 +737,19 @@ func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, re
 	if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing to inbox: %w", err)
 	}
+	if err := journal.RecordProcessMailboxEvent(
+		nodeInfo.SessionDir,
+		nodeInfo.SessionName,
+		"compatibility_mailbox_delivered",
+		journal.VisibilityCompatibilityMailbox,
+		filename,
+		sender,
+		recipient,
+		shadowRelativePath(nodeInfo.SessionDir, dst),
+		time.Now(),
+	); err != nil {
+		log.Printf("postman: WARNING: journal shadow system delivery append failed for %s: %v\n", filename, err)
+	}
 
 	notificationPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
 	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, recipient, sender, nodeInfo.SessionName, notificationPath, livenessMap)
@@ -747,6 +774,14 @@ func countInboxMessages(inboxDir string) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func shadowRelativePath(sessionDir, fullPath string) string {
+	rel, err := filepath.Rel(sessionDir, fullPath)
+	if err != nil {
+		return filepath.Base(fullPath)
+	}
+	return rel
 }
 
 // sendDeadLetterNotification writes a dead-letter notification directly to the

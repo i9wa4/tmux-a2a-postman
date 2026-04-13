@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -1474,5 +1475,103 @@ func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *test
 	}
 	if !strings.Contains(string(warningBody), "send --context-id test-ctx --to <recipient>") {
 		t.Fatalf("warning missing normalized reply command: %q", string(warningBody))
+	}
+}
+
+func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	manager := journal.NewManager("test-ctx", 31337)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	filename := "20260414-173500-r1234-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T17:35:00Z\n---\n\nshadow delivery\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile postPath failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"review-session:worker":       {PaneID: "%1", SessionName: "review-session", SessionDir: sessionDir},
+		"review-session:orchestrator": {PaneID: "%2", SessionName: "review-session", SessionDir: sessionDir},
+	}
+	cfg := &config.Config{}
+	adjacency := map[string][]string{"orchestrator": {"worker"}}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	}
+	if events[2].Type != "compatibility_mailbox_delivered" {
+		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_delivered", events[2].Type)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
+	}
+	if payload["path"] != filepath.Join("inbox", "worker", filename) {
+		t.Fatalf("payload[path] = %q, want %q", payload["path"], filepath.Join("inbox", "worker", filename))
+	}
+}
+
+func TestDeliverSystemMessageDirect_AppendsShadowJournalDeliveredEvent(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	manager := journal.NewManager("test-ctx", 31337)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%1",
+		SessionName: "review-session",
+		SessionDir:  sessionDir,
+	}
+	cfg := &config.Config{}
+
+	if err := DeliverSystemMessageDirect(
+		"20260414-173600-r5678-from-postman-to-worker.md",
+		nodeInfo,
+		"worker",
+		"postman",
+		"test-ctx",
+		"system delivery",
+		cfg,
+		map[string][]string{},
+		map[string]discovery.NodeInfo{"review-session:worker": nodeInfo},
+		map[string]bool{},
+	); err != nil {
+		t.Fatalf("DeliverSystemMessageDirect failed: %v", err)
+	}
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	}
+	if events[2].Type != "compatibility_mailbox_delivered" {
+		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_delivered", events[2].Type)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
+	}
+	if payload["from"] != "postman" || payload["to"] != "worker" {
+		t.Fatalf("payload = %#v, want from=postman to=worker", payload)
 	}
 }
