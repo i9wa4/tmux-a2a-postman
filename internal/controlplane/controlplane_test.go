@@ -1,9 +1,12 @@
 package controlplane
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
@@ -117,5 +120,92 @@ func TestTmuxHandAdapterDeliverUsesHandAttachment(t *testing.T) {
 	}
 	if probeCalls != 1 {
 		t.Fatalf("ProbeRuntime calls = %d, want %d", probeCalls, 1)
+	}
+}
+
+func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	target := Target{
+		ActorID:     "worker",
+		RunID:       "review-session:worker",
+		SessionName: "review-session",
+		SessionDir:  sessionDir,
+		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%9"},
+	}
+
+	result, err := (TmuxHandAdapter{}).DeliverSystemMessage(target, SystemMessageDelivery{
+		Filename:        "20260414-120000-r1234-from-postman-to-worker.md",
+		Sender:          "postman",
+		Content:         "system delivery",
+		QueueCap:        20,
+		QueueFullSuffix: "-dl-queue-full",
+	})
+	if err != nil {
+		t.Fatalf("DeliverSystemMessage() error = %v", err)
+	}
+	if !result.Delivered {
+		t.Fatal("DeliverSystemMessage() delivered = false, want true")
+	}
+
+	body, err := os.ReadFile(filepath.Join(sessionDir, "inbox", "worker", "20260414-120000-r1234-from-postman-to-worker.md"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(body) != "system delivery" {
+		t.Fatalf("inbox body = %q, want %q", string(body), "system delivery")
+	}
+}
+
+func TestTmuxHandAdapterWriteHeartbeatTriggerRecyclesStaleAndWritesPost(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	target := Target{
+		ActorID:     "worker",
+		RunID:       "review-session:worker",
+		SessionName: "review-session",
+		SessionDir:  sessionDir,
+		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%9"},
+	}
+
+	if err := os.MkdirAll(filepath.Join(sessionDir, "inbox", "worker"), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	stalePath := filepath.Join(sessionDir, "inbox", "worker", "20260414-115500-r1111-from-postman-to-worker.md")
+	if err := os.WriteFile(stalePath, []byte("stale trigger"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	staleTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stalePath, staleTime, staleTime); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+
+	result, err := (TmuxHandAdapter{}).WriteHeartbeatTrigger(target, HeartbeatTrigger{
+		Filename: "20260414-120000-r2222-from-postman-to-worker.md",
+		Content:  "heartbeat trigger",
+		TTL:      2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("WriteHeartbeatTrigger() error = %v", err)
+	}
+	if !result.Written {
+		t.Fatal("WriteHeartbeatTrigger() written = false, want true")
+	}
+
+	if _, err := os.Stat(filepath.Join(sessionDir, "dead-letter", "20260414-115500-r1111-from-postman-to-worker.md")); err != nil {
+		t.Fatalf("dead-letter stale trigger missing: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(sessionDir, "post", "20260414-120000-r2222-from-postman-to-worker.md"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(body) != "heartbeat trigger" {
+		t.Fatalf("post body = %q, want %q", string(body), "heartbeat trigger")
 	}
 }

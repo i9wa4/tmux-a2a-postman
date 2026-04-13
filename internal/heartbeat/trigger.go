@@ -3,8 +3,6 @@ package heartbeat
 import (
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -40,43 +38,8 @@ func SendHeartbeatTrigger(
 	}
 	target := controlplane.TargetForNode(llmNode, nodeInfo)
 
-	// Single-slot guard: check inbox for existing triggers
-	inboxDir := target.InboxDir()
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("heartbeat: reading inbox %s: %w", inboxDir, err)
-	}
-
 	now := time.Now()
 	ttl := time.Duration(intervalSeconds*2) * time.Second
-	unread := 0
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		age := now.Sub(info.ModTime())
-		filePath := filepath.Join(inboxDir, entry.Name())
-		if age > ttl {
-			// Stale: recycle to dead-letter/
-			deadLetter := filepath.Join(target.SessionDir, "dead-letter", entry.Name())
-			if err := os.Rename(filePath, deadLetter); err != nil {
-				log.Printf("heartbeat: failed to recycle stale trigger %s: %v", filePath, err)
-				return fmt.Errorf("heartbeat: recycling stale trigger: %w", err)
-			}
-		} else {
-			unread++
-		}
-	}
-
-	if unread > 0 {
-		// LLM still processing
-		return nil
-	}
 
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
@@ -109,9 +72,17 @@ func SendHeartbeatTrigger(
 		"message":      expandedPrompt,
 	})
 
-	if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
-		log.Printf("heartbeat: failed to write trigger %s: %v", filePath, err)
-		return fmt.Errorf("heartbeat: writing trigger: %w", err)
+	adapter, err := controlplane.DefaultHandAdapter(target)
+	if err != nil {
+		return fmt.Errorf("heartbeat: selecting hand adapter: %w", err)
+	}
+	if _, err := adapter.WriteHeartbeatTrigger(target, controlplane.HeartbeatTrigger{
+		Filename: filename,
+		Content:  content,
+		TTL:      ttl,
+	}); err != nil {
+		log.Printf("heartbeat: %v", err)
+		return fmt.Errorf("heartbeat: %w", err)
 	}
 	return nil
 }

@@ -116,6 +116,17 @@ func syncCompatibilityMailbox(sessionDir string) {
 	}
 }
 
+func mailboxThreadIDFromContent(content string) string {
+	if content == "" {
+		return ""
+	}
+	metadata, err := ParseEnvelopeMetadata(content)
+	if err != nil {
+		return ""
+	}
+	return metadata.ThreadID
+}
+
 func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
@@ -124,6 +135,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		MessageID:  messageID,
 		From:       from,
 		To:         to,
+		ThreadID:   mailboxThreadIDFromContent(content),
 		Path:       shadowRelativePath(sessionDir, dstPath),
 		SourcePath: shadowRelativePath(sessionDir, srcPath),
 		Content:    content,
@@ -156,6 +168,12 @@ type MessageInfo struct {
 	To          string
 	SessionHash string // Optional 4-char hex hash extracted from filename (#198)
 	Filename    string // Original filename (set by ScanInboxMessages)
+}
+
+type EnvelopeMetadata struct {
+	From     string
+	To       string
+	ThreadID string
 }
 
 // Message carries the payload and metadata for phony-node delivery (#305).
@@ -342,6 +360,7 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 			MessageID: filepath.Base(postPath),
 			From:      sender,
 			To:        rawRecipient,
+			ThreadID:  mailboxThreadIDFromContent(string(body)),
 			Path:      shadowRelativePath(sourceSessionDir, postPath),
 		})
 		syncCompatibilityMailbox(sourceSessionDir)
@@ -700,12 +719,14 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		MessageID: filename,
 		From:      info.From,
 		To:        info.To,
+		ThreadID:  mailboxThreadIDFromContent(messageContent),
 		Path:      shadowRelativePath(sourceSessionDir, postPath),
 	})
 	recordCompatibilityMailboxPayload(recipientSessionDir, recipientSessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
 		To:        info.To,
+		ThreadID:  mailboxThreadIDFromContent(messageContent),
 		Path:      shadowRelativePath(recipientSessionDir, dst),
 		Content:   messageContent,
 	})
@@ -790,44 +811,24 @@ func DeliverSystemMessageDirectToTarget(filename string, target controlplane.Tar
 	if err := nodeaddr.Validate(target.ActorID); err != nil {
 		return fmt.Errorf("invalid recipient address: %w", err)
 	}
-	recipientInbox := target.InboxDir()
-	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
-		return fmt.Errorf("creating recipient inbox: %w", err)
+	adapter, err := controlplane.DefaultHandAdapter(target)
+	if err != nil {
+		return fmt.Errorf("selecting hand adapter: %w", err)
 	}
-
-	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
-		deadLetterDir := filepath.Join(target.SessionDir, "dead-letter")
-		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
-			return fmt.Errorf("creating dead-letter dir: %w", err)
-		}
-		dst := deadLetterDst(target.SessionDir, filename, dlSuffixQueueFull)
-		if err := writeDeadLetterFile(dst, []byte(content)); err != nil {
-			return fmt.Errorf("writing queue-full dead-letter: %w", err)
-		}
-		recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
-			MessageID: filename,
-			From:      sender,
-			To:        target.ActorID,
-			Path:      shadowRelativePath(target.SessionDir, dst),
-			Content:   content,
-		})
-		syncCompatibilityMailbox(target.SessionDir)
-		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", target.ActorID, inboxQueueCap, count, filename)
+	result, err := adapter.DeliverSystemMessage(target, controlplane.SystemMessageDelivery{
+		Filename:        filename,
+		Sender:          sender,
+		ThreadID:        mailboxThreadIDFromContent(content),
+		Content:         content,
+		QueueCap:        inboxQueueCap,
+		QueueFullSuffix: dlSuffixQueueFull,
+	})
+	if err != nil {
+		return err
+	}
+	if !result.Delivered {
 		return nil
 	}
-
-	dst := filepath.Join(recipientInbox, filename)
-	if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("writing to inbox: %w", err)
-	}
-	recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
-		MessageID: filename,
-		From:      sender,
-		To:        target.ActorID,
-		Path:      shadowRelativePath(target.SessionDir, dst),
-		Content:   content,
-	})
-	syncCompatibilityMailbox(target.SessionDir)
 
 	notificationPath := target.PostPath(filename)
 	sendDeliveryNotification(target, cfg, adjacency, knownNodes, contextID, target.ActorID, sender, target.SessionName, notificationPath, livenessMap)
@@ -902,20 +903,31 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 // from and to must appear as indented fields under the params: top-level key.
 // Returns an error if the frontmatter block is absent or if either field is missing.
 func parseEnvelopeFromTo(content string) (from, to string, err error) {
+	metadata, err := ParseEnvelopeMetadata(content)
+	if err != nil {
+		return "", "", err
+	}
+	return metadata.From, metadata.To, nil
+}
+
+// ParseEnvelopeMetadata extracts selected fields from the params block inside
+// a message frontmatter envelope.
+func ParseEnvelopeMetadata(content string) (EnvelopeMetadata, error) {
 	// Find opening "---\n"
 	first := strings.Index(content, "---\n")
 	if first < 0 {
-		return "", "", fmt.Errorf("no frontmatter block found")
+		return EnvelopeMetadata{}, fmt.Errorf("no frontmatter block found")
 	}
 	rest := content[first+4:]
 	// Find closing "\n---"
 	second := strings.Index(rest, "\n---")
 	if second < 0 {
-		return "", "", fmt.Errorf("frontmatter not closed")
+		return EnvelopeMetadata{}, fmt.Errorf("frontmatter not closed")
 	}
 	frontmatter := rest[:second]
 
 	// Scan lines for params: block, then collect from/to
+	var metadata EnvelopeMetadata
 	inParams := false
 	for _, line := range strings.Split(frontmatter, "\n") {
 		line = strings.TrimRight(line, "\r") // handle \r\n line endings
@@ -930,17 +942,19 @@ func parseEnvelopeFromTo(content string) (from, to string, err error) {
 				continue
 			}
 			if strings.HasPrefix(line, "  from: ") {
-				from = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
+				metadata.From = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
 			} else if strings.HasPrefix(line, "  to: ") {
-				to = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
+				metadata.To = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
+			} else if strings.HasPrefix(line, "  thread_id: ") {
+				metadata.ThreadID = strings.TrimSpace(strings.TrimPrefix(line, "  thread_id: "))
 			}
 		}
 	}
 
-	if from == "" || to == "" {
-		return "", "", fmt.Errorf("missing from or to in params block")
+	if metadata.From == "" || metadata.To == "" {
+		return EnvelopeMetadata{}, fmt.Errorf("missing from or to in params block")
 	}
-	return from, to, nil
+	return metadata, nil
 }
 
 // DrainStalePost moves stale messages from post/ to dead-letter/ with ttl-expired suffix.
