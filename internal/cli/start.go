@@ -222,13 +222,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		startupCollisions = nil
 	}
 	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	for nodeName := range nodes {
-		parts := strings.SplitN(nodeName, ":", 2)
-		rawName := parts[len(parts)-1]
-		if !edgeNodes[rawName] {
-			delete(nodes, nodeName)
-		}
-	}
+	nodes = filterDiscoveredEdgeNodes(nodes, edgeNodes)
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {
 		claimCmd := exec.Command(
@@ -260,12 +254,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			return
 		}
 		edgeNodesLocal := config.GetEdgeNodeNames(cfg.Edges)
-		for nodeName := range fresh {
-			parts := strings.SplitN(nodeName, ":", 2)
-			if !edgeNodesLocal[parts[len(parts)-1]] {
-				delete(fresh, nodeName)
-			}
-		}
+		fresh = filterDiscoveredEdgeNodes(fresh, edgeNodesLocal)
 		sharedNodes.Store(&fresh)
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
 	})
@@ -274,7 +263,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	for _, collision := range startupCollisions {
 		parts := strings.SplitN(collision.NodeKey, ":", 2)
 		rawName := parts[len(parts)-1]
-		if !edgeNodes[rawName] {
+		if !edgeNodes[collision.NodeKey] && !edgeNodes[rawName] {
 			continue
 		}
 		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
@@ -517,29 +506,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								}
 								// Pre-claim panes in the enabled session so the F3 guard passes.
 								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-								preClaimed := 0
-								if paneOut, paneErr := exec.Command("tmux", "list-panes", "-s", "-t", cmd.Target, "-F", "#{pane_id} #{pane_title}").Output(); paneErr == nil {
-									for _, line := range strings.Split(strings.TrimSpace(string(paneOut)), "\n") {
-										parts := strings.SplitN(line, " ", 2)
-										if len(parts) == 2 && edgeNodes[parts[1]] {
-											if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
-												log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
-											} else {
-												preClaimed++
-											}
-										}
-									}
-								} else {
-									log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", cmd.Target, paneErr)
-								}
+								preClaimed := preclaimSessionEdgePanes(cmd.Target, contextID, edgeNodes)
 								log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, cmd.Target, contextID)
 								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-								for nodeName := range refreshed {
-									parts := strings.SplitN(nodeName, ":", 2)
-									if !edgeNodes[parts[len(parts)-1]] {
-										delete(refreshed, nodeName)
-									}
-								}
+								refreshed = filterDiscoveredEdgeNodes(refreshed, edgeNodes)
 								sharedNodes.Store(&refreshed)
 								log.Printf("postman: node snapshot refreshed after enabling session %s (%d nodes)\n", cmd.Target, len(refreshed))
 							}

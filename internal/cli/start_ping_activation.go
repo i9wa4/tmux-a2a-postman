@@ -73,7 +73,12 @@ func preclaimSessionEdgePanes(sessionName, contextID string, edgeNodes map[strin
 	preClaimed := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 || !edgeNodes[parts[1]] {
+		if len(parts) != 2 {
+			continue
+		}
+		nodeName := parts[1]
+		nodeKey := sessionName + ":" + nodeName
+		if !edgeNodes[nodeName] && !edgeNodes[nodeKey] {
 			continue
 		}
 		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
@@ -90,7 +95,7 @@ func filterDiscoveredEdgeNodes(nodes map[string]discovery.NodeInfo, edgeNodes ma
 	for nodeName, nodeInfo := range nodes {
 		parts := strings.SplitN(nodeName, ":", 2)
 		rawName := parts[len(parts)-1]
-		if !edgeNodes[rawName] {
+		if !edgeNodes[nodeName] && !edgeNodes[rawName] {
 			continue
 		}
 		filtered[nodeName] = nodeInfo

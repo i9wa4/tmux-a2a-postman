@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
@@ -22,7 +23,7 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"dotfiles:orchestrator -- dotfiles:messenger"}
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")
@@ -83,6 +84,27 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("tmux pre-claim log missing %q: %q", want, logText)
 		}
+	}
+}
+
+func TestFilterDiscoveredEdgeNodes_PreservesSessionPrefixedKeys(t *testing.T) {
+	filtered := filterDiscoveredEdgeNodes(map[string]discovery.NodeInfo{
+		"dotfiles:messenger":    {},
+		"dotfiles:orchestrator": {},
+		"review:critic":         {},
+	}, map[string]bool{
+		"dotfiles:messenger":    true,
+		"dotfiles:orchestrator": true,
+	})
+
+	if _, ok := filtered["dotfiles:messenger"]; !ok {
+		t.Fatal("expected session-prefixed sender node to remain after edge filtering")
+	}
+	if _, ok := filtered["dotfiles:orchestrator"]; !ok {
+		t.Fatal("expected session-prefixed recipient node to remain after edge filtering")
+	}
+	if _, ok := filtered["review:critic"]; ok {
+		t.Fatal("unexpected unrelated node remained after edge filtering")
 	}
 }
 

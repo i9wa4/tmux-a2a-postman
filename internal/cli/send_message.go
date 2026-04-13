@@ -131,15 +131,12 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
-	recipientSimpleName := nodeaddr.Simple(*to)
+	recipientSessionName, recipientSimpleName, recipientHasSession := nodeaddr.Split(*to)
 	recipientIsPhony := false
 	if cfg.BindingsPath != "" {
 		registry, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders())
 		if loadErr == nil {
-			if *to != recipientSimpleName && registry.FindByNodeName(recipientSimpleName) != nil {
-				return fmt.Errorf("phony recipients must use bare node names: %q", *to)
-			}
-			if *to == recipientSimpleName && registry.FindByNodeName(recipientSimpleName) != nil {
+			if !recipientHasSession && registry.FindByNodeName(recipientSimpleName) != nil {
 				recipientIsPhony = true
 			}
 		}
@@ -167,11 +164,13 @@ func RunSendMessage(args []string) error {
 		}
 	}
 	recipientCandidates := []string{*to}
-	if recipientSimpleName == *to {
+	if !recipientHasSession {
 		recipientFullName := nodeaddr.Full(recipientSimpleName, sessionName)
 		if recipientFullName != *to {
 			recipientCandidates = append(recipientCandidates, recipientFullName)
 		}
+	} else if recipientSessionName == sessionName {
+		recipientCandidates = append(recipientCandidates, recipientSimpleName)
 	}
 	canTalkTo := strings.Join(talksToList, ", ")
 	if !recipientIsPhony {
