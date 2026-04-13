@@ -439,9 +439,13 @@ permitted_senders = ["messenger"]
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := fmt.Sprintf(`[postman]
 bindings_path = %q
+edges = ["messenger -- orchestrator"]
 
 [messenger]
 role = "messenger"
+
+[orchestrator]
+role = "orchestrator"
 `, bindingsPath)
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
@@ -468,6 +472,55 @@ role = "messenger"
 	if !strings.Contains(entries[0].Name(), "-to-channel-a.md") {
 		t.Fatalf("post filename missing phony recipient: %q", entries[0].Name())
 	}
+}
+
+func TestSendMessage_PhonyRecipientStillRequiresConfiguredSender(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx-send-phony"
+session_name = "external-session"
+pane_title = "channel-a-pane"
+pane_node_name = ""
+active = true
+permitted_senders = ["messenger"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("WriteFile bindings: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+bindings_path = %q
+
+[messenger]
+role = "messenger"
+`, bindingsPath)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-phony-missing-sender",
+		"--to", "channel-a",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected missing sender error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing sender") {
+		t.Fatalf("expected missing sender error, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-phony-missing-sender", "test-session"))
 }
 
 func TestSendMessage_AllowsPrefixedRecipientWhenBindingSharesSimpleName(t *testing.T) {

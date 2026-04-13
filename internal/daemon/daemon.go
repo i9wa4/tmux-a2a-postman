@@ -890,6 +890,22 @@ func RunDaemonLoop(
 						// Update shared state
 						cfg = newCfg
 						adjacency = newAdjacency
+						if newCfg.BindingsPath != "" {
+							watched := false
+							for _, watchedConfigPath := range configPaths {
+								if watchedConfigPath == newCfg.BindingsPath {
+									watched = true
+									break
+								}
+							}
+							if !watched {
+								if err := watcher.Add(newCfg.BindingsPath); err != nil {
+									log.Printf("postman: WARNING: failed to watch bindings registry %s: %v\n", newCfg.BindingsPath, err)
+								} else {
+									configPaths = append(configPaths, newCfg.BindingsPath)
+								}
+							}
+						}
 
 						// #306: Reload binding registry on config change.
 						if newCfg.BindingsPath != "" {
@@ -900,6 +916,26 @@ func RunDaemonLoop(
 							}
 						} else {
 							registry = nil
+						}
+						if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); discErr != nil {
+							log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
+							realNodes := make(map[string]discovery.NodeInfo)
+							for nodeName, nodeInfo := range nodes {
+								if nodeInfo.IsPhony {
+									continue
+								}
+								realNodes[nodeName] = nodeInfo
+							}
+							mergePhonyNodes(realNodes, registry)
+							nodes = realNodes
+						} else {
+							filterNodesByEdges(freshNodes, cfg.Edges)
+							mergePhonyNodes(freshNodes, registry)
+							nodes = freshNodes
+						}
+						if sharedNodes != nil {
+							nodesSnapshot := nodes
+							sharedNodes.Store(&nodesSnapshot)
 						}
 
 						// Send config update event

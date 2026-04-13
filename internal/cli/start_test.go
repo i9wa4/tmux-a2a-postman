@@ -119,6 +119,20 @@ func TestResolveWatchedConfigPath(t *testing.T) {
 	}
 }
 
+func TestAppendWatchedPaths(t *testing.T) {
+	initial := []string{"config.toml", "local.toml"}
+	got := appendWatchedPaths(initial, "", "bindings.toml", "config.toml")
+	want := []string{"config.toml", "local.toml", "bindings.toml"}
+	if len(got) != len(want) {
+		t.Fatalf("appendWatchedPaths len = %d, want %d; got=%v want=%v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("appendWatchedPaths[%d] = %q, want %q; full got=%v want=%v", i, got[i], want[i], got, want)
+		}
+	}
+}
+
 func writeWatcherConfigFixture(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -365,5 +379,16 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	}
 	if markerIndex > discoveryIndex {
 		t.Fatal("start.go still publishes the enabled-session marker after startup discovery begins")
+	}
+}
+
+func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilterAndBindingsWatch(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if !strings.Contains(source, "watchedConfigPaths := appendWatchedPaths(resolveWatchedConfigPaths(configPath), cfg.BindingsPath)") {
+		t.Fatal("start.go no longer watches the active bindings registry alongside config files")
+	}
+	if strings.Count(source, "filterDiscoveredEdgeNodes(") < 3 {
+		t.Fatal("start.go no longer routes startup discovery through the shared exact-or-raw edge filter")
 	}
 }

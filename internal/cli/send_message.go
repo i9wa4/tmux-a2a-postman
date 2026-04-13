@@ -173,10 +173,10 @@ func RunSendMessage(args []string) error {
 		recipientCandidates = append(recipientCandidates, recipientSimpleName)
 	}
 	canTalkTo := strings.Join(talksToList, ", ")
+	if !senderPresent {
+		return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
+	}
 	if !recipientIsPhony {
-		if !senderPresent {
-			return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
-		}
 		recipientPresent := false
 		for _, candidate := range recipientCandidates {
 			if _, ok := adjacency[candidate]; ok {
