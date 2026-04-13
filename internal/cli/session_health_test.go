@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -221,6 +222,18 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
+	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+		Edges: []string{"worker -- critic"},
+	})
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy: %v", err)
+	}
+	appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+		baseDir:     tmpDir,
+		contextID:   contextID,
+		sessionName: sessionName,
+	}, legacy)
+
 	oldStdout := os.Stdout
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -350,6 +363,18 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+		Edges: []string{"worker -- critic"},
+	})
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy: %v", err)
+	}
+	appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+		baseDir:     tmpDir,
+		contextID:   contextID,
+		sessionName: sessionName,
+	}, legacy)
 
 	oldStdout := os.Stdout
 	reader, writer, err := os.Pipe()
@@ -519,6 +544,15 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
+	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	if err != nil {
+		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+	}
+	if !ok {
+		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+	}
+	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+
 	payload, _, ok, err := collectAllSessionHealth(contextID, "", configPath)
 	if err != nil {
 		t.Fatalf("collectAllSessionHealth: %v", err)
@@ -611,6 +645,15 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	if err != nil {
+		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+	}
+	if !ok {
+		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+	}
+	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
 	payload, _, ok, err := collectAllSessionHealth(contextID, "", configPath)
 	if err != nil {

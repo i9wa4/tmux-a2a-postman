@@ -262,6 +262,15 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) 
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
+	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	if err != nil {
+		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+	}
+	if !ok {
+		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+	}
+	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+
 	var stdout bytes.Buffer
 	if err := RunGetSessionStatusOneline(&stdout, []string{
 		"--config", configPath,
@@ -350,6 +359,15 @@ func TestRunGetSessionStatusOneline_JSONOutput_PreservesSessionIDIndicesAcrossSe
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	if err != nil {
+		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+	}
+	if !ok {
+		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+	}
+	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
 	var stdout bytes.Buffer
 	if err := RunGetSessionStatusOneline(&stdout, []string{

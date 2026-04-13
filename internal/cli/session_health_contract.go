@@ -97,8 +97,10 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	if projected, ok := projectedSessionHealth(sessionDir); ok {
 		return projected, nil
 	}
-	projectedInboxCounts, useProjectedInboxCounts := projectedInboxCounts(sessionDir, sessionName)
-	return collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName, cfg, projectedInboxCounts, useProjectedInboxCounts)
+	return status.SessionHealth{
+		ContextID:   contextID,
+		SessionName: sessionName,
+	}, nil
 }
 
 func collectSessionHealthLegacy(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {

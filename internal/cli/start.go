@@ -25,6 +25,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -125,6 +126,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
+	}
+	journalManager := journal.NewManager(contextID, os.Getpid())
+	journal.InstallProcessManager(journalManager)
+	defer journal.ClearProcessManager()
+	if err := journalManager.Bootstrap(sessionDir, sessionName, time.Now()); err != nil {
+		log.Printf("postman: WARNING: journal shadow bootstrap failed for %s: %v\n", sessionName, err)
 	}
 
 	if tmuxSessionName == "" {
@@ -401,13 +408,13 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
-	tuiEvents := daemonEvents
+	var tuiEvents chan tui.DaemonEvent
 	if !noTUI {
 		tuiEvents = make(chan tui.DaemonEvent, 200)
-		safeGo("tui-health-relay", nil, func() {
-			relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
-		})
 	}
+	safeGo("tui-health-relay", nil, func() {
+		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
+	})
 	safeGo("daemon-loop", daemonEvents, func() {
 		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, watchedConfigPaths, watchedNodesDirs, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
 	})
@@ -420,6 +427,11 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Build session info from nodes (all disabled by default)
 	sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
+	for _, sessionInfo := range sessionList {
+		if _, err := refreshProjectedSessionHealth(baseDir, contextID, sessionInfo.Name, cfg); err != nil {
+			log.Printf("postman: WARNING: initial session health snapshot skipped %s: %v\n", sessionInfo.Name, err)
+		}
+	}
 
 	// Send initial status
 	daemonEvents <- tui.DaemonEvent{

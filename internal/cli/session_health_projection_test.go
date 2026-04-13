@@ -77,6 +77,7 @@ func TestGetHealthProjectionParity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("collectSessionHealthLegacy() error = %v", err)
 			}
+			appendSessionHealthSnapshot(t, fixture, legacy)
 			projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 			if err != nil {
 				t.Fatalf("collectSessionHealth() error = %v", err)
@@ -108,6 +109,7 @@ func TestGetHealthOnelineProjectionParity(t *testing.T) {
 	if !ok {
 		t.Fatal("collectAllSessionHealthLegacy() ok = false, want true")
 	}
+	appendSessionHealthSnapshot(t, fixture, legacy.Sessions[0])
 
 	projected, _, ok, err := collectAllSessionHealth(fixture.contextID, "", fixture.configPath)
 	if err != nil {
@@ -165,6 +167,7 @@ func TestTUIProjectionParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
 	}
+	appendSessionHealthSnapshot(t, fixture, legacy)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -192,6 +195,38 @@ func TestTUIProjectionParity(t *testing.T) {
 		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
 	}
 	assertSessionHealthParity(t, legacy, got)
+}
+
+func TestGetHealthDoesNotFallbackWithoutSnapshot(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"worker": 1},
+		map[string]string{
+			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
+		},
+		[]projectionJournalStep{
+			{kind: "deliver", to: "worker"},
+		},
+	)
+
+	projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealth() error = %v", err)
+	}
+
+	if projected.ContextID != fixture.contextID {
+		t.Fatalf("ContextID = %q, want %q", projected.ContextID, fixture.contextID)
+	}
+	if projected.SessionName != fixture.sessionName {
+		t.Fatalf("SessionName = %q, want %q", projected.SessionName, fixture.sessionName)
+	}
+	if projected.VisibleState != "" || projected.Compact != "" || projected.NodeCount != 0 {
+		t.Fatalf("unexpected fallback payload: %#v", projected)
+	}
+	if len(projected.Nodes) != 0 || len(projected.Windows) != 0 {
+		t.Fatalf("unexpected fallback topology: %#v", projected)
+	}
 }
 
 func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
@@ -507,6 +542,18 @@ func appendSessionHealthSnapshot(t *testing.T, fixture sessionHealthProjectionFi
 		now.Add(time.Second),
 	); err != nil {
 		t.Fatalf("AppendEvent(session health snapshot): %v", err)
+	}
+}
+
+func appendAllSessionHealthSnapshots(t *testing.T, baseDir, contextID string, sessions []status.SessionHealth) {
+	t.Helper()
+
+	for _, health := range sessions {
+		appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+			baseDir:     baseDir,
+			contextID:   contextID,
+			sessionName: health.SessionName,
+		}, health)
 	}
 }
 

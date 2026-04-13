@@ -10,7 +10,9 @@ import (
 )
 
 func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEvent, tuiEvents chan<- tui.DaemonEvent, baseDir, contextID string, cfg *config.Config) {
-	defer close(tuiEvents)
+	if tuiEvents != nil {
+		defer close(tuiEvents)
+	}
 
 	knownSessions := make(map[string]struct{})
 
@@ -23,7 +25,9 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 				return
 			}
 
-			tuiEvents <- event
+			if tuiEvents != nil {
+				tuiEvents <- event
+			}
 			refreshKnownSessions(knownSessions, event)
 			if !shouldRefreshSessionHealth(event.Type) || len(knownSessions) == 0 {
 				continue
@@ -35,11 +39,13 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 					log.Printf("postman: session health relay skipped %s: %v\n", sessionName, err)
 					continue
 				}
-				tuiEvents <- tui.DaemonEvent{
-					Type: "session_health_update",
-					Details: map[string]interface{}{
-						"health": health,
-					},
+				if tuiEvents != nil {
+					tuiEvents <- tui.DaemonEvent{
+						Type: "session_health_update",
+						Details: map[string]interface{}{
+							"health": health,
+						},
+					}
 				}
 			}
 		}

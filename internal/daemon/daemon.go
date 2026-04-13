@@ -768,8 +768,6 @@ func RunDaemonLoop(
 		}
 	}
 	mergePhonyNodes(nodes, registry)
-	installShadowJournalManager(sessionDir, contextID, selfSession, time.Now())
-	defer journal.ClearProcessManager()
 
 	for {
 		select {
