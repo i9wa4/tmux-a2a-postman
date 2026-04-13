@@ -14,6 +14,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -89,6 +90,24 @@ func orderedEdgeNodeNames(edges []string) []string {
 }
 
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	projectedInboxCounts, useProjectedInboxCounts := projectedInboxCounts(sessionDir, sessionName)
+	return collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName, cfg, projectedInboxCounts, useProjectedInboxCounts)
+}
+
+func collectSessionHealthLegacy(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	return collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName, cfg, nil, false)
+}
+
+func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool) {
+	projected, ok, err := projection.ProjectMailboxState(sessionDir, sessionName)
+	if err != nil || !ok {
+		return nil, false
+	}
+	return projected.InboxCounts, true
+}
+
+func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionHealth, error) {
 	result := status.SessionHealth{
 		ContextID:   contextID,
 		SessionName: sessionName,
@@ -137,12 +156,16 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 		}
 
 		pane := paneBySimpleName[simpleName]
+		inboxCount := countMarkdownFiles(filepath.Join(sessionDir, "inbox", simpleName))
+		if useProjectedInboxCounts {
+			inboxCount = inboxCounts[simpleName]
+		}
 		node := status.NodeHealth{
 			Name:           simpleName,
 			PaneID:         nodeInfo.PaneID,
 			PaneState:      paneStates[nodeInfo.PaneID],
 			WaitingState:   waitingStates[simpleName],
-			InboxCount:     countMarkdownFiles(filepath.Join(sessionDir, "inbox", simpleName)),
+			InboxCount:     inboxCount,
 			WaitingCount:   waitingCounts[simpleName],
 			CurrentCommand: pane.currentCommand,
 		}

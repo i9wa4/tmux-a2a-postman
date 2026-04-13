@@ -60,6 +60,8 @@ type sessionHealthTarget struct {
 	sessionName string
 }
 
+type sessionHealthCollector func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error)
+
 func resolveSessionHealthTarget(contextIDFlag, sessionFlag, configPath string) (sessionHealthTarget, bool, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -125,6 +127,14 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 }
 
 func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (status.AllSessionHealth, *config.Config, bool, error) {
+	return collectAllSessionHealthWithCollector(contextIDFlag, sessionFlag, configPath, collectSessionHealth)
+}
+
+func collectAllSessionHealthLegacy(contextIDFlag, sessionFlag, configPath string) (status.AllSessionHealth, *config.Config, bool, error) {
+	return collectAllSessionHealthWithCollector(contextIDFlag, sessionFlag, configPath, collectSessionHealthLegacy)
+}
+
+func collectAllSessionHealthWithCollector(contextIDFlag, sessionFlag, configPath string, collector sessionHealthCollector) (status.AllSessionHealth, *config.Config, bool, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return status.AllSessionHealth{}, nil, false, fmt.Errorf("loading config: %w", err)
@@ -172,7 +182,7 @@ func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (sta
 		if err != nil {
 			return status.AllSessionHealth{}, nil, true, err
 		}
-		health, err := collectSessionHealth(baseDir, resolvedContextID, sessionName, cfg)
+		health, err := collector(baseDir, resolvedContextID, sessionName, cfg)
 		if err != nil {
 			return status.AllSessionHealth{}, nil, true, err
 		}
