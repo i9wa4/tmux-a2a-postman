@@ -2,11 +2,11 @@ package ping
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -26,12 +26,9 @@ func ExtractSimpleName(fullName string) string {
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
 func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	// Extract simple name for filename and config lookups (Issue #33)
-	simpleName := ExtractSimpleName(nodeName)
-
-	// Derive sourceSessionName from nodeInfo.SessionName so each target node
-	// resolves its own session correctly (fixes multi-session regression).
-	sourceSessionName := nodeInfo.SessionName
+	target := controlplane.TargetForNode(nodeName, nodeInfo)
+	simpleName := target.ActorID
+	sourceSessionName := target.SessionName
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
@@ -41,7 +38,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	if err != nil {
 		return fmt.Errorf("generating filename: %w", err)
 	}
-	postPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
+	postPath := target.PostPath(filename)
 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
@@ -54,16 +51,5 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		"role_content": roleContent,
 	})
 
-	return message.DeliverSystemMessageDirect(
-		filename,
-		nodeInfo,
-		simpleName,
-		"postman",
-		contextID,
-		content,
-		cfg,
-		adjacency,
-		nodes,
-		livenessMap,
-	)
+	return message.DeliverSystemMessageDirectToTarget(filename, target, "postman", contextID, content, cfg, adjacency, nodes, livenessMap)
 }

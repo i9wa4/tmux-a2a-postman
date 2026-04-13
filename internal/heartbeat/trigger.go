@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -37,9 +38,10 @@ func SendHeartbeatTrigger(
 		log.Printf("heartbeat: llm_node %q not found in active nodes; skipping", llmNode)
 		return nil
 	}
+	target := controlplane.TargetForNode(llmNode, nodeInfo)
 
 	// Single-slot guard: check inbox for existing triggers
-	inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", llmNode)
+	inboxDir := target.InboxDir()
 	entries, err := os.ReadDir(inboxDir)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("heartbeat: reading inbox %s: %w", inboxDir, err)
@@ -61,7 +63,7 @@ func SendHeartbeatTrigger(
 		filePath := filepath.Join(inboxDir, entry.Name())
 		if age > ttl {
 			// Stale: recycle to dead-letter/
-			deadLetter := filepath.Join(nodeInfo.SessionDir, "dead-letter", entry.Name())
+			deadLetter := filepath.Join(target.SessionDir, "dead-letter", entry.Name())
 			if err := os.Rename(filePath, deadLetter); err != nil {
 				log.Printf("heartbeat: failed to recycle stale trigger %s: %v", filePath, err)
 				return fmt.Errorf("heartbeat: recycling stale trigger: %w", err)
@@ -78,12 +80,11 @@ func SendHeartbeatTrigger(
 
 	// Write trigger to post/
 	ts := now.Format("20060102-150405")
-	filename, err := message.GenerateFilename(ts, "postman", llmNode, nodeInfo.SessionName)
+	filename, err := message.GenerateFilename(ts, "postman", target.ActorID, target.SessionName)
 	if err != nil {
 		return fmt.Errorf("heartbeat: generating filename: %w", err)
 	}
-	postDir := filepath.Join(nodeInfo.SessionDir, "post")
-	filePath := filepath.Join(postDir, filename)
+	filePath := target.PostPath(filename)
 
 	expandedPrompt := strings.ReplaceAll(prompt, "{context_id}", contextID)
 
@@ -94,9 +95,9 @@ func SendHeartbeatTrigger(
 	}
 
 	activeNodes := *sharedNodes.Load()
-	sourceSessionName := nodeInfo.SessionName
+	sourceSessionName := target.SessionName
 	scaffolded := envelope.BuildEnvelope(
-		cfg, tmpl, llmNode, "postman",
+		cfg, tmpl, target.ActorID, "postman",
 		contextID, filePath,
 		nil, adjacency, activeNodes, sourceSessionName,
 		nil, // livenessMap = nil → static adjacency
@@ -104,7 +105,7 @@ func SendHeartbeatTrigger(
 	content := template.ExpandVariables(scaffolded, map[string]string{
 		"message_type": "heartbeat",
 		"heading":      "Heartbeat",
-		"role_content": envelope.BuildRoleContent(cfg, llmNode),
+		"role_content": envelope.BuildRoleContent(cfg, target.ActorID),
 		"message":      expandedPrompt,
 	})
 

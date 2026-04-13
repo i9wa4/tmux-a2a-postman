@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -717,7 +717,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Send tmux notification to the recipient pane
 	// Issue #84: Get liveness map for talks_to_line filtering
 	livenessMap := idleTracker.GetLivenessMap()
-	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, livenessMap)
+	sendDeliveryNotification(controlplane.TargetForNode(info.To, nodeInfo), cfg, adjacency, knownNodes, contextID, info.To, info.From, sourceSessionName, postPath, livenessMap)
 	// NOTE: Error already logged by SendToPane (WARNING level)
 	// Continue with delivery (notification failure does not fail delivery)
 
@@ -754,7 +754,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	return nil
 }
 
-func sendDeliveryNotification(nodeInfo discovery.NodeInfo, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, notificationPath string, livenessMap map[string]bool) {
+func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, notificationPath string, livenessMap map[string]bool) {
 	recipientSimpleName := nodeaddr.Simple(recipient)
 	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, recipient, sender, sourceSessionName, notificationPath, livenessMap)
 	nodeEnterDelay := cfg.GetNodeConfig(recipientSimpleName).EnterDelay
@@ -763,49 +763,56 @@ func sendDeliveryNotification(nodeInfo discovery.NodeInfo, cfg *config.Config, a
 		enterDelay = time.Duration(nodeEnterDelay * float64(time.Second))
 	}
 	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-	paneIDForProbe := nodeInfo.PaneID
-	enterCount := notification.ResolveEnterCount(
-		cfg.GetNodeConfig(recipientSimpleName).EnterCount,
-		func() (string, error) {
-			out, err := exec.Command("tmux", "display-message", "-t",
-				paneIDForProbe, "-p", "#{pane_current_command}").Output()
-			return strings.TrimSpace(string(out)), err
-		},
-	)
-
 	verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
-	_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
+	adapter, err := controlplane.DefaultHandAdapter(target)
+	if err != nil {
+		log.Printf("postman: WARNING: failed to select hand adapter for %s: %v\n", target.RunID, err)
+		return
+	}
+	if err := adapter.Deliver(target, controlplane.PaneDelivery{
+		Content:        notificationMsg,
+		EnterDelay:     enterDelay,
+		TmuxTimeout:    tmuxTimeout,
+		EnterCount:     cfg.GetNodeConfig(recipientSimpleName).EnterCount,
+		BypassCooldown: true,
+		VerifyDelay:    verifyDelay,
+		MaxRetries:     cfg.EnterRetryMax,
+	}); err != nil {
+		log.Printf("postman: WARNING: failed to deliver pane notification via %s hand for %s: %v\n", target.Hand.Kind, target.RunID, err)
+	}
 }
 
 func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {
-	if err := nodeaddr.Validate(recipient); err != nil {
+	return DeliverSystemMessageDirectToTarget(filename, controlplane.TargetForNode(recipient, nodeInfo), sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
+}
+
+func DeliverSystemMessageDirectToTarget(filename string, target controlplane.Target, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {
+	if err := nodeaddr.Validate(target.ActorID); err != nil {
 		return fmt.Errorf("invalid recipient address: %w", err)
 	}
-	recipientSimpleName := nodeaddr.Simple(recipient)
-
-	recipientInbox := filepath.Join(nodeInfo.SessionDir, "inbox", recipientSimpleName)
+	recipientInbox := target.InboxDir()
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
 		return fmt.Errorf("creating recipient inbox: %w", err)
 	}
 
 	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
-		deadLetterDir := filepath.Join(nodeInfo.SessionDir, "dead-letter")
+		deadLetterDir := filepath.Join(target.SessionDir, "dead-letter")
 		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
 			return fmt.Errorf("creating dead-letter dir: %w", err)
 		}
-		dst := deadLetterDst(nodeInfo.SessionDir, filename, dlSuffixQueueFull)
+		dst := deadLetterDst(target.SessionDir, filename, dlSuffixQueueFull)
 		if err := writeDeadLetterFile(dst, []byte(content)); err != nil {
 			return fmt.Errorf("writing queue-full dead-letter: %w", err)
 		}
-		recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 			MessageID: filename,
 			From:      sender,
-			To:        recipient,
-			Path:      shadowRelativePath(nodeInfo.SessionDir, dst),
+			To:        target.ActorID,
+			Path:      shadowRelativePath(target.SessionDir, dst),
 			Content:   content,
 		})
-		syncCompatibilityMailbox(nodeInfo.SessionDir)
-		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", recipient, inboxQueueCap, count, filename)
+		syncCompatibilityMailbox(target.SessionDir)
+		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", target.ActorID, inboxQueueCap, count, filename)
 		return nil
 	}
 
@@ -813,18 +820,18 @@ func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, re
 	if err := os.WriteFile(dst, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("writing to inbox: %w", err)
 	}
-	recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      sender,
-		To:        recipient,
-		Path:      shadowRelativePath(nodeInfo.SessionDir, dst),
+		To:        target.ActorID,
+		Path:      shadowRelativePath(target.SessionDir, dst),
 		Content:   content,
 	})
-	syncCompatibilityMailbox(nodeInfo.SessionDir)
+	syncCompatibilityMailbox(target.SessionDir)
 
-	notificationPath := filepath.Join(nodeInfo.SessionDir, "post", filename)
-	sendDeliveryNotification(nodeInfo, cfg, adjacency, knownNodes, contextID, recipient, sender, nodeInfo.SessionName, notificationPath, livenessMap)
-	log.Printf("📬 postman: delivered %s -> %s\n", filename, recipient)
+	notificationPath := target.PostPath(filename)
+	sendDeliveryNotification(target, cfg, adjacency, knownNodes, contextID, target.ActorID, sender, target.SessionName, notificationPath, livenessMap)
+	log.Printf("📬 postman: delivered %s -> %s\n", filename, target.ActorID)
 	return nil
 }
 
