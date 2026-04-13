@@ -206,17 +206,21 @@ Key templates that inject context automatically:
 | Template            | Injected at                  | Key variables provided                        |
 | ------------------- | ---------------------------- | --------------------------------------------- |
 | `draft_template`    | draft/send creation          | `{template}` (recipient role), frontmatter    |
-| `message_footer`    | appended to delivered message | `{can_talk_to}`, `{reply_command}`            |
+| `message_footer`    | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}` |
 | `notification_template` | sendkeys to pane on arrival | `{node}`, `{from_node}`                      |
-| `message_template`  | daemon ping delivery         | `{role_content}`, `{talks_to_line}`           |
+| `daemon_message_template` | daemon alert/ping/heartbeat mail | `{role_content}`, `{talks_to_line}`, `{reply_command}` |
 
 **Audit implication**: if a role template repeats any of the following, flag it
 as MINOR (unnecessary duplication, not a bug):
 
-- Reply command instructions (provided by `message_footer`)
-- "You can talk to" lists (provided by `message_footer` `{can_talk_to}`)
+- Reply command instructions for stored `send` messages (provided by
+  `message_footer`)
+- "You can talk to" lists in stored `send` messages (provided by
+  `message_footer` `{can_talk_to}`)
 - Recipient role content (provided by `draft_template` `{template}`)
 - Edge violation warnings (handled by daemon `edge_violation_warning_template`)
+- Daemon or heartbeat reply guidance (handled by `daemon_message_template`)
+- Dead-letter re-send instructions (written by dead-letter notification code)
 
 ## 6. Workflow
 
