@@ -188,10 +188,19 @@ Public knobs for this model live in `postman.toml`:
 - `ui_node`
 - `reminder_interval_messages`
 - `inbox_unread_threshold`
+- `message_footer`
 - `[node].idle_timeout_seconds`
 - `[node].dropped_ball_timeout_seconds`
 - `node_spinning_seconds`
 - `[heartbeat].enabled`
+
+For stored messages written by `send`, reply guidance comes from
+`message_footer` in `internal/config/postman.default.toml`. TOML config and XDG
+`postman.md` can replace that footer; project-local `postman.md` appends its
+`message_footer` to the effective base footer. Daemon alerts and heartbeat mail
+use `daemon_message_template`, and dead-letter notifications write their own
+re-send instructions. `pop` prints the stored message as written and does not
+add a second hard-coded reply footer.
 
 Advanced dampening and rendering-shaping fields remain documented in
 `docs/design/notification.md` and `docs/guides/alert-config.md`.

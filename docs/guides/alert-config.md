@@ -24,6 +24,13 @@ Local `.tmux-a2a-postman/` and `~/.config/tmux-a2a-postman/` config can still
 layer a fuller operator profile on top, but that is separate from the embedded
 file and should be explained as an environment-specific choice.
 
+`message_footer` controls reply guidance only for stored messages written by
+`send`. TOML config and XDG `postman.md` can replace that footer; project-local
+`postman.md` appends its `message_footer` to the effective base footer. Daemon
+alerts and heartbeat mail use `daemon_message_template`, and dead-letter
+notifications embed their own re-send instructions. `pop` should print the
+delivered message body as stored, not invent a second hard-coded reply hint.
+
 Starting with the version that includes fix `#352`, the daemon also emits a
 visible startup warning in the daemon log when the effective `ui_node` is not
 discoverable in the current session or when all per-node timeouts are zero at
