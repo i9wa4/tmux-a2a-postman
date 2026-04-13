@@ -90,6 +90,14 @@ func orderedEdgeNodeNames(edges []string) []string {
 }
 
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		return status.SessionHealth{}, err
+	}
+	if mode == config.JournalCutoverLegacy {
+		return collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
+	}
+
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		return unavailableSessionHealth(contextID, sessionName), nil

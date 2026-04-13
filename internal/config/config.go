@@ -80,15 +80,17 @@ type Config struct {
 	MessageFooter                   string `toml:"message_footer"`                      // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                      []string `toml:"edges"`
-	ReplyCommand               string   `toml:"reply_command"`
-	UINode                     string   `toml:"ui_node"`                       // Issue #46: Generalized target node name
-	InboxUnreadThreshold       int      `toml:"inbox_unread_threshold"`        // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
-	AlertCooldownSeconds       int      `toml:"alert_cooldown_seconds"`        // min seconds between any alert/warning to same recipient
-	AlertDeliveryWindowSeconds int      `toml:"alert_delivery_window_seconds"` // suppress alert if recipient received msg within this window
-	PaneNotifyCooldownSeconds  int      `toml:"pane_notify_cooldown_seconds"`  // min seconds between SendToPane calls to the same pane; 0 = use default (600)
-	AutoEnableNewSessions      *bool    `toml:"auto_enable_new_sessions"`      // nil = use default (false) (#219)
-	AutoEnableNewAgents        *bool    `toml:"auto_enable_new_agents"`        // nil = use default (true) (#219)
+	Edges                              []string `toml:"edges"`
+	ReplyCommand                       string   `toml:"reply_command"`
+	UINode                             string   `toml:"ui_node"`                               // Issue #46: Generalized target node name
+	InboxUnreadThreshold               int      `toml:"inbox_unread_threshold"`                // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
+	AlertCooldownSeconds               int      `toml:"alert_cooldown_seconds"`                // min seconds between any alert/warning to same recipient
+	AlertDeliveryWindowSeconds         int      `toml:"alert_delivery_window_seconds"`         // suppress alert if recipient received msg within this window
+	PaneNotifyCooldownSeconds          int      `toml:"pane_notify_cooldown_seconds"`          // min seconds between SendToPane calls to the same pane; 0 = use default (600)
+	AutoEnableNewSessions              *bool    `toml:"auto_enable_new_sessions"`              // nil = use default (false) (#219)
+	AutoEnableNewAgents                *bool    `toml:"auto_enable_new_agents"`                // nil = use default (true) (#219)
+	JournalHealthCutoverEnabled        *bool    `toml:"journal_health_cutover_enabled"`        // nil = use default (false) (#379)
+	JournalCompatibilityCutoverEnabled *bool    `toml:"journal_compatibility_cutover_enabled"` // nil = use default (false) (#379)
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -749,6 +751,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.AutoEnableNewAgents != nil {
 		base.AutoEnableNewAgents = override.AutoEnableNewAgents
+	}
+	if override.JournalHealthCutoverEnabled != nil {
+		base.JournalHealthCutoverEnabled = override.JournalHealthCutoverEnabled
+	}
+	if override.JournalCompatibilityCutoverEnabled != nil {
+		base.JournalCompatibilityCutoverEnabled = override.JournalCompatibilityCutoverEnabled
 	}
 
 	// Float64 fields

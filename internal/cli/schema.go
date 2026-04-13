@@ -69,16 +69,18 @@ func runSchema(stdout io.Writer, args []string) error {
 			Title:  "postman.toml public config surface",
 			Type:   "object",
 			Properties: map[string]schemaProperty{
-				"base_dir":                            {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
-				"edges":                               {Type: "array", Description: "Bidirectional routing edges between named nodes"},
-				"ui_node":                             {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
-				"reminder_interval_messages":          {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
-				"inbox_unread_threshold":              {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
-				"retention_period_days":               {Type: "integer", Description: "Inactive runtime cleanup threshold in days (0 = disabled)"},
-				"[node].idle_timeout_seconds":         {Type: "integer", Description: "Per-node inactivity alert threshold (0 = disabled)"},
-				"[node].dropped_ball_timeout_seconds": {Type: "integer", Description: "Per-node late-reply and dropped-ball threshold (0 = disabled)"},
-				"node_spinning_seconds":               {Type: "integer", Description: "Reply-tracked composing-to-spinning threshold (0 = disabled)"},
-				"[heartbeat].enabled":                 {Type: "boolean", Description: "Enable periodic heartbeat messages"},
+				"base_dir":                              {Type: "string", Description: "Override state base directory (also: POSTMAN_HOME)"},
+				"edges":                                 {Type: "array", Description: "Bidirectional routing edges between named nodes"},
+				"ui_node":                               {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
+				"reminder_interval_messages":            {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
+				"inbox_unread_threshold":                {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
+				"journal_health_cutover_enabled":        {Type: "boolean", Description: "Enable journal-backed canonical health reads while keeping legacy mailbox delivery"},
+				"journal_compatibility_cutover_enabled": {Type: "boolean", Description: "Enable journal-backed compatibility submit delivery (requires journal_health_cutover_enabled)"},
+				"retention_period_days":                 {Type: "integer", Description: "Inactive runtime cleanup threshold in days (0 = disabled)"},
+				"[node].idle_timeout_seconds":           {Type: "integer", Description: "Per-node inactivity alert threshold (0 = disabled)"},
+				"[node].dropped_ball_timeout_seconds":   {Type: "integer", Description: "Per-node late-reply and dropped-ball threshold (0 = disabled)"},
+				"node_spinning_seconds":                 {Type: "integer", Description: "Reply-tracked composing-to-spinning threshold (0 = disabled)"},
+				"[heartbeat].enabled":                   {Type: "boolean", Description: "Enable periodic heartbeat messages"},
 			},
 		})
 	// Properties = --params scope only (excluded flags omitted; see alwaysExcludedParams)
@@ -116,6 +118,25 @@ func runSchema(stdout io.Writer, args []string) error {
 				"archived":      {Type: "boolean", Description: "List archived messages in read/ (self-filter: calling node only)"},
 				"dead-letters":  {Type: "boolean", Description: "List dead-letter messages (metadata only, filenames hidden)"},
 				"resend-oldest": {Type: "boolean", Description: "Resend the oldest dead-letter (requires --dead-letters)"},
+			},
+		})
+	case "timeline":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "timeline options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"limit":                 {Type: "integer", Description: "Maximum number of current-generation events to print (0 = all)"},
+				"include-control-plane": {Type: "boolean", Description: "Include control-plane-only events in the redacted timeline"},
+			},
+		})
+	case "replay":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "replay options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"surface": {Type: "string", Description: "Projection surface to rebuild: all, health, mailbox, approval"},
 			},
 		})
 	case "get-context-id":

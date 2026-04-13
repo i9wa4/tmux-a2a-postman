@@ -197,6 +197,62 @@ func TestDispatch_HealthCommandsUseCanonicalNamesOnly(t *testing.T) {
 	})
 }
 
+func TestDispatch_ReplayAndTimelinePrependContextAndConfig(t *testing.T) {
+	t.Run("timeline", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"timeline",
+			[]string{"--limit", "25"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				Timeline: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman timeline" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman timeline")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--limit", "25"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("timeline args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("replay", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"replay",
+			[]string{"--surface", "mailbox"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				Replay: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman replay" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman replay")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--surface", "mailbox"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("replay args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+}
+
 func TestDispatch_LegacyDefaultNamesReturnUnknownCommand(t *testing.T) {
 	cases := []string{"send-message", "get-session-health", "get-session-status-oneline"}
 	for _, command := range cases {

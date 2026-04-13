@@ -15,6 +15,8 @@ type Handlers struct {
 	Read                    func(args []string) error
 	Pop                     func(args []string) error
 	GetSessionHealth        func(args []string) error
+	Timeline                func(args []string) error
+	Replay                  func(args []string) error
 	GetContextID            func(args []string) error
 	SupervisorDrain         func(args []string) error
 	SendMessage             func(args []string) error
@@ -56,6 +58,16 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman get-health",
 			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "timeline":
+		return Result{
+			Label: "postman timeline",
+			Err:   handlers.Timeline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "replay":
+		return Result{
+			Label: "postman replay",
+			Err:   handlers.Replay(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "get-context-id":
 		return Result{

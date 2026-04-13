@@ -30,6 +30,8 @@ starting the daemon.
 | `read`                     | List inbox messages, archived messages, or dead-letters |
 | `get-health`               | Canonical JSON health report for all nodes in the session |
 | `get-health-oneline`       | Compact all-session tokens rendered from canonical health     |
+| `timeline`                 | Redacted current-generation journal timeline for the session |
+| `replay`                   | Read-only rebuild of journal-backed projection surfaces |
 | `get-context-id`           | Print the active context ID                          |
 | `schema`                   | Print JSON Schema for a command or the curated public config surface |
 | `help`                     | Print help topics                                    |
@@ -122,6 +124,25 @@ Always-preserved paths:
 | `{baseDir}/{contextId}/phony/` | Binding-backed inbox and dead-letter state |
 | `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory store |
 | Unknown entries | Preserved by default instead of pruning by name guesswork |
+
+### 2.5. Journal Cutover Modes
+
+Two public cutover flags control how canonical health and compatibility-submit
+delivery move from legacy runtime state to journal-backed projection:
+
+| Flag | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `journal_health_cutover_enabled` | bool | false | Enable journal-backed canonical health while direct mailbox delivery remains authoritative |
+| `journal_compatibility_cutover_enabled` | bool | false | Enable compatibility-submit mailbox delivery; requires `journal_health_cutover_enabled = true` |
+
+The effective modes are:
+
+| Mode | Config | Behavior |
+| ---- | ------ | -------- |
+| `legacy` | both flags false | Legacy health and direct mailbox delivery remain authoritative |
+| `health-first` | health=true, compatibility=false | `get-health`, `get-health-oneline`, and the default TUI read journal-backed canonical health; `send` and `pop` still write mailbox state directly |
+| `compatibility-first` | health=true, compatibility=true | Canonical health stays journal-backed and `send` / `pop` use compatibility-submit for owned sessions |
+| invalid | health=false, compatibility=true | `start` rejects the config before the daemon begins running |
 
 ## 3. Messaging Commands
 
@@ -299,6 +320,41 @@ tmux-a2a-postman get-context-id [--json] [--params ...] [--session NAME] [--conf
 | `--session` | string | ""      | No        | tmux session name (excluded from --params)        |
 | `--config`  | string | ""      | No        | Path to config file (excluded from --params)      |
 
+### 5.4. timeline
+
+```text
+tmux-a2a-postman timeline [--context-id ID] [--session NAME] [--config PATH] [--limit N] [--include-control-plane]
+```
+
+Always outputs pretty JSON. Reads the current journal generation only. Payloads
+are recursively redacted by sensitive key name, and control-plane-only events
+stay hidden unless explicitly requested.
+
+| Flag | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--context-id` | string | "" | Context ID (auto-resolved from tmux session) |
+| `--session` | string | "" | tmux session name (optional, auto-detect if in tmux) |
+| `--config` | string | "" | Path to config file |
+| `--limit` | int | 50 | Maximum number of current-generation events to print (`0` = all) |
+| `--include-control-plane` | bool | false | Include control-plane-only events in the output |
+
+### 5.5. replay
+
+```text
+tmux-a2a-postman replay [--context-id ID] [--session NAME] [--config PATH] [--surface NAME]
+```
+
+Always outputs pretty JSON. Rebuilds journal-backed projection surfaces without
+mutating runtime state. Mailbox replay returns projected file paths only, not
+message contents, and it does not materialize missing files on disk.
+
+| Flag | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--context-id` | string | "" | Context ID (auto-resolved from tmux session) |
+| `--session` | string | "" | tmux session name (optional, auto-detect if in tmux) |
+| `--config` | string | "" | Path to config file |
+| `--surface` | string | `all` | Projection surface: `all`, `health`, `mailbox`, `approval` |
+
 ## 6. schema Subcommand
 
 ```text
@@ -327,6 +383,8 @@ Can be combined with a command argument or used alone.
 | `send`                     | `send` `--params` scope                       |
 | `pop`                      | `pop` `--params` scope                        |
 | `read`                     | `read` `--params` scope                       |
+| `timeline`                 | `timeline` option surface                     |
+| `replay`                   | `replay` option surface                       |
 | `get-context-id`           | `get-context-id` `--params` scope             |
 | `get-health-oneline`       | `get-health-oneline` `--params` scope         |
 | `get-health`               | `get-health` output shape                     |

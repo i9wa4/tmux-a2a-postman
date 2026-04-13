@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -384,6 +385,8 @@ func TestSendMessage_AllowsBareGraphKeyForSameSessionPrefixedRecipient(t *testin
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
 edges = ["messenger -- worker"]
+journal_health_cutover_enabled = true
+journal_compatibility_cutover_enabled = true
 
 [messenger]
 role = "messenger"
@@ -965,6 +968,8 @@ func TestRunSendMessage_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
 edges = ["messenger -- worker"]
+journal_health_cutover_enabled = true
+journal_compatibility_cutover_enabled = true
 
 [messenger]
 role = "messenger"
@@ -983,6 +988,20 @@ role = "worker"
 	}
 	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		t.Fatalf("ResolveJournalCutoverMode: %v", err)
+	}
+	if mode != config.JournalCutoverCompatibilityFirst {
+		t.Fatalf("cutover mode = %q, want %q", mode, config.JournalCutoverCompatibilityFirst)
+	}
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit", "test-session") {
+		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
 	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)

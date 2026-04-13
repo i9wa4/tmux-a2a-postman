@@ -78,6 +78,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
+		return fmt.Errorf("journal cutover: %w", err)
+	}
 
 	// Parse edge definitions for routing
 	adjacency, err := config.ParseEdges(cfg.Edges)

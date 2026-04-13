@@ -117,6 +117,8 @@ func main() {
 			Read:                    cli.RunRead,
 			Pop:                     cli.RunPop,
 			GetSessionHealth:        cli.RunGetSessionHealth,
+			Timeline:                cli.RunTimeline,
+			Replay:                  cli.RunReplay,
 			GetContextID:            runGetContextID,
 			SupervisorDrain:         cli.RunSupervisorDrain,
 			SendMessage:             cli.RunSendMessage,
@@ -161,6 +163,8 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Additional tools:")
 	fmt.Fprintln(w, "  read                       List inbox messages or access archived/dead-letter messages")
+	fmt.Fprintln(w, "  timeline                   Print current-generation journal timeline (redacted by default)")
+	fmt.Fprintln(w, "  replay                     Rebuild journal-backed projections without mutating runtime state")
 	fmt.Fprintln(w, "  schema [command]           Print JSON Schema for config or supported command surfaces")
 	fmt.Fprintln(w, "  help [topic]               Show help overview or topic-based help")
 	fmt.Fprintln(w, "")
@@ -172,6 +176,7 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")
 	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
 	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
+	fmt.Fprintln(w, "  tmux-a2a-postman timeline --limit 20                # Inspect recent redacted journal events")
 	fmt.Fprintln(w, "  tmux-a2a-postman schema send                         # Show send JSON Schema")
 	fmt.Fprintln(w, "  tmux-a2a-postman --base-dir /tmp/test read           # Override state directory")
 	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")

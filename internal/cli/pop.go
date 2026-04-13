@@ -61,6 +61,9 @@ func RunPop(args []string) error {
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
+		if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
+			return fmt.Errorf("journal cutover: %w", err)
+		}
 		baseDir := config.ResolveBaseDir(cfg.BaseDir)
 		sessionName := config.GetTmuxSessionName()
 		if sessionName == "" {
@@ -100,11 +103,16 @@ func RunPop(args []string) error {
 	sessionName := filepath.Base(sessionDir)
 	nodeName := filepath.Base(inboxPath)
 
-	if !*peek && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		cfg, err := config.LoadConfig(*configPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cutoverMode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		return fmt.Errorf("journal cutover: %w", err)
+	}
+
+	if !*peek && cutoverMode == config.JournalCutoverCompatibilityFirst && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
 			Command: projection.CompatibilitySubmitPop,
 			Node:    nodeName,

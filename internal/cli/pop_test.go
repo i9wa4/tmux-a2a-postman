@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -263,12 +264,34 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 
 	contextID := "ctx-pop-submit"
 	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	configPath := filepath.Join(tmpDir, "postman.toml")
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll inbox: %v", err)
 	}
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\njournal_health_cutover_enabled = true\njournal_compatibility_cutover_enabled = true\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		t.Fatalf("ResolveJournalCutoverMode: %v", err)
+	}
+	if mode != config.JournalCutoverCompatibilityFirst {
+		t.Fatalf("cutover mode = %q, want %q", mode, config.JournalCutoverCompatibilityFirst)
+	}
+	if !config.ContextOwnsSession(tmpDir, contextID, "test-session") {
+		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 	filename := "20260414-032800-from-orchestrator-to-worker.md"
 	originalInboxPath := filepath.Join(inboxDir, filename)
@@ -296,7 +319,7 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunPop([]string{"--context-id", contextID})
+		return RunPop([]string{"--config", configPath, "--context-id", contextID})
 	})
 	if err != nil {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)

@@ -161,6 +161,10 @@ func recordSessionHealthSnapshot(sessionDir, sessionName string, health status.S
 }
 
 func refreshProjectedSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		return status.SessionHealth{}, err
+	}
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		return unavailableSessionHealth(contextID, sessionName), nil
 	}
@@ -175,12 +179,18 @@ func refreshProjectedSessionHealth(baseDir, contextID, sessionName string, cfg *
 				projected, projectedOK = projectedSessionHealth(sessionDir)
 			}
 		}
+		if mode == config.JournalCutoverLegacy {
+			return legacy, nil
+		}
 		if projectedOK {
 			return projected, nil
 		}
 		return legacy, nil
 	}
 
+	if mode == config.JournalCutoverLegacy {
+		return status.SessionHealth{}, err
+	}
 	if projectedOK {
 		return projected, nil
 	}

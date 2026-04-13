@@ -367,7 +367,7 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		[]byte("[postman]\nedges = [\"worker -- critic\"]\njournal_health_cutover_enabled = true\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
@@ -445,6 +445,8 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 
 	cfg := config.DefaultConfig()
 	cfg.Edges = []string{"worker -- critic"}
+	healthCutoverEnabled := true
+	cfg.JournalHealthCutoverEnabled = &healthCutoverEnabled
 
 	return sessionHealthProjectionFixture{
 		baseDir:     tmpDir,

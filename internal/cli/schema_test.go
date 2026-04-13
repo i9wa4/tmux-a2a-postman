@@ -37,6 +37,8 @@ func TestRunSchema_ConfigShowsUnifiedModelPublicKnobs(t *testing.T) {
 		`"ui_node"`,
 		`"reminder_interval_messages"`,
 		`"inbox_unread_threshold"`,
+		`"journal_health_cutover_enabled"`,
+		`"journal_compatibility_cutover_enabled"`,
 		`"retention_period_days"`,
 		`"[node].idle_timeout_seconds"`,
 		`"[node].dropped_ball_timeout_seconds"`,
@@ -97,6 +99,41 @@ func TestRunSchema_GetHealthOnelineOptions(t *testing.T) {
 	if !strings.Contains(stdout.String(), `{\"status\": \"[0]🟣 [1]🟢\"}`) {
 		t.Fatalf("stdout missing emoji json example: %q", stdout.String())
 	}
+}
+
+func TestRunSchema_TimelineAndReplayOptions(t *testing.T) {
+	t.Run("timeline", func(t *testing.T) {
+		var stdout bytes.Buffer
+
+		if err := runSchema(&stdout, []string{"timeline"}); err != nil {
+			t.Fatalf("runSchema: %v", err)
+		}
+		got := stdout.String()
+		if !strings.Contains(got, `"title": "timeline options"`) {
+			t.Fatalf("stdout missing timeline title: %q", got)
+		}
+		if !strings.Contains(got, `"limit"`) {
+			t.Fatalf("stdout missing limit option: %q", got)
+		}
+		if !strings.Contains(got, `"include-control-plane"`) {
+			t.Fatalf("stdout missing include-control-plane option: %q", got)
+		}
+	})
+
+	t.Run("replay", func(t *testing.T) {
+		var stdout bytes.Buffer
+
+		if err := runSchema(&stdout, []string{"replay"}); err != nil {
+			t.Fatalf("runSchema: %v", err)
+		}
+		got := stdout.String()
+		if !strings.Contains(got, `"title": "replay options"`) {
+			t.Fatalf("stdout missing replay title: %q", got)
+		}
+		if !strings.Contains(got, `"surface"`) {
+			t.Fatalf("stdout missing surface option: %q", got)
+		}
+	})
 }
 
 func TestRunSchema_LegacyCommandNamesAreRejected(t *testing.T) {

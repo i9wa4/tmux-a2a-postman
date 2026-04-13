@@ -76,6 +76,10 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	cutoverMode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		return fmt.Errorf("journal cutover: %w", err)
+	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
 	sender := config.GetTmuxPaneName()
@@ -267,7 +271,7 @@ func RunSendMessage(args []string) error {
 		content = content[:idx] + "\nidempotency_key: " + *idempotencyKey + content[idx:]
 	}
 
-	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+	if cutoverMode == config.JournalCutoverCompatibilityFirst && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		if _, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
 			Command:  projection.CompatibilitySubmitSend,
 			Filename: filename,

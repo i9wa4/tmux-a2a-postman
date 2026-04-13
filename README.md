@@ -217,12 +217,22 @@ Public knobs for this model live in `postman.toml`:
 - `ui_node`
 - `reminder_interval_messages`
 - `inbox_unread_threshold`
+- `journal_health_cutover_enabled`
+- `journal_compatibility_cutover_enabled`
 - `retention_period_days`
 - `message_footer`
 - `[node].idle_timeout_seconds`
 - `[node].dropped_ball_timeout_seconds`
 - `node_spinning_seconds`
 - `[heartbeat].enabled`
+
+The journal cutover flags form three valid modes. `legacy` is the default with
+both flags off. `health-first` enables journal-backed canonical health while
+`send` and `pop` still write mailbox state directly. `compatibility-first`
+enables both journal-backed health and compatibility-submit mailbox delivery.
+`journal_compatibility_cutover_enabled = true` without
+`journal_health_cutover_enabled = true` is invalid, and `start` rejects that
+config.
 
 For stored messages written by `send`, reply guidance comes from
 `message_footer` in `internal/config/postman.default.toml`. TOML config and XDG
@@ -349,6 +359,13 @@ tmux-a2a-postman stop
 tmux-a2a-postman get-context-id
 tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
 tmux-a2a-postman schema [COMMAND]   # JSON Schema for the public config surface or a command's --params scope
+```
+
+Diagnostic and cutover tooling:
+
+```text
+tmux-a2a-postman timeline --limit 20        # recent redacted journal events for the live session
+tmux-a2a-postman replay --surface mailbox   # read-only projected mailbox paths from the journal
 ```
 
 Migration from older names:

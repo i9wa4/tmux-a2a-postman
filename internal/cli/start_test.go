@@ -232,6 +232,30 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	}
 }
 
+func TestRunStartWithFlags_RejectsInvalidJournalCutoverConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "postman.toml")
+	configContent := "[postman]\n" +
+		"edges = [\"boss -- worker\"]\n" +
+		"journal_compatibility_cutover_enabled = true\n\n" +
+		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
+		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	err := RunStartWithFlags("ctx-invalid-cutover", configPath, "", true)
+	if err == nil {
+		t.Fatal("RunStartWithFlags() error = nil, want invalid cutover rejection")
+	}
+	if !strings.Contains(err.Error(), "journal cutover") {
+		t.Fatalf("RunStartWithFlags() error = %q, want journal cutover wording", err)
+	}
+	if !strings.Contains(err.Error(), "journal_compatibility_cutover_enabled requires journal_health_cutover_enabled") {
+		t.Fatalf("RunStartWithFlags() error = %q, want cutover dependency wording", err)
+	}
+}
+
 func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{
 		"review:messenger": {},

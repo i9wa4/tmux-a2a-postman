@@ -34,6 +34,12 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Print JSON Schema for the public config surface or a supported command") {
 		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "timeline                   Print current-generation journal timeline (redacted by default)") {
+		t.Fatalf("stdout missing timeline overview line: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "replay                     Rebuild journal-backed projections without mutating runtime state") {
+		t.Fatalf("stdout missing replay overview line: %q", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "  bind                       ") {
 		t.Fatalf("stdout still exposes bind in the default overview: %q", stdout.String())
 	}
@@ -82,6 +88,12 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Print JSON Schema for the curated public config surface or supported command surfaces.") {
 		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "\ntimeline\n") {
+		t.Fatalf("stdout missing timeline command help: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "\nreplay\n") {
+		t.Fatalf("stdout missing replay command help: %q", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "\nbind\n") {
 		t.Fatalf("stdout still exposes bind in command help: %q", stdout.String())
 	}
@@ -116,6 +128,13 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"[node].dropped_ball_timeout_seconds  Shared late-reply timeout for unreplied-message alerts and dropped-ball detection",
 		"node_spinning_seconds            Optional early escalation from composing to spinning",
 		"[heartbeat].enabled             Optional keepalive automation (advanced)",
+		"journal_health_cutover_enabled   Enable journal-backed canonical health reads",
+		"journal_compatibility_cutover_enabled  Enable journal-backed compatibility submit delivery",
+		"Cutover modes:",
+		"legacy                 Default. Legacy health and direct mailbox delivery remain authoritative.",
+		"health-first           Enable journal-backed canonical health while mailbox delivery still writes directly.",
+		"compatibility-first    Enable journal-backed health plus compatibility-submit mailbox operations.",
+		"Invalid: compatibility-first without health-first. start rejects that config.",
 		"Advanced/internal shaping knobs live in docs/design/notification.md and docs/guides/alert-config.md.",
 		"get-health, get-health-oneline, and the default TUI read the same canonical health contract.",
 	} {
