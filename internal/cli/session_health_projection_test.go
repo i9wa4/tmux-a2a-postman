@@ -12,6 +12,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
@@ -193,6 +194,115 @@ func TestTUIProjectionParity(t *testing.T) {
 	assertSessionHealthParity(t, legacy, got)
 }
 
+func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "idle"},
+		map[string]int{"worker": 1},
+		map[string]string{
+			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
+		},
+		nil,
+	)
+
+	legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	appendSessionHealthSnapshot(t, fixture, legacy)
+	removeLiveSessionHealthArtifacts(t, fixture)
+	installSessionHealthProjectionBrokenTmux(t)
+
+	projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealth() error = %v", err)
+	}
+
+	assertSessionHealthParity(t, legacy, projected)
+}
+
+func TestGetHealthOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"critic": 1},
+		map[string]string{
+			"worker": "---\nstate: composing\nexpects_reply: true\n---\n",
+		},
+		nil,
+	)
+
+	legacy, _, ok, err := collectAllSessionHealthLegacy(fixture.contextID, "", fixture.configPath)
+	if err != nil {
+		t.Fatalf("collectAllSessionHealthLegacy() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("collectAllSessionHealthLegacy() ok = false, want true")
+	}
+
+	appendSessionHealthSnapshot(t, fixture, legacy.Sessions[0])
+	removeLiveSessionHealthArtifacts(t, fixture)
+	installSessionHealthProjectionListSessionsOnlyTmux(t, fixture.sessionName)
+
+	var stdout strings.Builder
+	if err := RunGetSessionStatusOneline(&stdout, []string{"--context-id", fixture.contextID, "--config", fixture.configPath}); err != nil {
+		t.Fatalf("RunGetSessionStatusOneline() error = %v", err)
+	}
+
+	if got, want := strings.TrimSpace(stdout.String()), formatAllSessionHealthOneline(legacy); got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestTUIProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"worker": 1},
+		map[string]string{
+			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
+		},
+		nil,
+	)
+
+	legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	appendSessionHealthSnapshot(t, fixture, legacy)
+	removeLiveSessionHealthArtifacts(t, fixture)
+	installSessionHealthProjectionBrokenTmux(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rawEvents := make(chan tui.DaemonEvent, 1)
+	tuiEvents := make(chan tui.DaemonEvent, 4)
+	go relayDaemonEventsToTUI(ctx, rawEvents, tuiEvents, fixture.baseDir, fixture.contextID, fixture.cfg)
+
+	rawEvents <- tui.DaemonEvent{
+		Type:    "status_update",
+		Message: "Running",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: fixture.sessionName, Enabled: true}},
+		},
+	}
+
+	<-tuiEvents
+	healthEvent := <-tuiEvents
+	if healthEvent.Type != "session_health_update" {
+		t.Fatalf("health event type = %q, want session_health_update", healthEvent.Type)
+	}
+
+	got, ok := healthEvent.Details["health"].(status.SessionHealth)
+	if !ok {
+		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+	}
+	assertSessionHealthParity(t, legacy, got)
+}
+
 func assertSessionHealthParity(t *testing.T, legacy, projected status.SessionHealth) {
 	t.Helper()
 
@@ -340,6 +450,79 @@ func installSessionHealthProjectionTmux(t *testing.T, contextID, sessionName str
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installSessionHealthProjectionBrokenTmux(t *testing.T) {
+	t.Helper()
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"exit 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake broken tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installSessionHealthProjectionListSessionsOnlyTmux(t *testing.T, sessionName string) {
+	t.Helper()
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"case \"$1 $2\" in",
+		"  \"list-sessions -F\")",
+		"    printf '%s\\n' '" + sessionName + "\t$173'",
+		"    ;;",
+		"  *)",
+		"    exit 1",
+		"    ;;",
+		"esac",
+		"",
+	}, "\n")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake list-sessions-only tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func appendSessionHealthSnapshot(t *testing.T, fixture sessionHealthProjectionFixture, health status.SessionHealth) {
+	t.Helper()
+
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 303, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter(snapshot) error = %v", err)
+	}
+	if _, err := writer.AppendEvent(
+		projection.SessionHealthSnapshotEventType,
+		journal.VisibilityControlPlaneOnly,
+		health,
+		now.Add(time.Second),
+	); err != nil {
+		t.Fatalf("AppendEvent(session health snapshot): %v", err)
+	}
+}
+
+func removeLiveSessionHealthArtifacts(t *testing.T, fixture sessionHealthProjectionFixture) {
+	t.Helper()
+
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	if err := os.Remove(filepath.Join(fixture.baseDir, fixture.contextID, "pane-activity.json")); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("Remove(pane-activity.json): %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(sessionDir, "waiting")); err != nil {
+		t.Fatalf("RemoveAll(waiting): %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(sessionDir, "inbox")); err != nil {
+		t.Fatalf("RemoveAll(inbox): %v", err)
+	}
 }
 
 func unreadFixtureName(nodeName string, index int) string {

@@ -5,10 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -124,6 +129,63 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 		return status.SessionHealth{}, true, err
 	}
 	return result, true, nil
+}
+
+func unavailableSessionHealth(contextID, sessionName string) status.SessionHealth {
+	result := status.SessionHealth{
+		ContextID:   contextID,
+		SessionName: sessionName,
+	}
+	result.VisibleState = "unavailable"
+	result.Compact = compactSessionStatusMark(result.VisibleState)
+	return result
+}
+
+func projectedSessionHealth(sessionDir string) (status.SessionHealth, bool) {
+	projected, ok, err := projection.ProjectSessionHealth(sessionDir)
+	if err != nil || !ok {
+		return status.SessionHealth{}, false
+	}
+	return projected, true
+}
+
+func recordSessionHealthSnapshot(sessionDir, sessionName string, health status.SessionHealth, now time.Time) error {
+	return journal.RecordProcessEvent(
+		sessionDir,
+		sessionName,
+		projection.SessionHealthSnapshotEventType,
+		journal.VisibilityControlPlaneOnly,
+		health,
+		now,
+	)
+}
+
+func refreshProjectedSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
+		return unavailableSessionHealth(contextID, sessionName), nil
+	}
+
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	projected, projectedOK := projectedSessionHealth(sessionDir)
+
+	legacy, err := collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
+	if err == nil {
+		if !projectedOK || !reflect.DeepEqual(projected, legacy) {
+			if recordErr := recordSessionHealthSnapshot(sessionDir, sessionName, legacy, time.Now()); recordErr == nil {
+				projected, projectedOK = projectedSessionHealth(sessionDir)
+			}
+		}
+		if projectedOK {
+			return projected, nil
+		}
+		return legacy, nil
+	}
+
+	if projectedOK {
+		return projected, nil
+	}
+
+	return status.SessionHealth{}, err
 }
 
 func collectAllSessionHealth(contextIDFlag, sessionFlag, configPath string) (status.AllSessionHealth, *config.Config, bool, error) {

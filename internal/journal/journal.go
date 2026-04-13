@@ -130,6 +130,16 @@ func RecordProcessMailboxEvent(sessionDir, tmuxSessionName, eventType string, vi
 	return manager.RecordMailboxEvent(sessionDir, tmuxSessionName, eventType, visibility, messageID, from, to, relativePath, now)
 }
 
+func RecordProcessEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, now time.Time) error {
+	processManager.RLock()
+	manager := processManager.manager
+	processManager.RUnlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.RecordEvent(sessionDir, tmuxSessionName, eventType, visibility, payload, now)
+}
+
 func (m *Manager) Bootstrap(sessionDir, tmuxSessionName string, now time.Time) error {
 	_, err := m.writerFor(sessionDir, tmuxSessionName, now)
 	return err
@@ -146,6 +156,15 @@ func (m *Manager) RecordMailboxEvent(sessionDir, tmuxSessionName, eventType stri
 		"from":       from,
 		"to":         to,
 		"path":       relativePath,
+	}
+	_, err = writer.AppendEvent(eventType, visibility, payload, now)
+	return err
+}
+
+func (m *Manager) RecordEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, now time.Time) error {
+	writer, err := m.writerFor(sessionDir, tmuxSessionName, now)
+	if err != nil {
+		return err
 	}
 	_, err = writer.AppendEvent(eventType, visibility, payload, now)
 	return err

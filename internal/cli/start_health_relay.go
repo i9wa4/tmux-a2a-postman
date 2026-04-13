@@ -30,7 +30,7 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 			}
 
 			for _, sessionName := range sortedSessionNames(knownSessions) {
-				health, err := collectSessionHealth(baseDir, contextID, sessionName, cfg)
+				health, err := refreshProjectedSessionHealth(baseDir, contextID, sessionName, cfg)
 				if err != nil {
 					log.Printf("postman: session health relay skipped %s: %v\n", sessionName, err)
 					continue

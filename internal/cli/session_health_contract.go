@@ -91,6 +91,12 @@ func orderedEdgeNodeNames(edges []string) []string {
 
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
+		return unavailableSessionHealth(contextID, sessionName), nil
+	}
+	if projected, ok := projectedSessionHealth(sessionDir); ok {
+		return projected, nil
+	}
 	projectedInboxCounts, useProjectedInboxCounts := projectedInboxCounts(sessionDir, sessionName)
 	return collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName, cfg, projectedInboxCounts, useProjectedInboxCounts)
 }
