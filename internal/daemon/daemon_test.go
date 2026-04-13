@@ -11,7 +11,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -365,7 +367,7 @@ func TestRequeueWaitingMessage_UnreadOriginalPreservesInboxPayload(t *testing.T)
 		t.Fatalf("WriteFile inbox: %v", err)
 	}
 
-	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+	if err := requeueWaitingMessage(sessionDir, filepath.Base(sessionDir), simpleName, filename); err != nil {
 		t.Fatalf("requeueWaitingMessage: %v", err)
 	}
 
@@ -414,7 +416,7 @@ func TestRequeueWaitingMessage_ArchivedOriginalRestoresInboxCopy(t *testing.T) {
 		t.Fatalf("Chtimes read: %v", err)
 	}
 
-	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+	if err := requeueWaitingMessage(sessionDir, filepath.Base(sessionDir), simpleName, filename); err != nil {
 		t.Fatalf("requeueWaitingMessage: %v", err)
 	}
 
@@ -464,7 +466,7 @@ func TestRequeueWaitingMessage_NoOriginalArtifactMovesMarkerToDeadLetter(t *test
 		t.Fatalf("WriteFile waiting: %v", err)
 	}
 
-	if err := requeueWaitingMessage(sessionDir, simpleName, filename); err != nil {
+	if err := requeueWaitingMessage(sessionDir, filepath.Base(sessionDir), simpleName, filename); err != nil {
 		t.Fatalf("requeueWaitingMessage: %v", err)
 	}
 
@@ -485,6 +487,125 @@ func TestRequeueWaitingMessage_NoOriginalArtifactMovesMarkerToDeadLetter(t *test
 	}
 	if string(gotDeadLetter) != string(waitingContent) {
 		t.Fatalf("dead-letter content changed:\n got %q\nwant %q", gotDeadLetter, waitingContent)
+	}
+}
+
+func TestRequeueWaitingMessage_ArchivedOriginalReplayRestoresInboxAndClearsWaiting(t *testing.T) {
+	sessionDir := t.TempDir()
+	sessionName := "review"
+	simpleName := "worker"
+	filename := "20260328-101503-from-orchestrator-to-worker.md"
+	waitingDir := filepath.Join(sessionDir, "waiting")
+	readDir := filepath.Join(sessionDir, "read")
+	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
+	if err := os.MkdirAll(waitingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll waiting: %v", err)
+	}
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	now := time.Date(2026, time.March, 28, 10, 15, 3, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-main", sessionName, now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	waitingPath := filepath.Join(waitingDir, filename)
+	readPath := filepath.Join(readDir, filename)
+	waitingContent := []byte("---\nstate: composing\nexpects_reply: true\n---\n")
+	readContent := []byte("---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-03-28T10:15:03Z\n---\n\nArchived payload\n")
+	if err := os.WriteFile(waitingPath, waitingContent, 0o600); err != nil {
+		t.Fatalf("WriteFile waiting: %v", err)
+	}
+	if err := os.WriteFile(readPath, readContent, 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, compatibilityMailboxPayloadForFile(filename, filepath.Join("read", filename), string(readContent)))
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_created", journal.VisibilityOperatorVisible, compatibilityMailboxPayloadForFile(filename, filepath.Join("waiting", filename), string(waitingContent)))
+
+	if err := requeueWaitingMessage(sessionDir, sessionName, simpleName, filename); err != nil {
+		t.Fatalf("requeueWaitingMessage: %v", err)
+	}
+
+	for _, root := range []string{"inbox", "read", "waiting", "dead-letter"} {
+		if err := os.RemoveAll(filepath.Join(sessionDir, root)); err != nil {
+			t.Fatalf("RemoveAll %s: %v", root, err)
+		}
+	}
+	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
+		t.Fatalf("SyncCompatibilityMailbox: %v", err)
+	}
+
+	gotInbox, err := os.ReadFile(filepath.Join(inboxDir, filename))
+	if err != nil {
+		t.Fatalf("ReadFile replayed inbox: %v", err)
+	}
+	if string(gotInbox) != string(readContent) {
+		t.Fatalf("replayed inbox content changed:\n got %q\nwant %q", gotInbox, readContent)
+	}
+	gotRead, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("ReadFile replayed read: %v", err)
+	}
+	if string(gotRead) != string(readContent) {
+		t.Fatalf("replayed read content changed:\n got %q\nwant %q", gotRead, readContent)
+	}
+	if _, err := os.Stat(waitingPath); !os.IsNotExist(err) {
+		t.Fatalf("waiting file replayed unexpectedly: %v", err)
+	}
+}
+
+func TestRequeueWaitingMessage_NoOriginalReplayRestoresDeadLetterAndClearsWaiting(t *testing.T) {
+	sessionDir := t.TempDir()
+	sessionName := "review"
+	simpleName := "worker"
+	filename := "20260328-101504-from-orchestrator-to-worker.md"
+	waitingDir := filepath.Join(sessionDir, "waiting")
+	if err := os.MkdirAll(waitingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll waiting: %v", err)
+	}
+
+	now := time.Date(2026, time.March, 28, 10, 15, 4, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-main", sessionName, now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	waitingPath := filepath.Join(waitingDir, filename)
+	waitingContent := []byte("---\nstate: stalled\nexpects_reply: true\n---\n")
+	if err := os.WriteFile(waitingPath, waitingContent, 0o600); err != nil {
+		t.Fatalf("WriteFile waiting: %v", err)
+	}
+
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_created", journal.VisibilityOperatorVisible, compatibilityMailboxPayloadForFile(filename, filepath.Join("waiting", filename), string(waitingContent)))
+
+	if err := requeueWaitingMessage(sessionDir, sessionName, simpleName, filename); err != nil {
+		t.Fatalf("requeueWaitingMessage: %v", err)
+	}
+
+	for _, root := range []string{"inbox", "read", "waiting", "dead-letter"} {
+		if err := os.RemoveAll(filepath.Join(sessionDir, root)); err != nil {
+			t.Fatalf("RemoveAll %s: %v", root, err)
+		}
+	}
+	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
+		t.Fatalf("SyncCompatibilityMailbox: %v", err)
+	}
+
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterMissingOriginalName(filename))
+	gotDeadLetter, err := os.ReadFile(deadLetterPath)
+	if err != nil {
+		t.Fatalf("ReadFile replayed dead-letter: %v", err)
+	}
+	if string(gotDeadLetter) != string(waitingContent) {
+		t.Fatalf("replayed dead-letter content changed:\n got %q\nwant %q", gotDeadLetter, waitingContent)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", simpleName, filename)); !os.IsNotExist(err) {
+		t.Fatalf("inbox file replayed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(waitingPath); !os.IsNotExist(err) {
+		t.Fatalf("waiting file replayed unexpectedly: %v", err)
 	}
 }
 

@@ -143,6 +143,19 @@ func syncCompatibilityMailboxProjection(sessionDir string) {
 	}
 }
 
+func compatibilityMailboxPayloadForFile(filename, relativePath, content string) journal.MailboxEventPayload {
+	payload := journal.MailboxEventPayload{
+		MessageID: filename,
+		Path:      relativePath,
+		Content:   content,
+	}
+	if info, err := message.ParseMessageFilename(filename); err == nil {
+		payload.From = info.From
+		payload.To = info.To
+	}
+	return payload
+}
+
 func compatibilitySubmitSessionDir(requestPath string) (string, bool) {
 	requestDir := filepath.Dir(requestPath)
 	if filepath.Base(requestDir) != "requests" {
@@ -1599,6 +1612,7 @@ func RunDaemonLoop(
 					paneState := paneStatus[recipientInfo.PaneID]
 					if updated, changed := advanceWaitingState(contentStr, paneState, now, idleThreshold, spinningThreshold, spinningEnabled); changed {
 						_ = os.WriteFile(filePath, []byte(updated), 0o600)
+						recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_waiting_updated", journal.VisibilityOperatorVisible, compatibilityMailboxPayloadForFile(entry.Name(), filepath.Join("waiting", entry.Name()), updated))
 						previousState := visibleWaitingState(contentStr)
 						updatedState := visibleWaitingState(updated)
 						if previousState == "composing" && updatedState == "spinning" {
@@ -2540,7 +2554,7 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 						if !strings.Contains(e.Name(), "-to-"+simpleName) {
 							continue
 						}
-						if err := requeueWaitingMessage(nodeInfo.SessionDir, simpleName, e.Name()); err != nil {
+						if err := requeueWaitingMessage(nodeInfo.SessionDir, nodeInfo.SessionName, simpleName, e.Name()); err != nil {
 							continue
 						}
 						deadLetterPath := filepath.Join(nodeInfo.SessionDir, "dead-letter", deadLetterMissingOriginalName(e.Name()))
@@ -2672,14 +2686,23 @@ func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo)
 	return inboxCount, waitingCount
 }
 
-func requeueWaitingMessage(sessionDir, simpleName, filename string) error {
+func requeueWaitingMessage(sessionDir, sessionName, simpleName, filename string) error {
 	waitingPath := filepath.Join(sessionDir, "waiting", filename)
 	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
 	inboxPath := filepath.Join(inboxDir, filename)
 	readPath := filepath.Join(sessionDir, "read", filename)
+	waitingContent, err := os.ReadFile(waitingPath)
+	if err != nil {
+		return err
+	}
+	waitingPayload := compatibilityMailboxPayloadForFile(filename, filepath.Join("waiting", filename), string(waitingContent))
 
 	if _, err := os.Stat(inboxPath); err == nil {
-		return os.Remove(waitingPath)
+		if err := os.Remove(waitingPath); err != nil {
+			return err
+		}
+		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
+		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -2691,7 +2714,12 @@ func requeueWaitingMessage(sessionDir, simpleName, filename string) error {
 		if err := os.WriteFile(inboxPath, data, 0o600); err != nil {
 			return err
 		}
-		return os.Remove(waitingPath)
+		if err := os.Remove(waitingPath); err != nil {
+			return err
+		}
+		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
+		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, compatibilityMailboxPayloadForFile(filename, filepath.Join("inbox", simpleName, filename), string(data)))
+		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -2699,7 +2727,15 @@ func requeueWaitingMessage(sessionDir, simpleName, filename string) error {
 	if err := os.MkdirAll(filepath.Join(sessionDir, "dead-letter"), 0o700); err != nil {
 		return err
 	}
-	return os.Rename(waitingPath, filepath.Join(sessionDir, "dead-letter", deadLetterMissingOriginalName(filename)))
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterMissingOriginalName(filename))
+	if err := os.Rename(waitingPath, deadLetterPath); err != nil {
+		return err
+	}
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
+	deadLetterPayload := compatibilityMailboxPayloadForFile(filename, filepath.Join("dead-letter", deadLetterMissingOriginalName(filename)), string(waitingContent))
+	deadLetterPayload.SourcePath = waitingPayload.Path
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, deadLetterPayload)
+	return nil
 }
 
 func deadLetterMissingOriginalName(filename string) string {

@@ -130,6 +130,44 @@ func TestProjectCompatibilityMailbox_ControlPlaneOnlyExcluded(t *testing.T) {
 	}
 }
 
+func TestProjectCompatibilityMailbox_WaitingUpdatedStateWins(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 4, 30, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	appendMailboxEventForTest(t, writer, "compatibility_mailbox_waiting_created", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID: "20260414-043001-r1111-from-orchestrator-to-worker.md",
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("waiting", "20260414-043001-r1111-from-orchestrator-to-worker.md"),
+		Content:   "---\nstate: composing\nexpects_reply: true\n---\n",
+	}, now.Add(time.Second))
+	appendMailboxEventForTest(t, writer, "compatibility_mailbox_waiting_updated", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID: "20260414-043001-r1111-from-orchestrator-to-worker.md",
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("waiting", "20260414-043001-r1111-from-orchestrator-to-worker.md"),
+		Content:   "---\nstate: stalled\nexpects_reply: true\n---\n",
+	}, now.Add(2*time.Second))
+
+	projected, ok, err := ProjectCompatibilityMailbox(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectCompatibilityMailbox() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCompatibilityMailbox() ok = false, want true")
+	}
+
+	got := projected.Waiting[pathKey(filepath.Join("waiting", "20260414-043001-r1111-from-orchestrator-to-worker.md"))]
+	if got.Content != "---\nstate: stalled\nexpects_reply: true\n---\n" {
+		t.Fatalf("waiting projection content = %q, want stalled state", got.Content)
+	}
+}
+
 func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 5, 0, 0, 0, time.UTC)

@@ -127,6 +127,8 @@ func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool,
 				return CompatibilityMailbox{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
 		case "compatibility_mailbox_waiting_created":
+			fallthrough
+		case "compatibility_mailbox_waiting_updated":
 			if !setProjectedFile(projected.Waiting, payload.Path, payload.Content) {
 				return CompatibilityMailbox{}, false, fmt.Errorf("invalid waiting path %q", payload.Path)
 			}
