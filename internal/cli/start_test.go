@@ -119,20 +119,6 @@ func TestResolveWatchedConfigPath(t *testing.T) {
 	}
 }
 
-func TestAppendWatchedPaths(t *testing.T) {
-	initial := []string{"config.toml", "local.toml"}
-	got := appendWatchedPaths(initial, "", "bindings.toml", "config.toml")
-	want := []string{"config.toml", "local.toml", "bindings.toml"}
-	if len(got) != len(want) {
-		t.Fatalf("appendWatchedPaths len = %d, want %d; got=%v want=%v", len(got), len(want), got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("appendWatchedPaths[%d] = %q, want %q; full got=%v want=%v", i, got[i], want[i], got, want)
-		}
-	}
-}
-
 func writeWatcherConfigFixture(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -382,7 +368,7 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	}
 }
 
-func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilterAndBindingsWatch(t *testing.T) {
+func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilter(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 
 	if strings.Count(source, "filterDiscoveredEdgeNodes(") < 3 {

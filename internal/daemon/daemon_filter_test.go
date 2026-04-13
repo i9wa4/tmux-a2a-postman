@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
@@ -36,7 +38,7 @@ func TestFilterNodesByEdges_PreservesSessionPrefixedKeys(t *testing.T) {
 	}
 }
 
-func TestRunDaemonLoop_SourceContractReloadsBindingsAndRefreshesPhonyNodes(t *testing.T) {
+func TestEnsureWatchedPath_Deduplicates(t *testing.T) {
 	added := []string{}
 	addFn := func(path string) error {
 		added = append(added, path)
@@ -64,6 +66,64 @@ func TestRunDaemonLoop_SourceContractReloadsBindingsAndRefreshesPhonyNodes(t *te
 	if len(added) != 1 {
 		t.Fatalf("ensureWatchedPath() duplicate add count = %d, want 1", len(added))
 	}
+}
+
+func TestMatchesBindingsEvent_CoversAtomicSavePaths(t *testing.T) {
+	bindingsPath := filepath.Join("/tmp", "state", "bindings.toml")
+
+	if !matchesBindingsEvent(filepath.Join("/tmp", "state", "bindings.toml"), bindingsPath) {
+		t.Fatal("expected bindings file event to match")
+	}
+	if !matchesBindingsEvent(filepath.Join("/tmp", "state", "bindings.toml.tmp"), bindingsPath) {
+		t.Fatal("expected atomic-save temp file event to match")
+	}
+	if matchesBindingsEvent(filepath.Join("/tmp", "other", "bindings.toml"), bindingsPath) {
+		t.Fatal("unexpected match for different directory")
+	}
+	if matchesBindingsEvent(filepath.Join("/tmp", "state", "other.toml"), bindingsPath) {
+		t.Fatal("unexpected match for different filename")
+	}
+}
+
+func TestBindingsWatchDir_CatchesRepeatedAtomicSaves(t *testing.T) {
+	root := t.TempDir()
+	bindingsPath := filepath.Join(root, "bindings.toml")
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	if err := watcher.Add(bindingsWatchDir(bindingsPath)); err != nil {
+		t.Fatalf("watcher.Add(%q): %v", bindingsWatchDir(bindingsPath), err)
+	}
+
+	registry := &binding.BindingRegistry{
+		Bindings: []binding.Binding{
+			{
+				ChannelID:        "channel-a",
+				NodeName:         "channel-a",
+				ContextID:        "ctx",
+				SessionName:      "external",
+				PaneTitle:        "channel-a-pane",
+				Active:           true,
+				PermittedSenders: []string{"messenger"},
+			},
+		},
+	}
+
+	if err := registry.Save(bindingsPath); err != nil {
+		t.Fatalf("Save(first): %v", err)
+	}
+	waitForMatchingBindingsEvent(t, watcher, bindingsPath)
+	drainWatcherUntilQuiet(t, watcher, 200*time.Millisecond)
+
+	registry.Bindings[0].PermittedSenders = []string{"worker"}
+	if err := registry.Save(bindingsPath); err != nil {
+		t.Fatalf("Save(second): %v", err)
+	}
+	waitForMatchingBindingsEvent(t, watcher, bindingsPath)
 }
 
 func TestRefreshNodesWithRegistry_ReplacesPhonySnapshotOnBindingsChange(t *testing.T) {
@@ -112,5 +172,52 @@ permitted_senders = ["messenger"]
 	}
 	if _, ok := nodes["test-session:messenger"]; !ok {
 		t.Fatal("expected real node to remain after invalid registry reload")
+	}
+}
+
+func waitForMatchingBindingsEvent(t *testing.T, watcher *fsnotify.Watcher, bindingsPath string) {
+	t.Helper()
+
+	timeout := time.NewTimer(3 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				t.Fatal("watcher.Events closed")
+			}
+			if matchesBindingsEvent(event.Name, bindingsPath) {
+				return
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				t.Fatal("watcher.Errors closed")
+			}
+			t.Fatalf("watcher error: %v", err)
+		case <-timeout.C:
+			t.Fatalf("timed out waiting for bindings event for %q", bindingsPath)
+		}
+	}
+}
+
+func drainWatcherUntilQuiet(t *testing.T, watcher *fsnotify.Watcher, quiet time.Duration) {
+	t.Helper()
+
+	timer := time.NewTimer(quiet)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-watcher.Events:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(quiet)
+		case err := <-watcher.Errors:
+			t.Fatalf("watcher error while draining: %v", err)
+		case <-timer.C:
+			return
+		}
 	}
 }

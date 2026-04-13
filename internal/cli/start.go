@@ -326,13 +326,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 	}
 
-	// Watch the same TOML config files LoadConfig effectively applies, plus the
-	// active bindings registry when configured.
+	// Watch the same TOML config files LoadConfig effectively applies.
 	resolvedConfigPath := configPath
 	if resolvedConfigPath == "" {
 		resolvedConfigPath = config.ResolveConfigPath()
 	}
-	watchedConfigPaths := appendWatchedPaths(resolveWatchedConfigPaths(configPath), cfg.BindingsPath)
+	watchedConfigPaths := resolveWatchedConfigPaths(configPath)
 	for _, watchedConfigPath := range watchedConfigPaths {
 		if err := watcher.Add(watchedConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch config: %v\n", err)
@@ -823,21 +822,6 @@ func resolveWatchedConfigPaths(configPath string) []string {
 	}
 	add(localPath)
 
-	return paths
-}
-
-func appendWatchedPaths(paths []string, extraPaths ...string) []string {
-	seen := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		seen[path] = true
-	}
-	for _, path := range extraPaths {
-		if path == "" || seen[path] {
-			continue
-		}
-		paths = append(paths, path)
-		seen[path] = true
-	}
 	return paths
 }
 

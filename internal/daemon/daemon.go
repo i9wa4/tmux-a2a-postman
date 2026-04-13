@@ -466,8 +466,8 @@ func filterNodesByEdges(nodes map[string]discovery.NodeInfo, edges []string) {
 }
 
 // mergePhonyNodes inserts phony NodeInfo entries from registry into nodes.
-// Keys are bare node names (no session prefix) so dispatchPhonyNode can match
-// the raw to: value before ResolveNodeName is called (#306).
+// Keys stay bare node names so bare phony recipients and session-prefixed
+// phony aliases can both resolve back to the same binding-backed node (#306).
 func mergePhonyNodes(nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry) {
 	if registry == nil {
 		return
@@ -475,6 +475,13 @@ func mergePhonyNodes(nodes map[string]discovery.NodeInfo, registry *binding.Bind
 	for _, b := range registry.Bindings {
 		nodes[b.NodeName] = discovery.NodeInfo{IsPhony: true}
 	}
+}
+
+func bindingsWatchDir(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Dir(path)
 }
 
 func ensureWatchedPath(watchedPaths []string, path string, add func(string) error) ([]string, error) {
@@ -502,6 +509,22 @@ func refreshNodesWithRegistry(nodes map[string]discovery.NodeInfo, registry *bin
 	}
 	mergePhonyNodes(realNodes, registry)
 	return realNodes
+}
+
+func matchesBindingsEvent(eventPath, bindingsPath string) bool {
+	if eventPath == "" || bindingsPath == "" {
+		return false
+	}
+	watchDir := bindingsWatchDir(bindingsPath)
+	if watchDir == "" {
+		return false
+	}
+	if filepath.Clean(filepath.Dir(eventPath)) != filepath.Clean(watchDir) {
+		return false
+	}
+	targetBase := filepath.Base(bindingsPath)
+	eventBase := filepath.Base(eventPath)
+	return eventBase == targetBase || eventBase == targetBase+".tmp"
 }
 
 // RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).
@@ -570,6 +593,14 @@ func RunDaemonLoop(
 
 	// #306: Load binding registry for phony node dispatch; nil = disabled.
 	var registry *binding.BindingRegistry
+	bindingWatchDirs := []string{}
+	if watchDir := bindingsWatchDir(cfg.BindingsPath); watchDir != "" {
+		if updatedWatchDirs, watchErr := ensureWatchedPath(bindingWatchDirs, watchDir, watcher.Add); watchErr != nil {
+			log.Printf("postman: WARNING: failed to watch bindings registry dir %s: %v\n", watchDir, watchErr)
+		} else {
+			bindingWatchDirs = updatedWatchDirs
+		}
+	}
 	if cfg.BindingsPath != "" {
 		if reg, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
 			log.Printf("postman: WARNING: failed to load bindings registry %s: %v\n", cfg.BindingsPath, loadErr)
@@ -889,7 +920,8 @@ func RunDaemonLoop(
 					break
 				}
 			}
-			if isConfigEvent || isNodesDirEvent {
+			isBindingsEvent := matchesBindingsEvent(eventPath, cfg.BindingsPath)
+			if isConfigEvent || isNodesDirEvent || isBindingsEvent {
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 					// Debounce config updates (200ms)
 					if configTimer != nil {
@@ -917,10 +949,10 @@ func RunDaemonLoop(
 						// Update shared state
 						cfg = newCfg
 						adjacency = newAdjacency
-						if updatedConfigPaths, watchErr := ensureWatchedPath(configPaths, newCfg.BindingsPath, watcher.Add); watchErr != nil {
-							log.Printf("postman: WARNING: failed to watch bindings registry %s: %v\n", newCfg.BindingsPath, watchErr)
+						if updatedBindingWatchDirs, watchErr := ensureWatchedPath(bindingWatchDirs, bindingsWatchDir(newCfg.BindingsPath), watcher.Add); watchErr != nil {
+							log.Printf("postman: WARNING: failed to watch bindings registry dir %s: %v\n", bindingsWatchDir(newCfg.BindingsPath), watchErr)
 						} else {
-							configPaths = updatedConfigPaths
+							bindingWatchDirs = updatedBindingWatchDirs
 						}
 
 						// #306: Reload binding registry on config change.
