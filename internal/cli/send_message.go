@@ -126,6 +126,31 @@ func RunSendMessage(args []string) error {
 		}
 	}
 
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		return fmt.Errorf("parsing edges: %w", err)
+	}
+	if _, ok := adjacency[sender]; !ok {
+		return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
+	}
+	recipientSimpleName := nodeaddr.Simple(*to)
+	if _, ok := adjacency[recipientSimpleName]; !ok {
+		return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+	}
+	talksToList := config.GetTalksTo(adjacency, sender)
+	canTalkTo := strings.Join(talksToList, ", ")
+	recipientAllowed := false
+	for _, n := range talksToList {
+		if n == *to || n == recipientSimpleName {
+			recipientAllowed = true
+			break
+		}
+	}
+	if !recipientAllowed {
+		return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
+			sender, *to, canTalkTo)
+	}
+
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
@@ -142,28 +167,6 @@ func RunSendMessage(args []string) error {
 	content := cfg.DraftTemplate
 	if content == "" {
 		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
-	}
-
-	adjacency, err := config.ParseEdges(cfg.Edges)
-	if err != nil {
-		return fmt.Errorf("parsing edges: %w", err)
-	}
-	talksToList := config.GetTalksTo(adjacency, sender)
-	canTalkTo := strings.Join(talksToList, ", ")
-
-	if len(talksToList) > 0 {
-		recipientAllowed := false
-		recipientSimpleName := nodeaddr.Simple(*to)
-		for _, n := range talksToList {
-			if n == *to || n == recipientSimpleName {
-				recipientAllowed = true
-				break
-			}
-		}
-		if !recipientAllowed {
-			return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
-				sender, *to, canTalkTo)
-		}
 	}
 
 	vars := map[string]string{

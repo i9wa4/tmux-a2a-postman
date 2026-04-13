@@ -72,6 +72,132 @@ func TestRunSendMessage_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-pane", "test-session"))
 }
 
+func TestSendMessage_MissingSender(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator -- worker"]
+
+[messenger]
+role = "messenger"
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-missing-sender",
+		"--to", "worker",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected missing sender error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing sender") {
+		t.Fatalf("expected missing sender error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "\"messenger\"") {
+		t.Fatalf("expected missing sender error to name messenger, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-missing-sender", "test-session"))
+}
+
+func TestSendMessage_MissingReceiver(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- orchestrator"]
+
+[messenger]
+role = "messenger"
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-missing-receiver",
+		"--to", "worker",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected missing receiver error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing receiver") {
+		t.Fatalf("expected missing receiver error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "\"worker\"") {
+		t.Fatalf("expected missing receiver error to name worker, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-missing-receiver", "test-session"))
+}
+
+func TestSendMessage_InvalidEdge(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- orchestrator -- worker"]
+
+[messenger]
+role = "messenger"
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-invalid-edge",
+		"--to", "worker",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected edge violation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "edge violation") {
+		t.Fatalf("expected edge violation error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "allowed recipients: orchestrator") {
+		t.Fatalf("expected edge violation error to name allowed recipients, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-edge", "test-session"))
+}
+
 func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := writeMinimalNodeConfig(t, tmpDir)
