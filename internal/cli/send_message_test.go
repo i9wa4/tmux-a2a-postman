@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,6 +197,145 @@ role = "worker"
 	}
 
 	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-edge", "test-session"))
+}
+
+func TestSendMessage_AllowsSessionPrefixedGraphKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["test-session:messenger -- review-session:worker"]
+
+["test-session:messenger"]
+role = "messenger"
+
+["review-session:worker"]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-prefixed-graph",
+		"--to", "review-session:worker",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-prefixed-graph", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-review-session:worker.md") {
+		t.Fatalf("post filename missing session-prefixed recipient: %q", entries[0].Name())
+	}
+}
+
+func TestSendMessage_AllowsSameSessionFullGraphKeyForBareRecipient(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["test-session:messenger -- test-session:worker"]
+
+["test-session:messenger"]
+role = "messenger"
+
+["test-session:worker"]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-full-same-session-graph",
+		"--to", "worker",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-full-same-session-graph", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-worker.md") {
+		t.Fatalf("post filename missing bare recipient: %q", entries[0].Name())
+	}
+}
+
+func TestSendMessage_AllowsPhonyRecipientWithoutGraphEdge(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx-send-phony"
+session_name = "external-session"
+pane_title = "channel-a-pane"
+pane_node_name = ""
+active = true
+permitted_senders = ["messenger"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("WriteFile bindings: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+bindings_path = %q
+
+[messenger]
+role = "messenger"
+`, bindingsPath)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-phony",
+		"--to", "channel-a",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-phony", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-channel-a.md") {
+		t.Fatalf("post filename missing phony recipient: %q", entries[0].Name())
+	}
 }
 
 func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {

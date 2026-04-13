@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -130,27 +131,71 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
-	if _, ok := adjacency[sender]; !ok {
-		return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
-	}
 	recipientSimpleName := nodeaddr.Simple(*to)
-	if _, ok := adjacency[recipientSimpleName]; !ok {
-		return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+	recipientIsPhony := false
+	if cfg.BindingsPath != "" {
+		registry, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders())
+		if loadErr == nil && registry.FindByNodeName(recipientSimpleName) != nil {
+			recipientIsPhony = true
+		}
 	}
-	talksToList := config.GetTalksTo(adjacency, sender)
-	canTalkTo := strings.Join(talksToList, ", ")
-	recipientAllowed := false
-	for _, n := range talksToList {
-		if n == *to || n == recipientSimpleName {
-			recipientAllowed = true
+	senderCandidates := []string{sender}
+	senderFullName := nodeaddr.Full(sender, sessionName)
+	if senderFullName != sender {
+		senderCandidates = append(senderCandidates, senderFullName)
+	}
+	senderGraphKey := ""
+	for _, candidate := range senderCandidates {
+		if _, ok := adjacency[candidate]; ok {
+			senderGraphKey = candidate
 			break
 		}
 	}
-	if !recipientAllowed {
-		return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
-			sender, *to, canTalkTo)
+	recipientCandidates := []string{*to}
+	if recipientSimpleName != *to {
+		recipientCandidates = append(recipientCandidates, recipientSimpleName)
+	} else {
+		recipientFullName := nodeaddr.Full(recipientSimpleName, sessionName)
+		if recipientFullName != *to {
+			recipientCandidates = append(recipientCandidates, recipientFullName)
+		}
 	}
-
+	talksToList := []string{}
+	if senderGraphKey != "" {
+		talksToList = config.GetTalksTo(adjacency, senderGraphKey)
+	}
+	canTalkTo := strings.Join(talksToList, ", ")
+	if !recipientIsPhony {
+		if senderGraphKey == "" {
+			return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
+		}
+		recipientPresent := false
+		for _, candidate := range recipientCandidates {
+			if _, ok := adjacency[candidate]; ok {
+				recipientPresent = true
+				break
+			}
+		}
+		if !recipientPresent {
+			return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+		}
+		recipientAllowed := false
+		for _, n := range talksToList {
+			for _, candidate := range recipientCandidates {
+				if n == candidate {
+					recipientAllowed = true
+					break
+				}
+			}
+			if recipientAllowed {
+				break
+			}
+		}
+		if !recipientAllowed {
+			return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
+				sender, *to, canTalkTo)
+		}
+	}
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
