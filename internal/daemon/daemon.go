@@ -459,7 +459,7 @@ func filterNodesByEdges(nodes map[string]discovery.NodeInfo, edges []string) {
 	for nodeName := range nodes {
 		parts := strings.SplitN(nodeName, ":", 2)
 		rawName := parts[len(parts)-1]
-		if !allowed[rawName] {
+		if !allowed[nodeName] && !allowed[rawName] {
 			delete(nodes, nodeName)
 		}
 	}

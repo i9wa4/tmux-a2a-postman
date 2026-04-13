@@ -241,6 +241,96 @@ role = "worker"
 	}
 }
 
+func TestSendMessage_AllowsMixedSenderGraphKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = [
+  "messenger -- orchestrator",
+  "test-session:messenger -- review-session:worker",
+]
+
+[messenger]
+role = "messenger"
+
+[orchestrator]
+role = "orchestrator"
+
+["test-session:messenger"]
+role = "messenger"
+
+["review-session:worker"]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-mixed-sender-graph",
+		"--to", "review-session:worker",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-mixed-sender-graph", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-review-session:worker.md") {
+		t.Fatalf("post filename missing session-prefixed recipient: %q", entries[0].Name())
+	}
+}
+
+func TestSendMessage_PrefixedRecipientRequiresExplicitGraphKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["test-session:messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+["test-session:messenger"]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-prefixed-recipient-needs-explicit-edge",
+		"--to", "review-session:worker",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected missing receiver error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing receiver") {
+		t.Fatalf("expected missing receiver error, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-prefixed-recipient-needs-explicit-edge", "test-session"))
+}
+
 func TestSendMessage_AllowsSameSessionFullGraphKeyForBareRecipient(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -336,6 +426,55 @@ role = "messenger"
 	if !strings.Contains(entries[0].Name(), "-to-channel-a.md") {
 		t.Fatalf("post filename missing phony recipient: %q", entries[0].Name())
 	}
+}
+
+func TestSendMessage_PrefixedPhonyRecipientRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx-send-phony"
+session_name = "external-session"
+pane_title = "channel-a-pane"
+pane_node_name = ""
+active = true
+permitted_senders = ["messenger"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("WriteFile bindings: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+bindings_path = %q
+
+[messenger]
+role = "messenger"
+`, bindingsPath)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-prefixed-phony",
+		"--to", "review-session:channel-a",
+		"--body", "hello",
+	})
+	if err == nil {
+		t.Fatal("expected phony recipient format error, got nil")
+	}
+	if !strings.Contains(err.Error(), "phony recipients must use bare node names") {
+		t.Fatalf("expected phony recipient format error, got: %v", err)
+	}
+
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-prefixed-phony", "test-session"))
 }
 
 func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
@@ -537,7 +676,7 @@ role = "boss"
 	}
 }
 
-func TestRunSendMessage_MessageFooterUsesSimpleRecipientReachabilityForSessionPrefixedAddress(t *testing.T) {
+func TestRunSendMessage_MessageFooterUsesSessionPrefixedRecipientReachability(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -549,12 +688,12 @@ draft_template = "# Content\n\n"
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
 """
-edges = ["messenger -- orchestrator -- boss"]
+edges = ["messenger -- review-session:orchestrator -- boss"]
 
 [messenger]
 role = "messenger"
 
-[orchestrator]
+["review-session:orchestrator"]
 role = "orchestrator"
 
 [boss]
@@ -593,10 +732,10 @@ role = "boss"
 	}
 	content := string(draftContent)
 	if !strings.Contains(content, "You can talk to: messenger, boss") {
-		t.Fatalf("footer missing simple recipient reachability fallback:\n%s", content)
+		t.Fatalf("footer missing session-prefixed recipient reachability:\n%s", content)
 	}
 	if strings.Contains(content, "You can talk to: review-session:orchestrator") {
-		t.Fatalf("footer unexpectedly used full session-prefixed recipient as reachability source:\n%s", content)
+		t.Fatalf("footer unexpectedly used recipient key instead of neighbor list:\n%s", content)
 	}
 	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-prefixed-recipient --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)

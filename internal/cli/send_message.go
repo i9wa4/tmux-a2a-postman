@@ -135,8 +135,13 @@ func RunSendMessage(args []string) error {
 	recipientIsPhony := false
 	if cfg.BindingsPath != "" {
 		registry, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders())
-		if loadErr == nil && registry.FindByNodeName(recipientSimpleName) != nil {
-			recipientIsPhony = true
+		if loadErr == nil {
+			if *to != recipientSimpleName && registry.FindByNodeName(recipientSimpleName) != nil {
+				return fmt.Errorf("phony recipients must use bare node names: %q", *to)
+			}
+			if *to == recipientSimpleName && registry.FindByNodeName(recipientSimpleName) != nil {
+				recipientIsPhony = true
+			}
 		}
 	}
 	senderCandidates := []string{sender}
@@ -144,29 +149,33 @@ func RunSendMessage(args []string) error {
 	if senderFullName != sender {
 		senderCandidates = append(senderCandidates, senderFullName)
 	}
-	senderGraphKey := ""
+	senderPresent := false
+	seenNeighbors := make(map[string]bool)
+	talksToList := []string{}
 	for _, candidate := range senderCandidates {
-		if _, ok := adjacency[candidate]; ok {
-			senderGraphKey = candidate
-			break
+		neighbors, ok := adjacency[candidate]
+		if !ok {
+			continue
+		}
+		senderPresent = true
+		for _, neighbor := range neighbors {
+			if seenNeighbors[neighbor] {
+				continue
+			}
+			seenNeighbors[neighbor] = true
+			talksToList = append(talksToList, neighbor)
 		}
 	}
 	recipientCandidates := []string{*to}
-	if recipientSimpleName != *to {
-		recipientCandidates = append(recipientCandidates, recipientSimpleName)
-	} else {
+	if recipientSimpleName == *to {
 		recipientFullName := nodeaddr.Full(recipientSimpleName, sessionName)
 		if recipientFullName != *to {
 			recipientCandidates = append(recipientCandidates, recipientFullName)
 		}
 	}
-	talksToList := []string{}
-	if senderGraphKey != "" {
-		talksToList = config.GetTalksTo(adjacency, senderGraphKey)
-	}
 	canTalkTo := strings.Join(talksToList, ", ")
 	if !recipientIsPhony {
-		if senderGraphKey == "" {
+		if !senderPresent {
 			return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
 		}
 		recipientPresent := false
