@@ -167,6 +167,11 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if drained := message.DrainStalePost(sessionDir, cfg.MessageTTLSeconds); drained > 0 {
 		log.Printf("postman: drained %d stale post/ messages at startup\n", drained)
 	}
+	if removed, err := cleanupExpiredRuntimeState(baseDir, contextID, cfg.RetentionPeriodDays, time.Now()); err != nil {
+		log.Printf("postman: WARNING: retention cleanup skipped: %v\n", err)
+	} else if removed > 0 {
+		log.Printf("postman: pruned %d expired runtime path(s) at startup\n", removed)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -733,6 +738,143 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	log.Println("postman: daemon exiting normally")
 	return nil
+}
+
+func cleanupExpiredRuntimeState(baseDir, activeContextID string, retentionDays int, now time.Time) (int, error) {
+	if retentionDays <= 0 || baseDir == "" {
+		return 0, nil
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading base dir: %w", err)
+	}
+
+	cutoff := now.AddDate(0, 0, -retentionDays)
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		contextID := entry.Name()
+		if contextID == "lock" || contextID == activeContextID {
+			continue
+		}
+		if config.ContextHasLiveDaemon(baseDir, contextID) {
+			continue
+		}
+
+		contextDir := filepath.Join(baseDir, contextID)
+		contextRemoved, err := cleanupExpiredContextRuntime(contextDir, cutoff)
+		if err != nil {
+			return removed, fmt.Errorf("cleaning context %s: %w", contextID, err)
+		}
+		removed += contextRemoved
+
+		empty, err := isDirectoryEmpty(contextDir)
+		if err != nil {
+			return removed, fmt.Errorf("checking context %s emptiness: %w", contextID, err)
+		}
+		if empty {
+			if err := os.Remove(contextDir); err != nil && !os.IsNotExist(err) {
+				return removed, fmt.Errorf("removing empty context %s: %w", contextID, err)
+			}
+		}
+	}
+
+	return removed, nil
+}
+
+func cleanupExpiredContextRuntime(contextDir string, cutoff time.Time) (int, error) {
+	entries, err := os.ReadDir(contextDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading context dir: %w", err)
+	}
+
+	removed := 0
+	for _, entry := range entries {
+		if !isRetentionEligibleContextEntry(contextDir, entry) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return removed, fmt.Errorf("stat %s: %w", entry.Name(), err)
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+
+		path := filepath.Join(contextDir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return removed, fmt.Errorf("removing %s: %w", entry.Name(), err)
+		}
+		removed++
+	}
+
+	return removed, nil
+}
+
+func isRetentionEligibleContextEntry(contextDir string, entry os.DirEntry) bool {
+	name := entry.Name()
+	if entry.IsDir() {
+		if name == "phony" || name == "supervisor-memory" {
+			return false
+		}
+		return isSessionRuntimeDir(filepath.Join(contextDir, name))
+	}
+	return name == "postman.log" || name == "pane-activity.json"
+}
+
+func isSessionRuntimeDir(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+
+	recognized := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if !isKnownSessionRuntimeSubdir(entry.Name()) {
+				return false
+			}
+			recognized = true
+			continue
+		}
+		if entry.Name() == "postman.pid" {
+			recognized = true
+			continue
+		}
+		return false
+	}
+
+	return recognized
+}
+
+func isKnownSessionRuntimeSubdir(name string) bool {
+	switch name {
+	case "inbox", "post", "draft", "read", "dead-letter", "waiting":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDirectoryEmpty(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return len(entries) == 0, nil
 }
 
 // cleanupStaleInbox moves all messages from inbox/ subdirectories to read/.

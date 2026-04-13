@@ -74,6 +74,7 @@ func runSchema(stdout io.Writer, args []string) error {
 				"ui_node":                             {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
 				"reminder_interval_messages":          {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
 				"inbox_unread_threshold":              {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
+				"retention_period_days":               {Type: "integer", Description: "Inactive runtime cleanup threshold in days (0 = disabled)"},
 				"[node].idle_timeout_seconds":         {Type: "integer", Description: "Per-node inactivity alert threshold (0 = disabled)"},
 				"[node].dropped_ball_timeout_seconds": {Type: "integer", Description: "Per-node late-reply and dropped-ball threshold (0 = disabled)"},
 				"node_spinning_seconds":               {Type: "integer", Description: "Reply-tracked composing-to-spinning threshold (0 = disabled)"},

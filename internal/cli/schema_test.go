@@ -37,6 +37,7 @@ func TestRunSchema_ConfigShowsUnifiedModelPublicKnobs(t *testing.T) {
 		`"ui_node"`,
 		`"reminder_interval_messages"`,
 		`"inbox_unread_threshold"`,
+		`"retention_period_days"`,
 		`"[node].idle_timeout_seconds"`,
 		`"[node].dropped_ball_timeout_seconds"`,
 		`"node_spinning_seconds"`,

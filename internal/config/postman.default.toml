@@ -65,6 +65,7 @@ startup_delay_seconds = 10.0       # Initial startup delay
 reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
 inbox_unread_threshold = 3         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
+retention_period_days = 90            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
 # message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)

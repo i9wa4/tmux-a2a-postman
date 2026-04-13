@@ -46,6 +46,7 @@ type Config struct {
 	NodeSpinningSeconds       float64 `toml:"node_spinning_seconds"`        // Hard ceiling for active-but-no-reply detection; 0 = disabled
 	MessageAgeWarningSeconds  float64 `toml:"message_age_warning_seconds"`  // Delivery latency warning threshold; 0 = disabled
 	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
+	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
 	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 
@@ -537,6 +538,8 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 		return cfg.MessageAgeWarningSeconds == 0
 	case "message_ttl_seconds":
 		return cfg.MessageTTLSeconds == 0
+	case "retention_period_days":
+		return cfg.RetentionPeriodDays == 0
 	case "min_delivery_gap_seconds":
 		return cfg.MinDeliveryGapSeconds == 0
 	case "startup_drain_window_seconds":
@@ -600,6 +603,8 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 			base.MessageAgeWarningSeconds = 0
 		case "message_ttl_seconds":
 			base.MessageTTLSeconds = 0
+		case "retention_period_days":
+			base.RetentionPeriodDays = 0
 		case "min_delivery_gap_seconds":
 			base.MinDeliveryGapSeconds = 0
 		case "startup_drain_window_seconds":
@@ -805,6 +810,9 @@ func mergeConfig(base, override *Config) {
 	// Int fields
 	if override.PaneCaptureMaxPanes != 0 {
 		base.PaneCaptureMaxPanes = override.PaneCaptureMaxPanes
+	}
+	if override.RetentionPeriodDays != 0 {
+		base.RetentionPeriodDays = override.RetentionPeriodDays
 	}
 	if override.InboxUnreadThreshold != 0 {
 		base.InboxUnreadThreshold = override.InboxUnreadThreshold
@@ -1446,6 +1454,13 @@ func isContextDaemonAlive(baseDir, contextName string) bool {
 		}
 	}
 	return false
+}
+
+// ContextHasLiveDaemon reports whether any session under contextName has a live
+// postman.pid. This is the exported lifecycle guard for cleanup and ownership
+// decisions.
+func ContextHasLiveDaemon(baseDir, contextName string) bool {
+	return isContextDaemonAlive(baseDir, contextName)
 }
 
 func enabledSessionOwner(baseDir, sessionName string) string {

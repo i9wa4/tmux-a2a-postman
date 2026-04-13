@@ -241,6 +241,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.StalledAlertTemplate == "" {
 		t.Error("default StalledAlertTemplate: got empty, want non-empty")
 	}
+	if cfg.RetentionPeriodDays != 90 {
+		t.Errorf("default RetentionPeriodDays: got %d, want 90", cfg.RetentionPeriodDays)
+	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
 	}
@@ -1623,6 +1626,7 @@ enter_retry_max = 4
 node_spinning_seconds = 30.0
 message_age_warning_seconds = 45.0
 message_ttl_seconds = 600.0
+retention_period_days = 90
 min_delivery_gap_seconds = 2.0
 startup_drain_window_seconds = 11.0
 pane_capture_max_panes = 5
@@ -1663,6 +1667,7 @@ enter_retry_max = 0
 node_spinning_seconds = 0
 message_age_warning_seconds = 0
 message_ttl_seconds = 0
+retention_period_days = 0
 min_delivery_gap_seconds = 0
 startup_drain_window_seconds = 0
 pane_capture_max_panes = 0
@@ -1714,6 +1719,9 @@ func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
 	}
 	if cfg.MessageTTLSeconds != 0 {
 		t.Fatalf("MessageTTLSeconds: got %v, want 0", cfg.MessageTTLSeconds)
+	}
+	if cfg.RetentionPeriodDays != 0 {
+		t.Fatalf("RetentionPeriodDays: got %d, want 0", cfg.RetentionPeriodDays)
 	}
 	if cfg.MinDeliveryGapSeconds != 0 {
 		t.Fatalf("MinDeliveryGapSeconds: got %v, want 0", cfg.MinDeliveryGapSeconds)

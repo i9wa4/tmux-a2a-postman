@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -368,10 +369,140 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	}
 }
 
+func TestCleanupExpiredRuntimeState_PreservesLiveAndDurablePaths(t *testing.T) {
+	baseDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 1, 46, 0, 0, time.UTC)
+	staleWhen := now.AddDate(0, 0, -31)
+
+	lockDir := filepath.Join(baseDir, "lock")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(lockDir): %v", err)
+	}
+	markOldRuntimePath(t, lockDir, staleWhen)
+
+	liveContext := "ctx-live"
+	liveSession := "20240101-review"
+	liveContextDir := writeRuntimeSessionFixture(t, baseDir, liveContext, liveSession, true)
+	liveLog := filepath.Join(liveContextDir, "postman.log")
+	writeRuntimeFileFixture(t, liveLog, "live log")
+	markOldRuntimePath(t, filepath.Join(liveContextDir, liveSession), staleWhen)
+	markOldRuntimePath(t, liveLog, staleWhen)
+
+	staleContext := "ctx-stale"
+	staleSession := "main"
+	staleContextDir := writeRuntimeSessionFixture(t, baseDir, staleContext, staleSession, false)
+	staleSessionDir := filepath.Join(staleContextDir, staleSession)
+	staleLog := filepath.Join(staleContextDir, "postman.log")
+	stalePaneActivity := filepath.Join(staleContextDir, "pane-activity.json")
+	stalePhony := filepath.Join(staleContextDir, "phony")
+	staleMemory := filepath.Join(staleContextDir, "supervisor-memory")
+	staleUnknown := filepath.Join(staleContextDir, "scratch-cache")
+
+	writeRuntimeFileFixture(t, staleLog, "old log")
+	writeRuntimeFileFixture(t, stalePaneActivity, "{}")
+	writeRuntimeFileFixture(t, filepath.Join(stalePhony, "channel", "inbox", "message.json"), "{}")
+	writeRuntimeFileFixture(t, filepath.Join(staleMemory, "note.yaml"), "summary: preserve")
+	if err := os.MkdirAll(staleUnknown, 0o700); err != nil {
+		t.Fatalf("MkdirAll(scratch-cache): %v", err)
+	}
+
+	for _, path := range []string{staleSessionDir, staleLog, stalePaneActivity, stalePhony, staleMemory, staleUnknown} {
+		markOldRuntimePath(t, path, staleWhen)
+	}
+
+	removed, err := cleanupExpiredRuntimeState(baseDir, "ctx-current", 30, now)
+	if err != nil {
+		t.Fatalf("cleanupExpiredRuntimeState: %v", err)
+	}
+	if removed < 3 {
+		t.Fatalf("cleanupExpiredRuntimeState removed %d entries, want at least stale session + log + pane activity", removed)
+	}
+
+	assertPathExists(t, lockDir)
+	assertPathExists(t, filepath.Join(liveContextDir, liveSession))
+	assertPathExists(t, liveLog)
+	assertPathMissing(t, staleSessionDir)
+	assertPathMissing(t, staleLog)
+	assertPathMissing(t, stalePaneActivity)
+	assertPathExists(t, stalePhony)
+	assertPathExists(t, staleMemory)
+	assertPathExists(t, staleUnknown)
+}
+
+func TestCleanupExpiredRuntimeState_ZeroRetentionDisablesCleanup(t *testing.T) {
+	baseDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 1, 46, 0, 0, time.UTC)
+	staleWhen := now.AddDate(0, 0, -60)
+
+	contextDir := writeRuntimeSessionFixture(t, baseDir, "ctx-stale", "main", false)
+	sessionDir := filepath.Join(contextDir, "main")
+	markOldRuntimePath(t, sessionDir, staleWhen)
+
+	removed, err := cleanupExpiredRuntimeState(baseDir, "ctx-current", 0, now)
+	if err != nil {
+		t.Fatalf("cleanupExpiredRuntimeState: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("cleanupExpiredRuntimeState removed %d entries, want 0 when retention is disabled", removed)
+	}
+	assertPathExists(t, sessionDir)
+}
+
 func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilter(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 
 	if strings.Count(source, "filterDiscoveredEdgeNodes(") < 3 {
 		t.Fatal("start.go no longer routes startup discovery through the shared exact-or-raw edge filter")
+	}
+}
+
+func writeRuntimeSessionFixture(t *testing.T, baseDir, contextID, sessionName string, livePID bool) string {
+	t.Helper()
+
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(%q, %q): %v", contextDir, sessionName, err)
+	}
+	if livePID {
+		pidPath := filepath.Join(contextDir, sessionName, "postman.pid")
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			t.Fatalf("WriteFile(postman.pid): %v", err)
+		}
+	}
+	return contextDir
+}
+
+func writeRuntimeFileFixture(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+func markOldRuntimePath(t *testing.T, path string, when time.Time) {
+	t.Helper()
+
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatalf("Chtimes(%q): %v", path, err)
+	}
+}
+
+func assertPathExists(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Stat(%q): %v", path, err)
+	}
+}
+
+func assertPathMissing(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) error = %v, want not exists", path, err)
 	}
 }
