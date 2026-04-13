@@ -15,9 +15,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-// TestWarnAlertConfig verifies the three warning branches of warnAlertConfig.
-// Issue #352: daemon must emit a visible warning when the alert system is
-// effectively disabled due to missing ui_node or all-zero timeout values.
+// TestWarnAlertConfig verifies the degraded startup branches of warnAlertConfig.
+// Issue #352/#383: daemon must emit a visible degraded signal when alert
+// delivery loses reachability or threshold coverage.
 func TestWarnAlertConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -54,7 +54,7 @@ func TestWarnAlertConfig(t *testing.T) {
 				"review:worker":    {SessionName: "review"},
 			},
 			wantWarning: true,
-			wantContain: "partially disabled",
+			wantContain: "alert delivery degraded",
 		},
 		{
 			name: "UINodeSetWithActivePerNodeTimeout",
@@ -85,25 +85,71 @@ func TestWarnAlertConfig(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			events := make(chan tui.DaemonEvent, 5)
-			warnAlertConfig(tc.cfg, tc.nodes, events)
+			state := warnAlertConfig(tc.cfg, tc.nodes, events)
 			if tc.wantWarning {
 				if len(events) == 0 {
 					t.Fatal("expected a warning event but channel is empty")
 				}
 				ev := <-events
-				if ev.Type != "alert_config_warning" {
-					t.Errorf("event type: got %q, want %q", ev.Type, "alert_config_warning")
+				if ev.Type != "alert_delivery_degraded" {
+					t.Errorf("event type: got %q, want %q", ev.Type, "alert_delivery_degraded")
 				}
 				if tc.wantContain != "" && !strings.Contains(ev.Message, tc.wantContain) {
 					t.Errorf("event message %q does not contain %q", ev.Message, tc.wantContain)
+				}
+				if !strings.HasPrefix(state, "degraded:") {
+					t.Errorf("state = %q, want degraded prefix", state)
 				}
 			} else {
 				if len(events) != 0 {
 					ev := <-events
 					t.Errorf("expected no warning but got event: %q", ev.Message)
 				}
+				if state != "" && state != "healthy" {
+					t.Errorf("state = %q, want empty or healthy", state)
+				}
 			}
 		})
+	}
+}
+
+func TestSyncAlertDeliveryStatus_EmitsRecoveredSignal(t *testing.T) {
+	events := make(chan tui.DaemonEvent, 5)
+	cfg := &config.Config{
+		UINode: "messenger",
+		Nodes:  map[string]config.NodeConfig{"worker": {IdleTimeoutSeconds: 900}},
+	}
+
+	degradedState := warnAlertConfig(cfg, map[string]discovery.NodeInfo{
+		"review:worker": {SessionName: "review"},
+	}, events)
+	if degradedState != "degraded:ui_node_missing" {
+		t.Fatalf("degradedState = %q, want %q", degradedState, "degraded:ui_node_missing")
+	}
+	if len(events) != 1 {
+		t.Fatalf("degraded event count = %d, want 1", len(events))
+	}
+	degradedEvent := <-events
+	if degradedEvent.Type != "alert_delivery_degraded" {
+		t.Fatalf("degraded event type = %q, want %q", degradedEvent.Type, "alert_delivery_degraded")
+	}
+
+	recoveredState := syncAlertDeliveryStatus(degradedState, cfg, map[string]discovery.NodeInfo{
+		"review:messenger": {SessionName: "review"},
+		"review:worker":    {SessionName: "review"},
+	}, events)
+	if recoveredState != "healthy" {
+		t.Fatalf("recoveredState = %q, want %q", recoveredState, "healthy")
+	}
+	if len(events) != 1 {
+		t.Fatalf("recovered event count = %d, want 1", len(events))
+	}
+	recoveredEvent := <-events
+	if recoveredEvent.Type != "alert_delivery_recovered" {
+		t.Fatalf("recovered event type = %q, want %q", recoveredEvent.Type, "alert_delivery_recovered")
+	}
+	if !strings.Contains(recoveredEvent.Message, "alert delivery recovered") {
+		t.Fatalf("recovered event message = %q, want recovery wording", recoveredEvent.Message)
 	}
 }
 

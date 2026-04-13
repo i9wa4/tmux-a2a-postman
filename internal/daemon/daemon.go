@@ -588,8 +588,8 @@ func RunDaemonLoop(
 		go startHeartbeatTrigger(ctx, sharedNodes, contextID, cfg, adjacency)
 	}
 
-	// Issue #352: Warn if alert system is effectively disabled at startup.
-	warnAlertConfig(cfg, nodes, events)
+	// Issue #352/#383: Surface alert-delivery degradation and later recovery.
+	alertDeliverySignalState := warnAlertConfig(cfg, nodes, events)
 
 	// #306: Load binding registry for phony node dispatch; nil = disabled.
 	var registry *binding.BindingRegistry
@@ -978,6 +978,7 @@ func RunDaemonLoop(
 							nodesSnapshot := nodes
 							sharedNodes.Store(&nodesSnapshot)
 						}
+						alertDeliverySignalState = syncAlertDeliveryStatus(alertDeliverySignalState, cfg, nodes, events)
 
 						// Send config update event
 						// Issue #37: Build edge list with activity data
@@ -1128,6 +1129,7 @@ func RunDaemonLoop(
 				nodesSnapshot := freshNodes
 				sharedNodes.Store(&nodesSnapshot)
 			}
+			alertDeliverySignalState = syncAlertDeliveryStatus(alertDeliverySignalState, cfg, nodes, events)
 
 			// Issue #117: Discover all tmux sessions (not just A2A sessions)
 			allSessions, err := discovery.DiscoverAllSessions()
@@ -1501,40 +1503,69 @@ func uiNodeDiscovered(nodes map[string]discovery.NodeInfo, uiNode string) bool {
 	return false
 }
 
-// warnAlertConfig emits a log warning and TUI event when the alert system is
-// effectively degraded by an undiscoverable ui_node or zero timeout values.
-// This is observability-only: no behavior is changed. Issue #352.
-func warnAlertConfig(cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) {
-	if cfg == nil || cfg.UINode == "" {
-		return
+func hasActiveAlertTimeouts(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
 	}
-	if cfg.UINode != "" && !uiNodeDiscovered(nodes, cfg.UINode) {
-		msg := fmt.Sprintf(
-			"postman: WARNING: alert system partially disabled: ui_node %q is not discoverable in this session. Alerts routed to %q may dead-letter until that pane is present.",
-			cfg.UINode, cfg.UINode,
-		)
-		log.Print(msg)
-		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
-		return
+	if cfg.NodeDefaults.IdleTimeoutSeconds > 0 || cfg.NodeDefaults.DroppedBallTimeoutSeconds > 0 {
+		return true
 	}
-	// cfg.NodeDefaults applies to all nodes; treat non-zero defaults as active.
-	hasActiveTimeout := cfg.NodeDefaults.IdleTimeoutSeconds > 0 ||
-		cfg.NodeDefaults.DroppedBallTimeoutSeconds > 0
-	if !hasActiveTimeout {
-		for _, node := range cfg.Nodes {
-			if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
-				hasActiveTimeout = true
-				break
-			}
+	for _, node := range cfg.Nodes {
+		if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
+			return true
 		}
 	}
-	if !hasActiveTimeout {
-		msg := "postman: WARNING: alert system partially disabled: no nodes have " +
+	return false
+}
+
+func alertDeliveryStatus(cfg *config.Config, nodes map[string]discovery.NodeInfo) (string, string) {
+	if cfg == nil || cfg.UINode == "" {
+		return "", ""
+	}
+	if cfg.UINode != "" && !uiNodeDiscovered(nodes, cfg.UINode) {
+		return "degraded:ui_node_missing", fmt.Sprintf(
+			"postman: WARNING: alert delivery degraded: ui_node %q is not discoverable in this session. Alerts routed to %q may dead-letter until that pane is present.",
+			cfg.UINode, cfg.UINode,
+		)
+	}
+	if !hasActiveAlertTimeouts(cfg) {
+		return "degraded:thresholds_disabled", "postman: WARNING: alert delivery degraded: no nodes have " +
 			"idle_timeout_seconds or dropped_ball_timeout_seconds set. " +
 			"Node-inactivity and unreplied-message alerts will not fire."
-		log.Print(msg)
-		events <- tui.DaemonEvent{Type: "alert_config_warning", Message: msg}
 	}
+	return "healthy", fmt.Sprintf(
+		"postman: INFO: alert delivery recovered: ui_node %q is discoverable and per-node alert thresholds are active.",
+		cfg.UINode,
+	)
+}
+
+func syncAlertDeliveryStatus(prev string, cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) string {
+	current, msg := alertDeliveryStatus(cfg, nodes)
+	if current == "" {
+		return ""
+	}
+	if strings.HasPrefix(current, "degraded:") {
+		if current == prev {
+			return current
+		}
+		log.Print(msg)
+		events <- tui.DaemonEvent{Type: "alert_delivery_degraded", Message: msg}
+		return current
+	}
+	if current == "healthy" {
+		if strings.HasPrefix(prev, "degraded:") {
+			log.Print(msg)
+			events <- tui.DaemonEvent{Type: "alert_delivery_recovered", Message: msg}
+		}
+		return current
+	}
+	return current
+}
+
+// warnAlertConfig emits the initial alert-delivery degradation signal at startup.
+// This is observability-only: no behavior is changed.
+func warnAlertConfig(cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) string {
+	return syncAlertDeliveryStatus("", cfg, nodes, events)
 }
 
 // checkInboxStagnation checks inbox unread count for all nodes and sends an alert to

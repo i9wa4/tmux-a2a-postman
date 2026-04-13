@@ -16,6 +16,7 @@ import (
 
 // Issue #101: Event severity constants (observer review feedback - MINOR)
 const (
+	SeverityInfo     = "info"
 	SeverityWarning  = "warning"
 	SeverityCritical = "critical"
 	SeverityDropped  = "dropped"
@@ -64,6 +65,9 @@ var (
 				Reverse(true)
 
 	// Issue #101: Event severity styles
+	eventInfoStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("120")) // green
+
 	eventWarningStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("226")) // yellow
 
@@ -817,6 +821,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
+		case "alert_delivery_degraded":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: "",
+				Timestamp:   time.Now(),
+				Severity:    SeverityWarning,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
+		case "alert_delivery_recovered":
+			m.events = append(m.events, EventEntry{
+				Message:     msg.Message,
+				SessionName: "",
+				Timestamp:   time.Now(),
+				Severity:    SeverityInfo,
+			})
+			if len(m.events) > 10 {
+				m.events = m.events[len(m.events)-10:]
+			}
 		case "channel_closed":
 			m.quitting = true
 			return m, tea.Quit
@@ -1435,6 +1459,8 @@ func (m Model) renderEventsView(width, height int) string {
 			// Issue #101: Apply severity-based styling
 			styledMsg := msg
 			switch event.Severity {
+			case SeverityInfo:
+				styledMsg = eventInfoStyle.Render(msg)
 			case SeverityWarning:
 				styledMsg = eventWarningStyle.Render(msg)
 			case SeverityCritical:

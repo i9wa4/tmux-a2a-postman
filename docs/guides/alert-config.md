@@ -31,10 +31,12 @@ alerts and heartbeat mail use `daemon_message_template`, and dead-letter
 notifications embed their own re-send instructions. `pop` should print the
 delivered message body as stored, not invent a second hard-coded reply hint.
 
-Starting with the version that includes fix `#352`, the daemon also emits a
-visible startup warning in the daemon log when the effective `ui_node` is not
-discoverable in the current session or when all per-node timeouts are zero at
-startup.
+Starting with the versions that include fixes `#352` and `#383`, the daemon
+emits explicit alert-delivery degraded or recovered signals in the daemon log.
+Degraded is emitted when the effective `ui_node` is not discoverable in the
+current session or when all per-node timeouts are zero. Recovered is emitted
+after a degraded state clears because `ui_node` becomes discoverable again and
+per-node alert thresholds are active.
 
 ## 2. Current Embedded Default Behavior
 
@@ -153,21 +155,29 @@ tmux-a2a-postman get-health
 The `messenger` node must appear in `nodes[*]`, with the canonical
 `visible_state` plus the live `inbox_count` and `waiting_count` facts.
 
-## 7. Daemon Startup Warning
+## 7. Daemon Alert-Delivery Signals
 
-If the daemon detects a misconfigured alert system it logs:
+If the daemon detects a degraded alert-delivery path it logs:
 
 ```text
-postman: WARNING: alert system partially disabled: ui_node "messenger" is not discoverable in this session. ...
+postman: WARNING: alert delivery degraded: ui_node "messenger" is not discoverable in this session. ...
 ```
 
 or:
 
 ```text
-postman: WARNING: alert system partially disabled: no nodes have
+postman: WARNING: alert delivery degraded: no nodes have
     idle_timeout_seconds or dropped_ball_timeout_seconds set. ...
 ```
 
-Resolve these warnings by adding the config values shown above. Use the daemon
-log as the reliable startup signal; the reduced default TUI does not expose a
-separate event-log pane.
+When those conditions clear, the daemon logs:
+
+```text
+postman: INFO: alert delivery recovered: ui_node "messenger" is discoverable and per-node alert thresholds are active.
+```
+
+Resolve degraded signals by adding the config values shown above or by making
+the `ui_node` pane discoverable again. Use the daemon log as the reliable
+startup signal; the reduced default TUI does not expose a separate event-log
+pane. Treat the same daemon log as the runtime source for degraded and
+recovered transitions after startup.
