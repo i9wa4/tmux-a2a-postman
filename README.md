@@ -50,6 +50,12 @@ Example: orchestrator delegates a task to worker.
 5. worker replies:
    `tmux-a2a-postman send --to orchestrator --body "DONE: ..."`
 
+For thread-bound review or approval traffic, add a durable `thread_id` inside
+the message `params:` block. Non-thread traffic can omit it. When present, the
+daemon preserves that `thread_id` in journal-backed mailbox shadow and
+waiting-file events, and approval projection only materializes from events that
+carry the durable thread identity.
+
 ### 3.2. ui_node
 
 `ui_node` designates the human-facing interface. The embedded defaults route

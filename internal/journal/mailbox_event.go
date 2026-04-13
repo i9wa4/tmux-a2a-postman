@@ -9,6 +9,7 @@ type MailboxEventPayload struct {
 	MessageID  string `json:"message_id,omitempty"`
 	From       string `json:"from,omitempty"`
 	To         string `json:"to,omitempty"`
+	ThreadID   string `json:"thread_id,omitempty"`
 	Path       string `json:"path,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
 	Content    string `json:"content,omitempty"`
@@ -32,6 +33,8 @@ func (m *Manager) RecordMailboxPayload(sessionDir, tmuxSessionName, eventType st
 	if payload.Directory == "" {
 		payload.Directory = directoryNameFromEventType(eventType)
 	}
-	_, err = writer.AppendEvent(eventType, visibility, payload, now)
+	_, err = writer.AppendEventWithOptions(eventType, visibility, payload, AppendOptions{
+		ThreadID: payload.ThreadID,
+	}, now)
 	return err
 }

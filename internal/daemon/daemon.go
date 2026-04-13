@@ -151,6 +151,20 @@ func compatibilityMailboxPayloadForFile(filename, relativePath, content string) 
 		payload.From = info.From
 		payload.To = info.To
 	}
+	if metadata, err := message.ParseEnvelopeMetadata(content); err == nil {
+		if payload.From == "" {
+			payload.From = metadata.From
+		}
+		if payload.To == "" {
+			payload.To = metadata.To
+		}
+		if metadata.ThreadID != "" {
+			payload.ThreadID = metadata.ThreadID
+		}
+	}
+	if payload.ThreadID == "" {
+		payload.ThreadID = frontmatterValue(content, "thread_id")
+	}
 	return payload
 }
 
@@ -301,18 +315,22 @@ func processCompatibilitySubmitRequest(requestPath string) error {
 
 func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {
 	waitingSince := now.UTC().Format(time.RFC3339)
+	threadLine := ""
+	if metadata, err := message.ParseEnvelopeMetadata(string(messageContent)); err == nil && metadata.ThreadID != "" {
+		threadLine = "thread_id: " + metadata.ThreadID + "\n"
+	}
 	if cfg != nil && cfg.UINode != "" && info.To == cfg.UINode {
 		return fmt.Sprintf(
-			"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: user_input\nstate_updated_at: %s\nexpects_reply: false\n---\n",
-			info.From, info.To, waitingSince, waitingSince,
+			"---\nfrom: %s\nto: %s\n%swaiting_since: %s\nstate: user_input\nstate_updated_at: %s\nexpects_reply: false\n---\n",
+			info.From, info.To, threadLine, waitingSince, waitingSince,
 		), true
 	}
 	if !frontmatterBool(string(messageContent), "expects_reply") {
 		return "", false
 	}
 	return fmt.Sprintf(
-		"---\nfrom: %s\nto: %s\nwaiting_since: %s\nstate: composing\nstate_updated_at: %s\nexpects_reply: true\n---\n",
-		info.From, info.To, waitingSince, waitingSince,
+		"---\nfrom: %s\nto: %s\n%swaiting_since: %s\nstate: composing\nstate_updated_at: %s\nexpects_reply: true\n---\n",
+		info.From, info.To, threadLine, waitingSince, waitingSince,
 	), true
 }
 

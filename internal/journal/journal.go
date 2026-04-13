@@ -73,10 +73,15 @@ type Event struct {
 	SessionKey      string          `json:"session_key"`
 	TmuxSessionName string          `json:"tmux_session_name"`
 	Generation      int             `json:"generation"`
+	ThreadID        string          `json:"thread_id,omitempty"`
 	LeaseID         string          `json:"lease_id"`
 	LeaseEpoch      int             `json:"lease_epoch"`
 	OccurredAt      string          `json:"occurred_at"`
 	Payload         json.RawMessage `json:"payload"`
+}
+
+type AppendOptions struct {
+	ThreadID string
 }
 
 type Writer struct {
@@ -317,11 +322,19 @@ func AcquireLease(sessionDir string, session SessionState, contextID, holderSess
 }
 
 func (w *Writer) AppendEvent(eventType string, visibility Visibility, payload interface{}, now time.Time) (Event, error) {
+	return w.AppendEventWithOptions(eventType, visibility, payload, AppendOptions{}, now)
+}
+
+func (w *Writer) AppendEventWithOptions(eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time) (Event, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if !isKnownVisibility(visibility) {
 		return Event{}, fmt.Errorf("unknown visibility %q", visibility)
+	}
+	threadID := strings.TrimSpace(options.ThreadID)
+	if err := validateThreadBinding(eventType, threadID); err != nil {
+		return Event{}, err
 	}
 	var event Event
 	if err := withAppendAuthorityFence(w.sessionDir, func() error {
@@ -348,6 +361,7 @@ func (w *Writer) AppendEvent(eventType string, visibility Visibility, payload in
 			SessionKey:      w.session.SessionKey,
 			TmuxSessionName: w.session.TmuxSessionName,
 			Generation:      w.session.Generation,
+			ThreadID:        threadID,
 			LeaseID:         w.lease.LeaseID,
 			LeaseEpoch:      w.lease.LeaseEpoch,
 			OccurredAt:      now.UTC().Format(time.RFC3339),
@@ -437,6 +451,9 @@ func Replay(sessionDir string) ([]Event, error) {
 		if event.Generation < 1 {
 			return nil, fmt.Errorf("replay: record %s has invalid generation %d", record.name, event.Generation)
 		}
+		if err := validateThreadBinding(event.Type, strings.TrimSpace(event.ThreadID)); err != nil {
+			return nil, fmt.Errorf("replay: record %s: %w", record.name, err)
+		}
 
 		if event.Type == leaseAcquiredEventType {
 			if event.LeaseID == "" {
@@ -516,6 +533,17 @@ func directoryNameFromEventType(eventType string) string {
 	default:
 		return ""
 	}
+}
+
+func validateThreadBinding(eventType, threadID string) error {
+	if requiresThreadID(eventType) && threadID == "" {
+		return fmt.Errorf("event type %q requires thread_id", eventType)
+	}
+	return nil
+}
+
+func requiresThreadID(eventType string) bool {
+	return strings.HasPrefix(eventType, "approval_") || strings.HasPrefix(eventType, "review_")
 }
 
 func isKnownVisibility(visibility Visibility) bool {

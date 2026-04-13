@@ -31,18 +31,19 @@ func recordShadowMailboxPathEvent(eventPath, eventType string, visibility journa
 	if readErr != nil && !os.IsNotExist(readErr) {
 		log.Printf("postman: WARNING: failed to read shadow mailbox payload %s: %v\n", filepath.Base(eventPath), readErr)
 	}
+	payload := compatibilityMailboxPayloadForFile(filepath.Base(eventPath), shadowRelativePath(sessionDir, eventPath), string(content))
+	if payload.From == "" {
+		payload.From = info.From
+	}
+	if payload.To == "" {
+		payload.To = info.To
+	}
 	if err := journal.RecordProcessMailboxPayload(
 		sessionDir,
 		sessionName,
 		eventType,
 		visibility,
-		journal.MailboxEventPayload{
-			MessageID: filepath.Base(eventPath),
-			From:      info.From,
-			To:        info.To,
-			Path:      shadowRelativePath(sessionDir, eventPath),
-			Content:   string(content),
-		},
+		payload,
 		now,
 	); err != nil {
 		log.Printf("postman: WARNING: journal shadow append failed for %s: %v\n", filepath.Base(eventPath), err)

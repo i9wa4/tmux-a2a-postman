@@ -47,6 +47,37 @@ func TestRecordShadowMailboxPathEvent_AppendsOperatorVisibleRead(t *testing.T) {
 	}
 }
 
+func TestRecordShadowMailboxPathEvent_PreservesThreadIDFromEnvelope(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 31, 0, 0, time.UTC)
+
+	manager := journal.NewManager("ctx-main", 4242)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	eventPath := filepath.Join(sessionDir, "read", "20260414-173100-r1234-from-orchestrator-to-worker.md")
+	if err := os.MkdirAll(filepath.Dir(eventPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(read): %v", err)
+	}
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  thread_id: thread-review-01\n---\n\nApproval request\n"
+	if err := os.WriteFile(eventPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(read): %v", err)
+	}
+
+	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, now)
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("journal.Replay() returned %d events, want 3", len(events))
+	}
+	if got := events[2].ThreadID; got != "thread-review-01" {
+		t.Fatalf("events[2].ThreadID = %q, want thread-review-01", got)
+	}
+}
+
 func TestShadowSessionFromEventPath(t *testing.T) {
 	sessionDir := filepath.Join(string(os.PathSeparator), "tmp", "ctx-main", "review-session")
 	eventPath := filepath.Join(sessionDir, "post", "20260414-173100-r5678-from-worker-to-orchestrator.md")

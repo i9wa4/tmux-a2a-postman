@@ -376,6 +376,12 @@ waiting file is created or updated only when a node archives a message from
 - the archived message carries `expects_reply: true`, which produces
   `state: composing` with `expects_reply: true`
 
+If the archived message also carries `params.thread_id`, the generated
+waiting-file frontmatter copies that durable identity into top-level
+`thread_id`. This keeps the waiting overlay and mailbox shadow aligned with the
+journal-backed thread or approval projection without making non-thread traffic
+carry extra identity fields.
+
 Messages without explicit reply tracking do not create a reply-tracked waiting
 marker, and visible `composing`, `spinning`, or `stalled` overlays are
 suppressed unless `expects_reply: true` is present. Reply-tracked files

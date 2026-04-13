@@ -635,6 +635,31 @@ func TestWaitingFileContentForRead_ExplicitReplyTracking(t *testing.T) {
 	}
 }
 
+func TestWaitingFileContentForRead_PreservesThreadID(t *testing.T) {
+	cfg := &config.Config{UINode: "messenger"}
+	info := &message.MessageInfo{From: "orchestrator", To: "worker"}
+
+	got, ok := waitingFileContentForRead(info, []byte("---\nparams:\n  from: orchestrator\n  to: worker\n  thread_id: thread-review-01\nexpects_reply: true\n---\n\nPlease reply.\n"), cfg, time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC))
+	if !ok {
+		t.Fatal("waitingFileContentForRead did not create waiting content for thread-bound expects_reply: true")
+	}
+	if !strings.Contains(got, "thread_id: thread-review-01") {
+		t.Fatalf("waiting file missing thread_id:\n%s", got)
+	}
+}
+
+func TestCompatibilityMailboxPayloadForFile_PreservesThreadID(t *testing.T) {
+	payload := compatibilityMailboxPayloadForFile(
+		"20260330-120000-r1234-from-orchestrator-to-worker.md",
+		filepath.Join("waiting", "20260330-120000-r1234-from-orchestrator-to-worker.md"),
+		"---\nfrom: orchestrator\nto: worker\nthread_id: thread-review-01\nstate: composing\nexpects_reply: true\n---\n",
+	)
+
+	if payload.ThreadID != "thread-review-01" {
+		t.Fatalf("payload.ThreadID = %q, want thread-review-01", payload.ThreadID)
+	}
+}
+
 func TestAdvanceWaitingState_NonReplyTrackedComposingDoesNotTransition(t *testing.T) {
 	now := time.Date(2026, time.March, 30, 12, 20, 0, 0, time.UTC)
 	content := "---\nfrom: orchestrator\nto: worker\nwaiting_since: 2026-03-30T12:00:00Z\nstate: composing\nstate_updated_at: 2026-03-30T12:00:00Z\nexpects_reply: false\n---\n"
