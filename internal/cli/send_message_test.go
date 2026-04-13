@@ -415,7 +415,7 @@ role = "worker"
 	}
 }
 
-func TestSendMessage_AllowsPhonyRecipientWithoutGraphEdge(t *testing.T) {
+func TestSendMessage_BindingRecipientStillRequiresGraphEdge(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -452,26 +452,20 @@ role = "orchestrator"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	err := RunSendMessage([]string{
 		"--config", configPath,
 		"--context-id", "ctx-send-phony",
 		"--to", "channel-a",
 		"--body", "hello",
-	}); err != nil {
-		t.Fatalf("RunSendMessage: %v", err)
+	})
+	if err == nil {
+		t.Fatal("expected missing receiver error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing receiver") {
+		t.Fatalf("expected missing receiver error, got: %v", err)
 	}
 
-	postDir := filepath.Join(tmpDir, "ctx-send-phony", "test-session", "post")
-	entries, err := os.ReadDir(postDir)
-	if err != nil {
-		t.Fatalf("ReadDir post: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("post entry count = %d, want 1", len(entries))
-	}
-	if !strings.Contains(entries[0].Name(), "-to-channel-a.md") {
-		t.Fatalf("post filename missing phony recipient: %q", entries[0].Name())
-	}
+	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-phony", "test-session"))
 }
 
 func TestSendMessage_PhonyRecipientStillRequiresConfiguredSender(t *testing.T) {
@@ -521,6 +515,65 @@ role = "messenger"
 	}
 
 	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-phony-missing-sender", "test-session"))
+}
+
+func TestSendMessage_AllowsBindingRecipientWhenGraphEdgeExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	bindingsPath := filepath.Join(tmpDir, "bindings.toml")
+	bindingsContent := `[[binding]]
+channel_id = "channel-a"
+node_name = "channel-a"
+context_id = "ctx-send-phony"
+session_name = "external-session"
+pane_title = "channel-a-pane"
+pane_node_name = ""
+active = true
+permitted_senders = ["messenger"]
+`
+	if err := os.WriteFile(bindingsPath, []byte(bindingsContent), 0o600); err != nil {
+		t.Fatalf("WriteFile bindings: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+bindings_path = %q
+edges = ["messenger -- channel-a"]
+
+[messenger]
+role = "messenger"
+
+[channel-a]
+role = "worker"
+`, bindingsPath)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := RunSendMessage([]string{
+		"--config", configPath,
+		"--context-id", "ctx-send-phony-graph",
+		"--to", "channel-a",
+		"--body", "hello",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-phony-graph", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-channel-a.md") {
+		t.Fatalf("post filename missing phony recipient: %q", entries[0].Name())
+	}
 }
 
 func TestSendMessage_AllowsPrefixedRecipientWhenBindingSharesSimpleName(t *testing.T) {

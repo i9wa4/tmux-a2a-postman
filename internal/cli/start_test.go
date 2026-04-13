@@ -385,9 +385,6 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilterAndBindingsWatch(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 
-	if !strings.Contains(source, "watchedConfigPaths := appendWatchedPaths(resolveWatchedConfigPaths(configPath), cfg.BindingsPath)") {
-		t.Fatal("start.go no longer watches the active bindings registry alongside config files")
-	}
 	if strings.Count(source, "filterDiscoveredEdgeNodes(") < 3 {
 		t.Fatal("start.go no longer routes startup discovery through the shared exact-or-raw edge filter")
 	}

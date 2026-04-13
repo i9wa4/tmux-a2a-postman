@@ -477,6 +477,33 @@ func mergePhonyNodes(nodes map[string]discovery.NodeInfo, registry *binding.Bind
 	}
 }
 
+func ensureWatchedPath(watchedPaths []string, path string, add func(string) error) ([]string, error) {
+	if path == "" {
+		return watchedPaths, nil
+	}
+	for _, watchedPath := range watchedPaths {
+		if watchedPath == path {
+			return watchedPaths, nil
+		}
+	}
+	if err := add(path); err != nil {
+		return watchedPaths, err
+	}
+	return append(watchedPaths, path), nil
+}
+
+func refreshNodesWithRegistry(nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry) map[string]discovery.NodeInfo {
+	realNodes := make(map[string]discovery.NodeInfo)
+	for nodeName, nodeInfo := range nodes {
+		if nodeInfo.IsPhony {
+			continue
+		}
+		realNodes[nodeName] = nodeInfo
+	}
+	mergePhonyNodes(realNodes, registry)
+	return realNodes
+}
+
 // RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).
 func RunDaemonLoop(
 	ctx context.Context,
@@ -890,27 +917,17 @@ func RunDaemonLoop(
 						// Update shared state
 						cfg = newCfg
 						adjacency = newAdjacency
-						if newCfg.BindingsPath != "" {
-							watched := false
-							for _, watchedConfigPath := range configPaths {
-								if watchedConfigPath == newCfg.BindingsPath {
-									watched = true
-									break
-								}
-							}
-							if !watched {
-								if err := watcher.Add(newCfg.BindingsPath); err != nil {
-									log.Printf("postman: WARNING: failed to watch bindings registry %s: %v\n", newCfg.BindingsPath, err)
-								} else {
-									configPaths = append(configPaths, newCfg.BindingsPath)
-								}
-							}
+						if updatedConfigPaths, watchErr := ensureWatchedPath(configPaths, newCfg.BindingsPath, watcher.Add); watchErr != nil {
+							log.Printf("postman: WARNING: failed to watch bindings registry %s: %v\n", newCfg.BindingsPath, watchErr)
+						} else {
+							configPaths = updatedConfigPaths
 						}
 
 						// #306: Reload binding registry on config change.
 						if newCfg.BindingsPath != "" {
 							if reg, loadErr := binding.Load(newCfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
 								log.Printf("postman: WARNING: failed to reload bindings registry %s: %v\n", newCfg.BindingsPath, loadErr)
+								registry = nil
 							} else {
 								registry = reg
 							}
@@ -919,15 +936,7 @@ func RunDaemonLoop(
 						}
 						if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession); discErr != nil {
 							log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
-							realNodes := make(map[string]discovery.NodeInfo)
-							for nodeName, nodeInfo := range nodes {
-								if nodeInfo.IsPhony {
-									continue
-								}
-								realNodes[nodeName] = nodeInfo
-							}
-							mergePhonyNodes(realNodes, registry)
-							nodes = realNodes
+							nodes = refreshNodesWithRegistry(nodes, registry)
 						} else {
 							filterNodesByEdges(freshNodes, cfg.Edges)
 							mergePhonyNodes(freshNodes, registry)

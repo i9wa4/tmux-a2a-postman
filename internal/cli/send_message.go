@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -132,15 +131,6 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
 	recipientSessionName, recipientSimpleName, recipientHasSession := nodeaddr.Split(*to)
-	recipientIsPhony := false
-	if cfg.BindingsPath != "" {
-		registry, loadErr := binding.Load(cfg.BindingsPath, binding.AllowEmptySenders())
-		if loadErr == nil {
-			if !recipientHasSession && registry.FindByNodeName(recipientSimpleName) != nil {
-				recipientIsPhony = true
-			}
-		}
-	}
 	senderCandidates := []string{sender}
 	senderFullName := nodeaddr.Full(sender, sessionName)
 	if senderFullName != sender {
@@ -176,33 +166,31 @@ func RunSendMessage(args []string) error {
 	if !senderPresent {
 		return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
 	}
-	if !recipientIsPhony {
-		recipientPresent := false
+	recipientPresent := false
+	for _, candidate := range recipientCandidates {
+		if _, ok := adjacency[candidate]; ok {
+			recipientPresent = true
+			break
+		}
+	}
+	if !recipientPresent {
+		return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+	}
+	recipientAllowed := false
+	for _, n := range talksToList {
 		for _, candidate := range recipientCandidates {
-			if _, ok := adjacency[candidate]; ok {
-				recipientPresent = true
+			if n == candidate {
+				recipientAllowed = true
 				break
 			}
 		}
-		if !recipientPresent {
-			return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+		if recipientAllowed {
+			break
 		}
-		recipientAllowed := false
-		for _, n := range talksToList {
-			for _, candidate := range recipientCandidates {
-				if n == candidate {
-					recipientAllowed = true
-					break
-				}
-			}
-			if recipientAllowed {
-				break
-			}
-		}
-		if !recipientAllowed {
-			return fmt.Errorf("edge violation: %q cannot send to %q — allowed recipients: %s",
-				sender, *to, canTalkTo)
-		}
+	}
+	if !recipientAllowed {
+		return fmt.Errorf("edge violation: %q cannot send to %q — not allowed; allowed recipients: %s",
+			sender, *to, canTalkTo)
 	}
 	draftDir := filepath.Join(baseDir, resolvedContextID, sessionName, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
