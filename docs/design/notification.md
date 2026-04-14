@@ -453,11 +453,10 @@ the sender's inbox, bypassing `post/` routing. The edge violation warning uses
 
 The daemon sends PING as a direct system message when it needs to confirm
 liveness. In the current tree that includes first discovery, pane-restart
-rechecks, and manual TUI-triggered PING. Manual PING is restricted to
-`ui_node` only when the operator explicitly configured a non-empty `ui_node`
-in TOML or Markdown. The embedded default `ui_node = "messenger"` does not
-narrow manual PING; without an explicit `ui_node` override, the pass still
-fans out to all discovered nodes in the target session.
+rechecks, and manual TUI-triggered PING. Manual PING now fans out to all
+discovered nodes in the target session. `ui_node` still controls alert
+delivery, but it no longer narrows the manual PING pass, even when the
+operator explicitly sets a non-empty `ui_node` in TOML or Markdown.
 
 Liveness is confirmed via two independent paths:
 

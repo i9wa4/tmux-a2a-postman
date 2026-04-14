@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
 func TestUpdateActivity(t *testing.T) {
@@ -670,5 +671,130 @@ func TestGetLivenessMap(t *testing.T) {
 	}
 	if result["session1:nodeC"] {
 		t.Errorf("nodeC should not be in liveness map (no liveness confirmed)")
+	}
+}
+
+func TestContainsCompactionTrigger(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "matches compacting case-insensitively",
+			content: "Compacting conversation history",
+			want:    true,
+		},
+		{
+			name:    "matches compaction substring broadly",
+			content: "autoCompaction finished",
+			want:    true,
+		},
+		{
+			name:    "ignores unrelated text",
+			content: "writing response",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := containsCompactionTrigger(tt.content); got != tt.want {
+				t.Fatalf("containsCompactionTrigger(%q) = %v, want %v", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterPaneCaptureNodes_PreservesSessionPrefixedKeys(t *testing.T) {
+	filtered := filterPaneCaptureNodes(map[string]discovery.NodeInfo{
+		"dotfiles:messenger":    {},
+		"dotfiles:orchestrator": {},
+		"review:critic":         {},
+	}, map[string]bool{
+		"dotfiles:messenger":    true,
+		"dotfiles:orchestrator": true,
+	})
+
+	if _, ok := filtered["dotfiles:messenger"]; !ok {
+		t.Fatal("expected session-prefixed sender node to remain after edge filtering")
+	}
+	if _, ok := filtered["dotfiles:orchestrator"]; !ok {
+		t.Fatal("expected session-prefixed recipient node to remain after edge filtering")
+	}
+	if _, ok := filtered["review:critic"]; ok {
+		t.Fatal("unexpected unrelated node remained after edge filtering")
+	}
+}
+
+func TestFilterPaneCaptureNodes_PreservesBareKeys(t *testing.T) {
+	filtered := filterPaneCaptureNodes(map[string]discovery.NodeInfo{
+		"dotfiles:messenger":    {},
+		"dotfiles:orchestrator": {},
+		"review:critic":         {},
+	}, map[string]bool{
+		"messenger":    true,
+		"orchestrator": true,
+	})
+
+	if _, ok := filtered["dotfiles:messenger"]; !ok {
+		t.Fatal("expected bare-edge sender node to remain after edge filtering")
+	}
+	if _, ok := filtered["dotfiles:orchestrator"]; !ok {
+		t.Fatal("expected bare-edge recipient node to remain after edge filtering")
+	}
+	if _, ok := filtered["review:critic"]; ok {
+		t.Fatal("unexpected unrelated node remained after edge filtering")
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNode(t *testing.T) {
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}' ]; then\n" +
+		"  printf '%s\\n' '%11'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  printf '%s\\n' 'Compacting transcript now'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	targets := tracker.checkPaneCapture(cfg, nodes)
+	if len(targets) != 1 {
+		t.Fatalf("checkPaneCapture() returned %d targets, want 1", len(targets))
+	}
+	if targets[0] != "review:worker" {
+		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0], "review:worker")
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if state.LastCompactionPingAt.IsZero() {
+		t.Fatal("checkPaneCapture() did not record the compaction-triggered ping timestamp")
 	}
 }

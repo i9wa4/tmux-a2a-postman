@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,56 @@ func restrictPingTargetsToConfiguredUINode(nodes map[string]discovery.NodeInfo, 
 
 	filtered := cliutil.FilterToUINode(nodes, cfg.UINode)
 	return filtered, len(filtered) > 0
+}
+
+func pingTargetsForSession(nodes map[string]discovery.NodeInfo, sessionName string) map[string]discovery.NodeInfo {
+	target := make(map[string]discovery.NodeInfo)
+	for nodeName, nodeInfo := range nodes {
+		if nodeInfo.SessionName == sessionName {
+			target[nodeName] = nodeInfo
+		}
+	}
+	return target
+}
+
+func activePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
+	activeNodes := make([]string, 0, len(nodes))
+	seen := make(map[string]bool)
+	for nodeName := range nodes {
+		simpleName := ping.ExtractSimpleName(nodeName)
+		if seen[simpleName] {
+			continue
+		}
+		seen[simpleName] = true
+		activeNodes = append(activeNodes, simpleName)
+	}
+	sort.Strings(activeNodes)
+	return activeNodes
+}
+
+func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targetNodeKeys []string) {
+	if len(targetNodeKeys) == 0 {
+		return
+	}
+
+	activeNodes := activePingNodeNames(nodes)
+	livenessMap := idleTracker.GetLivenessMap()
+	pingAdjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil || pingAdjacency == nil {
+		pingAdjacency = map[string][]string{}
+	}
+
+	for _, nodeKey := range targetNodeKeys {
+		nodeInfo, ok := nodes[nodeKey]
+		if !ok {
+			continue
+		}
+		if err := ping.SendPingToNode(nodeInfo, contextID, nodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes); err != nil {
+			log.Printf("postman: compaction-triggered PING failed for %s: %v\n", nodeKey, err)
+			continue
+		}
+		log.Printf("postman: compaction-triggered PING sent to %s\n", nodeKey)
+	}
 }
 
 func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
@@ -277,9 +328,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Log collisions for edge nodes after edge filter
 	for _, collision := range startupCollisions {
-		parts := strings.SplitN(collision.NodeKey, ":", 2)
-		rawName := parts[len(parts)-1]
-		if !edgeNodes[collision.NodeKey] && !edgeNodes[rawName] {
+		if !config.EdgeNodeAllowed(edgeNodes, collision.NodeKey) {
 			continue
 		}
 		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
@@ -407,7 +456,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)
 
 	// Start pane capture check goroutine (hybrid idle detection)
-	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName)
+	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName, func(nodes map[string]discovery.NodeInfo, targetNodeKeys []string) {
+		sendCompactionPings(contextID, cfg, idleTracker, nodes, targetNodeKeys)
+	})
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
@@ -602,16 +653,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 						}
 						// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
 						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
-						filterTargetNodes := func(nodes map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
-							target := make(map[string]discovery.NodeInfo)
-							for k, v := range nodes {
-								if v.SessionName == cmd.Target {
-									target[k] = v
-								}
-							}
-							return target
-						}
-						targetNodes := filterTargetNodes(freshNodes)
+						targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
 						if cachedPtr == nil || len(targetNodes) == 0 {
 							activationBlocked := false
 							// Attempt a fresh discovery before giving up (catches panes
@@ -620,7 +662,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							if discErr == nil && len(freshDiscovered) > 0 {
 								freshNodes = filterDiscoveredEdgeNodes(freshDiscovered, edgeNodesFilter)
 								sharedNodes.Store(&freshNodes)
-								targetNodes = filterTargetNodes(freshNodes)
+								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 							}
 							if len(targetNodes) == 0 {
 								activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
@@ -628,7 +670,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								case activationErr == nil:
 									freshNodes = activatedNodes
 									sharedNodes.Store(&freshNodes)
-									targetNodes = filterTargetNodes(freshNodes)
+									targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 									daemonEvents <- tui.DaemonEvent{
 										Type:    "status_update",
 										Message: fmt.Sprintf("Activated session %s for ping", cmd.Target),
@@ -669,25 +711,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								break
 							}
 						}
-						// Restrict ping to ui_node only (if configured).
-						uiNodeFound := true
-						targetNodes, uiNodeFound = restrictPingTargetsToConfiguredUINode(targetNodes, cfg)
-						if !uiNodeFound {
-							log.Printf("postman: PING skipped for session %s — ui_node %q not found\n", cmd.Target, cfg.UINode)
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "status_update",
-								Message: fmt.Sprintf("ui_node %q not found in session %s", cfg.UINode, cmd.Target),
-								Details: map[string]interface{}{"session": cmd.Target},
-							}
-							break
-						}
 						// Build active nodes from freshNodes (not stale startup nodes)
-						activeNodes := make([]string, 0, len(freshNodes))
-						for nodeName := range freshNodes {
-							simpleName := ping.ExtractSimpleName(nodeName)
-							activeNodes = append(activeNodes, simpleName)
-						}
-						// Send PING to ui_node in the target session.
+						activeNodes := activePingNodeNames(freshNodes)
+						// Send PING to all discovered nodes in the target session.
 						livenessMap := idleTracker.GetLivenessMap()
 						pingAdjacency, _ := config.ParseEdges(cfg.Edges)
 						if pingAdjacency == nil {

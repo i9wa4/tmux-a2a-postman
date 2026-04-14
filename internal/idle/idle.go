@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
+
+const compactionPingCooldown = 30 * time.Second
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
@@ -36,10 +39,11 @@ type PaneActivityExport struct {
 
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
-	LastHash      uint32    // CRC32 hash of pane content
-	LastChangeAt  time.Time // Last time content change was detected
-	ChangeCount   int       // Consecutive change count (2 = active)
-	LastCaptureAt time.Time // Last capture time
+	LastHash             uint32    // CRC32 hash of pane content
+	LastChangeAt         time.Time // Last time content change was detected
+	ChangeCount          int       // Consecutive change count (2 = active)
+	LastCaptureAt        time.Time // Last capture time
+	LastCompactionPingAt time.Time // Last compaction-triggered PING for this pane
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -347,11 +351,27 @@ func hashContentCRC32(content string) uint32 {
 	return crc32.ChecksumIEEE([]byte(content))
 }
 
+func containsCompactionTrigger(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "compacting") || strings.Contains(lower, "compaction")
+}
+
+func filterPaneCaptureNodes(nodes map[string]discovery.NodeInfo, edgeNodes map[string]bool) map[string]discovery.NodeInfo {
+	filtered := make(map[string]discovery.NodeInfo)
+	for nodeName, nodeInfo := range nodes {
+		if !config.EdgeNodeAllowed(edgeNodes, nodeName) {
+			continue
+		}
+		filtered[nodeName] = nodeInfo
+	}
+	return filtered
+}
+
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
 // Issue #xxx: Hybrid idle detection with screen capture.
-func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) {
+func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) []string {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) {
-		return
+		return nil
 	}
 
 	t.mu.Lock()
@@ -362,14 +382,13 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Failed to list panes - skip this check
-		return
+		return nil
 	}
 
 	// Build paneID -> nodeKey mapping from nodes
 	paneToNode := make(map[string]string) // paneID -> nodeKey (session:node format)
 	for nodeName, nodeInfo := range nodes {
-		sessionKey := nodeInfo.SessionName + ":" + nodeName
-		paneToNode[nodeInfo.PaneID] = sessionKey
+		paneToNode[nodeInfo.PaneID] = nodeName
 	}
 
 	// Parse pane IDs and filter to node panes only (MUST 3: node panes first)
@@ -393,6 +412,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	}
 
 	now := time.Now()
+	compactionTargets := make(map[string]struct{})
 
 	for _, paneID := range nodePaneIDs {
 		// Capture pane content
@@ -410,17 +430,32 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		state, exists := t.paneCaptureState[paneID]
 		if !exists {
 			// First time seeing this pane - initialize state
-			t.paneCaptureState[paneID] = PaneCaptureState{
+			state = PaneCaptureState{
 				LastHash:      currentHash,
 				LastChangeAt:  now,
 				ChangeCount:   0,
 				LastCaptureAt: now,
 			}
+			if nodeKey, hasNode := paneToNode[paneID]; hasNode && containsCompactionTrigger(content) {
+				state.LastCompactionPingAt = now
+				compactionTargets[nodeKey] = struct{}{}
+			}
+			t.paneCaptureState[paneID] = state
 			continue
 		}
 
 		// Update last capture time
 		state.LastCaptureAt = now
+		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+			if containsCompactionTrigger(content) {
+				if state.LastCompactionPingAt.IsZero() || now.Sub(state.LastCompactionPingAt) >= compactionPingCooldown {
+					state.LastCompactionPingAt = now
+					compactionTargets[nodeKey] = struct{}{}
+				}
+			} else {
+				state.LastCompactionPingAt = time.Time{}
+			}
+		}
 
 		// Check if content changed
 		if currentHash != state.LastHash {
@@ -469,11 +504,18 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			delete(t.paneCaptureState, paneID)
 		}
 	}
+
+	targetNodeKeys := make([]string, 0, len(compactionTargets))
+	for nodeKey := range compactionTargets {
+		targetNodeKeys = append(targetNodeKeys, nodeKey)
+	}
+	sort.Strings(targetNodeKeys)
+	return targetNodeKeys
 }
 
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
 // Issue #xxx: Hybrid idle detection with screen capture.
-func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string) {
+func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string, onCompactionPing func(map[string]discovery.NodeInfo, []string)) {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) || cfg.PaneCaptureIntervalSeconds <= 0 {
 		return // Pane capture disabled
 	}
@@ -493,17 +535,13 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 				if err != nil {
 					continue
 				}
-				edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-				for nodeName := range nodes {
-					parts := strings.SplitN(nodeName, ":", 2)
-					rawName := parts[len(parts)-1]
-					if !edgeNodes[rawName] {
-						delete(nodes, nodeName)
-					}
-				}
+				nodes = filterPaneCaptureNodes(nodes, config.GetEdgeNodeNames(cfg.Edges))
 
 				// Perform pane capture check
-				t.checkPaneCapture(cfg, nodes)
+				compactionTargets := t.checkPaneCapture(cfg, nodes)
+				if onCompactionPing != nil && len(compactionTargets) > 0 {
+					onCompactionPing(nodes, compactionTargets)
+				}
 
 				// Issue #120: Export pane activity status to file for CLI access
 				stateFile := filepath.Join(baseDir, contextID, "pane-activity.json")

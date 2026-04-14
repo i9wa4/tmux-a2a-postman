@@ -10,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 )
 
@@ -362,6 +363,67 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 			t.Fatalf("explicit empty ui_node filtered %d nodes, want %d", len(filtered), len(nodes))
 		}
 	})
+}
+
+func TestPingTargetsForSession_BroadcastsAllNodesInSession(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:messenger":  {SessionName: "review"},
+		"review:worker":     {SessionName: "review"},
+		"main:orchestrator": {SessionName: "main"},
+	}
+
+	targets := pingTargetsForSession(nodes, "review")
+	if len(targets) != 2 {
+		t.Fatalf("pingTargetsForSession() returned %d nodes, want 2", len(targets))
+	}
+	if _, ok := targets["review:messenger"]; !ok {
+		t.Fatal("pingTargetsForSession() missing review:messenger")
+	}
+	if _, ok := targets["review:worker"]; !ok {
+		t.Fatal("pingTargetsForSession() missing review:worker")
+	}
+	if _, ok := targets["main:orchestrator"]; ok {
+		t.Fatal("pingTargetsForSession() included a node from a different session")
+	}
+}
+
+func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
+	tracker := idle.NewIdleTracker()
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+	cfg := &config.Config{
+		DaemonMessageTemplate: "{message}",
+		TmuxTimeout:           1.0,
+	}
+
+	sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []string{"review:worker"})
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir(inbox): %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 compaction-triggered PING, got %d", len(entries))
+	}
+
+	body, err := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile(inbox message): %v", err)
+	}
+	if !strings.Contains(string(body), "PING from postman daemon") {
+		t.Fatalf("compaction-triggered PING body = %q, want daemon PING message", string(body))
+	}
 }
 
 func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *testing.T) {
