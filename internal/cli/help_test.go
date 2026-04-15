@@ -40,6 +40,9 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "replay                     Rebuild journal-backed projections without mutating runtime state") {
 		t.Fatalf("stdout missing replay overview line: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "todo                       Manage owner TODO files and print live session summaries") {
+		t.Fatalf("stdout missing todo overview line: %q", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "  bind                       ") {
 		t.Fatalf("stdout still exposes bind in the default overview: %q", stdout.String())
 	}
@@ -94,6 +97,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "\nreplay\n") {
 		t.Fatalf("stdout missing replay command help: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "\ntodo\n") {
+		t.Fatalf("stdout missing todo command help: %q", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "\nbind\n") {
 		t.Fatalf("stdout still exposes bind in command help: %q", stdout.String())
 	}
@@ -130,6 +136,9 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"[heartbeat].enabled             Optional keepalive automation (advanced)",
 		"journal_health_cutover_enabled   Enable journal-backed canonical health reads",
 		"journal_compatibility_cutover_enabled  Enable journal-backed compatibility submit delivery",
+		"read_context_mode                Bare-pop read-time context mode (none or pieces)",
+		"read_context_pieces              Ordered built-in read-time context pieces",
+		"read_context_heading             Heading for the read-time context block",
 		"Cutover modes:",
 		"legacy                 Default. Legacy health and direct mailbox delivery remain authoritative.",
 		"health-first           Enable journal-backed canonical health while mailbox delivery still writes directly.",

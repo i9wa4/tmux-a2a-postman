@@ -225,3 +225,69 @@ func TestValidateConfig_DuplicateEdges_DirectedNotDuplicate(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateConfig_ReadContextPiecesModeRequiresNonEmptyPieces(t *testing.T) {
+	cfg := &Config{
+		ReadContextMode: "pieces",
+		Nodes: map[string]NodeConfig{
+			"worker": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	foundError := false
+	for _, err := range errors {
+		if err.Severity == "error" && err.Field == "read_context_pieces" {
+			foundError = true
+			break
+		}
+	}
+	if !foundError {
+		t.Fatalf("expected read_context_pieces error, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_ReadContextRejectsUnknownAndDuplicatePieces(t *testing.T) {
+	cfg := &Config{
+		ReadContextMode:   "pieces",
+		ReadContextPieces: []string{"node", "unknown", "node"},
+		Nodes: map[string]NodeConfig{
+			"worker": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	var unknownFound bool
+	var duplicateFound bool
+	for _, err := range errors {
+		if err.Severity != "error" {
+			continue
+		}
+		if err.Field == "read_context_pieces[1]" && strings.Contains(err.Message, "unsupported") {
+			unknownFound = true
+		}
+		if err.Field == "read_context_pieces[2]" && strings.Contains(err.Message, "duplicate") {
+			duplicateFound = true
+		}
+	}
+	if !unknownFound || !duplicateFound {
+		t.Fatalf("expected unknown and duplicate piece errors, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_ReadContextAcceptsSupportedPieces(t *testing.T) {
+	cfg := &Config{
+		ReadContextMode:   "pieces",
+		ReadContextPieces: []string{"time", "node", "cwd", "git", "add_dir"},
+		Nodes: map[string]NodeConfig{
+			"worker": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	for _, err := range errors {
+		if err.Severity == "error" && strings.HasPrefix(err.Field, "read_context") {
+			t.Fatalf("unexpected read_context validation error: %v", err)
+		}
+	}
+}

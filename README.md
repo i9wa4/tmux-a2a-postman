@@ -221,6 +221,9 @@ Public knobs for this model live in `postman.toml`:
 - `journal_compatibility_cutover_enabled`
 - `retention_period_days`
 - `message_footer`
+- `read_context_mode`
+- `read_context_pieces`
+- `read_context_heading`
 - `[node].idle_timeout_seconds`
 - `[node].dropped_ball_timeout_seconds`
 - `node_spinning_seconds`
@@ -241,6 +244,14 @@ For stored messages written by `send`, reply guidance comes from
 use `daemon_message_template`, and dead-letter notifications write their own
 re-send instructions. `pop` prints the stored message as written and does not
 add a second hard-coded reply footer.
+
+When `read_context_mode = "pieces"` is enabled, bare interactive
+`tmux-a2a-postman pop` may append one fresh `Local Runtime Context` block after
+the stored message using the configured built-in pieces:
+`time`, `node`, `cwd`, `git`, and `add_dir`. Raw and machine-facing surfaces
+stay unchanged: `pop --peek`, `pop --file`, `pop --json`, archived-file reads,
+and stored message files on disk remain raw. Live TODO coordination stays on
+the explicit `todo` command family, not on `pop`.
 
 Advanced dampening and rendering-shaping fields remain documented in
 `docs/design/notification.md` and `docs/guides/alert-config.md`.
@@ -304,6 +315,7 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
       post/             # internal: outbox queue managed by postman daemon
       inbox/{node}/     # daemon delivers messages here
       read/             # agent moves messages here after reading
+      todo/             # owner TODO documents for explicit summary commands
       dead-letter/      # unroutable messages land here
       waiting/          # per-node waiting state files
 ```
@@ -349,6 +361,13 @@ tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
 tmux-a2a-postman get-health
 tmux-a2a-postman get-health-oneline --json
+```
+
+Explicit coordination surfaces:
+
+```text
+tmux-a2a-postman todo summary
+tmux-a2a-postman todo summary --json
 ```
 
 Lifecycle and recovery:

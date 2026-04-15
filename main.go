@@ -122,6 +122,7 @@ func main() {
 			GetContextID:            runGetContextID,
 			SupervisorDrain:         cli.RunSupervisorDrain,
 			SendMessage:             cli.RunSendMessage,
+			Todo:                    cli.RunTodo,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},
@@ -163,6 +164,7 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Additional tools:")
 	fmt.Fprintln(w, "  read                       List inbox messages or access archived/dead-letter messages")
+	fmt.Fprintln(w, "  todo                       Manage owner TODO files and print live session summaries")
 	fmt.Fprintln(w, "  timeline                   Print current-generation journal timeline (redacted by default)")
 	fmt.Fprintln(w, "  replay                     Rebuild journal-backed projections without mutating runtime state")
 	fmt.Fprintln(w, "  schema [command]           Print JSON Schema for config or supported command surfaces")

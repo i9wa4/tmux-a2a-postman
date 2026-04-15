@@ -20,6 +20,7 @@ type Handlers struct {
 	GetContextID            func(args []string) error
 	SupervisorDrain         func(args []string) error
 	SendMessage             func(args []string) error
+	Todo                    func(args []string) error
 	Stop                    func(args []string) error
 	Bind                    func(args []string) error
 	Schema                  func(args []string) error
@@ -88,6 +89,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman stop",
 			Err:   handlers.Stop(prependConfig(cfg.ConfigPath, args)),
+		}
+	case "todo":
+		return Result{
+			Label: "postman todo",
+			Err:   handlers.Todo(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "bind":
 		return Result{

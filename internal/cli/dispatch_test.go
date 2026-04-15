@@ -253,6 +253,33 @@ func TestDispatch_ReplayAndTimelinePrependContextAndConfig(t *testing.T) {
 	})
 }
 
+func TestDispatch_TodoPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"todo",
+		[]string{"summary", "--json"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			Todo: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman todo" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman todo")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "summary", "--json"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("todo args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_LegacyDefaultNamesReturnUnknownCommand(t *testing.T) {
 	cases := []string{"send-message", "get-session-health", "get-session-status-oneline"}
 	for _, command := range cases {

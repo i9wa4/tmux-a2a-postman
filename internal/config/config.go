@@ -87,6 +87,9 @@ type Config struct {
 	AlertCooldownSeconds               int      `toml:"alert_cooldown_seconds"`                // min seconds between any alert/warning to same recipient
 	AlertDeliveryWindowSeconds         int      `toml:"alert_delivery_window_seconds"`         // suppress alert if recipient received msg within this window
 	PaneNotifyCooldownSeconds          int      `toml:"pane_notify_cooldown_seconds"`          // min seconds between SendToPane calls to the same pane; 0 = use default (600)
+	ReadContextMode                    string   `toml:"read_context_mode"`                     // Read-time context rendering mode for bare interactive pop
+	ReadContextPieces                  []string `toml:"read_context_pieces"`                   // Ordered built-in pieces rendered for bare interactive pop
+	ReadContextHeading                 string   `toml:"read_context_heading"`                  // Heading for the rendered read-time context block
 	AutoEnableNewSessions              *bool    `toml:"auto_enable_new_sessions"`              // nil = use default (false) (#219)
 	AutoEnableNewAgents                *bool    `toml:"auto_enable_new_agents"`                // nil = use default (true) (#219)
 	JournalHealthCutoverEnabled        *bool    `toml:"journal_health_cutover_enabled"`        // nil = use default (false) (#379)
@@ -745,6 +748,12 @@ func mergeConfig(base, override *Config) {
 		base.UINode = override.UINode
 		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
 	}
+	if override.ReadContextMode != "" {
+		base.ReadContextMode = override.ReadContextMode
+	}
+	if override.ReadContextHeading != "" {
+		base.ReadContextHeading = override.ReadContextHeading
+	}
 	// *bool merge: bidirectional override — nil = unset (use base), non-nil = explicit (#219)
 	if override.AutoEnableNewSessions != nil {
 		base.AutoEnableNewSessions = override.AutoEnableNewSessions
@@ -843,6 +852,9 @@ func mergeConfig(base, override *Config) {
 	// Edges: replace if override is non-empty
 	if len(override.Edges) > 0 {
 		base.Edges = override.Edges
+	}
+	if len(override.ReadContextPieces) > 0 {
+		base.ReadContextPieces = append([]string{}, override.ReadContextPieces...)
 	}
 	base.recordNodeNames(override.NodeOrder...)
 
@@ -1344,7 +1356,7 @@ func ResolveBaseDir(configBaseDir string) string {
 
 // CreateSessionDirs creates the session directory structure.
 // Legacy signature for backward compatibility with tests.
-// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting}
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting,todo}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -1353,6 +1365,7 @@ func CreateSessionDirs(sessionDir string) error {
 		filepath.Join(sessionDir, "read"),
 		filepath.Join(sessionDir, "dead-letter"),
 		filepath.Join(sessionDir, "waiting"),
+		filepath.Join(sessionDir, "todo"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -1364,7 +1377,7 @@ func CreateSessionDirs(sessionDir string) error {
 
 // CreateMultiSessionDirs creates the multi-session directory structure.
 // For multi-session support: contextDir = baseDir/contextID, sessionName = tmux session name
-// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting}
+// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting,todo}
 func CreateMultiSessionDirs(contextDir, sessionName string) error {
 	sessionDir := filepath.Join(contextDir, sessionName)
 	return CreateSessionDirs(sessionDir)

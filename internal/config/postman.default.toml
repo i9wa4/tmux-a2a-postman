@@ -72,6 +72,8 @@ startup_drain_window_seconds = 10.0    # Session-enabled bypass window after dae
 alert_cooldown_seconds = 600          # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
 pane_notify_cooldown_seconds = 600    # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
 alert_delivery_window_seconds = 60    # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
+read_context_mode = "none"            # Read-time local context block for bare interactive pop: "none" or "pieces"
+read_context_heading = "Local Runtime Context"
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)

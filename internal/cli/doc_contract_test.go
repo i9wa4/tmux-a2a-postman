@@ -45,6 +45,9 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
 	assertContainsNormalized(t, commandsDoc, `{"status":"[0]🟣 [1]🟢"}`)
 	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive; it searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context without archiving.")
+	assertContainsNormalized(t, commandsDoc, "When `read_context_mode = \"pieces\"` is enabled, bare interactive `pop` may append one read-time `Local Runtime Context` block after the stored message.")
+	assertContainsNormalized(t, commandsDoc, "| `todo` | Manage session-local owner TODO files and live summaries |")
+	assertContainsNormalized(t, commandsDoc, "| `todo summary` | `{\"nodes\":[]}` | `{\"nodes\":[{\"node\",\"token\",\"state\",\"checked\",\"total\",\"exists\",\"invalid\"}]}` |")
 	if strings.Contains(commandsDoc, "`bind`") {
 		t.Fatal("docs/commands.md still exposes bind in the public contract")
 	}
@@ -115,6 +118,11 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "For stored messages written by `send`, reply guidance comes from `message_footer` in `internal/config/postman.default.toml`.")
 	assertContainsNormalized(t, readme, "Daemon alerts and heartbeat mail use `daemon_message_template`, and dead-letter notifications write their own re-send instructions.")
 	assertContainsNormalized(t, readme, "`pop` prints the stored message as written and does not add a second hard-coded reply footer.")
+	assertContainsNormalized(t, readme, "`read_context_mode`")
+	assertContainsNormalized(t, readme, "`read_context_pieces`")
+	assertContainsNormalized(t, readme, "`read_context_heading`")
+	assertContainsNormalized(t, readme, "tmux-a2a-postman todo summary")
+	assertContainsNormalized(t, readme, "todo/ # owner TODO documents for explicit summary commands")
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
 	if strings.Contains(readme, "tmux-a2a-postman bind <subcommand>") {

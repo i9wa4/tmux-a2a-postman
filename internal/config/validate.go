@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/readcontext"
 )
 
 // ValidationError represents a configuration validation issue (Issue #70).
@@ -102,6 +104,44 @@ func ValidateConfig(cfg *Config) []ValidationError {
 
 	// Rule 4: Deprecated fields (none currently, placeholder for future)
 	// Add deprecated field checks here as needed
+
+	switch cfg.ReadContextMode {
+	case "", "none", "pieces":
+	default:
+		errors = append(errors, ValidationError{
+			Field:    "read_context_mode",
+			Message:  fmt.Sprintf("unsupported mode %q (want none or pieces)", cfg.ReadContextMode),
+			Severity: "error",
+		})
+	}
+
+	seenReadContextPieces := make(map[string]int)
+	for i, piece := range cfg.ReadContextPieces {
+		if !readcontext.IsSupportedPiece(piece) {
+			errors = append(errors, ValidationError{
+				Field:    fmt.Sprintf("read_context_pieces[%d]", i),
+				Message:  fmt.Sprintf("unsupported piece %q", piece),
+				Severity: "error",
+			})
+			continue
+		}
+		if firstIdx, exists := seenReadContextPieces[piece]; exists {
+			errors = append(errors, ValidationError{
+				Field:    fmt.Sprintf("read_context_pieces[%d]", i),
+				Message:  fmt.Sprintf("duplicate piece %q (first occurrence at read_context_pieces[%d])", piece, firstIdx),
+				Severity: "error",
+			})
+			continue
+		}
+		seenReadContextPieces[piece] = i
+	}
+	if cfg.ReadContextMode == "pieces" && len(cfg.ReadContextPieces) == 0 {
+		errors = append(errors, ValidationError{
+			Field:    "read_context_pieces",
+			Message:  "must be non-empty when read_context_mode = \"pieces\"",
+			Severity: "error",
+		})
+	}
 
 	return errors
 }

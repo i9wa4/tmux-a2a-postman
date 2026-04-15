@@ -28,6 +28,7 @@ starting the daemon.
 | `send`                     | Compose and send a message in one step               |
 | `pop`                      | Read and archive the next inbox message              |
 | `read`                     | List inbox messages, archived messages, or dead-letters |
+| `todo`                     | Manage session-local owner TODO files and live summaries |
 | `get-health`               | Canonical JSON health report for all nodes in the session |
 | `get-health-oneline`       | Compact all-session tokens rendered from canonical health     |
 | `timeline`                 | Redacted current-generation journal timeline for the session |
@@ -112,7 +113,7 @@ Eligible paths inside an inactive context:
 
 | Path | Notes |
 | ---- | ----- |
-| `{baseDir}/{contextId}/{sessionName}/` | Session runtime tree containing `draft/`, `post/`, `inbox/`, `read/`, `dead-letter/`, `waiting/`, and optional `postman.pid` |
+| `{baseDir}/{contextId}/{sessionName}/` | Session runtime tree containing `draft/`, `post/`, `inbox/`, `read/`, `todo/`, `dead-letter/`, `waiting/`, and optional `postman.pid` |
 | `{baseDir}/{contextId}/postman.log` | Context-local daemon log |
 | `{baseDir}/{contextId}/pane-activity.json` | Context-local pane activity cache |
 
@@ -182,6 +183,9 @@ Reads the next unread inbox message. Archives it after reading unless
 `--peek` is used. `--file` remains non-destructive; it searches across
 contexts only when `--context-id` is omitted, and an explicit
 `--context-id` binds lookup to that context without archiving.
+When `read_context_mode = "pieces"` is enabled, bare interactive `pop`
+may append one read-time `Local Runtime Context` block after the stored
+message. `--peek`, `--file`, and `--json` stay raw.
 
 | Flag           | Type   | Default | --params? | Description                                        |
 | -------------- | ------ | ------- | --------- | -------------------------------------------------- |
@@ -237,6 +241,63 @@ depending on the flags provided.
 **Note:** `--archived` self-filters to messages addressed to the calling node
 (the node whose pane title matches the current tmux pane). Raw filenames for
 dead-letter messages are never exposed (`--dead-letters` metadata only).
+
+### 4.2. todo
+
+```text
+tmux-a2a-postman todo summary [--json] [--context-id ID] [--config PATH]
+tmux-a2a-postman todo show [--node NODE] [--context-id ID] [--config PATH]
+tmux-a2a-postman todo write (--body TEXT | --file PATH) [--context-id ID] [--config PATH]
+```
+
+`todo` is the explicit live TODO coordination surface. It reads and writes
+session-local owner files under `todo/{node}.md`. `summary` reports live
+checkbox counts, `show` prints one owner file as stored, and `write`
+atomically replaces the current node's owner file.
+
+**`summary` flags:**
+
+| Flag           | Type   | Default | Description |
+| -------------- | ------ | ------- | ----------- |
+| `--json`       | bool   | false   | Output JSON: `{"nodes":[...]}` |
+| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
+| `--config`     | string | ""      | Path to config file |
+
+**Human output shape:**
+
+```text
+worker [-] 1/2
+orchestrator [x] 1/1
+messenger [·] 0/0
+```
+
+**`summary --json` output shape:**
+
+```text
+{"nodes":[{"node":"worker","token":"[-]","state":"partial","checked":1,"total":2,"exists":true,"invalid":false}]}
+```
+
+**`show` flags:**
+
+| Flag           | Type   | Default | Description |
+| -------------- | ------ | ------- | ----------- |
+| `--node`       | string | ""      | Owner node to read; defaults to the current pane title |
+| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
+| `--config`     | string | ""      | Path to config file |
+
+Missing owner files return no output and no error.
+
+**`write` flags:**
+
+| Flag           | Type   | Default | Description |
+| -------------- | ------ | ------- | ----------- |
+| `--body`       | string | ""      | Replacement document body |
+| `--file`       | string | ""      | Replacement document path |
+| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
+| `--config`     | string | ""      | Path to config file |
+
+`todo write` requires exactly one of `--body` or `--file`. The current node may
+write only its own owner file.
 
 ## 5. Session Inspection Commands
 
@@ -383,6 +444,7 @@ Can be combined with a command argument or used alone.
 | `send`                     | `send` `--params` scope                       |
 | `pop`                      | `pop` `--params` scope                        |
 | `read`                     | `read` `--params` scope                       |
+| `todo`                     | `todo` option surface                         |
 | `timeline`                 | `timeline` option surface                     |
 | `replay`                   | `replay` option surface                       |
 | `get-context-id`           | `get-context-id` `--params` scope             |
@@ -498,6 +560,7 @@ flag. Output goes to stdout; errors go to stderr.
 | `read` (default)           | `{"files":[]}`          | `{"files":["...","..."]}`                                    |
 | `read --archived`          | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}`            |
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
+| `todo summary`             | `{"nodes":[]}`          | `{"nodes":[{"node","token","state","checked","total","exists","invalid"}]}` |
 | `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
 | `get-health-oneline`       | N/A                     | `{"status":"[0]🟣 [1]🟢"}`                                    |

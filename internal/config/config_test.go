@@ -79,7 +79,7 @@ func TestCreateSessionDirs(t *testing.T) {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
-	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting"}
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting", "todo"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(sessionDir, d)
 		info, err := os.Stat(path)
@@ -103,7 +103,7 @@ func TestCreateMultiSessionDirs(t *testing.T) {
 	}
 
 	sessionDir := filepath.Join(contextDir, sessionName)
-	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting"}
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting", "todo"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(sessionDir, d)
 		info, err := os.Stat(path)

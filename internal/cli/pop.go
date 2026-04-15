@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/readcontext"
 )
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
@@ -131,8 +132,12 @@ func RunPop(args []string) error {
 			parsed := parseMessageContent(response.Content, response.Filename)
 			return json.NewEncoder(os.Stdout).Encode(parsed)
 		}
+		output := response.Content
+		if shouldRenderReadContext(*peek, *jsonOut, *file, cfg) {
+			output = appendReadContextBlock(output, readcontext.BuildBlock(cfg.ReadContextHeading, cfg.ReadContextPieces, readcontext.CurrentOptions(nodeName)))
+		}
 		fmt.Fprintf(os.Stderr, "[1/%d unread]\n", response.UnreadBefore)
-		fmt.Print(response.Content)
+		fmt.Print(output)
 		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", response.UnreadBefore-1)
 		return nil
 	}
@@ -193,7 +198,11 @@ func RunPop(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "[1/%d unread]\n", len(msgs))
-	fmt.Print(string(data))
+	output := string(data)
+	if shouldRenderReadContext(*peek, *jsonOut, *file, cfg) {
+		output = appendReadContextBlock(output, readcontext.BuildBlock(cfg.ReadContextHeading, cfg.ReadContextPieces, readcontext.CurrentOptions(nodeName)))
+	}
+	fmt.Print(output)
 
 	if *peek {
 		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs))
@@ -244,6 +253,17 @@ func findInboxFileByName(baseDir, sessionName, contextID, filename string) (stri
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
 	return message.ArchiveInboxMessage(absPath, filename)
+}
+
+func shouldRenderReadContext(peek, jsonOut bool, file string, cfg *config.Config) bool {
+	return !peek && !jsonOut && file == "" && cfg != nil && cfg.ReadContextMode == "pieces"
+}
+
+func appendReadContextBlock(content, block string) string {
+	if block == "" {
+		return content
+	}
+	return strings.TrimRight(content, "\n") + "\n\n" + block + "\n"
 }
 
 // messageJSON holds JSON-serializable fields for a message (used by pop --json).

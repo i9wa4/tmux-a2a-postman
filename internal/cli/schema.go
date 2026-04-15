@@ -74,6 +74,9 @@ func runSchema(stdout io.Writer, args []string) error {
 				"ui_node":                               {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
 				"reminder_interval_messages":            {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
 				"inbox_unread_threshold":                {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
+				"read_context_mode":                     {Type: "string", Description: "Bare-pop read-time context mode: none or pieces"},
+				"read_context_pieces":                   {Type: "array", Description: "Ordered built-in read-time context pieces rendered on bare interactive pop"},
+				"read_context_heading":                  {Type: "string", Description: "Heading for the rendered bare-pop read-time context block"},
 				"journal_health_cutover_enabled":        {Type: "boolean", Description: "Enable journal-backed canonical health reads while keeping legacy mailbox delivery"},
 				"journal_compatibility_cutover_enabled": {Type: "boolean", Description: "Enable journal-backed compatibility submit delivery (requires journal_health_cutover_enabled)"},
 				"retention_period_days":                 {Type: "integer", Description: "Inactive runtime cleanup threshold in days (0 = disabled)"},
@@ -118,6 +121,18 @@ func runSchema(stdout io.Writer, args []string) error {
 				"archived":      {Type: "boolean", Description: "List archived messages in read/ (self-filter: calling node only)"},
 				"dead-letters":  {Type: "boolean", Description: "List dead-letter messages (metadata only, filenames hidden)"},
 				"resend-oldest": {Type: "boolean", Description: "Resend the oldest dead-letter (requires --dead-letters)"},
+			},
+		})
+	case "todo":
+		return enc.Encode(jsonSchema{
+			Schema: "https://json-schema.org/draft/2020-12/schema",
+			Title:  "todo options",
+			Type:   "object",
+			Properties: map[string]schemaProperty{
+				"json": {Type: "boolean", Description: "Output JSON for todo summary"},
+				"node": {Type: "string", Description: "TODO document owner for todo show"},
+				"body": {Type: "string", Description: "Replacement document body for todo write"},
+				"file": {Type: "string", Description: "Replacement document path for todo write"},
 			},
 		})
 	case "timeline":

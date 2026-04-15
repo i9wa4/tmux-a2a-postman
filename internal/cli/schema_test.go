@@ -40,6 +40,9 @@ func TestRunSchema_ConfigShowsUnifiedModelPublicKnobs(t *testing.T) {
 		`"journal_health_cutover_enabled"`,
 		`"journal_compatibility_cutover_enabled"`,
 		`"retention_period_days"`,
+		`"read_context_mode"`,
+		`"read_context_pieces"`,
+		`"read_context_heading"`,
 		`"[node].idle_timeout_seconds"`,
 		`"[node].dropped_ball_timeout_seconds"`,
 		`"node_spinning_seconds"`,
@@ -134,6 +137,23 @@ func TestRunSchema_TimelineAndReplayOptions(t *testing.T) {
 			t.Fatalf("stdout missing surface option: %q", got)
 		}
 	})
+}
+
+func TestRunSchema_TodoOptions(t *testing.T) {
+	var stdout bytes.Buffer
+
+	if err := runSchema(&stdout, []string{"todo"}); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, `"title": "todo options"`) {
+		t.Fatalf("stdout missing todo title: %q", got)
+	}
+	for _, want := range []string{`"json"`, `"node"`, `"body"`, `"file"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stdout missing %q: %q", want, got)
+		}
+	}
 }
 
 func TestRunSchema_LegacyCommandNamesAreRejected(t *testing.T) {

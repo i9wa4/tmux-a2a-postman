@@ -258,6 +258,87 @@ func TestRunPop_DoesNotAppendHardCodedReplyHint(t *testing.T) {
 	}
 }
 
+func TestRunPop_RendersConfiguredReadContextOnDefaultPop(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-read-context"
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\nread_context_mode = \"pieces\"\nread_context_pieces = [\"node\", \"cwd\"]\nread_context_heading = \"Local Runtime Context\"\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	messageFile := "20260415-010101-from-orchestrator-to-worker.md"
+	if err := os.WriteFile(filepath.Join(inboxDir, messageFile), []byte(messageFixture("orchestrator", "worker", "Primary payload")), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--config", configPath, "--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	if !strings.Contains(stdout, "Primary payload") {
+		t.Fatalf("stdout missing original payload:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "## Local Runtime Context") {
+		t.Fatalf("stdout missing read-context heading:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "- node: worker") {
+		t.Fatalf("stdout missing node piece:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "- cwd: "+cwd) {
+		t.Fatalf("stdout missing cwd piece:\n%s", stdout)
+	}
+}
+
+func TestRunPop_JSONDoesNotRenderConfiguredReadContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-read-context-json"
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\nread_context_mode = \"pieces\"\nread_context_pieces = [\"node\", \"cwd\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inboxDir, "20260415-010102-from-orchestrator-to-worker.md"), []byte(messageFixture("orchestrator", "worker", "JSON payload")), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--config", configPath, "--context-id", contextID, "--json"})
+	})
+	if err != nil {
+		t.Fatalf("RunPop --json: %v\nstderr=%s", err, stderr)
+	}
+	if strings.Contains(stdout, "Local Runtime Context") {
+		t.Fatalf("stdout leaked read-context block into json mode:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"body":"JSON payload"`) {
+		t.Fatalf("stdout missing json payload body:\n%s", stdout)
+	}
+}
+
 func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
@@ -271,7 +352,7 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\njournal_health_cutover_enabled = true\njournal_compatibility_cutover_enabled = true\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\njournal_health_cutover_enabled = true\njournal_compatibility_cutover_enabled = true\nread_context_mode = \"pieces\"\nread_context_pieces = [\"node\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
@@ -333,6 +414,9 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "compatibility pop payload") {
 		t.Fatalf("stdout %q does not contain compatibility payload", stdout)
+	}
+	if !strings.Contains(stdout, "## Local Runtime Context") || !strings.Contains(stdout, "- node: worker") {
+		t.Fatalf("stdout missing compatibility-submit read-context block:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "[1/1 unread]") || !strings.Contains(stderr, "Remaining: 0 unread") {
 		t.Fatalf("stderr missing unread counters:\n%s", stderr)
