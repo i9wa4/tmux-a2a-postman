@@ -671,7 +671,8 @@ func (rt *daemonRuntime) handleScanTick() {
 		}
 	}
 
-	rt.detectNewNodes(freshNodes, true)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	rt.detectNewNodes(freshNodes, autoEnableSessions)
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
 	rt.alertDeliverySignalState = syncAlertDeliveryStatus(rt.alertDeliverySignalState, rt.cfg, rt.nodes, rt.events)

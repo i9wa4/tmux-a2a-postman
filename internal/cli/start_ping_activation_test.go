@@ -88,7 +88,40 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 	}
 }
 
-func TestActivateStartupSessions_MakesForeignSessionDiscoverableAndOwned(t *testing.T) {
+func TestActivateStartupSessions_DefaultDoesNotClaimForeignSessions(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "state")
+	contextID := "ctx-self"
+	selfSession := "0"
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"messenger -- orchestrator"}
+
+	scriptDir := t.TempDir()
+	logPath := filepath.Join(root, "tmux.log")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> '" + logPath + "'\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	activated := activateStartupSessions(baseDir, contextDir, contextID, selfSession, cfg)
+	if len(activated) != 0 {
+		t.Fatalf("activateStartupSessions() = %v, want no foreign session activation by default", activated)
+	}
+	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("activateStartupSessions() invoked tmux unexpectedly: %v", err)
+	}
+}
+
+func TestActivateStartupSessions_OptInMakesForeignSessionDiscoverableAndOwned(t *testing.T) {
 	root := t.TempDir()
 	baseDir := filepath.Join(root, "state")
 	contextID := "ctx-self"
@@ -104,6 +137,8 @@ func TestActivateStartupSessions_MakesForeignSessionDiscoverableAndOwned(t *test
 
 	cfg := config.DefaultConfig()
 	cfg.Edges = []string{"messenger -- orchestrator"}
+	autoEnable := true
+	cfg.AutoEnableNewSessions = &autoEnable
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")
@@ -180,7 +215,7 @@ func TestActivateStartupSessions_MakesForeignSessionDiscoverableAndOwned(t *test
 	}
 }
 
-func TestActivateStartupSessions_UsesConfiguredNodeNamesWhenEdgesAreEmpty(t *testing.T) {
+func TestActivateStartupSessions_OptInUsesConfiguredNodeNamesWhenEdgesAreEmpty(t *testing.T) {
 	root := t.TempDir()
 	baseDir := filepath.Join(root, "state")
 	contextID := "ctx-self"
@@ -194,6 +229,8 @@ func TestActivateStartupSessions_UsesConfiguredNodeNamesWhenEdgesAreEmpty(t *tes
 	cfg := config.DefaultConfig()
 	cfg.Nodes["messenger"] = config.NodeConfig{}
 	cfg.Nodes["orchestrator"] = config.NodeConfig{}
+	autoEnable := true
+	cfg.AutoEnableNewSessions = &autoEnable
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")

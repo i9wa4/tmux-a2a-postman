@@ -4,11 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
 func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t *testing.T) {
@@ -149,6 +153,70 @@ func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
 
 	if !rt.beginPostEvent(path) {
 		t.Fatal("beginPostEvent(after finish) = false, want true")
+	}
+}
+
+func TestDetectNewNodes_HonorsAutoEnableFlag(t *testing.T) {
+	freshNodes := map[string]discovery.NodeInfo{
+		"foreign:worker": {
+			SessionName: "foreign",
+			SessionDir:  t.TempDir(),
+		},
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	rtDisabled := &daemonRuntime{
+		cfg:         config.DefaultConfig(),
+		watcher:     watcher,
+		knownNodes:  make(map[string]bool),
+		watchedDirs: make(map[string]bool),
+		daemonState: NewDaemonState(0, "ctx-disabled"),
+		events:      make(chan tui.DaemonEvent, 1),
+	}
+	rtDisabled.detectNewNodes(freshNodes, false)
+	if rtDisabled.daemonState.GetConfiguredSessionEnabled("foreign") {
+		t.Fatal("detectNewNodes() auto-enabled a foreign session even though auto-enable was disabled")
+	}
+
+	watcherEnabled, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(enabled): %v", err)
+	}
+	defer func() { _ = watcherEnabled.Close() }()
+
+	rtEnabled := &daemonRuntime{
+		cfg:         config.DefaultConfig(),
+		watcher:     watcherEnabled,
+		knownNodes:  make(map[string]bool),
+		watchedDirs: make(map[string]bool),
+		daemonState: NewDaemonState(0, "ctx-enabled"),
+		events:      make(chan tui.DaemonEvent, 1),
+	}
+	rtEnabled.detectNewNodes(freshNodes, true)
+	if !rtEnabled.daemonState.GetConfiguredSessionEnabled("foreign") {
+		t.Fatal("detectNewNodes() did not auto-enable a foreign session when the auto-enable flag was true")
+	}
+}
+
+func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing.T) {
+	sourceBytes, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("ReadFile(runtime.go): %v", err)
+	}
+	source := string(sourceBytes)
+
+	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)") {
+		t.Fatal("runtime.handleScanTick no longer derives session auto-enable from cfg.AutoEnableNewSessions")
+	}
+	if !strings.Contains(source, "rt.detectNewNodes(freshNodes, autoEnableSessions)") {
+		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into detectNewNodes")
+	}
+	if strings.Contains(source, "rt.detectNewNodes(freshNodes, true)") {
+		t.Fatal("runtime.handleScanTick still hardcodes foreign-session auto-enable")
 	}
 }
 

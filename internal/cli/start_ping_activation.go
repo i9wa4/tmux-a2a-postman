@@ -19,6 +19,9 @@ func activateStartupSessions(baseDir, contextDir, contextID, selfSession string,
 	if cfg == nil {
 		return nil
 	}
+	if !config.BoolVal(cfg.AutoEnableNewSessions, false) {
+		return nil
+	}
 
 	allSessions, err := discovery.DiscoverAllSessions()
 	if err != nil {
