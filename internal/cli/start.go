@@ -673,6 +673,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
 								switch {
 								case activationErr == nil:
+									daemonState.SetSessionEnabled(cmd.Target, true)
 									freshNodes = activatedNodes
 									sharedNodes.Store(&freshNodes)
 									targetNodes = pingTargetsForSession(freshNodes, cmd.Target)

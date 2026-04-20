@@ -365,6 +365,27 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 	})
 }
 
+func TestRunStartWithFlags_SourceContractEnablesActivatedPingSession(t *testing.T) {
+	sourceBytes, err := os.ReadFile("start.go")
+	if err != nil {
+		t.Fatalf("ReadFile(start.go): %v", err)
+	}
+	source := string(sourceBytes)
+
+	activationIndex := strings.Index(source, "activatedNodes, activationErr := activateSessionForPing")
+	if activationIndex == -1 {
+		t.Fatal("start.go no longer activates sessions on send_ping fallback")
+	}
+
+	enableIndex := strings.Index(source, "daemonState.SetSessionEnabled(cmd.Target, true)")
+	if enableIndex == -1 {
+		t.Fatal("start.go no longer marks ping-activated sessions enabled in daemonState")
+	}
+	if enableIndex < activationIndex {
+		t.Fatal("daemonState.SetSessionEnabled(cmd.Target, true) must run after activateSessionForPing succeeds")
+	}
+}
+
 func TestPingTargetsForSession_BroadcastsAllNodesInSession(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{
 		"review:messenger":  {SessionName: "review"},
