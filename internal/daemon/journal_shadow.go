@@ -28,6 +28,14 @@ func recordShadowMailboxPathEvent(eventPath, eventType string, visibility journa
 		return
 	}
 	content, readErr := os.ReadFile(eventPath)
+	if eventType == "compatibility_mailbox_posted" {
+		if os.IsNotExist(readErr) {
+			return
+		}
+		if readErr == nil && len(content) == 0 {
+			return
+		}
+	}
 	if readErr != nil && !os.IsNotExist(readErr) {
 		log.Printf("postman: WARNING: failed to read shadow mailbox payload %s: %v\n", filepath.Base(eventPath), readErr)
 	}

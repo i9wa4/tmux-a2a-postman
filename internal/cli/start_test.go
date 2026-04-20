@@ -534,11 +534,11 @@ func TestCleanupExpiredRuntimeState_ZeroRetentionDisablesCleanup(t *testing.T) {
 	assertPathExists(t, sessionDir)
 }
 
-func TestRunStartWithFlags_SourceContractUsesSharedEdgeFilter(t *testing.T) {
+func TestRunStartWithFlags_SourceContractUsesSharedActivationFilter(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 
-	if strings.Count(source, "filterDiscoveredEdgeNodes(") < 3 {
-		t.Fatal("start.go no longer routes startup discovery through the shared exact-or-raw edge filter")
+	if strings.Count(source, "filterDiscoveredActivationNodes(") < 3 {
+		t.Fatal("start.go no longer routes startup discovery through the shared activation-node filter")
 	}
 }
 

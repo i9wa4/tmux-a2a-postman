@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +62,8 @@ type daemonRuntime struct {
 	alertDeliverySignalState string
 	registry                 *binding.BindingRegistry
 	bindingWatchDirs         []string
+	postEventsMu             sync.Mutex
+	activePostEvents         map[string]bool
 }
 
 type runtimeStatusSnapshot struct {
@@ -113,6 +116,7 @@ func newDaemonRuntime(
 		watchedDirs:      make(map[string]bool),
 		claimedPanes:     make(map[string]bool),
 		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
 	}
 }
 
@@ -322,6 +326,13 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 	if !strings.HasSuffix(filename, ".md") {
 		return
 	}
+	if !rt.beginPostEvent(eventPath) {
+		return
+	}
+	if _, err := os.Stat(eventPath); os.IsNotExist(err) {
+		rt.finishPostEvent(eventPath)
+		return
+	}
 
 	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, time.Now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
@@ -359,12 +370,14 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 			rt.daemonState.lastDeliveryMu.RUnlock()
 			if exists && time.Since(lastTime) < gap {
 				log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs)\n", msgInfo.From, msgInfo.To, rt.cfg.MinDeliveryGapSeconds)
+				rt.finishPostEvent(eventPath)
 				return
 			}
 		}
 	}
 
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config) {
+		defer rt.finishPostEvent(eventPath)
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("🚨 PANIC in delivery goroutine for %s: %v\n", filename, r)
@@ -480,6 +493,22 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 			}
 		}
 	}(eventPath, filename, rt.nodes, rt.registry, rt.adjacency, rt.cfg)
+}
+
+func (rt *daemonRuntime) beginPostEvent(eventPath string) bool {
+	rt.postEventsMu.Lock()
+	defer rt.postEventsMu.Unlock()
+	if rt.activePostEvents[eventPath] {
+		return false
+	}
+	rt.activePostEvents[eventPath] = true
+	return true
+}
+
+func (rt *daemonRuntime) finishPostEvent(eventPath string) {
+	rt.postEventsMu.Lock()
+	delete(rt.activePostEvents, eventPath)
+	rt.postEventsMu.Unlock()
 }
 
 func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op) {

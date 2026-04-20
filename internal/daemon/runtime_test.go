@@ -132,6 +132,26 @@ func TestResumeCompatibilityMailboxProjections_RestoresKnownSessionTrees(t *test
 	}
 }
 
+func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
+	rt := &daemonRuntime{
+		activePostEvents: make(map[string]bool),
+	}
+
+	path := "/tmp/post/message.md"
+	if !rt.beginPostEvent(path) {
+		t.Fatal("beginPostEvent(first) = false, want true")
+	}
+	if rt.beginPostEvent(path) {
+		t.Fatal("beginPostEvent(duplicate) = true, want false")
+	}
+
+	rt.finishPostEvent(path)
+
+	if !rt.beginPostEvent(path) {
+		t.Fatal("beginPostEvent(after finish) = false, want true")
+	}
+}
+
 func appendRuntimeMailboxEventForTest(t *testing.T, writer *journal.Writer, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, visibility, payload, now); err != nil {

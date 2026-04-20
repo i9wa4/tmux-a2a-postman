@@ -15,6 +15,48 @@ import (
 
 var errPingSessionOwned = errors.New("session owned by another daemon")
 
+func activateStartupSessions(baseDir, contextDir, contextID, selfSession string, cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+
+	allSessions, err := discovery.DiscoverAllSessions()
+	if err != nil {
+		log.Printf("postman: WARNING: failed to discover tmux sessions for startup activation: %v\n", err)
+		return nil
+	}
+
+	candidateNodes := activationNodeNames(cfg)
+	var activated []string
+	for _, targetSession := range allSessions {
+		if targetSession == "" || targetSession == selfSession {
+			continue
+		}
+		if owner := config.FindSessionOwner(baseDir, targetSession, contextID); owner != "" {
+			continue
+		}
+
+		preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes)
+		if preClaimed == 0 {
+			continue
+		}
+
+		if err := config.CreateMultiSessionDirs(contextDir, targetSession); err != nil {
+			log.Printf("postman: WARNING: failed to create startup session dirs for %s: %v\n", targetSession, err)
+			continue
+		}
+		if err := config.SetSessionEnabledMarker(contextID, targetSession, true); err != nil {
+			log.Printf("postman: WARNING: failed to publish enabled-session marker for %s: %v\n", targetSession, err)
+			continue
+		}
+
+		log.Printf("postman: startup activated session %s (%d panes)\n", targetSession, preClaimed)
+		activated = append(activated, targetSession)
+	}
+
+	return activated
+}
+
 func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetSession string, cfg *config.Config, watcher *fsnotify.Watcher, watchedDirs map[string]bool) (map[string]discovery.NodeInfo, error) {
 	if targetSession == "" {
 		return nil, fmt.Errorf("target session is empty")
@@ -32,14 +74,14 @@ func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetS
 	}
 	registerWatchedSessionDirs(watcher, watchedDirs, filepath.Join(contextDir, targetSession))
 
-	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	preClaimed := preclaimSessionEdgePanes(targetSession, contextID, edgeNodes)
+	candidateNodes := activationNodeNames(cfg)
+	preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes)
 	refreshed, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 	if err != nil {
 		_ = config.SetSessionEnabledMarker(contextID, targetSession, false)
 		return nil, fmt.Errorf("discovering nodes for %s: %w", targetSession, err)
 	}
-	refreshed = filterDiscoveredEdgeNodes(refreshed, edgeNodes)
+	refreshed = filterDiscoveredActivationNodes(refreshed, candidateNodes)
 	log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, targetSession, contextID)
 	log.Printf("postman: node snapshot refreshed after activating session %s (%d nodes)\n", targetSession, len(refreshed))
 	return refreshed, nil
@@ -63,7 +105,21 @@ func registerWatchedSessionDirs(watcher *fsnotify.Watcher, watchedDirs map[strin
 	}
 }
 
-func preclaimSessionEdgePanes(sessionName, contextID string, edgeNodes map[string]bool) int {
+func activationNodeNames(cfg *config.Config) map[string]bool {
+	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
+	if candidateNodes == nil {
+		candidateNodes = make(map[string]bool)
+	}
+	for _, nodeName := range cfg.OrderedNodeNames() {
+		if nodeName == "" {
+			continue
+		}
+		candidateNodes[nodeName] = true
+	}
+	return candidateNodes
+}
+
+func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
 	out, err := exec.Command("tmux", "list-panes", "-s", "-t", sessionName, "-F", "#{pane_id} #{pane_title}").Output()
 	if err != nil {
 		log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", sessionName, err)
@@ -78,7 +134,7 @@ func preclaimSessionEdgePanes(sessionName, contextID string, edgeNodes map[strin
 		}
 		nodeName := parts[1]
 		nodeKey := sessionName + ":" + nodeName
-		if !config.EdgeNodeAllowed(edgeNodes, nodeKey) {
+		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}
 		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
@@ -90,10 +146,10 @@ func preclaimSessionEdgePanes(sessionName, contextID string, edgeNodes map[strin
 	return preClaimed
 }
 
-func filterDiscoveredEdgeNodes(nodes map[string]discovery.NodeInfo, edgeNodes map[string]bool) map[string]discovery.NodeInfo {
+func filterDiscoveredActivationNodes(nodes map[string]discovery.NodeInfo, candidateNodes map[string]bool) map[string]discovery.NodeInfo {
 	filtered := make(map[string]discovery.NodeInfo)
 	for nodeName, nodeInfo := range nodes {
-		if !config.EdgeNodeAllowed(edgeNodes, nodeName) {
+		if !config.EdgeNodeAllowed(candidateNodes, nodeName) {
 			continue
 		}
 		filtered[nodeName] = nodeInfo

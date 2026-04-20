@@ -221,6 +221,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if err := config.SetSessionEnabledMarker(contextID, sessionName, true); err != nil {
 		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 	}
+	startupActivatedSessions := activateStartupSessions(baseDir, contextDir, contextID, sessionName, cfg)
 
 	inboxDir := filepath.Join(sessionDir, "inbox")
 	readDir := filepath.Join(sessionDir, "read")
@@ -288,8 +289,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		nodes = make(map[string]discovery.NodeInfo)
 		startupCollisions = nil
 	}
-	edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-	nodes = filterDiscoveredEdgeNodes(nodes, edgeNodes)
+	activationNodes := activationNodeNames(cfg)
+	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {
 		claimCmd := exec.Command(
@@ -320,15 +321,15 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			log.Printf("⚠️  postman: startup re-discovery failed: %v\n", err)
 			return
 		}
-		edgeNodesLocal := config.GetEdgeNodeNames(cfg.Edges)
-		fresh = filterDiscoveredEdgeNodes(fresh, edgeNodesLocal)
+		activationNodesLocal := activationNodeNames(cfg)
+		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
 		sharedNodes.Store(&fresh)
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
 	})
 
 	// Log collisions for edge nodes after edge filter
 	for _, collision := range startupCollisions {
-		if !config.EdgeNodeAllowed(edgeNodes, collision.NodeKey) {
+		if !config.EdgeNodeAllowed(activationNodes, collision.NodeKey) {
 			continue
 		}
 		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
@@ -445,6 +446,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Issue #71: Create state management instances
 	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
+	daemonState.AutoEnableSessionIfNew(sessionName)
+	for _, activatedSession := range startupActivatedSessions {
+		daemonState.AutoEnableSessionIfNew(activatedSession)
+	}
 	if cfg.StartupDrainWindowSeconds > 0 {
 		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
 	}
@@ -597,11 +602,11 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 									}
 								}
 								// Pre-claim panes in the enabled session so the F3 guard passes.
-								edgeNodes := config.GetEdgeNodeNames(cfg.Edges)
-								preClaimed := preclaimSessionEdgePanes(cmd.Target, contextID, edgeNodes)
+								activationNodes := activationNodeNames(cfg)
+								preClaimed := preclaimSessionCandidatePanes(cmd.Target, contextID, activationNodes)
 								log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, cmd.Target, contextID)
 								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-								refreshed = filterDiscoveredEdgeNodes(refreshed, edgeNodes)
+								refreshed = filterDiscoveredActivationNodes(refreshed, activationNodes)
 								sharedNodes.Store(&refreshed)
 								log.Printf("postman: node snapshot refreshed after enabling session %s (%d nodes)\n", cmd.Target, len(refreshed))
 							}
@@ -652,7 +657,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							}
 						}
 						// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
-						edgeNodesFilter := config.GetEdgeNodeNames(cfg.Edges)
+						activationNodesFilter := activationNodeNames(cfg)
 						targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
 						if cachedPtr == nil || len(targetNodes) == 0 {
 							activationBlocked := false
@@ -660,7 +665,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 							// that set titles after startup or after the last scan).
 							freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 							if discErr == nil && len(freshDiscovered) > 0 {
-								freshNodes = filterDiscoveredEdgeNodes(freshDiscovered, edgeNodesFilter)
+								freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
 								sharedNodes.Store(&freshNodes)
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 							}
