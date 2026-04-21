@@ -223,6 +223,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
+	if cfg.PaneCaptureIntervalSeconds != 5.0 {
+		t.Errorf("default PaneCaptureIntervalSeconds: got %v, want 5.0", cfg.PaneCaptureIntervalSeconds)
+	}
 	if !strings.HasPrefix(cfg.NotificationTemplate, "Hello, {node}!") {
 		t.Errorf("default NotificationTemplate: got %q, want prefix Hello, {node}!", cfg.NotificationTemplate)
 	}
