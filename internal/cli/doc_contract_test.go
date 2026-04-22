@@ -44,6 +44,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, "`get-session-status-oneline` | `get-health-oneline` | Compact all-session tokens over canonical health")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
 	assertContainsNormalized(t, commandsDoc, `{"status":"[0]🟣 [1]🟢"}`)
+	assertContainsNormalized(t, commandsDoc, "| `send` | N/A | `{\"sent\": \"filename.md\", \"status\": \"processed\\|queued\"}` |")
 	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive; it searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context without archiving.")
 	assertContainsNormalized(t, commandsDoc, "When `read_context_mode = \"pieces\"` is enabled, bare interactive `pop` may append one read-time `Local Runtime Context` block after the stored message.")
 	assertContainsNormalized(t, commandsDoc, "| `todo` | Manage session-local owner TODO files and live summaries |")

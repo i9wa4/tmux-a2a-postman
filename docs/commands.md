@@ -564,7 +564,7 @@ flag. Output goes to stdout; errors go to stderr.
 
 | Command                    | Empty / no-result shape | Populated shape (keys)                                       |
 | -------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `send`                     | N/A                     | `{"sent": "filename.md"}`                                    |
+| `send`                     | N/A                     | `{"sent": "filename.md", "status": "processed\|queued"}`      |
 | `pop`                      | `{}`                    | `{"id","from","to","body","timestamp"}`                      |
 | `read` (default)           | `{"files":[]}`          | `{"files":["...","..."]}`                                    |
 | `read --archived`          | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}`            |
