@@ -159,3 +159,23 @@ func awaitCompatibilitySubmitRequest(t *testing.T, sessionDir string, timeout ti
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func awaitMarkdownFile(t *testing.T, dir string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+					continue
+				}
+				return entry.Name()
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for markdown file in %s", dir)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

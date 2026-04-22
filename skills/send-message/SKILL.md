@@ -81,5 +81,12 @@ docs/guides/alert-config.md and docs/design/node-state-machine.md.
 
 ```text
 tmux-a2a-postman send --to worker --body "hello" --json
-# {"sent":"20240101-120000-xxxx-from-worker.md"}
+# {"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}
 ```
+
+The `sent` field stays as the filename token for compatibility. Check
+`status`:
+
+- `processed` = the CLI observed the daemon consume the queued `post/` file
+- `queued` = only the local handoff to `post/` was confirmed before the
+  observation window closed

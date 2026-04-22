@@ -20,6 +20,14 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
+type sendStatus string
+
+const (
+	sendStatusProcessed         sendStatus = "processed"
+	sendStatusQueued            sendStatus = "queued"
+	sendOutcomeObservationDelay            = 250 * time.Millisecond
+)
+
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	// Options struct fields (--params scope): to, body, idempotency-key, json
@@ -272,20 +280,23 @@ func RunSendMessage(args []string) error {
 	}
 
 	if cutoverMode == config.JournalCutoverCompatibilityFirst && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		if _, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
+		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
 			Command:  projection.CompatibilitySubmitSend,
 			Filename: filename,
 			Content:  content,
-		}, compatibilitySubmitTimeout(cfg.TmuxTimeout)); err != nil {
+		}, compatibilitySubmitTimeout(cfg.TmuxTimeout))
+		if err != nil {
 			return fmt.Errorf("compatibility submit send: %w", err)
 		}
-		if *jsonOut {
-			return json.NewEncoder(os.Stdout).Encode(struct {
-				Sent string `json:"sent"`
-			}{Sent: filename})
+		deliveredFilename := filename
+		if response.Filename != "" {
+			deliveredFilename = response.Filename
 		}
-		fmt.Printf("Sent: %s\n", filename)
-		return nil
+		status, err := observeSendOutcome(baseDir, resolvedContextID, sessionDir, deliveredFilename)
+		if err != nil {
+			return fmt.Errorf("send outcome: %w", err)
+		}
+		return writeSendResult(deliveredFilename, status, *jsonOut)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -300,13 +311,11 @@ func RunSendMessage(args []string) error {
 	if err := os.Rename(draftPath, dst); err != nil {
 		return fmt.Errorf("sending draft: %w", err)
 	}
-	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(struct {
-			Sent string `json:"sent"`
-		}{Sent: filename})
+	status, err := observeSendOutcome(baseDir, resolvedContextID, sessionDir, filename)
+	if err != nil {
+		return fmt.Errorf("send outcome: %w", err)
 	}
-	fmt.Printf("Sent: %s\n", filename)
-	return nil
+	return writeSendResult(filename, status, *jsonOut)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,
@@ -331,4 +340,77 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 		return cfg.CommonTemplate
 	}
 	return tmpl
+}
+
+func writeSendResult(filename string, status sendStatus, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Sent   string `json:"sent"`
+			Status string `json:"status"`
+		}{
+			Sent:   filename,
+			Status: string(status),
+		})
+	}
+	if status == sendStatusProcessed {
+		fmt.Printf("Sent: %s\n", filename)
+		return nil
+	}
+	fmt.Printf("Queued: %s\n", filename)
+	return nil
+}
+
+func observeSendOutcome(baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
+	if deadLetterBasename, ok, err := findMatchingDeadLetter(sessionDir, filename); err != nil {
+		return "", err
+	} else if ok {
+		return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
+	}
+	if !config.ContextHasLiveDaemon(baseDir, contextID) {
+		return sendStatusQueued, nil
+	}
+
+	postPath := filepath.Join(sessionDir, "post", filename)
+	deadline := time.Now().Add(sendOutcomeObservationDelay)
+	for {
+		if deadLetterBasename, ok, err := findMatchingDeadLetter(sessionDir, filename); err != nil {
+			return "", err
+		} else if ok {
+			return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
+		}
+
+		if _, err := os.Stat(postPath); err != nil {
+			if os.IsNotExist(err) {
+				return sendStatusProcessed, nil
+			}
+			return "", fmt.Errorf("checking post queue state: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return sendStatusQueued, nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func findMatchingDeadLetter(sessionDir, filename string) (string, bool, error) {
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	entries, err := os.ReadDir(deadLetterDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("reading dead-letter directory: %w", err)
+	}
+
+	prefix := strings.TrimSuffix(filename, ".md") + "-dl-"
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".md") {
+			return name, true, nil
+		}
+	}
+	return "", false, nil
 }

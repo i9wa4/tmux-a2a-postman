@@ -154,7 +154,12 @@ tmux-a2a-postman send --to NODE --body TEXT [options]
 ```
 
 The primary command for agent-to-agent messaging. Composes and delivers
-a message atomically in one step.
+a message, then reports the strongest outcome the CLI can observe during a
+short confirmation window. `status = "processed"` means the daemon consumed
+the queued `post/` file before the window closed. `status = "queued"` means
+only the local handoff to `post/` was confirmed. If a matching dead-letter is
+observed during that window, `send` returns an error instead of a success
+payload.
 
 | Flag                | Type   | Default | --params? | Description                                   |
 | ------------------- | ------ | ------- | --------- | --------------------------------------------- |
@@ -170,8 +175,12 @@ a message atomically in one step.
 **`--json` output shapes:**
 
 ```text
-{"sent": "20240101-120000-xxxx-from-worker.md"}
+{"sent": "20240101-120000-xxxx-from-worker.md", "status": "processed"}
+{"sent": "20240101-120000-xxxx-from-worker.md", "status": "queued"}
 ```
+
+`sent` stays as the filename field for compatibility. Inspect `status` to tell
+whether the CLI observed daemon-side processing or only queue submission.
 
 ### 3.2. pop
 

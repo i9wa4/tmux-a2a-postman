@@ -961,6 +961,205 @@ role = "orchestrator"
 	}
 }
 
+func TestRunSendMessage_JSONOutputReportsQueuedWhenOnlyLocalHandoffIsConfirmed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-queued-json",
+			"--to", "worker",
+			"--body", "hello queued json",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+
+	var payload struct {
+		Sent   string `json:"sent"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if payload.Sent == "" {
+		t.Fatalf("payload.Sent = empty, want filename")
+	}
+	if payload.Status != string(sendStatusQueued) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusQueued)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-queued-json", "test-session", "post")
+	postEntries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(postEntries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(postEntries))
+	}
+	if postEntries[0].Name() != payload.Sent {
+		t.Fatalf("post filename = %q, want %q", postEntries[0].Name(), payload.Sent)
+	}
+}
+
+func TestRunSendMessage_JSONOutputReportsProcessedWhenDaemonConsumesDirectPost(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-direct-processed", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+
+	go func() {
+		postDir := filepath.Join(sessionDir, "post")
+		filename := awaitMarkdownFile(t, postDir, time.Second)
+		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+			t.Errorf("MkdirAll inboxDir: %v", err)
+			return
+		}
+		if err := os.Rename(filepath.Join(postDir, filename), filepath.Join(inboxDir, filename)); err != nil {
+			t.Errorf("Rename post to inbox: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-direct-processed",
+			"--to", "worker",
+			"--body", "hello processed json",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+
+	var payload struct {
+		Sent   string `json:"sent"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if payload.Status != string(sendStatusProcessed) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker", payload.Sent)); err != nil {
+		t.Fatalf("Stat delivered inbox file: %v", err)
+	}
+}
+
+func TestRunSendMessage_ReturnsErrorWhenDaemonDeadLettersDirectPost(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-direct-dead-letter", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+
+	go func() {
+		postDir := filepath.Join(sessionDir, "post")
+		filename := awaitMarkdownFile(t, postDir, time.Second)
+		deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
+			t.Errorf("MkdirAll deadLetterDir: %v", err)
+			return
+		}
+		dst := filepath.Join(deadLetterDir, strings.TrimSuffix(filename, ".md")+"-dl-routing-denied.md")
+		if err := os.Rename(filepath.Join(postDir, filename), dst); err != nil {
+			t.Errorf("Rename post to dead-letter: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-direct-dead-letter",
+			"--to", "worker",
+			"--body", "hello dead letter",
+		})
+	})
+	if err == nil {
+		t.Fatal("RunSendMessage() = nil, want dead-letter error")
+	}
+	if !strings.Contains(err.Error(), "message dead-lettered:") {
+		t.Fatalf("RunSendMessage() error = %v, want dead-letter wording", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+}
+
 func TestRunSendMessage_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -1009,6 +1208,16 @@ role = "worker"
 	go func() {
 		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
+		postDir := filepath.Join(sessionDir, "post")
+		if err := os.MkdirAll(postDir, 0o700); err != nil {
+			t.Errorf("MkdirAll postDir: %v", err)
+			return
+		}
+		postPath := filepath.Join(postDir, request.Filename)
+		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
+			t.Errorf("WriteFile postPath: %v", err)
+			return
+		}
 		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
 			RequestID: request.RequestID,
 			Command:   request.Command,
@@ -1019,6 +1228,14 @@ role = "worker"
 		}
 		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
 			t.Errorf("Remove requestPath: %v", err)
+		}
+		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+			t.Errorf("MkdirAll inboxDir: %v", err)
+			return
+		}
+		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+			t.Errorf("Rename post to inbox: %v", err)
 		}
 	}()
 
@@ -1100,6 +1317,16 @@ role = "worker"
 	go func() {
 		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
+		postDir := filepath.Join(sessionDir, "post")
+		if err := os.MkdirAll(postDir, 0o700); err != nil {
+			t.Errorf("MkdirAll postDir: %v", err)
+			return
+		}
+		postPath := filepath.Join(postDir, request.Filename)
+		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
+			t.Errorf("WriteFile postPath: %v", err)
+			return
+		}
 		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
 			RequestID: request.RequestID,
 			Command:   request.Command,
@@ -1110,6 +1337,14 @@ role = "worker"
 		}
 		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
 			t.Errorf("Remove requestPath: %v", err)
+		}
+		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+			t.Errorf("MkdirAll inboxDir: %v", err)
+			return
+		}
+		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+			t.Errorf("Rename post to inbox: %v", err)
 		}
 	}()
 
@@ -1139,13 +1374,17 @@ role = "worker"
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	var payload struct {
-		Sent string `json:"sent"`
+		Sent   string `json:"sent"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
 	}
 	if payload.Sent != request.Filename {
 		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	}
+	if payload.Status != string(sendStatusProcessed) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
 	}
 	if strings.Contains(stdout, "Sent: ") {
 		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
