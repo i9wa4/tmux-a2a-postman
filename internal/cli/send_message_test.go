@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1044,6 +1045,110 @@ role = "worker"
 	}
 	if stdout != "Sent: "+request.Filename+"\n" {
 		t.Fatalf("stdout = %q, want %q", stdout, "Sent: "+request.Filename+"\n")
+	}
+	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendMessage_JSONOutputUsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+journal_health_cutover_enabled = true
+journal_compatibility_cutover_enabled = true
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-submit-json", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		t.Fatalf("ResolveJournalCutoverMode: %v", err)
+	}
+	if mode != config.JournalCutoverCompatibilityFirst {
+		t.Fatalf("cutover mode = %q, want %q", mode, config.JournalCutoverCompatibilityFirst)
+	}
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-json", "test-session") {
+		t.Fatal("ContextOwnsSession() = false, want true")
+	}
+
+	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	go func() {
+		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestSeen <- request
+		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+		}
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-submit-json",
+			"--to", "worker",
+			"--body", "hello through submit json",
+			"--json",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	request := <-requestSeen
+	if request.Command != projection.CompatibilitySubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	}
+	if !strings.Contains(request.Filename, "-to-worker.md") {
+		t.Fatalf("request filename missing recipient: %q", request.Filename)
+	}
+	if !strings.Contains(request.Content, "hello through submit json") {
+		t.Fatalf("request content missing body:\n%s", request.Content)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	var payload struct {
+		Sent string `json:"sent"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if payload.Sent != request.Filename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	}
+	if strings.Contains(stdout, "Sent: ") {
+		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
