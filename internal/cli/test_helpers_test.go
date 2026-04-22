@@ -2,8 +2,10 @@ package cli
 
 import (
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +39,7 @@ func captureCommandOutput(t *testing.T, fn func() error) (string, string, error)
 	t.Helper()
 	origStdout := os.Stdout
 	origStderr := os.Stderr
+	origLogWriter := log.Writer()
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("Pipe stdout: %v", err)
@@ -47,12 +50,14 @@ func captureCommandOutput(t *testing.T, fn func() error) (string, string, error)
 	}
 	os.Stdout = stdoutW
 	os.Stderr = stderrW
+	log.SetOutput(stderrW)
 	defer func() {
 		os.Stdout = origStdout
 		os.Stderr = origStderr
 	}()
 
 	runErr := fn()
+	log.SetOutput(origLogWriter)
 
 	if err := stdoutW.Close(); err != nil {
 		t.Fatalf("Close stdout writer: %v", err)
@@ -70,6 +75,22 @@ func captureCommandOutput(t *testing.T, fn func() error) (string, string, error)
 		t.Fatalf("ReadAll stderr: %v", err)
 	}
 	return string(stdoutBytes), string(stderrBytes), runErr
+}
+
+func TestCaptureCommandOutput_CapturesDefaultLogger(t *testing.T) {
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		log.Print("captured logger output")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("captureCommandOutput returned err: %v", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "captured logger output") {
+		t.Fatalf("stderr missing logger output: %q", stderr)
+	}
 }
 
 func assertNoMarkdownFilesInTree(t *testing.T, root string) {
