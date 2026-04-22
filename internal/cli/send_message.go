@@ -35,7 +35,7 @@ func RunSendMessage(args []string) error {
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
-	jsonOut := fs.Bool("json", false, `output json: {"sent":"filename.md"}`)
+	jsonOut := fs.Bool("json", false, `output json: {"sent":"filename.md","status":"processed|queued"}`)
 	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
 	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")

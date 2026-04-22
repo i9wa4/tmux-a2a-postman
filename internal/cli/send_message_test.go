@@ -24,6 +24,27 @@ func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRunSendMessage_HelpMentionsObservableJSONStatuses(t *testing.T) {
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{"-h"})
+	})
+	if err == nil {
+		t.Fatal("RunSendMessage(-h) = nil, want help error")
+	}
+	if !strings.Contains(err.Error(), "flag: help requested") {
+		t.Fatalf("RunSendMessage(-h) error = %v, want help requested", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "Usage of send:") {
+		t.Fatalf("stderr missing help header: %q", stderr)
+	}
+	if !strings.Contains(stderr, `output json: {"sent":"filename.md","status":"processed|queued"}`) {
+		t.Fatalf("stderr missing observable send JSON contract: %q", stderr)
+	}
+}
+
 func TestRunSendMessage_FromFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
