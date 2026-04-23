@@ -177,13 +177,13 @@ func TestBuildEnvelope_NormalizesLegacyReplyCommandToSend(t *testing.T) {
 	if strings.Contains(result, "send-message") {
 		t.Fatalf("reply_command still contains legacy send-message: %q", result)
 	}
-	want := "tmux-a2a-postman send --context-id ctx-123 --to orchestrator"
+	want := "tmux-a2a-postman send --to orchestrator"
 	if result != want {
 		t.Fatalf("reply_command = %q, want %q", result, want)
 	}
 }
 
-func TestBuildEnvelope_InjectsContextIDForBareReplySendCommands(t *testing.T) {
+func TestBuildEnvelope_DoesNotInjectContextIDForBareReplySendCommands(t *testing.T) {
 	tests := []struct {
 		name         string
 		replyCommand string
@@ -210,7 +210,7 @@ func TestBuildEnvelope_InjectsContextIDForBareReplySendCommands(t *testing.T) {
 			if strings.Contains(result, "send-message") {
 				t.Fatalf("reply_command still contains legacy send-message: %q", result)
 			}
-			want := "send --context-id ctx-456 --to orchestrator"
+			want := "send --to orchestrator"
 			if result != want {
 				t.Fatalf("reply_command = %q, want %q", result, want)
 			}
@@ -223,7 +223,7 @@ func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
 
 	got := RenderReplyCommand(replyCommand, "ctx-789", "worker")
 
-	want := "tmux-a2a-postman send\n  --context-id ctx-789 --to <recipient>\n  --body \"<your message>\""
+	want := "tmux-a2a-postman send\n  --to <recipient>\n  --body \"<your message>\""
 	if got != want {
 		t.Fatalf("RenderReplyCommand() = %q, want %q", got, want)
 	}
@@ -288,8 +288,8 @@ func TestRenderReplyCommand_DoesNotRewriteWrapperNames(t *testing.T) {
 			if got != tc.command {
 				t.Fatalf("RenderReplyCommand() = %q, want wrapper command unchanged %q", got, tc.command)
 			}
-			if strings.Contains(got, "--context-id") {
-				t.Fatalf("RenderReplyCommand() unexpectedly injected context into wrapper command: %q", got)
+			if strings.Contains(got, "{context_id}") {
+				t.Fatalf("RenderReplyCommand() unexpectedly leaked placeholder into wrapper command: %q", got)
 			}
 		})
 	}

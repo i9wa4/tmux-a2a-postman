@@ -195,6 +195,14 @@ func TestSplitCommand_RequiresExplicitSubcommand(t *testing.T) {
 func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
 	var stderr bytes.Buffer
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
+	fs.Bool("version", false, "show version")
+	fs.Bool("help", false, "show help")
+	fs.Bool("no-tui", false, "run without TUI")
+	fs.String("context-id", "", "context ID (auto-generated if not specified)")
+	fs.String("config", "", "path to config file")
+	fs.String("log-file", "", "log file path")
+	fs.String("base-dir", "", "override state directory")
+	fs.String("state-home", "", "override XDG_STATE_HOME")
 
 	printUsage(&stderr, fs)
 
@@ -213,5 +221,11 @@ func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
 	}
 	if strings.Contains(got, "Start tmux-a2a-postman daemon (default)") {
 		t.Fatalf("usage still claims start is the default: %q", got)
+	}
+	if strings.Contains(got, "--context-id") {
+		t.Fatalf("usage still exposes hidden context override: %q", got)
+	}
+	if strings.Contains(got, "get-context-id") {
+		t.Fatalf("usage still exposes get-context-id in the default operator surface: %q", got)
 	}
 }

@@ -26,6 +26,7 @@ func isShellCommand(cmd string) bool {
 // Output format: [0]🔷🔵:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): json
 	// SYNC: schema get-health-oneline properties; alwaysExcludedParams map
 	jsonOut := fs.Bool("json", false, `output json: {"status":"..."}`)

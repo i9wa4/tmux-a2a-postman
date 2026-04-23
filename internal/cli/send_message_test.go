@@ -40,6 +40,9 @@ func TestRunSendMessage_HelpMentionsObservableJSONStatuses(t *testing.T) {
 	if !strings.Contains(stderr, "Usage of send:") {
 		t.Fatalf("stderr missing help header: %q", stderr)
 	}
+	if strings.Contains(stderr, "--context-id") {
+		t.Fatalf("stderr still exposes hidden context override: %q", stderr)
+	}
 	if !strings.Contains(stderr, `output json: {"sent":"filename.md","status":"processed|queued"}`) {
 		t.Fatalf("stderr missing observable send JSON contract: %q", stderr)
 	}
@@ -735,7 +738,7 @@ role = "worker"
 	if strings.Contains(string(draftContent), "send-message") {
 		t.Fatalf("draft content still contains legacy send-message: %q", string(draftContent))
 	}
-	if !strings.Contains(string(draftContent), "send --context-id ctx-draft-reply --to worker") {
+	if !strings.Contains(string(draftContent), "send --to worker") {
 		t.Fatalf("draft content missing normalized reply command: %q", string(draftContent))
 	}
 }
@@ -787,7 +790,7 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("ReadFile draft: %v", err)
 	}
-	want := "tmux-a2a-postman send\n  --context-id ctx-draft-multiline --to worker\n  --body \"<your message>\""
+	want := "tmux-a2a-postman send\n  --to worker\n  --body \"<your message>\""
 	if !strings.Contains(string(draftContent), want) {
 		t.Fatalf("draft content missing preserved multiline reply command:\n%s", string(draftContent))
 	}
@@ -854,10 +857,10 @@ role = "boss"
 	if strings.Contains(content, "You can talk to: orchestrator") {
 		t.Fatalf("footer still contains sender reachability:\n%s", content)
 	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-recipient --to messenger") {
+	if !strings.Contains(content, "Reply: tmux-a2a-postman send --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)
 	}
-	if strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-recipient --to orchestrator") {
+	if strings.Contains(content, "Reply: tmux-a2a-postman send --to orchestrator") {
 		t.Fatalf("footer still contains sender-scoped reply command:\n%s", content)
 	}
 }
@@ -923,7 +926,7 @@ role = "boss"
 	if strings.Contains(content, "You can talk to: review-session:orchestrator") {
 		t.Fatalf("footer unexpectedly used recipient key instead of neighbor list:\n%s", content)
 	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --context-id ctx-footer-prefixed-recipient --to messenger") {
+	if !strings.Contains(content, "Reply: tmux-a2a-postman send --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)
 	}
 }

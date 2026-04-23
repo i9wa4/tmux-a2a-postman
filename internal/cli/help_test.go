@@ -73,8 +73,8 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-context-id") {
-		t.Fatalf("stdout missing get-context-id command: %q", stdout.String())
+	if strings.Contains(stdout.String(), "get-context-id") {
+		t.Fatalf("stdout still exposes get-context-id in user-facing help: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Migration from older names") {
 		t.Fatalf("stdout missing migration section: %q", stdout.String())
@@ -105,6 +105,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "\nsupervisor-drain\n") {
 		t.Fatalf("stdout still exposes supervisor-drain in command help: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "--context-id") {
+		t.Fatalf("stdout still exposes direct context override in command help: %q", stdout.String())
 	}
 }
 

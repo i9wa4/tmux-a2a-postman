@@ -19,6 +19,7 @@ import (
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
 func RunPop(args []string) error {
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): peek, json
 	// SYNC: schema pop properties; alwaysExcludedParams map
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
@@ -27,7 +28,7 @@ func RunPop(args []string) error {
 	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	configPath := fs.String("config", "", "path to config file (optional)")
-	file := fs.String("file", "", "print a specific inbox message by filename (non-destructive; searches across contexts only when --context-id is omitted; explicit --context-id binds lookup to that context)")
+	file := fs.String("file", "", "print a specific inbox message by filename from the current session inbox (non-destructive)")
 	commandName := fs.Name()
 	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
@@ -218,24 +219,16 @@ func RunPop(args []string) error {
 }
 
 func findInboxFileByName(baseDir, sessionName, contextID, filename string) (string, error) {
-	if contextID != "" {
-		pattern := filepath.Join(baseDir, contextID, sessionName, "inbox", "*", filename)
-		matches, err := filepath.Glob(pattern)
+	resolvedContextID := contextID
+	if resolvedContextID == "" {
+		var err error
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
 		if err != nil {
-			return "", fmt.Errorf("globbing for %s: %w", filename, err)
-		}
-		sort.Strings(matches)
-		switch len(matches) {
-		case 0:
-			return "", fmt.Errorf("error: %s not found in any inbox/ directory", filename)
-		case 1:
-			return matches[0], nil
-		default:
-			return "", fmt.Errorf("error: %s found in multiple inbox/ directories: %v", filename, matches)
+			return "", err
 		}
 	}
 
-	pattern := filepath.Join(baseDir, "*", sessionName, "inbox", "*", filename)
+	pattern := filepath.Join(baseDir, resolvedContextID, sessionName, "inbox", "*", filename)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return "", fmt.Errorf("globbing for %s: %w", filename, err)

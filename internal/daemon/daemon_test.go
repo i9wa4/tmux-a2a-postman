@@ -920,13 +920,13 @@ func TestCheckInboxStagnation_NormalizesLegacyReplyCommandInAlertText(t *testing
 	if strings.Contains(string(alertContent), "send-message") {
 		t.Fatalf("alert text still contains legacy send-message: %q", string(alertContent))
 	}
-	if !strings.Contains(string(alertContent), "Outer: send --context-id ctx-alert --to <recipient>") {
+	if !strings.Contains(string(alertContent), "Outer: send --to <recipient>") {
 		t.Fatalf("outer daemon envelope missing normalized placeholder reply command: %q", string(alertContent))
 	}
-	if strings.Contains(string(alertContent), "Outer: send --context-id ctx-alert --to messenger") {
+	if strings.Contains(string(alertContent), "Outer: send --to messenger") {
 		t.Fatalf("outer daemon envelope self-targeted ui node: %q", string(alertContent))
 	}
-	if !strings.Contains(string(alertContent), "send --context-id ctx-alert --to worker") {
+	if !strings.Contains(string(alertContent), "send --to worker") {
 		t.Fatalf("alert text missing normalized reply command: %q", string(alertContent))
 	}
 }

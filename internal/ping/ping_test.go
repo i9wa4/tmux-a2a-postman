@@ -177,7 +177,7 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	if strings.Contains(body, "<recipient>") {
 		t.Fatalf("ping content still contains recipient placeholder: %q", body)
 	}
-	if !strings.Contains(body, "send --context-id ctx-ping --to worker") {
+	if !strings.Contains(body, "send --to worker") {
 		t.Fatalf("ping content missing concrete reply target: %q", body)
 	}
 }

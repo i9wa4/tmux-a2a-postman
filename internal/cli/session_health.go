@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
@@ -38,6 +39,7 @@ func emptyAllSessionHealth() status.AllSessionHealth {
 // RunGetSessionHealth prints the canonical session-health JSON payload (#220).
 func RunGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-health", flag.ExitOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "Config file path")

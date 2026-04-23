@@ -732,8 +732,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					mode = "compact"
 				}
 				if mode == "verbose" {
-					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send --context-id %s --to <allowed-node> --body \"<your message>\"\n  - Replace <allowed-node> with one of: %s",
-						contextID,
+					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send --to <allowed-node> --body \"<your message>\"\n  - Replace <allowed-node> with one of: %s",
 						neighborsStr,
 					)
 					warnContent += replyInstructions

@@ -20,6 +20,7 @@ import (
 // With --dead-letters: lists dead-letter metadata or resends messages.
 func RunRead(args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): json, archived, dead-letters, resend-oldest
 	// SYNC: schema read properties; alwaysExcludedParams map
 	jsonOut := fs.Bool("json", false, `output json: {"files":[...]} or {"messages":[...]}`)

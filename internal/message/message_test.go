@@ -1474,7 +1474,7 @@ func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *test
 	if strings.Contains(string(warningBody), "send-message") {
 		t.Fatalf("warning still contains legacy send-message: %q", string(warningBody))
 	}
-	if !strings.Contains(string(warningBody), "send --context-id test-ctx --to <recipient>") {
+	if !strings.Contains(string(warningBody), "send --to <recipient>") {
 		t.Fatalf("warning missing normalized reply command: %q", string(warningBody))
 	}
 }

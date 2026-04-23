@@ -33,16 +33,16 @@ starting the daemon.
 | `get-health-oneline`       | Compact all-session tokens rendered from canonical health     |
 | `timeline`                 | Redacted current-generation journal timeline for the session |
 | `replay`                   | Read-only rebuild of journal-backed projection surfaces |
-| `get-context-id`           | Print the active context ID                          |
 | `schema`                   | Print JSON Schema for a command or the curated public config surface |
 | `help`                     | Print help topics                                    |
 
 The default operator surface is `send`, `pop`, `get-health`, and
 `get-health-oneline`.
 
-Lifecycle and recovery commands (`start`, `stop`, `get-context-id`, and
-similar helpers) remain discoverable, but they do not define the default
-beginner/operator loop.
+Lifecycle and recovery commands such as `start` and `stop` remain discoverable,
+but they do not define the default beginner/operator loop. Internal
+compatibility helpers remain supported but are intentionally omitted from this
+public operator reference.
 
 ## 1.1. Migration Map
 
@@ -63,11 +63,13 @@ The following flags are defined at the root level and apply to all commands:
 | Flag            | Type   | Default | Description                                            |
 | --------------- | ------ | ------- | ------------------------------------------------------ |
 | `--no-tui`      | bool   | false   | Run headless (no TUI surface; for CI or automated environments) |
-| `--context-id`  | string | ""      | Override context ID (auto-detected from tmux session)  |
 | `--config`      | string | ""      | Path to config file (auto-detected from XDG_CONFIG_HOME)|
 | `--log-file`    | string | ""      | Path to log file (defaults to state dir log)           |
 | `--base-dir`    | string | ""      | Override state directory (sets POSTMAN_HOME)           |
 | `--state-home`  | string | ""      | Override XDG_STATE_HOME                                |
+
+Public flag tables omit internal compatibility flags such as direct context
+overrides.
 
 ### 2.2. start
 
@@ -168,7 +170,6 @@ payload.
 | `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication           |
 | `--json`            | bool   | false   | Yes       | Output JSON (see below)                       |
 | `--params`          | string | ""      | N/A       | Shorthand or JSON parameters (see Section 7)  |
-| `--context-id`      | string | ""      | No        | Context ID (auto-detected; excluded)          |
 | `--session`         | string | ""      | No        | tmux session name (auto-detected; excluded)   |
 | `--config`          | string | ""      | No        | Path to config file (excluded)                |
 
@@ -185,13 +186,12 @@ whether the CLI observed daemon-side processing or only queue submission.
 ### 3.2. pop
 
 ```text
-tmux-a2a-postman pop [--peek] [--json] [--params ...] [--context-id ID] [--file FILENAME]
+tmux-a2a-postman pop [--peek] [--json] [--params ...] [--file FILENAME]
 ```
 
 Reads the next unread inbox message. Archives it after reading unless
-`--peek` is used. `--file` remains non-destructive; it searches across
-contexts only when `--context-id` is omitted, and an explicit
-`--context-id` binds lookup to that context without archiving.
+`--peek` is used. `--file` remains non-destructive and reads from the current
+session inbox only.
 When `read_context_mode = "pieces"` is enabled, bare interactive `pop`
 may append one read-time `Local Runtime Context` block after the stored
 message. `--peek`, `--file`, and `--json` stay raw.
@@ -201,8 +201,7 @@ message. `--peek`, `--file`, and `--json` stay raw.
 | `--peek`       | bool   | false   | Yes       | Read without archiving (non-destructive)           |
 | `--json`       | bool   | false   | Yes       | Output JSON (two-shape; see below)                 |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters (see Section 7)       |
-| `--context-id` | string | ""      | No        | Context ID (excluded from --params)                |
-| `--file`       | string | ""      | No        | Print specific inbox message by filename; non-destructive. Searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context (excluded from --params) |
+| `--file`       | string | ""      | No        | Print specific inbox message by filename from the current session inbox; non-destructive (excluded from --params) |
 
 **`--json` output shapes (two-shape contract):**
 
@@ -254,9 +253,9 @@ dead-letter messages are never exposed (`--dead-letters` metadata only).
 ### 4.2. todo
 
 ```text
-tmux-a2a-postman todo summary [--json] [--context-id ID] [--config PATH]
-tmux-a2a-postman todo show [--node NODE] [--context-id ID] [--config PATH]
-tmux-a2a-postman todo write (--body TEXT | --file PATH) [--context-id ID] [--config PATH]
+tmux-a2a-postman todo summary [--json] [--config PATH]
+tmux-a2a-postman todo show [--node NODE] [--config PATH]
+tmux-a2a-postman todo write (--body TEXT | --file PATH) [--config PATH]
 ```
 
 `todo` is the explicit live TODO coordination surface. It reads and writes
@@ -269,7 +268,6 @@ atomically replaces the current node's owner file.
 | Flag           | Type   | Default | Description |
 | -------------- | ------ | ------- | ----------- |
 | `--json`       | bool   | false   | Output JSON: `{"nodes":[...]}` |
-| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
 | `--config`     | string | ""      | Path to config file |
 
 **Human output shape:**
@@ -291,7 +289,6 @@ messenger [·] 0/0
 | Flag           | Type   | Default | Description |
 | -------------- | ------ | ------- | ----------- |
 | `--node`       | string | ""      | Owner node to read; defaults to the current pane title |
-| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
 | `--config`     | string | ""      | Path to config file |
 
 Missing owner files return no output and no error.
@@ -302,7 +299,6 @@ Missing owner files return no output and no error.
 | -------------- | ------ | ------- | ----------- |
 | `--body`       | string | ""      | Replacement document body |
 | `--file`       | string | ""      | Replacement document path |
-| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session) |
 | `--config`     | string | ""      | Path to config file |
 
 `todo write` requires exactly one of `--body` or `--file`. The current node may
@@ -313,14 +309,13 @@ write only its own owner file.
 ### 5.1. get-health
 
 ```text
-tmux-a2a-postman get-health [--context-id ID] [--session NAME] [--config PATH]
+tmux-a2a-postman get-health [--session NAME] [--config PATH]
 ```
 
 Always outputs JSON. There is no `--json` flag. Does not accept `--params`.
 
 | Flag           | Type   | Default | Description                                        |
 | -------------- | ------ | ------- | -------------------------------------------------- |
-| `--context-id` | string | ""      | Context ID (auto-resolved from tmux session)       |
 | `--session`    | string | ""      | tmux session name (optional, auto-detect if in tmux) |
 | `--config`     | string | ""      | Path to config file                                |
 
@@ -360,7 +355,7 @@ by the default TUI.
 ### 5.2. get-health-oneline
 
 ```text
-tmux-a2a-postman get-health-oneline [--json] [--params ...] [--context-id ID] [--session NAME] [--config PATH]
+tmux-a2a-postman get-health-oneline [--json] [--params ...] [--session NAME] [--config PATH]
 ```
 
 One-line status string suitable for embedding in a tmux status-bar. It first
@@ -373,27 +368,13 @@ colon-separated window groups with no literal `windowN` labels.
 | -------------- | ------ | ------- | --------- | --------------------------------------------------- |
 | `--json`       | bool   | false   | Yes       | Output JSON: `{"status": "[0]🟣 [1]🟢"}`             |
 | `--params`     | string | ""      | N/A       | Shorthand or JSON parameters                        |
-| `--context-id` | string | ""      | No        | Context ID (auto-resolved from tmux session)        |
 | `--session`    | string | ""      | No        | tmux session name (optional, auto-detect if in tmux) |
 | `--config`     | string | ""      | No        | Path to config file                                 |
 
-### 5.3. get-context-id
+### 5.3. timeline
 
 ```text
-tmux-a2a-postman get-context-id [--json] [--params ...] [--session NAME] [--config PATH]
-```
-
-| Flag        | Type   | Default | --params? | Description                                       |
-| ----------- | ------ | ------- | --------- | ------------------------------------------------- |
-| `--json`    | bool   | false   | Yes       | Output JSON: `{"context_id": "..."}`              |
-| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters                      |
-| `--session` | string | ""      | No        | tmux session name (excluded from --params)        |
-| `--config`  | string | ""      | No        | Path to config file (excluded from --params)      |
-
-### 5.4. timeline
-
-```text
-tmux-a2a-postman timeline [--context-id ID] [--session NAME] [--config PATH] [--limit N] [--include-control-plane]
+tmux-a2a-postman timeline [--session NAME] [--config PATH] [--limit N] [--include-control-plane]
 ```
 
 Always outputs pretty JSON. Reads the current journal generation only. Payloads
@@ -402,16 +383,15 @@ stay hidden unless explicitly requested.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--context-id` | string | "" | Context ID (auto-resolved from tmux session) |
 | `--session` | string | "" | tmux session name (optional, auto-detect if in tmux) |
 | `--config` | string | "" | Path to config file |
 | `--limit` | int | 50 | Maximum number of current-generation events to print (`0` = all) |
 | `--include-control-plane` | bool | false | Include control-plane-only events in the output |
 
-### 5.5. replay
+### 5.4. replay
 
 ```text
-tmux-a2a-postman replay [--context-id ID] [--session NAME] [--config PATH] [--surface NAME]
+tmux-a2a-postman replay [--session NAME] [--config PATH] [--surface NAME]
 ```
 
 Always outputs pretty JSON. Rebuilds journal-backed projection surfaces without
@@ -420,7 +400,6 @@ message contents, and it does not materialize missing files on disk.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--context-id` | string | "" | Context ID (auto-resolved from tmux session) |
 | `--session` | string | "" | tmux session name (optional, auto-detect if in tmux) |
 | `--config` | string | "" | Path to config file |
 | `--surface` | string | `all` | Projection surface: `all`, `health`, `mailbox`, `approval` |
@@ -456,13 +435,12 @@ Can be combined with a command argument or used alone.
 | `todo`                     | `todo` option surface                         |
 | `timeline`                 | `timeline` option surface                     |
 | `replay`                   | `replay` option surface                       |
-| `get-context-id`           | `get-context-id` `--params` scope             |
 | `get-health-oneline`       | `get-health-oneline` `--params` scope         |
 | `get-health`               | `get-health` output shape                     |
 
 **Important:** Schema properties show only `--params`-settable flags.
-Always-excluded flags (`context-id`, `config`, `session`, `file`) are
-intentionally absent from schema output.
+Always-excluded flags (`config`, `session`, `file`, and internal compatibility
+flags) are intentionally absent from schema output.
 
 ## 7. --params Flag
 
@@ -516,7 +494,6 @@ Attempting to set them returns a hard error.
 
 | Flag           | Reason                                      |
 | -------------- | ------------------------------------------- |
-| `context-id`   | Security: context redirect risk             |
 | `config`       | Security: config path injection             |
 | `session`      | Security: session hijack risk               |
 | `file`         | Security: arbitrary filesystem path         |
@@ -570,7 +547,6 @@ flag. Output goes to stdout; errors go to stderr.
 | `read --archived`          | `{"messages":[]}`       | `{"messages":[{"file","from","to","timestamp"}]}`            |
 | `read --dead-letters`      | `{"messages":[]}`       | `{"messages":[{"from","to","timestamp"}]}`                   |
 | `todo summary`             | `{"nodes":[]}`          | `{"nodes":[{"node","token","state","checked","total","exists","invalid"}]}` |
-| `get-context-id`           | N/A                     | `{"context_id":"..."}`                                       |
 | `schema --nodes-dir`       | N/A                     | `{"xdg":"...","project_local":"..."}`                        |
 | `get-health-oneline`       | N/A                     | `{"status":"[0]🟣 [1]🟢"}`                                    |
 | `get-health`               | always JSON (no flag)   | `{"context_id","session_name","node_count","visible_state","nodes":[...],"windows":[...]}` |

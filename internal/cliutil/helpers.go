@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -212,7 +213,16 @@ func FilterToUINode(nodes map[string]discovery.NodeInfo, uiNode string) map[stri
 
 // PrintDoubleDashDefaults prints flag defaults with -- prefix (POSIX style).
 func PrintDoubleDashDefaults(fs *flag.FlagSet) {
+	PrintDoubleDashDefaultsExcept(os.Stderr, fs, nil)
+}
+
+// PrintDoubleDashDefaultsExcept prints flag defaults with -- prefix while
+// omitting any hidden flags.
+func PrintDoubleDashDefaultsExcept(w io.Writer, fs *flag.FlagSet, hidden map[string]bool) {
 	fs.VisitAll(func(f *flag.Flag) {
+		if hidden != nil && hidden[f.Name] {
+			return
+		}
 		typeName, usage := flag.UnquoteUsage(f)
 		var line string
 		if typeName == "" {
@@ -220,6 +230,15 @@ func PrintDoubleDashDefaults(fs *flag.FlagSet) {
 		} else {
 			line = fmt.Sprintf("  --%s %s", f.Name, typeName)
 		}
-		fmt.Fprintf(os.Stderr, "%s\n\t\t%s\n", line, usage)
+		fmt.Fprintf(w, "%s\n\t\t%s\n", line, usage)
 	})
+}
+
+// SetUsageWithoutContextID hides the internal compatibility context override
+// from command-specific help output while keeping the flag functional.
+func SetUsageWithoutContextID(fs *flag.FlagSet) {
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		PrintDoubleDashDefaultsExcept(fs.Output(), fs, map[string]bool{"context-id": true})
+	}
 }

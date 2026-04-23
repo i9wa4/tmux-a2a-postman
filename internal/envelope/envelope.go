@@ -15,8 +15,7 @@ import (
 
 // BuildEnvelope builds a message string by expanding tmpl with a shared set of variables.
 // Shared logic: role-template resolution, sentinel obfuscation, talks_to_line construction
-// (session-aware, same-session priority, liveness-filtered), and reply_command building
-// (--context-id injection).
+// (session-aware, same-session priority, liveness-filtered), and reply_command building.
 //
 // tmpl is caller-provided: pass cfg.DaemonMessageTemplate for ping/alert/heartbeat,
 // or cfg.NotificationTemplate for pane notification hints.
@@ -209,29 +208,12 @@ func buildEnvelope(
 // placeholders used by envelope, daemon alerts, and draft templates.
 func RenderReplyCommand(replyCmd, contextID, recipient string) string {
 	replyCmd = legacySendMessageTokenRe.ReplaceAllString(replyCmd, "${1}send${2}")
-	fields := strings.Fields(replyCmd)
-	if containsToken(fields, "send") && !strings.Contains(replyCmd, "--context-id") {
-		if strings.Contains(replyCmd, "--to") {
-			replyCmd = strings.Replace(replyCmd, "--to", fmt.Sprintf("--context-id %s --to", contextID), 1)
-		} else {
-			replyCmd = fmt.Sprintf("%s --context-id %s", replyCmd, contextID)
-		}
-	}
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 	replyCmd = strings.ReplaceAll(replyCmd, "{node}", recipient)
 	return replyCmd
 }
 
 var legacySendMessageTokenRe = regexp.MustCompile(`(^|[[:space:]])send-message([[:space:]]|$)`)
-
-func containsToken(fields []string, want string) bool {
-	for _, field := range fields {
-		if field == want {
-			return true
-		}
-	}
-	return false
-}
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.
 // Resolution: config template with CommonTemplate prepend.

@@ -45,7 +45,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
 	assertContainsNormalized(t, commandsDoc, `{"status":"[0]🟣 [1]🟢"}`)
 	assertContainsNormalized(t, commandsDoc, "| `send` | N/A | `{\"sent\": \"filename.md\", \"status\": \"processed\\|queued\"}` |")
-	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive; it searches across contexts only when `--context-id` is omitted, and an explicit `--context-id` binds lookup to that context without archiving.")
+	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive and reads from the current session inbox only.")
 	assertContainsNormalized(t, commandsDoc, "When `read_context_mode = \"pieces\"` is enabled, bare interactive `pop` may append one read-time `Local Runtime Context` block after the stored message.")
 	assertContainsNormalized(t, commandsDoc, "| `todo` | Manage session-local owner TODO files and live summaries |")
 	assertContainsNormalized(t, commandsDoc, "| `todo summary` | `{\"nodes\":[]}` | `{\"nodes\":[{\"node\",\"token\",\"state\",\"checked\",\"total\",\"exists\",\"invalid\"}]}` |")
@@ -61,9 +61,15 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	if strings.Contains(commandsDoc, "`--bindings`") {
 		t.Fatal("docs/commands.md still exposes --bindings in the public send contract")
 	}
+	if strings.Contains(commandsDoc, "`get-context-id`") {
+		t.Fatal("docs/commands.md still exposes get-context-id in the public contract")
+	}
+	if strings.Contains(commandsDoc, "`--context-id`") {
+		t.Fatal("docs/commands.md still exposes direct context override in the public contract")
+	}
 
 	popSource := readRepoFile(t, "internal/cli/pop.go")
-	assertContainsNormalized(t, popSource, "print a specific inbox message by filename (non-destructive; searches across contexts only when --context-id is omitted; explicit --context-id binds lookup to that context)")
+	assertContainsNormalized(t, popSource, "print a specific inbox message by filename from the current session inbox (non-destructive)")
 }
 
 func TestReducedSurfaceDocContract_DaemonModelAndAlertGuide(t *testing.T) {
@@ -128,6 +134,9 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
 	if strings.Contains(readme, "tmux-a2a-postman bind <subcommand>") {
 		t.Fatal("README still exposes bind in the default operator surface")
+	}
+	if strings.Contains(readme, "tmux-a2a-postman get-context-id") {
+		t.Fatal("README still exposes get-context-id in the default operator surface")
 	}
 
 	sendSkill := readRepoFile(t, "skills/send-message/SKILL.md")

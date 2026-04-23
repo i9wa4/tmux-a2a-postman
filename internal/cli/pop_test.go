@@ -21,6 +21,27 @@ func TestRunPop_ContextIDFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRunPop_HelpHidesContextIDFlag(t *testing.T) {
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"-h"})
+	})
+	if err == nil {
+		t.Fatal("RunPop(-h) = nil, want help error")
+	}
+	if !strings.Contains(err.Error(), "flag: help requested") {
+		t.Fatalf("RunPop(-h) error = %v, want help requested", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "Usage of pop:") {
+		t.Fatalf("stderr missing help header: %q", stderr)
+	}
+	if strings.Contains(stderr, "--context-id") {
+		t.Fatalf("stderr still exposes hidden context override: %q", stderr)
+	}
+}
+
 func TestRunPop_RequeuedMessagePreservesOriginalPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
@@ -123,14 +144,66 @@ func TestRunPop_RestoredArchivedMessagePreservesCanonicalReadTracking(t *testing
 	}
 }
 
-func TestRunPop_FileReadsAcrossContextsNonDestructively(t *testing.T) {
+func TestRunPop_FileReadsCurrentContextNonDestructively(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
 	currentContextID := "ctx-pop-current"
 	otherContextID := "ctx-pop-other"
 	filename := "20260330-101505-from-orchestrator-to-worker.md"
-	content := messageFixture("orchestrator", "worker", "Cross-context payload")
+	content := messageFixture("orchestrator", "worker", "Current-context payload")
+
+	currentInboxDir := filepath.Join(tmpDir, currentContextID, "test-session", "inbox", "worker")
+	otherInboxDir := filepath.Join(tmpDir, otherContextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(currentInboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll current inbox: %v", err)
+	}
+	if err := os.MkdirAll(otherInboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll other inbox: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, currentContextID, "test-session", "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+
+	targetPath := filepath.Join(otherInboxDir, filename)
+	if err := os.WriteFile(targetPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile target inbox: %v", err)
+	}
+	currentPath := filepath.Join(currentInboxDir, filename)
+	if err := os.WriteFile(currentPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile current inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--file", filename})
+	})
+	if err != nil {
+		t.Fatalf("RunPop --file: %v\nstderr=%s", err, stderr)
+	}
+	if stdout != content {
+		t.Fatalf("stdout changed payload:\n got %q\nwant %q", stdout, content)
+	}
+
+	remaining, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatalf("ReadFile current inbox: %v", err)
+	}
+	if string(remaining) != content {
+		t.Fatalf("current inbox content changed:\n got %q\nwant %q", remaining, content)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, currentContextID, "test-session", "read", filename)); !os.IsNotExist(err) {
+		t.Fatalf("unexpected archived copy or wrong error: %v", err)
+	}
+}
+
+func TestRunPop_FileDoesNotLeakOtherContextByDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	currentContextID := "ctx-pop-bound"
+	otherContextID := "ctx-pop-leak"
+	filename := "20260330-101506-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "Leaked payload")
 
 	currentInboxDir := filepath.Join(tmpDir, currentContextID, "test-session", "inbox", "worker")
 	otherInboxDir := filepath.Join(tmpDir, otherContextID, "test-session", "inbox", "worker")
@@ -152,53 +225,8 @@ func TestRunPop_FileReadsAcrossContextsNonDestructively(t *testing.T) {
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunPop([]string{"--file", filename})
 	})
-	if err != nil {
-		t.Fatalf("RunPop --file: %v\nstderr=%s", err, stderr)
-	}
-	if stdout != content {
-		t.Fatalf("stdout changed payload:\n got %q\nwant %q", stdout, content)
-	}
-
-	remaining, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("ReadFile target inbox: %v", err)
-	}
-	if string(remaining) != content {
-		t.Fatalf("target inbox content changed:\n got %q\nwant %q", remaining, content)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, otherContextID, "test-session", "read", filename)); !os.IsNotExist(err) {
-		t.Fatalf("unexpected archived copy or wrong error: %v", err)
-	}
-}
-
-func TestRunPop_FileHonorsExplicitContextID(t *testing.T) {
-	tmpDir := t.TempDir()
-	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
-
-	currentContextID := "ctx-pop-bound"
-	otherContextID := "ctx-pop-leak"
-	filename := "20260330-101506-from-orchestrator-to-worker.md"
-	content := messageFixture("orchestrator", "worker", "Leaked payload")
-
-	currentInboxDir := filepath.Join(tmpDir, currentContextID, "test-session", "inbox", "worker")
-	otherInboxDir := filepath.Join(tmpDir, otherContextID, "test-session", "inbox", "worker")
-	if err := os.MkdirAll(currentInboxDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll current inbox: %v", err)
-	}
-	if err := os.MkdirAll(otherInboxDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll other inbox: %v", err)
-	}
-
-	targetPath := filepath.Join(otherInboxDir, filename)
-	if err := os.WriteFile(targetPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("WriteFile target inbox: %v", err)
-	}
-
-	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunPop([]string{"--context-id", currentContextID, "--file", filename})
-	})
 	if err == nil {
-		t.Fatal("RunPop --context-id --file unexpectedly succeeded")
+		t.Fatal("RunPop --file unexpectedly succeeded")
 	}
 	if !strings.Contains(err.Error(), "not found in any inbox/ directory") {
 		t.Fatalf("unexpected error: %v", err)

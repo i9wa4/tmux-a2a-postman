@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
@@ -66,6 +67,7 @@ func RunReplay(args []string) error {
 
 func runReplay(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-resolve only when a live daemon owns the session)")
 	sessionName := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "config file path")

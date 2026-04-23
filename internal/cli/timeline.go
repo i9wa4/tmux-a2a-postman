@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -17,6 +18,7 @@ func RunTimeline(args []string) error {
 
 func runTimeline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("timeline", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-resolve only when a live daemon owns the session)")
 	sessionName := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "config file path")

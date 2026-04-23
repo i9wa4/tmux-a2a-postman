@@ -287,8 +287,8 @@ tmux-a2a-postman stop
 
 The default operator loop is `send`, `pop`, `get-health`, and
 `get-health-oneline`. Lifecycle and recovery commands such as `start`, `stop`,
-and `get-context-id` remain available, but they are no longer the main
-beginner/operator surface. Use explicit subcommands; bare
+and other internal compatibility helpers remain available, but they are no
+longer the main beginner/operator surface. Use explicit subcommands; bare
 `tmux-a2a-postman` prints usage and does not start the daemon.
 
 ## 6. Directory Structure
@@ -375,7 +375,6 @@ Lifecycle and recovery:
 ```text
 tmux-a2a-postman start
 tmux-a2a-postman stop
-tmux-a2a-postman get-context-id
 tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
 tmux-a2a-postman schema [COMMAND]   # JSON Schema for the public config surface or a command's --params scope
 ```

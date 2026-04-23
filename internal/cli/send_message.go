@@ -30,6 +30,7 @@ const (
 
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): to, body, idempotency-key, json
 	// SYNC: schema send properties; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")

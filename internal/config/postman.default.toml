@@ -30,7 +30,7 @@
 #   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
-#   {reply_command}  - Command to create draft reply with context_id substituted
+#   {reply_command}  - Command to create draft reply
 #   {template}       - Recipient's role template from config
 #   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
@@ -151,7 +151,7 @@ Run `tmux-a2a-postman pop` to read it. """
 
 # Message footer (appended to outgoing messages by `send` after the message content)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
-#            {reply_command} - reply command for the current recipient context
+#            {reply_command} - reply command for the current recipient
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
 No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
@@ -269,11 +269,11 @@ prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tas
 
 If nothing needs attention:
   nix run github:i9wa4/tmux-a2a-postman -- send \\
-    --context-id {context_id} --to postman --body "HEARTBEAT_OK"
+    --to postman --body "HEARTBEAT_OK"
 
 If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
   nix run github:i9wa4/tmux-a2a-postman -- send \\
-    --context-id {context_id} --to messenger \\
+    --to messenger \\
     --body "[HEARTBEAT ALERT] <your message>""""
 
 [node_defaults]

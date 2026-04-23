@@ -147,7 +147,7 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	if strings.Contains(notification, "<recipient>") {
 		t.Fatalf("notification still contains recipient placeholder: %q", notification)
 	}
-	if !strings.Contains(notification, "send --context-id ctx-notify --to worker") {
+	if !strings.Contains(notification, "send --to worker") {
 		t.Fatalf("notification missing concrete reply target: %q", notification)
 	}
 }

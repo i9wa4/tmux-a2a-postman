@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/todo"
@@ -67,6 +68,7 @@ func parseTodoGlobalFlags(args []string) (string, string, []string, error) {
 
 func runTodoSummary(args []string, globalContextID, globalConfigPath string) error {
 	fs := flag.NewFlagSet("todo summary", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	jsonOut := fs.Bool("json", false, "output json")
 	contextID := fs.String("context-id", "", "context ID")
 	configPath := fs.String("config", "", "path to config file (optional)")
@@ -123,6 +125,7 @@ func runTodoSummary(args []string, globalContextID, globalConfigPath string) err
 
 func runTodoShow(args []string, globalContextID, globalConfigPath string) error {
 	fs := flag.NewFlagSet("todo show", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	node := fs.String("node", "", "node name (defaults to current pane title)")
 	contextID := fs.String("context-id", "", "context ID")
 	configPath := fs.String("config", "", "path to config file (optional)")
@@ -156,6 +159,7 @@ func runTodoShow(args []string, globalContextID, globalConfigPath string) error 
 
 func runTodoWrite(args []string, globalContextID, globalConfigPath string) error {
 	fs := flag.NewFlagSet("todo write", flag.ContinueOnError)
+	cliutil.SetUsageWithoutContextID(fs)
 	body := fs.String("body", "", "replacement document body")
 	filePath := fs.String("file", "", "replacement document path")
 	contextID := fs.String("context-id", "", "context ID")
