@@ -58,6 +58,9 @@ jobs:
       - name: Run nix flake check
         run: nix flake check --print-build-logs
 
+      - name: Run nix build
+        run: nix build --print-build-logs
+
       - name: Run gitleaks history scan
         run: nix develop .#ci --command gitleaks detect --verbose --redact
 
