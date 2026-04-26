@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -345,6 +346,81 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 	}
 	if state.Nodes["review:worker"].Pending {
 		t.Fatal("pending auto-PING debt was not cleared after confirmed delivery")
+	}
+}
+
+func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.April, 26, 22, 2, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
+		t.Fatalf("MkdirAll recipient inbox: %v", err)
+	}
+	for i := range 20 {
+		name := filepath.Join(recipientInbox, fmt.Sprintf("20260426-2202%02d-rabcd-from-postman-to-worker.md", i))
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile queued fixture %d: %v", i, err)
+		}
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+			TmuxTimeout:           1.0,
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+
+	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
+	if err != nil {
+		t.Fatalf("ReadDir dead-letter: %v", err)
+	}
+	if len(deadEntries) != 0 {
+		t.Fatalf("dead-letter entries = %d, want 0 for retryable queue-full auto-PING", len(deadEntries))
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if !state.Nodes["review:worker"].Pending {
+		t.Fatal("pending auto-PING debt was cleared even though delivery was blocked by a full inbox")
 	}
 }
 

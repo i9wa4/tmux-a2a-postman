@@ -239,7 +239,7 @@ func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 	}
 }
 
-func TestSendPingToNodeWithResult_QueueFullDoesNotCountAsDelivered(t *testing.T) {
+func TestSendPingToNodeWithResult_QueueFullReturnsUndeliveredWithoutDeadLetter(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "queue-full-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -289,8 +289,8 @@ func TestSendPingToNodeWithResult_QueueFullDoesNotCountAsDelivered(t *testing.T)
 	if err != nil {
 		t.Fatalf("ReadDir dead-letter: %v", err)
 	}
-	if len(deadEntries) != 1 {
-		t.Fatalf("dead-letter entries = %d, want 1", len(deadEntries))
+	if len(deadEntries) != 0 {
+		t.Fatalf("dead-letter entries = %d, want 0 for retryable queue-full auto-PING", len(deadEntries))
 	}
 }
 
