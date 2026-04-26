@@ -26,6 +26,11 @@ func ExtractSimpleName(fullName string) string {
 // SendPingToNode sends a PING message to a specific node.
 // nodeName should be the full session-prefixed name (session:node).
 func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
+	_, err := SendPingToNodeWithResult(nodeInfo, contextID, nodeName, tmpl, cfg, activeNodes, livenessMap, adjacency, nodes)
+	return err
+}
+
+func SendPingToNodeWithResult(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
 	target := controlplane.TargetForNode(nodeName, nodeInfo)
 	simpleName := target.ActorID
 	sourceSessionName := target.SessionName
@@ -36,7 +41,7 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 	// Use simple name in filename (Issue #33: keep filenames simple)
 	filename, err := message.GenerateFilename(ts, "postman", simpleName, sourceSessionName)
 	if err != nil {
-		return fmt.Errorf("generating filename: %w", err)
+		return controlplane.SystemMessageResult{}, fmt.Errorf("generating filename: %w", err)
 	}
 	postPath := target.PostPath(filename)
 
@@ -51,5 +56,5 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 		"role_content": roleContent,
 	})
 
-	return message.DeliverSystemMessageDirectToTarget(filename, target, "postman", contextID, content, cfg, adjacency, nodes, livenessMap)
+	return message.DeliverSystemMessageDirectResultToTarget(filename, target, "postman", contextID, content, cfg, adjacency, nodes, livenessMap)
 }

@@ -1600,9 +1600,11 @@ func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
 // Issue #118: Added sessionDir for alert messaging.
-func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) {
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) []string {
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
+
+	var restartedNodeKeys []string
 
 	for currentPaneID, currentInfo := range paneStates {
 		nodeKey, exists := paneToNode[currentPaneID]
@@ -1636,8 +1638,13 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 		}
 
 		if oldPaneID != "" {
+			if _, oldStillLive := paneStates[oldPaneID]; oldStillLive {
+				continue
+			}
+
 			// Restart detected: node had oldPaneID, now has currentPaneID
 			log.Printf("postman: pane restart detected for %s (old: %s, new: %s)\n", nodeKey, oldPaneID, currentPaneID)
+			restartedNodeKeys = append(restartedNodeKeys, nodeKey)
 
 			// Send TUI event
 			events <- tui.DaemonEvent{
@@ -1700,6 +1707,8 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 	for paneID, nodeKey := range paneToNode {
 		ds.prevPaneToNode[paneID] = nodeKey
 	}
+
+	return restartedNodeKeys
 }
 
 // checkPaneDisappearance detects disappeared panes and marks corresponding nodes as inactive.

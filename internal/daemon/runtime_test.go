@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -156,11 +158,20 @@ func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
 	}
 }
 
-func TestDetectNewNodes_HonorsAutoEnableFlag(t *testing.T) {
+func TestDetectNewNodes_ReturnsOnlyNewRealNodesWithoutAutoEnable(t *testing.T) {
 	freshNodes := map[string]discovery.NodeInfo{
+		"self:known": {
+			SessionName: "self",
+			SessionDir:  t.TempDir(),
+		},
 		"foreign:worker": {
 			SessionName: "foreign",
 			SessionDir:  t.TempDir(),
+		},
+		"phony:helper": {
+			SessionName: "phony",
+			SessionDir:  t.TempDir(),
+			IsPhony:     true,
 		},
 	}
 	watcher, err := fsnotify.NewWatcher()
@@ -169,36 +180,22 @@ func TestDetectNewNodes_HonorsAutoEnableFlag(t *testing.T) {
 	}
 	defer func() { _ = watcher.Close() }()
 
-	rtDisabled := &daemonRuntime{
+	rt := &daemonRuntime{
 		cfg:         config.DefaultConfig(),
 		watcher:     watcher,
-		knownNodes:  make(map[string]bool),
+		knownNodes:  map[string]bool{"self:known": true},
 		watchedDirs: make(map[string]bool),
 		daemonState: NewDaemonState(0, "ctx-disabled"),
 		events:      make(chan tui.DaemonEvent, 1),
 	}
-	rtDisabled.detectNewNodes(freshNodes, false)
-	if rtDisabled.daemonState.GetConfiguredSessionEnabled("foreign") {
-		t.Fatal("detectNewNodes() auto-enabled a foreign session even though auto-enable was disabled")
-	}
+	newNodes := rt.detectNewNodes(freshNodes)
+	sort.Strings(newNodes)
 
-	watcherEnabled, err := fsnotify.NewWatcher()
-	if err != nil {
-		t.Fatalf("NewWatcher(enabled): %v", err)
+	if got, want := newNodes, []string{"foreign:worker"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectNewNodes() = %#v, want %#v", got, want)
 	}
-	defer func() { _ = watcherEnabled.Close() }()
-
-	rtEnabled := &daemonRuntime{
-		cfg:         config.DefaultConfig(),
-		watcher:     watcherEnabled,
-		knownNodes:  make(map[string]bool),
-		watchedDirs: make(map[string]bool),
-		daemonState: NewDaemonState(0, "ctx-enabled"),
-		events:      make(chan tui.DaemonEvent, 1),
-	}
-	rtEnabled.detectNewNodes(freshNodes, true)
-	if !rtEnabled.daemonState.GetConfiguredSessionEnabled("foreign") {
-		t.Fatal("detectNewNodes() did not auto-enable a foreign session when the auto-enable flag was true")
+	if rt.daemonState.GetConfiguredSessionEnabled("foreign") {
+		t.Fatal("detectNewNodes() auto-enabled a foreign session even though dispatch should own that decision")
 	}
 }
 
@@ -212,11 +209,252 @@ func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing
 	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)") {
 		t.Fatal("runtime.handleScanTick no longer derives session auto-enable from cfg.AutoEnableNewSessions")
 	}
-	if !strings.Contains(source, "rt.detectNewNodes(freshNodes, autoEnableSessions)") {
-		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into detectNewNodes")
+	if !strings.Contains(source, "newNodes := rt.detectNewNodes(freshNodes)") {
+		t.Fatal("runtime.handleScanTick no longer collects newly discovered node keys from detectNewNodes")
 	}
-	if strings.Contains(source, "rt.detectNewNodes(freshNodes, true)") {
-		t.Fatal("runtime.handleScanTick still hardcodes foreign-session auto-enable")
+	if !strings.Contains(source, "rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions") {
+		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into dispatchPendingAutoPings")
+	}
+	if strings.Contains(source, "rt.detectNewNodes(freshNodes, autoEnableSessions)") {
+		t.Fatal("runtime.handleScanTick still pushes auto-enable side effects into detectNewNodes")
+	}
+}
+
+func TestDispatchPendingAutoPings_ForeignOwnedSessionStaysPendingAndDisabled(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "foreign")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+	installShadowJournalManager(sessionDir, "ctx-self", "foreign", time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	writeRuntimeLivePID(t, baseDir, "ctx-owner", "daemon")
+	if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "foreign"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(ctx-owner/foreign): %v", err)
+	}
+	installRuntimeSessionOwnerTmux(t, map[string]string{
+		"foreign": "ctx-owner:43210",
+	})
+
+	now := time.Date(2026, time.April, 26, 21, 55, 0, 0, time.UTC)
+	if err := journal.RecordProcessEvent(sessionDir, "foreign", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "foreign:worker",
+		SessionName:  "foreign",
+		NodeName:     "worker",
+		PaneID:       "%51",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:     baseDir,
+		contextID:   "ctx-self",
+		cfg:         &config.Config{DaemonMessageTemplate: "PING {node} in {context_id}"},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"foreign:worker": {
+				PaneID:      "%51",
+				SessionName: "foreign",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+
+	rt.dispatchPendingAutoPings(rt.nodes, true, now)
+
+	if rt.daemonState.GetConfiguredSessionEnabled("foreign") {
+		t.Fatal("dispatchPendingAutoPings() auto-enabled a foreign-owned session")
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if !state.Nodes["foreign:worker"].Pending {
+		t.Fatal("pending auto-PING was cleared even though the session is foreign-owned")
+	}
+}
+
+func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.April, 26, 22, 0, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+			TmuxTimeout:           1.0,
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("inbox entries = %d, want 1", len(entries))
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if state.Nodes["review:worker"].Pending {
+		t.Fatal("pending auto-PING debt was not cleared after confirmed delivery")
+	}
+}
+
+func TestDispatchPendingAutoPings_RespectsNotBeforeAt(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.April, 26, 22, 5, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%62",
+		Reason:       "discovered",
+		TriggeredAt:  now.Format(time.RFC3339Nano),
+		DelaySeconds: 30,
+		NotBeforeAt:  now.Add(30 * time.Second).Format(time.RFC3339Nano),
+	}, now); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+			TmuxTimeout:           1.0,
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%62",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+
+	inboxEntries, err := os.ReadDir(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		t.Fatalf("ReadDir inbox root: %v", err)
+	}
+	if len(inboxEntries) != 0 {
+		t.Fatalf("inbox root entries = %d, want 0 before not_before_at", len(inboxEntries))
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if !state.Nodes["review:worker"].Pending {
+		t.Fatal("future pending auto-PING was cleared before not_before_at")
+	}
+}
+
+func installRuntimeSessionOwnerTmux(t *testing.T, owners map[string]string) {
+	t.Helper()
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	var builder strings.Builder
+	builder.WriteString("#!/bin/sh\n")
+	builder.WriteString("if [ \"$1 $2\" = \"show-options -gqv\" ]; then\n")
+	builder.WriteString("  case \"$3\" in\n")
+	keys := make([]string, 0, len(owners))
+	for key := range owners {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		builder.WriteString("    @a2a_session_on_" + key + ")\n")
+		builder.WriteString("      printf '%s\\n' '" + owners[key] + "'\n")
+		builder.WriteString("      exit 0\n")
+		builder.WriteString("      ;;\n")
+	}
+	builder.WriteString("    *)\n")
+	builder.WriteString("      exit 0\n")
+	builder.WriteString("      ;;\n")
+	builder.WriteString("  esac\n")
+	builder.WriteString("fi\n")
+	builder.WriteString("exit 1\n")
+
+	if err := os.WriteFile(scriptPath, []byte(builder.String()), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func writeRuntimeLivePID(t *testing.T, baseDir, contextName, sessionName string) {
+	t.Helper()
+
+	dir := filepath.Join(baseDir, contextName, sessionName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pid dir): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte("1"), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 }
 

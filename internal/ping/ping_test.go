@@ -239,6 +239,61 @@ func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 	}
 }
 
+func TestSendPingToNodeWithResult_QueueFullDoesNotCountAsDelivered(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "queue-full-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "queue-full-session",
+		SessionDir:  sessionDir,
+	}
+	cfg := &config.Config{
+		TmuxTimeout:           5.0,
+		DaemonMessageTemplate: "PING {node} in {context_id}",
+	}
+
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
+		t.Fatalf("MkdirAll recipient inbox: %v", err)
+	}
+	for i := range 20 {
+		name := filepath.Join(recipientInbox, fmt.Sprintf("20260426-2145%02d-rabcd-from-postman-to-worker.md", i))
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile queued fixture %d: %v", i, err)
+		}
+	}
+
+	result, err := SendPingToNodeWithResult(
+		nodeInfo,
+		"test-ctx",
+		"queue-full-session:worker",
+		cfg.DaemonMessageTemplate,
+		cfg,
+		[]string{"worker"},
+		map[string]bool{},
+		map[string][]string{},
+		map[string]discovery.NodeInfo{},
+	)
+	if err != nil {
+		t.Fatalf("SendPingToNodeWithResult() error = %v", err)
+	}
+	if result.Delivered {
+		t.Fatal("SendPingToNodeWithResult() delivered = true, want false when inbox is full")
+	}
+
+	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
+	if err != nil {
+		t.Fatalf("ReadDir dead-letter: %v", err)
+	}
+	if len(deadEntries) != 1 {
+		t.Fatalf("dead-letter entries = %d, want 1", len(deadEntries))
+	}
+}
+
 func TestSendPingToNode_NotificationAttemptedOnDelivery(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "tmux-args.txt")

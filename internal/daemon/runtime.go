@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
@@ -341,9 +342,11 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
 		rt.claimNewPanes(freshNodes)
-		rt.detectNewNodes(freshNodes, false)
+		newNodes := rt.detectNewNodes(freshNodes)
+		rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
+		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), time.Now())
 
 		allSessions, _ := discovery.DiscoverAllSessions()
 		if allSessions == nil {
@@ -672,7 +675,8 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
-	rt.detectNewNodes(freshNodes, autoEnableSessions)
+	newNodes := rt.detectNewNodes(freshNodes)
+	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
 	rt.alertDeliverySignalState = syncAlertDeliveryStatus(rt.alertDeliverySignalState, rt.cfg, rt.nodes, rt.events)
@@ -771,10 +775,13 @@ func (rt *daemonRuntime) handleScanTick() {
 			}
 
 			rt.daemonState.checkPaneDisappearance(paneStates, rt.daemonState.prevPaneToNode, rt.nodes, rt.events)
-			rt.daemonState.checkPaneRestarts(paneStates, paneToNode, rt.nodes, rt.cfg, rt.events, rt.contextID, rt.sessionDir, rt.adjacency, rt.idleTracker)
+			restartedNodes := rt.daemonState.checkPaneRestarts(paneStates, paneToNode, rt.nodes, rt.cfg, rt.events, rt.contextID, rt.sessionDir, rt.adjacency, rt.idleTracker)
+			rt.recordPendingAutoPings(restartedNodes, rt.nodes, "pane_restart", time.Now())
 			rt.prevPaneStatesJSON = currentJSONStr
 		}
 	}
+
+	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, time.Now())
 
 	droppedNodeMap := rt.idleTracker.GetCurrentlyDroppedNodes(nodeConfigs)
 	nodeStates := rt.idleTracker.GetNodeStates()
@@ -957,17 +964,27 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 	}
 }
 
-func (rt *daemonRuntime) detectNewNodes(freshNodes map[string]discovery.NodeInfo, autoEnableSession bool) {
-	for nodeName, nodeInfo := range freshNodes {
+func (rt *daemonRuntime) detectNewNodes(freshNodes map[string]discovery.NodeInfo) []string {
+	nodeNames := make([]string, 0, len(freshNodes))
+	for nodeName := range freshNodes {
+		nodeNames = append(nodeNames, nodeName)
+	}
+	sort.Strings(nodeNames)
+
+	newNodes := make([]string, 0, len(nodeNames))
+	for _, nodeName := range nodeNames {
+		nodeInfo := freshNodes[nodeName]
 		if rt.knownNodes[nodeName] {
 			continue
 		}
 		rt.knownNodes[nodeName] = true
-		if autoEnableSession {
-			rt.daemonState.AutoEnableSessionIfNew(nodeInfo.SessionName)
+		if nodeInfo.IsPhony {
+			continue
 		}
 		rt.ensureNodeWatchDirs(nodeName, nodeInfo)
+		newNodes = append(newNodes, nodeName)
 	}
+	return newNodes
 }
 
 func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeInfo) {
@@ -999,4 +1016,183 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 		}
 		rt.claimedPanes[nodeInfo.PaneID] = true
 	}
+}
+
+func (rt *daemonRuntime) recordPendingAutoPings(nodeKeys []string, freshNodes map[string]discovery.NodeInfo, reason string, now time.Time) {
+	if len(nodeKeys) == 0 {
+		return
+	}
+
+	sortedNodeKeys := append([]string{}, nodeKeys...)
+	sort.Strings(sortedNodeKeys)
+	for _, nodeKey := range sortedNodeKeys {
+		nodeInfo, ok := freshNodes[nodeKey]
+		if !ok {
+			continue
+		}
+		rt.recordPendingAutoPing(nodeKey, nodeInfo, reason, now)
+	}
+}
+
+func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, reason string, now time.Time) {
+	if nodeInfo.IsPhony || nodeInfo.SessionDir == "" || nodeInfo.SessionName == "" {
+		return
+	}
+
+	delaySeconds := 0.0
+	if rt.cfg != nil {
+		delaySeconds = rt.cfg.AutoPingDelaySeconds
+	}
+
+	triggeredAt := now
+	notBeforeAt := now.Add(time.Duration(delaySeconds * float64(time.Second)))
+	if state, ok, err := projection.ProjectAutoPingState(nodeInfo.SessionDir); err != nil {
+		log.Printf("postman: WARNING: auto-PING replay failed for %s: %v\n", nodeKey, err)
+	} else if ok {
+		if existing, exists := state.Nodes[nodeKey]; exists && existing.Pending {
+			if existing.DelaySeconds >= 0 {
+				delaySeconds = existing.DelaySeconds
+			}
+			if parsed, err := time.Parse(time.RFC3339Nano, existing.TriggeredAt); err == nil {
+				triggeredAt = parsed
+			}
+			if parsed, err := time.Parse(time.RFC3339Nano, existing.NotBeforeAt); err == nil {
+				notBeforeAt = parsed
+			}
+			if reason == "" {
+				reason = existing.Reason
+			}
+		}
+	}
+	if reason == "" {
+		reason = "discovered"
+	}
+
+	payload := projection.AutoPingEventPayload{
+		NodeKey:      nodeKey,
+		SessionName:  nodeInfo.SessionName,
+		NodeName:     ping.ExtractSimpleName(nodeKey),
+		PaneID:       nodeInfo.PaneID,
+		Reason:       reason,
+		TriggeredAt:  triggeredAt.Format(time.RFC3339Nano),
+		DelaySeconds: delaySeconds,
+		NotBeforeAt:  notBeforeAt.Format(time.RFC3339Nano),
+	}
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: auto-PING pending append failed for %s: %v\n", nodeKey, err)
+	}
+}
+
+func (rt *daemonRuntime) recordDeliveredAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, now time.Time) {
+	payload := projection.AutoPingEventPayload{
+		NodeKey:      nodeKey,
+		SessionName:  nodeInfo.SessionName,
+		NodeName:     ping.ExtractSimpleName(nodeKey),
+		PaneID:       nodeInfo.PaneID,
+		Reason:       pending.Reason,
+		TriggeredAt:  pending.TriggeredAt,
+		DelaySeconds: pending.DelaySeconds,
+		NotBeforeAt:  pending.NotBeforeAt,
+		DeliveredAt:  now.Format(time.RFC3339Nano),
+	}
+	if payload.Reason == "" {
+		payload.Reason = "discovered"
+	}
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: auto-PING delivered append failed for %s: %v\n", nodeKey, err)
+	}
+}
+
+func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discovery.NodeInfo, autoEnableSessions bool, now time.Time) {
+	if len(freshNodes) == 0 || rt.daemonState == nil {
+		return
+	}
+
+	projectedBySession := make(map[string]projection.AutoPingState)
+	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, freshNodes) {
+		state, ok, err := projection.ProjectAutoPingState(sessionDir)
+		if err != nil {
+			log.Printf("postman: WARNING: auto-PING replay failed for %s: %v\n", sessionDir, err)
+			continue
+		}
+		if ok {
+			projectedBySession[sessionDir] = state
+		}
+	}
+
+	nodeKeys := make([]string, 0, len(freshNodes))
+	for nodeKey := range freshNodes {
+		nodeKeys = append(nodeKeys, nodeKey)
+	}
+	sort.Strings(nodeKeys)
+
+	activeNodes := activeRuntimePingNodeNames(freshNodes)
+	livenessMap := map[string]bool{}
+	if rt.idleTracker != nil {
+		livenessMap = rt.idleTracker.GetLivenessMap()
+	}
+
+	for _, nodeKey := range nodeKeys {
+		nodeInfo := freshNodes[nodeKey]
+		if nodeInfo.IsPhony {
+			continue
+		}
+
+		state, ok := projectedBySession[nodeInfo.SessionDir]
+		if !ok {
+			continue
+		}
+		pending, exists := state.Nodes[nodeKey]
+		if !exists || !pending.Pending {
+			continue
+		}
+		if pending.NotBeforeAt != "" {
+			dueAt, err := time.Parse(time.RFC3339Nano, pending.NotBeforeAt)
+			if err == nil && now.Before(dueAt) {
+				continue
+			}
+		}
+		if owner := config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID); owner != "" {
+			continue
+		}
+
+		enabled := rt.daemonState.GetConfiguredSessionEnabled(nodeInfo.SessionName)
+		if !enabled && autoEnableSessions {
+			rt.daemonState.AutoEnableSessionIfNew(nodeInfo.SessionName)
+			enabled = rt.daemonState.GetConfiguredSessionEnabled(nodeInfo.SessionName)
+		}
+		if !enabled {
+			continue
+		}
+
+		tmpl := ""
+		if rt.cfg != nil {
+			tmpl = rt.cfg.DaemonMessageTemplate
+		}
+		result, err := ping.SendPingToNodeWithResult(nodeInfo, rt.contextID, nodeKey, tmpl, rt.cfg, activeNodes, livenessMap, rt.adjacency, freshNodes)
+		if err != nil {
+			log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", nodeKey, err)
+			continue
+		}
+		if !result.Delivered {
+			continue
+		}
+
+		rt.recordDeliveredAutoPing(nodeKey, nodeInfo, pending, now)
+	}
+}
+
+func activeRuntimePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
+	activeNodes := make([]string, 0, len(nodes))
+	seen := make(map[string]bool)
+	for nodeName := range nodes {
+		simpleName := ping.ExtractSimpleName(nodeName)
+		if seen[simpleName] {
+			continue
+		}
+		seen[simpleName] = true
+		activeNodes = append(activeNodes, simpleName)
+	}
+	sort.Strings(activeNodes)
+	return activeNodes
 }

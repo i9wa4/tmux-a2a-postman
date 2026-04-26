@@ -15,6 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
+	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
 // TestWarnAlertConfig verifies the degraded startup branches of warnAlertConfig.
@@ -227,6 +228,40 @@ func TestShouldSendAlert_ZeroCooldown(t *testing.T) {
 	// Zero cooldown: always return true regardless of timestamp
 	if !ds.ShouldSendAlert(alertKey, 0) {
 		t.Error("expected true with zero cooldown")
+	}
+}
+
+func TestCheckPaneRestarts_IgnoresWinnerSwapWhileOldPaneStillLive(t *testing.T) {
+	ds := NewDaemonState(0, "ctx-main")
+	ds.prevPaneStates = map[string]uinode.PaneInfo{
+		"%10": {},
+	}
+	ds.prevPaneToNode = map[string]string{
+		"%10": "review:worker",
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  t.TempDir(),
+		},
+	}
+	paneStates := map[string]uinode.PaneInfo{
+		"%10": {},
+		"%11": {},
+	}
+	paneToNode := map[string]string{
+		"%11": "review:worker",
+	}
+	events := make(chan tui.DaemonEvent, 1)
+
+	restarted := ds.checkPaneRestarts(paneStates, paneToNode, nodes, &config.Config{}, events, "ctx-main", nodes["review:worker"].SessionDir, map[string][]string{}, idle.NewIdleTracker())
+	if len(restarted) != 0 {
+		t.Fatalf("checkPaneRestarts() = %#v, want no restart when old pane is still live", restarted)
+	}
+	if len(events) != 0 {
+		t.Fatalf("pane_restart event emitted for live winner swap: %#v", <-events)
 	}
 }
 
