@@ -257,6 +257,8 @@ func (rt *daemonRuntime) bootstrap(ctx context.Context) {
 	if err := resumeCompatibilityMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
 }
 
 func (rt *daemonRuntime) handleContextDone() {

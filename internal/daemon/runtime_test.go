@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -346,6 +347,73 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 	}
 	if state.Nodes["review:worker"].Pending {
 		t.Fatal("pending auto-PING debt was not cleared after confirmed delivery")
+	}
+}
+
+func TestBootstrap_ReconcilesDuePendingAutoPingDebtAfterHydration(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.April, 27, 2, 50, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%63",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:     baseDir,
+		sessionDir:  sessionDir,
+		contextID:   "ctx-self",
+		selfSession: "review",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+			TmuxTimeout:           1.0,
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		events:      make(chan tui.DaemonEvent, 8),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%63",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.bootstrap(context.Background())
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("inbox entries after bootstrap = %d, want 1", len(entries))
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if state.Nodes["review:worker"].Pending {
+		t.Fatal("pending auto-PING debt was not cleared during bootstrap reconciliation")
 	}
 }
 
