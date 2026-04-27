@@ -73,6 +73,7 @@ func runSchema(stdout io.Writer, args []string) error {
 				"edges":                                 {Type: "array", Description: "Bidirectional routing edges between named nodes"},
 				"ui_node":                               {Type: "string", Description: "Human-facing node that receives daemon alerts and user_input waits"},
 				"reminder_interval_messages":            {Type: "integer", Description: "Reminder cadence after archived reads (0 = disabled)"},
+				"auto_ping_delay_seconds":               {Type: "number", Description: "Delay before the first auto-PING for newly discovered or replacement-pane nodes (0 = immediate)"},
 				"inbox_unread_threshold":                {Type: "integer", Description: "Unread-summary threshold for ui_node alerts (0 = disabled)"},
 				"read_context_mode":                     {Type: "string", Description: "Bare-pop read-time context mode: none or pieces"},
 				"read_context_pieces":                   {Type: "array", Description: "Ordered built-in read-time context pieces rendered on bare interactive pop"},

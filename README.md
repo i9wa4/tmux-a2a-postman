@@ -216,6 +216,7 @@ Public knobs for this model live in `postman.toml`:
 
 - `ui_node`
 - `reminder_interval_messages`
+- `auto_ping_delay_seconds`
 - `inbox_unread_threshold`
 - `journal_health_cutover_enabled`
 - `journal_compatibility_cutover_enabled`
@@ -257,6 +258,9 @@ Advanced dampening and rendering-shaping fields remain documented in
 `docs/design/notification.md` and `docs/guides/alert-config.md`.
 The embedded defaults in `internal/config/postman.default.toml` currently route
 alerts to `messenger`.
+`auto_ping_delay_seconds` controls how long a newly discovered or confirmed
+replacement-pane node waits before its first daemon auto-PING is delivered.
+`0` keeps auto-PING immediate.
 
 ### 4.6. Priority Order (highest to lowest)
 

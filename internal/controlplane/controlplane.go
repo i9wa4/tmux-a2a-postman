@@ -169,25 +169,8 @@ func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessag
 	}
 
 	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= delivery.QueueCap {
-		deadLetterDir := filepath.Join(target.SessionDir, "dead-letter")
-		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
-			return SystemMessageResult{}, fmt.Errorf("creating dead-letter dir: %w", err)
-		}
-		dst := deadLetterDst(target.SessionDir, delivery.Filename, delivery.QueueFullSuffix)
-		if err := writeDeadLetterFile(dst, []byte(delivery.Content)); err != nil {
-			return SystemMessageResult{}, fmt.Errorf("writing queue-full dead-letter: %w", err)
-		}
-		recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
-			MessageID: delivery.Filename,
-			From:      delivery.Sender,
-			To:        target.ActorID,
-			ThreadID:  delivery.ThreadID,
-			Path:      shadowRelativePath(target.SessionDir, dst),
-			Content:   delivery.Content,
-		})
-		syncCompatibilityMailbox(target.SessionDir)
-		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", target.ActorID, delivery.QueueCap, count, delivery.Filename)
-		return SystemMessageResult{}, nil
+		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): leaving %s undelivered for retry\n", target.ActorID, delivery.QueueCap, count, delivery.Filename)
+		return SystemMessageResult{Delivered: false}, nil
 	}
 
 	dst := filepath.Join(recipientInbox, delivery.Filename)

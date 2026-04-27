@@ -672,7 +672,7 @@ func TestMoveToDeadLetterRejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
-func TestDeliverSystemMessageDirectRejectsSymlinkedDeadLetterDir(t *testing.T) {
+func TestDeliverSystemMessageDirectQueueFullSkipsDeadLetterDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -717,11 +717,8 @@ func TestDeliverSystemMessageDirectRejectsSymlinkedDeadLetterDir(t *testing.T) {
 		map[string]discovery.NodeInfo{},
 		map[string]bool{},
 	)
-	if err == nil {
-		t.Fatal("expected symlink rejection error, got nil")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink rejection error, got: %v", err)
+	if err != nil {
+		t.Fatalf("expected queue-full direct delivery to stay undelivered without touching dead-letter, got: %v", err)
 	}
 
 	escapedPath := filepath.Join(escapedDir, "20260201-040000-from-daemon-to-worker-dl-queue-full.md")

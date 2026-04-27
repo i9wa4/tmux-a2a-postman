@@ -919,16 +919,26 @@ func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, ad
 }
 
 func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {
-	return DeliverSystemMessageDirectToTarget(filename, controlplane.TargetForNode(recipient, nodeInfo), sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
+	_, err := DeliverSystemMessageDirectResult(filename, nodeInfo, recipient, sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
+	return err
+}
+
+func DeliverSystemMessageDirectResult(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
+	return DeliverSystemMessageDirectResultToTarget(filename, controlplane.TargetForNode(recipient, nodeInfo), sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
 }
 
 func DeliverSystemMessageDirectToTarget(filename string, target controlplane.Target, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {
+	_, err := DeliverSystemMessageDirectResultToTarget(filename, target, sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
+	return err
+}
+
+func DeliverSystemMessageDirectResultToTarget(filename string, target controlplane.Target, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
 	if err := nodeaddr.Validate(target.ActorID); err != nil {
-		return fmt.Errorf("invalid recipient address: %w", err)
+		return controlplane.SystemMessageResult{}, fmt.Errorf("invalid recipient address: %w", err)
 	}
 	adapter, err := controlplane.DefaultHandAdapter(target)
 	if err != nil {
-		return fmt.Errorf("selecting hand adapter: %w", err)
+		return controlplane.SystemMessageResult{}, fmt.Errorf("selecting hand adapter: %w", err)
 	}
 	result, err := adapter.DeliverSystemMessage(target, controlplane.SystemMessageDelivery{
 		Filename:        filename,
@@ -939,16 +949,16 @@ func DeliverSystemMessageDirectToTarget(filename string, target controlplane.Tar
 		QueueFullSuffix: dlSuffixQueueFull,
 	})
 	if err != nil {
-		return err
+		return controlplane.SystemMessageResult{}, err
 	}
 	if !result.Delivered {
-		return nil
+		return result, nil
 	}
 
 	notificationPath := target.PostPath(filename)
 	sendDeliveryNotification(target, cfg, adjacency, knownNodes, contextID, target.ActorID, sender, target.SessionName, notificationPath, livenessMap)
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, target.ActorID)
-	return nil
+	return result, nil
 }
 
 // countInboxMessages returns the number of .md files in an inbox directory.

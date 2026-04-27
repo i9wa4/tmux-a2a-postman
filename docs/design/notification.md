@@ -458,6 +458,11 @@ discovered nodes in the target session. `ui_node` still controls alert
 delivery, but it no longer narrows the manual PING pass, even when the
 operator explicitly sets a non-empty `ui_node` in TOML or Markdown.
 
+Discovery-time and confirmed replacement-pane auto-PING now use durable
+pending state. `auto_ping_delay_seconds` sets the `not_before_at` deadline for
+that first send attempt; after the deadline, queue-full or ownership-blocked
+outcomes keep the same pending debt until a later eligible pass succeeds.
+
 Liveness is confirmed via two independent paths:
 
 1. **PING reply**: when a node archives the PING (moves it from inbox to

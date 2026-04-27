@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,6 +158,54 @@ func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 	}
 	if string(body) != "system delivery" {
 		t.Fatalf("inbox body = %q, want %q", string(body), "system delivery")
+	}
+}
+
+func TestTmuxHandAdapterDeliverSystemMessageQueueFullStaysUndeliveredWithoutDeadLetter(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	target := Target{
+		ActorID:     "worker",
+		RunID:       "review-session:worker",
+		SessionName: "review-session",
+		SessionDir:  sessionDir,
+		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%9"},
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(inboxDir) error = %v", err)
+	}
+	for i := range 20 {
+		name := filepath.Join(inboxDir, fmt.Sprintf("20260414-1155%02d-r1111-from-postman-to-worker.md", i))
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile(queued %d) error = %v", i, err)
+		}
+	}
+
+	result, err := (TmuxHandAdapter{}).DeliverSystemMessage(target, SystemMessageDelivery{
+		Filename:        "20260414-120000-r1234-from-postman-to-worker.md",
+		Sender:          "postman",
+		Content:         "system delivery",
+		QueueCap:        20,
+		QueueFullSuffix: "-dl-queue-full",
+	})
+	if err != nil {
+		t.Fatalf("DeliverSystemMessage() error = %v", err)
+	}
+	if result.Delivered {
+		t.Fatal("DeliverSystemMessage() delivered = true, want false when inbox is full")
+	}
+
+	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
+	if err != nil {
+		t.Fatalf("ReadDir(dead-letter) error = %v", err)
+	}
+	if len(deadEntries) != 0 {
+		t.Fatalf("dead-letter entries = %d, want 0 for retryable queue-full system delivery", len(deadEntries))
 	}
 }
 

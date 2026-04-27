@@ -49,6 +49,7 @@ type Config struct {
 	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
 	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
+	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING; 0 = immediate
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -549,6 +550,8 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 		return cfg.MinDeliveryGapSeconds == 0
 	case "startup_drain_window_seconds":
 		return cfg.StartupDrainWindowSeconds == 0
+	case "auto_ping_delay_seconds":
+		return cfg.AutoPingDelaySeconds == 0
 	case "pane_capture_max_panes":
 		return cfg.PaneCaptureMaxPanes == 0
 	case "inbox_unread_threshold":
@@ -614,6 +617,8 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 			base.MinDeliveryGapSeconds = 0
 		case "startup_drain_window_seconds":
 			base.StartupDrainWindowSeconds = 0
+		case "auto_ping_delay_seconds":
+			base.AutoPingDelaySeconds = 0
 		case "pane_capture_max_panes":
 			base.PaneCaptureMaxPanes = 0
 		case "inbox_unread_threshold":
@@ -816,6 +821,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.StartupDrainWindowSeconds != 0 {
 		base.StartupDrainWindowSeconds = override.StartupDrainWindowSeconds
+	}
+	if override.AutoPingDelaySeconds != 0 {
+		base.AutoPingDelaySeconds = override.AutoPingDelaySeconds
 	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds
