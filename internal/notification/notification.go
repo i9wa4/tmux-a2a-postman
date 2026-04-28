@@ -59,6 +59,7 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	if !bypassCooldown && paneNotifyCooldown > 0 {
 		if last, ok := paneLastNotified[paneID]; ok && time.Since(last) < paneNotifyCooldown {
 			paneNotifyMu.Unlock()
+			fmt.Fprintf(os.Stderr, "postman: notification: cooldown active for pane %s (last=%s, cooldown=%s)\n", paneID, last.Format(time.RFC3339), paneNotifyCooldown)
 			return nil
 		}
 	}

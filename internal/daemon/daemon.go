@@ -1449,8 +1449,8 @@ func checkSwallowedMessages(
 			daemonState.swallowedRetryCount[inboxPath]++
 			daemonState.swallowedRetryCountMu.Unlock()
 
-			log.Printf("postman: swallowed message re-delivered to %s: %s (attempt %d/%d)\n",
-				simpleName, entry.Name(), count+1, retryMax)
+			log.Printf("postman: swallowed message re-delivered to %s (pane=%s): %s (attempt %d/%d)\n",
+				simpleName, nodeInfo.PaneID, entry.Name(), count+1, retryMax)
 			events <- tui.DaemonEvent{
 				Type:    "swallowed_redelivery",
 				Message: fmt.Sprintf("Re-delivered to %s: %s (attempt %d/%d)", simpleName, entry.Name(), count+1, retryMax),

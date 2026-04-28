@@ -1,8 +1,10 @@
 package message
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
@@ -1697,5 +1700,99 @@ func TestDeliverMessage_AppendsReplayableApprovalEventsForCrossSessionThread(t *
 		if thread.DecisionMessageID != decisionFilename {
 			t.Fatalf("thread decision message = %q, want %q", thread.DecisionMessageID, decisionFilename)
 		}
+	}
+}
+
+// TestDeliverNotificationWithRetry_RetryUsesRefreshedPaneID verifies that when
+// the first delivery attempt fails and knownNodes has a fresh PaneID, the retry
+// uses the refreshed PaneID.
+func TestDeliverNotificationWithRetry_RetryUsesRefreshedPaneID(t *testing.T) {
+	var callCount int
+	var gotPaneIDs []string
+
+	adapter := controlplane.TmuxHandAdapter{
+		ProbeRuntime: func(string) (string, error) { return "bash", nil },
+		SendToPane: func(paneID string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+			callCount++
+			gotPaneIDs = append(gotPaneIDs, paneID)
+			if callCount == 1 {
+				return fmt.Errorf("no such pane: %s", paneID)
+			}
+			return nil
+		},
+	}
+
+	target := controlplane.Target{
+		ActorID:     "worker",
+		RunID:       "test:worker",
+		SessionName: "test",
+		Brain:       controlplane.Brain{Runtime: "bash"},
+		Hand:        controlplane.HandAttachment{Kind: controlplane.HandKindTmux, Address: "%stale"},
+	}
+	delivery := controlplane.PaneDelivery{BypassCooldown: true}
+	knownNodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%fresh", SessionName: "test"},
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", knownNodes)
+
+	if callCount != 2 {
+		t.Errorf("adapter.Deliver called %d times, want 2", callCount)
+	}
+	if len(gotPaneIDs) < 2 {
+		t.Fatalf("expected 2 pane ID calls, got %d", len(gotPaneIDs))
+	}
+	if gotPaneIDs[0] != "%stale" {
+		t.Errorf("first attempt pane = %q, want %%stale", gotPaneIDs[0])
+	}
+	if gotPaneIDs[1] != "%fresh" {
+		t.Errorf("retry pane = %q, want %%fresh", gotPaneIDs[1])
+	}
+	if strings.Contains(buf.String(), "pane notification failed") {
+		t.Errorf("unexpected WARNING on successful retry: %s", buf.String())
+	}
+}
+
+// TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning verifies that
+// when both delivery attempts fail, a WARNING is logged with node, pane, and session.
+func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T) {
+	var callCount int
+
+	adapter := controlplane.TmuxHandAdapter{
+		ProbeRuntime: func(string) (string, error) { return "bash", nil },
+		SendToPane: func(_ string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+			callCount++
+			return fmt.Errorf("pane not found")
+		},
+	}
+
+	target := controlplane.Target{
+		ActorID:     "worker",
+		RunID:       "test:worker",
+		SessionName: "test",
+		Brain:       controlplane.Brain{Runtime: "bash"},
+		Hand:        controlplane.HandAttachment{Kind: controlplane.HandKindTmux, Address: "%gone"},
+	}
+	delivery := controlplane.PaneDelivery{BypassCooldown: true}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", nil)
+
+	if callCount != 2 {
+		t.Errorf("adapter.Deliver called %d times, want 2", callCount)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, "pane notification failed") {
+		t.Errorf("expected WARNING containing 'pane notification failed', got: %s", logOut)
+	}
+	if !strings.Contains(logOut, "test:worker") {
+		t.Errorf("expected node name in WARNING, got: %s", logOut)
 	}
 }
