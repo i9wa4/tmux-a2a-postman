@@ -1024,19 +1024,21 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 	}
 }
 
-// logPaneIDChanges logs a re-discovery entry for each node whose PaneID changed
-// since the last discovery cycle. Called before rt.nodes is updated to freshNodes.
+// logPaneIDChanges logs collapse and re-discovery events for nodes whose PaneID
+// changed since the last cycle. Called before rt.nodes is updated to freshNodes.
 func (rt *daemonRuntime) logPaneIDChanges(freshNodes map[string]discovery.NodeInfo) {
-	for nodeKey, freshInfo := range freshNodes {
-		if freshInfo.IsPhony || freshInfo.PaneID == "" {
+	for nodeKey, oldInfo := range rt.nodes {
+		if oldInfo.IsPhony || oldInfo.PaneID == "" {
 			continue
 		}
-		oldInfo, existed := rt.nodes[nodeKey]
-		if !existed || oldInfo.PaneID == "" || oldInfo.PaneID == freshInfo.PaneID {
-			continue
+		freshInfo, found := freshNodes[nodeKey]
+		if !found || freshInfo.PaneID == "" {
+			log.Printf("postman: discovery: session %s collapsed (pane=%s node=%s)\n",
+				oldInfo.SessionName, oldInfo.PaneID, nodeKey)
+		} else if freshInfo.PaneID != oldInfo.PaneID {
+			log.Printf("postman: discovery: session %s re-discovered node %s (pane=%s -> %s)\n",
+				freshInfo.SessionName, nodeKey, oldInfo.PaneID, freshInfo.PaneID)
 		}
-		log.Printf("postman: discovery: session %s re-discovered (pane %s->%s node=%s)\n",
-			freshInfo.SessionName, oldInfo.PaneID, freshInfo.PaneID, nodeKey)
 	}
 }
 

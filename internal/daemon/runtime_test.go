@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -606,5 +608,46 @@ func appendRuntimeMailboxEventForTest(t *testing.T, writer *journal.Writer, even
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, visibility, payload, now); err != nil {
 		t.Fatalf("AppendEvent(%s): %v", eventType, err)
+	}
+}
+
+func TestLogPaneIDChanges_LogsRediscoveryAndCollapse(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	rt := &daemonRuntime{
+		nodes: map[string]discovery.NodeInfo{
+			"alpha:worker": {SessionName: "alpha", PaneID: "%10"},
+			"beta:worker":  {SessionName: "beta", PaneID: "%20"},
+			"gamma:worker": {SessionName: "gamma", PaneID: "%30"},
+		},
+	}
+
+	freshNodes := map[string]discovery.NodeInfo{
+		"alpha:worker": {SessionName: "alpha", PaneID: "%11"}, // pane changed → re-discovery
+		"beta:worker":  {SessionName: "beta", PaneID: "%20"},  // unchanged → no log
+		"delta:worker": {SessionName: "delta", PaneID: "%40"}, // new → no log
+		// gamma:worker absent → collapse
+	}
+
+	rt.logPaneIDChanges(freshNodes)
+	logOut := buf.String()
+
+	wantRediscovery := "postman: discovery: session alpha re-discovered node alpha:worker (pane=%10 -> %11)"
+	if !strings.Contains(logOut, wantRediscovery) {
+		t.Errorf("expected re-discovery log %q, got: %s", wantRediscovery, logOut)
+	}
+
+	wantCollapse := "postman: discovery: session gamma collapsed (pane=%30 node=gamma:worker)"
+	if !strings.Contains(logOut, wantCollapse) {
+		t.Errorf("expected collapse log %q, got: %s", wantCollapse, logOut)
+	}
+
+	if strings.Contains(logOut, "beta") {
+		t.Errorf("unexpected log for unchanged node beta: %s", logOut)
+	}
+	if strings.Contains(logOut, "delta") {
+		t.Errorf("unexpected log for new node delta: %s", logOut)
 	}
 }
