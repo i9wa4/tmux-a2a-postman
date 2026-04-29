@@ -1443,6 +1443,8 @@ func checkSwallowedMessages(
 			}
 
 			verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+			log.Printf("postman: notification: swallowed detected for %s: %s (age=%s, pane=%s)\n",
+				simpleName, entry.Name(), time.Since(deliveryTime).Truncate(time.Second), nodeInfo.PaneID)
 			_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
 
 			daemonState.swallowedRetryCountMu.Lock()

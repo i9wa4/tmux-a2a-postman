@@ -914,14 +914,14 @@ func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, ad
 		VerifyDelay:    verifyDelay,
 		MaxRetries:     cfg.EnterRetryMax,
 	}
-	log.Printf("postman: notification: attempting pane delivery to %s (pane=%s session=%s)\n", recipient, target.Hand.Address, target.SessionName)
-	deliverNotificationWithRetry(adapter, target, delivery, recipient, knownNodes)
+	log.Printf("postman: notification: attempting pane delivery to %s (pane=%s session=%s msg=%s)\n", recipient, target.Hand.Address, target.SessionName, filepath.Base(notificationPath))
+	deliverNotificationWithRetry(adapter, target, delivery, recipient, knownNodes, filepath.Base(notificationPath))
 }
 
 // deliverNotificationWithRetry attempts adapter.Deliver and, on failure, retries
 // once using a refreshed pane ID from knownNodes when available. Extracted for
 // testability: callers can inject a TmuxHandAdapter with a mock SendToPane.
-func deliverNotificationWithRetry(adapter controlplane.HandAdapter, target controlplane.Target, delivery controlplane.PaneDelivery, recipient string, knownNodes map[string]discovery.NodeInfo) {
+func deliverNotificationWithRetry(adapter controlplane.HandAdapter, target controlplane.Target, delivery controlplane.PaneDelivery, recipient string, knownNodes map[string]discovery.NodeInfo, filename string) {
 	if err := adapter.Deliver(target, delivery); err != nil {
 		// Retry once: look up a potentially refreshed PaneID from knownNodes (the
 		// daemon's discovery loop may have updated it since goroutine launch).
@@ -932,11 +932,11 @@ func deliverNotificationWithRetry(adapter controlplane.HandAdapter, target contr
 			}
 		}
 		if retryErr := adapter.Deliver(retryTarget, delivery); retryErr != nil {
-			log.Printf("postman: WARNING: pane notification failed: node=%s pane=%s session=%s err=%v\n", recipient, retryTarget.Hand.Address, retryTarget.SessionName, retryErr)
+			log.Printf("postman: WARNING: pane notification failed: node=%s pane=%s session=%s msg=%s err=%v\n", recipient, retryTarget.Hand.Address, retryTarget.SessionName, filename, retryErr)
 			return
 		}
 	}
-	log.Printf("postman: notification: pane delivery succeeded for %s (pane=%s)\n", recipient, target.Hand.Address)
+	log.Printf("postman: notification: pane delivery succeeded for %s (pane=%s msg=%s)\n", recipient, target.Hand.Address, filename)
 }
 
 func DeliverSystemMessageDirect(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) error {

@@ -346,6 +346,7 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 		rt.claimNewPanes(freshNodes)
 		newNodes := rt.detectNewNodes(freshNodes)
 		rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+		rt.logPaneIDChanges(freshNodes)
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
 		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), time.Now())
@@ -390,6 +391,9 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 		}()
 
 		messageEvents := make(chan message.DaemonEvent, 1)
+		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
+		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, registry, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
@@ -1017,6 +1021,22 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 			continue
 		}
 		rt.claimedPanes[nodeInfo.PaneID] = true
+	}
+}
+
+// logPaneIDChanges logs a re-discovery entry for each node whose PaneID changed
+// since the last discovery cycle. Called before rt.nodes is updated to freshNodes.
+func (rt *daemonRuntime) logPaneIDChanges(freshNodes map[string]discovery.NodeInfo) {
+	for nodeKey, freshInfo := range freshNodes {
+		if freshInfo.IsPhony || freshInfo.PaneID == "" {
+			continue
+		}
+		oldInfo, existed := rt.nodes[nodeKey]
+		if !existed || oldInfo.PaneID == "" || oldInfo.PaneID == freshInfo.PaneID {
+			continue
+		}
+		log.Printf("postman: discovery: session %s re-discovered (pane %s->%s node=%s)\n",
+			freshInfo.SessionName, oldInfo.PaneID, freshInfo.PaneID, nodeKey)
 	}
 }
 

@@ -1738,7 +1738,7 @@ func TestDeliverNotificationWithRetry_RetryUsesRefreshedPaneID(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", knownNodes)
+	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", knownNodes, "test-msg.md")
 
 	if callCount != 2 {
 		t.Errorf("adapter.Deliver called %d times, want 2", callCount)
@@ -1783,7 +1783,7 @@ func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T)
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", nil)
+	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", nil, "test-fail.md")
 
 	if callCount != 2 {
 		t.Errorf("adapter.Deliver called %d times, want 2", callCount)
@@ -1794,5 +1794,8 @@ func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T)
 	}
 	if !strings.Contains(logOut, "test:worker") {
 		t.Errorf("expected node name in WARNING, got: %s", logOut)
+	}
+	if !strings.Contains(logOut, "msg=test-fail.md") {
+		t.Errorf("expected msg= in WARNING, got: %s", logOut)
 	}
 }
