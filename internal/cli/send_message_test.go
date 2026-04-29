@@ -1418,3 +1418,97 @@ role = "worker"
 		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
 	}
 }
+
+func TestPerformCLINotification_SkippedWhenPaneEmpty(t *testing.T) {
+	var called bool
+	fn := func(_ string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+		called = true
+		return nil
+	}
+	status := performCLINotification("", "msg", 0, 0, 1, true, 0, 0, fn)
+	if status != cliNotifySkipped {
+		t.Errorf("status = %q, want %q", status, cliNotifySkipped)
+	}
+	if called {
+		t.Error("sendToPaneFunc should not be called when paneID is empty")
+	}
+}
+
+func TestPerformCLINotification_OKOnSuccess(t *testing.T) {
+	var gotPaneID string
+	fn := func(paneID string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+		gotPaneID = paneID
+		return nil
+	}
+	status := performCLINotification("%1", "msg", 0, 0, 1, true, 0, 0, fn)
+	if status != cliNotifyOK {
+		t.Errorf("status = %q, want %q", status, cliNotifyOK)
+	}
+	if gotPaneID != "%1" {
+		t.Errorf("gotPaneID = %q, want %%1", gotPaneID)
+	}
+}
+
+func TestPerformCLINotification_FailedOnError(t *testing.T) {
+	fn := func(_ string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+		return fmt.Errorf("tmux error")
+	}
+	status := performCLINotification("%gone", "msg", 0, 0, 1, true, 0, 0, fn)
+	if status != cliNotifyFailed {
+		t.Errorf("status = %q, want %q", status, cliNotifyFailed)
+	}
+}
+
+func TestWriteSendResult_ProcessedWithNotifyOK(t *testing.T) {
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifyOK)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "Sent: test.md") {
+		t.Errorf("missing 'Sent: test.md' in %q", stdout)
+	}
+	if !strings.Contains(stdout, "[notified: OK]") {
+		t.Errorf("missing '[notified: OK]' in %q", stdout)
+	}
+}
+
+func TestWriteSendResult_ProcessedWithNotifyFailed(t *testing.T) {
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifyFailed)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "[notified: FAILED -- recovery pending]") {
+		t.Errorf("missing FAILED suffix in %q", stdout)
+	}
+}
+
+func TestWriteSendResult_ProcessedWithNotifySkipped(t *testing.T) {
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifySkipped)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "[notified: SKIPPED -- pane not found]") {
+		t.Errorf("missing SKIPPED suffix in %q", stdout)
+	}
+}
+
+func TestWriteSendResult_QueuedHasNoNotifySuffix(t *testing.T) {
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return writeSendResult("test.md", sendStatusQueued, false, cliNotifyNone)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "Queued:") {
+		t.Errorf("expected 'Queued:' prefix, got %q", stdout)
+	}
+	if strings.Contains(stdout, "notified") {
+		t.Errorf("unexpected 'notified' in queued output: %q", stdout)
+	}
+}

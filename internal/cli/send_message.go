@@ -12,6 +12,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -27,6 +28,29 @@ const (
 	sendStatusQueued            sendStatus = "queued"
 	sendOutcomeObservationDelay            = 250 * time.Millisecond
 )
+
+type cliNotifyStatus string
+
+const (
+	cliNotifyOK      cliNotifyStatus = "OK"
+	cliNotifyFailed  cliNotifyStatus = "FAILED"
+	cliNotifySkipped cliNotifyStatus = "SKIPPED"
+	cliNotifyNone    cliNotifyStatus = ""
+)
+
+type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+
+// performCLINotification sends a synchronous pane notification from the CLI.
+// Returns cliNotifySkipped when paneID is empty, cliNotifyOK on success, cliNotifyFailed on error.
+func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int, fn sendToPaneFunc) cliNotifyStatus {
+	if paneID == "" {
+		return cliNotifySkipped
+	}
+	if err := fn(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries); err != nil {
+		return cliNotifyFailed
+	}
+	return cliNotifyOK
+}
 
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
@@ -297,7 +321,7 @@ func RunSendMessage(args []string) error {
 		if err != nil {
 			return fmt.Errorf("send outcome: %w", err)
 		}
-		return writeSendResult(deliveredFilename, status, *jsonOut)
+		return writeSendResult(deliveredFilename, status, *jsonOut, cliNotifyNone)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -316,7 +340,31 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("send outcome: %w", err)
 	}
-	return writeSendResult(filename, status, *jsonOut)
+	var notifyStatus cliNotifyStatus
+	if status == sendStatusProcessed {
+		freshNodes, _ := discovery.DiscoverNodes(baseDir, resolvedContextID, sessionName)
+		var paneID string
+		if freshNodes != nil {
+			fullKey := discovery.ResolveNodeName(*to, sessionName, freshNodes)
+			if nodeInfo, ok := freshNodes[fullKey]; ok {
+				paneID = nodeInfo.PaneID
+			}
+		}
+		notificationMsg := notification.BuildNotification(cfg, adjacency, freshNodes, resolvedContextID, *to, sender, sessionName, filename, nil)
+		recipientSimpleName := nodeaddr.Simple(*to)
+		enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+		if nd := cfg.GetNodeConfig(recipientSimpleName).EnterDelay; nd != 0 {
+			enterDelay = time.Duration(nd * float64(time.Second))
+		}
+		tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+		enterCount := cfg.GetNodeConfig(recipientSimpleName).EnterCount
+		if enterCount == 0 {
+			enterCount = 1
+		}
+		verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
+	}
+	return writeSendResult(filename, status, *jsonOut, notifyStatus)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,
@@ -343,7 +391,7 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 	return tmpl
 }
 
-func writeSendResult(filename string, status sendStatus, jsonOut bool) error {
+func writeSendResult(filename string, status sendStatus, jsonOut bool, notifyStatus cliNotifyStatus) error {
 	if jsonOut {
 		return json.NewEncoder(os.Stdout).Encode(struct {
 			Sent   string `json:"sent"`
@@ -354,7 +402,16 @@ func writeSendResult(filename string, status sendStatus, jsonOut bool) error {
 		})
 	}
 	if status == sendStatusProcessed {
-		fmt.Printf("Sent: %s\n", filename)
+		switch notifyStatus {
+		case cliNotifyOK:
+			fmt.Printf("Sent: %s [notified: OK]\n", filename)
+		case cliNotifyFailed:
+			fmt.Printf("Sent: %s [notified: FAILED -- recovery pending]\n", filename)
+		case cliNotifySkipped:
+			fmt.Printf("Sent: %s [notified: SKIPPED -- pane not found]\n", filename)
+		default:
+			fmt.Printf("Sent: %s\n", filename)
+		}
 		return nil
 	}
 	fmt.Printf("Queued: %s\n", filename)
