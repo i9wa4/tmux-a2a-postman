@@ -53,6 +53,11 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
 // captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+	if strings.TrimSpace(message) == "" {
+		err := fmt.Errorf("empty notification body for pane %s", paneID)
+		fmt.Fprintf(os.Stderr, "postman: notification: %v\n", err)
+		return err
+	}
 	// Rate limit: skip if pane was notified within cooldown window (#273).
 	// paneNotifyCooldown <= 0 disables the limiter (used in tests).
 	paneNotifyMu.Lock()

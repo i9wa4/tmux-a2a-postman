@@ -403,6 +403,29 @@ func TestSendToPane_InvalidPane(t *testing.T) {
 	}
 }
 
+func TestSendToPane_RejectsEmptyNotificationBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile fakeTmux failed: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+":"+origPath)
+
+	err := SendToPane("%99", " \n\t ", 1*time.Millisecond, 1*time.Second, 1, true, 0, 0)
+	if err == nil {
+		t.Fatal("SendToPane(empty) error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "empty notification body") {
+		t.Fatalf("SendToPane(empty) error = %v, want empty body wording", err)
+	}
+	if _, statErr := os.Stat(argsFile); !os.IsNotExist(statErr) {
+		t.Fatalf("fake tmux was invoked for an empty notification, stat err=%v", statErr)
+	}
+}
+
 func TestSendToPane_EnterCount2(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
