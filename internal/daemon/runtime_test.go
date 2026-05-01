@@ -165,14 +165,7 @@ func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
 
 func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatcherEvent(t *testing.T) {
 	tmpDir := t.TempDir()
-	fakeBin := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
-		t.Fatalf("MkdirAll(fakeBin): %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(fake tmux): %v", err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installRuntimeTestTmux(t, tmpDir)
 
 	baseDir := filepath.Join(tmpDir, "state")
 	contextID := "ctx-submit"
@@ -191,6 +184,7 @@ func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatc
 
 	cfg := config.DefaultConfig()
 	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.NotificationTemplate = "new message from {from_node}"
 	cfg.TmuxTimeout = 0.01
 	adjacency, err := config.ParseEdges(cfg.Edges)
 	if err != nil {
@@ -219,8 +213,8 @@ func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatc
 		prevSessionNodes: make(map[string][]string),
 		activePostEvents: make(map[string]bool),
 	}
-	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir}
-	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir}
+	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%1"}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%2"}
 
 	filename := "20260502-004600-r1111-from-orchestrator-to-messenger.md"
 	content := "---\nparams:\n  contextId: ctx-submit\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T00:46:00+09:00\n---\n\nhello\n"
@@ -257,6 +251,261 @@ func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatc
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
 		t.Fatalf("post file still present or wrong error: %v", err)
+	}
+}
+
+func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeTestTmux(t, tmpDir)
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-rate-limit"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	installShadowJournalManager(sessionDir, contextID, sessionName, time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.NotificationTemplate = "new message from {from_node}"
+	cfg.TmuxTimeout = 0.01
+	cfg.MinDeliveryGapSeconds = 0.2
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		t.Fatalf("ParseEdges: %v", err)
+	}
+
+	daemonState := NewDaemonState(0, contextID)
+	daemonState.SetSessionEnabled(sessionName, true)
+	daemonState.lastDeliveryMu.Lock()
+	daemonState.lastDeliveryBySenderRecipient["orchestrator:messenger"] = time.Now()
+	daemonState.lastDeliveryMu.Unlock()
+
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       sessionDir,
+		contextID:        contextID,
+		selfSession:      sessionName,
+		cfg:              cfg,
+		adjacency:        adjacency,
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       make(map[string]bool),
+		events:           make(chan tui.DaemonEvent, 8),
+		daemonState:      daemonState,
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      make(map[string]bool),
+		claimedPanes:     make(map[string]bool),
+		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
+	}
+	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%1"}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%2"}
+
+	filename := "20260502-010000-r1111-from-orchestrator-to-messenger.md"
+	content := "---\nparams:\n  contextId: ctx-rate-limit\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T01:00:00+09:00\n---\n\nhello after gap\n"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	start := time.Now()
+	rt.handlePostWatcherEvent(postPath, fsnotify.Create)
+
+	if _, err := os.Stat(postPath); err != nil {
+		t.Fatalf("rate-limited post file should remain until retry: %v", err)
+	}
+
+	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("inbox file should not be delivered before retry gap, got err=%v", err)
+	}
+	deliveredAt := waitForFileContent(t, inboxPath, content, time.Second)
+	if elapsed := deliveredAt.Sub(start); elapsed < 150*time.Millisecond {
+		t.Fatalf("message delivered before rate-limit gap elapsed: %s", elapsed)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after retry or wrong error: %v", err)
+	}
+}
+
+func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeTestTmux(t, tmpDir)
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-inflight"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	installShadowJournalManager(sessionDir, contextID, sessionName, time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.NotificationTemplate = "new message from {from_node}"
+	cfg.TmuxTimeout = 0.01
+	cfg.MinDeliveryGapSeconds = 0.2
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		t.Fatalf("ParseEdges: %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       sessionDir,
+		contextID:        contextID,
+		selfSession:      sessionName,
+		cfg:              cfg,
+		adjacency:        adjacency,
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       make(map[string]bool),
+		events:           make(chan tui.DaemonEvent, 8),
+		daemonState:      NewDaemonState(0, contextID),
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      make(map[string]bool),
+		claimedPanes:     make(map[string]bool),
+		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
+	}
+	rt.daemonState.SetSessionEnabled(sessionName, true)
+	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%1"}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%2"}
+
+	firstFilename := "20260502-010100-r1111-from-orchestrator-to-messenger.md"
+	firstContent := "---\nparams:\n  contextId: ctx-inflight\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T01:01:00+09:00\n---\n\nfirst\n"
+	firstPostPath := filepath.Join(sessionDir, "post", firstFilename)
+	if err := os.WriteFile(firstPostPath, []byte(firstContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(first post): %v", err)
+	}
+	secondFilename := "20260502-010101-r2222-from-orchestrator-to-messenger.md"
+	secondContent := "---\nparams:\n  contextId: ctx-inflight\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T01:01:01+09:00\n---\n\nsecond\n"
+	secondPostPath := filepath.Join(sessionDir, "post", secondFilename)
+	if err := os.WriteFile(secondPostPath, []byte(secondContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(second post): %v", err)
+	}
+
+	rt.handlePostWatcherEvent(firstPostPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(secondPostPath, fsnotify.Create)
+
+	firstInboxPath := filepath.Join(sessionDir, "inbox", "messenger", firstFilename)
+	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, time.Second)
+	secondInboxPath := filepath.Join(sessionDir, "inbox", "messenger", secondFilename)
+	if _, err := os.Stat(secondInboxPath); !os.IsNotExist(err) {
+		t.Fatalf("second same-route message should wait behind in-flight delivery, got err=%v", err)
+	}
+
+	secondDeliveredAt := waitForFileContent(t, secondInboxPath, secondContent, 2*time.Second)
+	if elapsed := secondDeliveredAt.Sub(firstDeliveredAt); elapsed < 150*time.Millisecond {
+		t.Fatalf("second same-route message delivered too soon after first: %s", elapsed)
+	}
+}
+
+func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeTestTmux(t, tmpDir)
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-backlog"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	installShadowJournalManager(sessionDir, contextID, sessionName, time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.NotificationTemplate = "new message from {from_node}"
+	cfg.TmuxTimeout = 0.01
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		t.Fatalf("ParseEdges: %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       sessionDir,
+		contextID:        contextID,
+		selfSession:      sessionName,
+		cfg:              cfg,
+		adjacency:        adjacency,
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       make(map[string]bool),
+		events:           make(chan tui.DaemonEvent, 8),
+		daemonState:      NewDaemonState(0, contextID),
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      make(map[string]bool),
+		claimedPanes:     make(map[string]bool),
+		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
+	}
+	rt.daemonState.SetSessionEnabled(sessionName, true)
+	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%1"}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%2"}
+
+	filename := "20260502-011000-r1111-from-orchestrator-to-messenger.md"
+	content := "---\nparams:\n  contextId: ctx-backlog\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T01:10:00+09:00\n---\n\nhello backlog\n"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "messenger",
+		Path:      shadowRelativePath(sessionDir, postPath),
+		Content:   content,
+	})
+
+	rt.bootstrap(context.Background())
+
+	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
+	waitForFileContent(t, inboxPath, content, time.Second)
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after bootstrap backlog reconciliation or wrong error: %v", err)
+	}
+}
+
+func installRuntimeTestTmux(t *testing.T, tmpDir string) {
+	t.Helper()
+	fakeBin := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("MkdirAll(fakeBin): %v", err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\n  set-buffer|paste-buffer|send-keys) exit 0 ;;\n  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func waitForFileContent(t *testing.T, path, want string, timeout time.Duration) time.Time {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		got, err := os.ReadFile(path)
+		if err == nil {
+			if string(got) != want {
+				t.Fatalf("file content = %q, want %q", string(got), want)
+			}
+			return time.Now()
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for file %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

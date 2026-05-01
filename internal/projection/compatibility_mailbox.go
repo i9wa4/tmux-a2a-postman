@@ -297,6 +297,9 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string) error
 			if _, ok := desired[rel]; ok {
 				return nil
 			}
+			if strings.HasPrefix(rel, "post"+string(filepath.Separator)) {
+				return nil
+			}
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}

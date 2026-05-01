@@ -1,6 +1,7 @@
 package projection
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -205,6 +206,42 @@ func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("quarantine matches = %d, want 1", len(matches))
+	}
+}
+
+func TestSyncCompatibilityMailbox_PreservesUnprojectedPostFiles(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 5, 30, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+		MessageID: "20260414-053001-r1111-from-orchestrator-to-worker.md",
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("post", "20260414-053001-r1111-from-orchestrator-to-worker.md"),
+		Content:   "projected body",
+	}, now.Add(time.Second))
+
+	unprojectedPath := filepath.Join(sessionDir, "post", "20260414-053002-r2222-from-orchestrator-to-worker.md")
+	if err := os.MkdirAll(filepath.Dir(unprojectedPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(post): %v", err)
+	}
+	if err := os.WriteFile(unprojectedPath, []byte("live pending body"), 0o600); err != nil {
+		t.Fatalf("WriteFile(unprojected post): %v", err)
+	}
+
+	if err := SyncCompatibilityMailbox(sessionDir); err != nil {
+		t.Fatalf("SyncCompatibilityMailbox() error = %v", err)
+	}
+	got, err := os.ReadFile(unprojectedPath)
+	if err != nil {
+		t.Fatalf("unprojected post file was removed: %v", err)
+	}
+	if string(got) != "live pending body" {
+		t.Fatalf("unprojected post content = %q, want live pending body", string(got))
 	}
 }
 

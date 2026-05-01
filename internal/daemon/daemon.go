@@ -513,6 +513,7 @@ type DaemonState struct {
 	lastInboxUnreadCount          map[string]int             // Issue #264: per-node last alerted inbox count
 	lastInboxUnreadCountMu        sync.RWMutex               // Issue #264
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
+	reservedDeliveryByRoute       map[string]time.Time       // Issue #393: in-flight rate-limit reservations (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	alertedReadFiles              map[string]struct{}        // Paths of read/ files already alerted (suppress repeats)
 	alertedReadFilesMu            sync.Mutex                 // Mutex for alertedReadFiles
@@ -534,9 +535,48 @@ func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
 		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
-		lastInboxUnreadCount:          make(map[string]int),             // Issue #264
+		reservedDeliveryByRoute:       make(map[string]time.Time),
+		lastInboxUnreadCount:          make(map[string]int), // Issue #264
 		alertedReadFiles:              make(map[string]struct{}),
 		swallowedRetryCount:           make(map[string]int),
+	}
+}
+
+func (ds *DaemonState) reserveDeliveryRoute(route string, gap time.Duration, now time.Time) (time.Duration, time.Time, bool) {
+	ds.lastDeliveryMu.Lock()
+	defer ds.lastDeliveryMu.Unlock()
+
+	if reservedAt, reserved := ds.reservedDeliveryByRoute[route]; reserved {
+		remaining := gap - now.Sub(reservedAt)
+		if remaining < 10*time.Millisecond {
+			remaining = 10 * time.Millisecond
+		}
+		return remaining, time.Time{}, false
+	}
+
+	latest, exists := ds.lastDeliveryBySenderRecipient[route]
+	if exists {
+		remaining := gap - now.Sub(latest)
+		if remaining > 0 {
+			return remaining, time.Time{}, false
+		}
+	}
+
+	ds.reservedDeliveryByRoute[route] = now
+	return 0, now, true
+}
+
+func (ds *DaemonState) finishDeliveryRoute(route string, reservedAt time.Time, hasReservation, delivered bool, finishedAt time.Time) {
+	ds.lastDeliveryMu.Lock()
+	defer ds.lastDeliveryMu.Unlock()
+
+	if hasReservation {
+		if current, ok := ds.reservedDeliveryByRoute[route]; ok && current.Equal(reservedAt) {
+			delete(ds.reservedDeliveryByRoute, route)
+		}
+	}
+	if delivered {
+		ds.lastDeliveryBySenderRecipient[route] = finishedAt
 	}
 }
 

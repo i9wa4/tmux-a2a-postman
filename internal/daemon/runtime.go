@@ -75,6 +75,12 @@ type runtimeStatusSnapshot struct {
 	NormalizedSessionNodes map[string][]string
 }
 
+type postDeliveryReservation struct {
+	route          string
+	reservedAt     time.Time
+	hasReservation bool
+}
+
 func newDaemonRuntime(
 	baseDir string,
 	sessionDir string,
@@ -259,6 +265,7 @@ func (rt *daemonRuntime) bootstrap(ctx context.Context) {
 	}
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
+	rt.dispatchPendingPostMessages()
 }
 
 func (rt *daemonRuntime) handleContextDone() {
@@ -342,6 +349,15 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 		return
 	}
 
+	rt.processActivePostEvent(eventPath, filename)
+}
+
+func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
+	reservation, ok := rt.reservePostDeliveryOrScheduleRetry(eventPath, filename)
+	if !ok {
+		return
+	}
+
 	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, time.Now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	syncCompatibilityMailboxProjection(sourceSessionDir)
@@ -372,23 +388,60 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 		}
 	}
 
-	if rt.cfg.MinDeliveryGapSeconds > 0 {
-		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-			deliveryKey := msgInfo.From + ":" + msgInfo.To
-			gap := time.Duration(rt.cfg.MinDeliveryGapSeconds * float64(time.Second))
-			rt.daemonState.lastDeliveryMu.RLock()
-			lastTime, exists := rt.daemonState.lastDeliveryBySenderRecipient[deliveryKey]
-			rt.daemonState.lastDeliveryMu.RUnlock()
-			if exists && time.Since(lastTime) < gap {
-				log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs)\n", msgInfo.From, msgInfo.To, rt.cfg.MinDeliveryGapSeconds)
-				rt.finishPostEvent(eventPath)
-				return
-			}
-		}
+	rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.registry, rt.adjacency, rt.cfg, reservation)
+}
+
+func (rt *daemonRuntime) reservePostDeliveryOrScheduleRetry(eventPath, filename string) (postDeliveryReservation, bool) {
+	msgInfo, parseErr := message.ParseMessageFilename(filename)
+	if parseErr != nil {
+		return postDeliveryReservation{}, true
+	}
+	deliveryKey := msgInfo.From + ":" + msgInfo.To
+	if rt.cfg.MinDeliveryGapSeconds <= 0 {
+		return postDeliveryReservation{route: deliveryKey}, true
 	}
 
+	gap := time.Duration(rt.cfg.MinDeliveryGapSeconds * float64(time.Second))
+	remaining, reservedAt, ok := rt.daemonState.reserveDeliveryRoute(deliveryKey, gap, time.Now())
+	if !ok {
+		rt.scheduleRateLimitedPostRetry(eventPath, filename, msgInfo.From, msgInfo.To, remaining, rt.cfg.MinDeliveryGapSeconds)
+		return postDeliveryReservation{}, false
+	}
+	return postDeliveryReservation{
+		route:          deliveryKey,
+		reservedAt:     reservedAt,
+		hasReservation: true,
+	}, true
+}
+
+func (rt *daemonRuntime) scheduleRateLimitedPostRetry(eventPath, filename, from, to string, remaining time.Duration, gapSeconds float64) {
+	if remaining < time.Millisecond {
+		remaining = time.Millisecond
+	}
+	log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs, retry_in=%s)\n", from, to, gapSeconds, remaining.Round(time.Millisecond))
+	safeAfterFunc(remaining, "post-rate-limit-retry", rt.events, func() {
+		rt.retryActivePostDelivery(eventPath, filename)
+	})
+}
+
+func (rt *daemonRuntime) retryActivePostDelivery(eventPath, filename string) {
+	if _, err := os.Stat(eventPath); os.IsNotExist(err) {
+		rt.finishPostEvent(eventPath)
+		return
+	}
+
+	rt.processActivePostEvent(eventPath, filename)
+}
+
+func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config) {
-		defer rt.finishPostEvent(eventPath)
+		deliveredNormally := false
+		defer func() {
+			if reservation.route != "" {
+				rt.daemonState.finishDeliveryRoute(reservation.route, reservation.reservedAt, reservation.hasReservation, deliveredNormally, time.Now())
+			}
+			rt.finishPostEvent(eventPath)
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("🚨 PANIC in delivery goroutine for %s: %v\n", filename, r)
@@ -430,12 +483,7 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 		}
 
 		if !suppressNormalDelivery {
-			if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-				deliveryKey := msgInfo.From + ":" + msgInfo.To
-				rt.daemonState.lastDeliveryMu.Lock()
-				rt.daemonState.lastDeliveryBySenderRecipient[deliveryKey] = time.Now()
-				rt.daemonState.lastDeliveryMu.Unlock()
-			}
+			deliveredNormally = true
 		}
 
 		if !suppressNormalDelivery {
@@ -506,7 +554,36 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 				}
 			}
 		}
-	}(eventPath, filename, rt.nodes, rt.registry, rt.adjacency, rt.cfg)
+	}(eventPath, filename, nodes, registry, adjacency, cfg)
+}
+
+func (rt *daemonRuntime) dispatchPendingPostMessages() {
+	seenRateLimitedRoutes := make(map[string]bool)
+	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
+		postDir := filepath.Join(sessionDir, "post")
+		entries, err := os.ReadDir(postDir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Printf("postman: WARNING: failed to scan pending post dir %s: %v\n", postDir, err)
+			}
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if rt.cfg.MinDeliveryGapSeconds > 0 {
+				if info, parseErr := message.ParseMessageFilename(entry.Name()); parseErr == nil {
+					routeKey := info.From + ":" + info.To
+					if seenRateLimitedRoutes[routeKey] {
+						continue
+					}
+					seenRateLimitedRoutes[routeKey] = true
+				}
+			}
+			rt.handlePostWatcherEvent(filepath.Join(postDir, entry.Name()), fsnotify.Create)
+		}
+	}
 }
 
 func (rt *daemonRuntime) beginPostEvent(eventPath string) bool {
@@ -793,6 +870,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, time.Now())
+	rt.dispatchPendingPostMessages()
 
 	droppedNodeMap := rt.idleTracker.GetCurrentlyDroppedNodes(nodeConfigs)
 	nodeStates := rt.idleTracker.GetNodeStates()
