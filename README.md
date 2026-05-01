@@ -194,75 +194,34 @@ your-project/
 **Nix/home-manager users:** if your XDG config is read-only Nix store
 symlinks, use project-local overrides.
 
-### 4.5. Unified state + notification model
+### 4.5. Runtime status model
 
-get-health, get-health-oneline, and the default TUI are three views over the
-same canonical contract. The per-node visible states are `ready`,
-`pending`, `user_input`, `composing`, `spinning`, and `stalled`. Session-level
+`status`, `status --json`, and the default TUI are three views over the same
+canonical contract. The per-node visible states are `ready`, `pending`,
+`user_input`, `composing`, `spinning`, and `stalled`. Session-level
 `unavailable` is a fallback that means the current daemon is not authoritative
-for canonical health; it is not a per-node state.
+for canonical status; it is not a per-node state.
 
 Quick reading guide:
 
 | If you see | It means | Tune / read next |
 | ---------- | -------- | ---------------- |
-| `pending`, `user_input`, `composing`, `spinning`, or `stalled` in `get-health`, `get-health-oneline`, or the TUI | Canonical visible state for a node right now | `docs/design/node-state-machine.md` |
+| `pending`, `user_input`, `composing`, `spinning`, or `stalled` in `status --json` or the TUI | Canonical visible state for a node right now | `docs/design/node-state-machine.md` |
 | A pane hint telling a node to run `tmux-a2a-postman pop` | Delivery reached that node's inbox; this is a pane notification, not a new state | `docs/design/notification.md` |
-| A daemon-generated message routed to `ui_node` | Policy alert such as unread summary, inactivity, unreplied message, expected-reply overdue, or a stalled reply-tracked wait | `docs/guides/alert-config.md` and `docs/design/notification.md` |
-| A dropped-ball event in the TUI or tmux status bar | Coordination warning based on `LastReceived > LastSent`; by default it is not an inbox alert | `docs/guides/alert-config.md` |
-| PING or heartbeat mail | Control-plane traffic that is still operator-visible in the current tree | `docs/design/notification.md` |
 
-Public knobs for this model live in `postman.toml`:
+Core public knobs for this model live in `postman.toml`:
 
 - `ui_node`
-- `reminder_interval_messages`
-- `auto_ping_delay_seconds`
-- `inbox_unread_threshold`
-- `journal_health_cutover_enabled`
-- `journal_compatibility_cutover_enabled`
 - `retention_period_days`
 - `message_footer`
-- `read_context_mode`
-- `read_context_pieces`
-- `read_context_heading`
-- `[node].idle_timeout_seconds`
-- `[node].dropped_ball_timeout_seconds`
-- `node_spinning_seconds`
-- `[heartbeat].enabled`
-
-The journal cutover flags form three valid modes. `legacy` is the default with
-both flags off. In all modes, `send` uses compatibility-submit when the target
-session is owned by a live daemon, and falls back to direct `post/` handoff only
-when no owner is available. `health-first` enables journal-backed canonical
-health while `pop` still writes mailbox state directly. `compatibility-first`
-enables both journal-backed health and compatibility-submit `pop` behavior.
-`journal_compatibility_cutover_enabled = true` without
-`journal_health_cutover_enabled = true` is invalid, and `start` rejects that
-config.
+- `notification_template`
+- `min_delivery_gap_seconds`
 
 For stored messages written by `send`, reply guidance comes from
 `message_footer` in `internal/config/postman.default.toml`. TOML config and XDG
 `postman.md` can replace that footer; project-local `postman.md` appends its
-`message_footer` to the effective base footer. Daemon alerts and heartbeat mail
-use `daemon_message_template`, and dead-letter notifications write their own
-re-send instructions. `pop` prints the stored message as written and does not
-add a second hard-coded reply footer.
-
-When `read_context_mode = "pieces"` is enabled, bare interactive
-`tmux-a2a-postman pop` may append one fresh `Local Runtime Context` block after
-the stored message using the configured built-in pieces:
-`time`, `node`, `cwd`, `git`, and `add_dir`. Raw and machine-facing surfaces
-stay unchanged: `pop --peek`, `pop --file`, `pop --json`, archived-file reads,
-and stored message files on disk remain raw. Live TODO coordination stays on
-the explicit `todo` command family, not on `pop`.
-
-Advanced dampening and rendering-shaping fields remain documented in
-`docs/design/notification.md` and `docs/guides/alert-config.md`.
-The embedded defaults in `internal/config/postman.default.toml` currently route
-alerts to `messenger`.
-`auto_ping_delay_seconds` controls how long a newly discovered or confirmed
-replacement-pane node waits before its first daemon auto-PING is delivered.
-`0` keeps auto-PING immediate.
+`message_footer` to the effective base footer. `pop` prints the stored message
+as written and does not add a second hard-coded reply footer.
 
 ### 4.6. Priority Order (highest to lowest)
 
@@ -291,11 +250,11 @@ tmux-a2a-postman start --no-tui
 tmux-a2a-postman stop
 ```
 
-The default operator loop is `send`, `pop`, `get-health`, and
-`get-health-oneline`. Lifecycle and recovery commands such as `start`, `stop`,
-and other internal compatibility helpers remain available, but they are no
-longer the main beginner/operator surface. Use explicit subcommands; bare
-`tmux-a2a-postman` prints usage and does not start the daemon.
+The default operator loop is `send`, `pop`, and `status`. Lifecycle and recovery
+commands such as `start` and `stop` are also public. Internal compatibility
+helpers may remain callable for migration, but they are not the main
+beginner/operator surface. Use explicit subcommands; bare `tmux-a2a-postman`
+prints usage and does not start the daemon.
 
 ## 6. Directory Structure
 
@@ -321,7 +280,6 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
       post/             # internal: outbox queue managed by postman daemon
       inbox/{node}/     # daemon delivers messages here
       read/             # agent moves messages here after reading
-      todo/             # owner TODO documents for explicit summary commands
       dead-letter/      # unroutable messages land here
       waiting/          # per-node waiting state files
 ```
@@ -345,8 +303,8 @@ live daemon, and preserves unknown entries by default instead of guessing.
 ## 7. Deployment Model
 
 The default operator model is one daemon process per Unix user. Start one
-daemon and treat it as the canonical health and alert authority for the tmux
-sessions it observes.
+daemon and treat it as the canonical status authority for the tmux sessions it
+observes.
 
 Only one live daemon may own a given tmux session at a time, and `start`
 rejects a second daemon for the same Unix user. A different Unix user's daemon
@@ -365,15 +323,8 @@ Default operator surface:
 ```text
 tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
-tmux-a2a-postman get-health
-tmux-a2a-postman get-health-oneline --json
-```
-
-Explicit coordination surfaces:
-
-```text
-tmux-a2a-postman todo summary
-tmux-a2a-postman todo summary --json
+tmux-a2a-postman status
+tmux-a2a-postman status --json
 ```
 
 Lifecycle and recovery:
@@ -382,23 +333,7 @@ Lifecycle and recovery:
 tmux-a2a-postman start
 tmux-a2a-postman stop
 tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
-tmux-a2a-postman schema [COMMAND]   # JSON Schema for the public config surface or a command's --params scope
 ```
-
-Diagnostic and cutover tooling:
-
-```text
-tmux-a2a-postman timeline --limit 20        # recent redacted journal events for the live session
-tmux-a2a-postman replay --surface mailbox   # read-only projected mailbox paths from the journal
-```
-
-Migration from older names:
-
-| Older name                      | Current path              | Note |
-| ------------------------------- | ------------------------- | ---- |
-| `send-message`                  | `send`                    | Use `send` in the default operator loop |
-| `get-session-health`            | `get-health`              | `get-health` is the canonical JSON payload |
-| `get-session-status-oneline`    | `get-health-oneline`      | `get-health-oneline` is the compact all-session formatter over canonical health |
 
 ## 9. Skills
 

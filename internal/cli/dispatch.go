@@ -14,6 +14,7 @@ type Handlers struct {
 	GetSessionStatusOneline func(args []string) error
 	Read                    func(args []string) error
 	Pop                     func(args []string) error
+	Status                  func(args []string) error
 	GetSessionHealth        func(args []string) error
 	Timeline                func(args []string) error
 	Replay                  func(args []string) error
@@ -40,9 +41,9 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman start",
 			Err:   handlers.Start(cfg.ContextID, cfg.ConfigPath, cfg.LogFilePath, cfg.NoTUI),
 		}
-	case "get-health-oneline":
+	case "get-health-oneline", "get-session-status-oneline":
 		return Result{
-			Label: "postman get-health-oneline",
+			Label: "postman " + command,
 			Err:   handlers.GetSessionStatusOneline(args),
 		}
 	case "read":
@@ -55,9 +56,14 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman pop",
 			Err:   handlers.Pop(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "get-health":
+	case "status":
 		return Result{
-			Label: "postman get-health",
+			Label: "postman status",
+			Err:   handlers.Status(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "get-health", "get-session-health":
+		return Result{
+			Label: "postman " + command,
 			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "timeline":
@@ -80,9 +86,9 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman supervisor-drain",
 			Err:   handlers.SupervisorDrain(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "send":
+	case "send", "send-message":
 		return Result{
-			Label: "postman send",
+			Label: "postman " + command,
 			Err:   handlers.SendMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "stop":

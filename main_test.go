@@ -192,7 +192,7 @@ func TestSplitCommand_RequiresExplicitSubcommand(t *testing.T) {
 	}
 }
 
-func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
+func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	var stderr bytes.Buffer
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
 	fs.Bool("version", false, "show version")
@@ -213,11 +213,13 @@ func TestPrintUsage_ShowsNeutralSchemaDescription(t *testing.T) {
 	if !strings.Contains(got, "Use an explicit subcommand; bare `tmux-a2a-postman` prints usage.") {
 		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
 	}
-	if !strings.Contains(got, "Print JSON Schema for config or supported command surfaces") {
-		t.Fatalf("usage missing neutral schema description: %q", got)
+	if !strings.Contains(got, "status                     Show current runtime status (--json for canonical payload)") {
+		t.Fatalf("usage missing status command: %q", got)
 	}
-	if strings.Contains(got, "Print JSON Schema for config or command options") {
-		t.Fatalf("usage still contains stale schema wording: %q", got)
+	for _, hidden := range []string{"get-health", "get-health-oneline", " read ", " todo ", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("usage exposes hidden surface %q: %q", hidden, got)
+		}
 	}
 	if strings.Contains(got, "Start tmux-a2a-postman daemon (default)") {
 		t.Fatalf("usage still claims start is the default: %q", got)

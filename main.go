@@ -116,6 +116,7 @@ func main() {
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			Read:                    cli.RunRead,
 			Pop:                     cli.RunPop,
+			Status:                  func(args []string) error { return cli.RunStatus(os.Stdout, args) },
 			GetSessionHealth:        cli.RunGetSessionHealth,
 			Timeline:                cli.RunTimeline,
 			Replay:                  cli.RunReplay,
@@ -154,21 +155,12 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Default operator surface:")
 	fmt.Fprintln(w, "  send                       Send a message in one step (--to and --body required)")
 	fmt.Fprintln(w, "  pop                        Read and archive the oldest unread inbox message")
-	fmt.Fprintln(w, "  get-health                 Print the canonical JSON session-health payload")
-	fmt.Fprintln(w, "  get-health-oneline         Print a one-line formatter over get-health")
+	fmt.Fprintln(w, "  status                     Show current runtime status (--json for canonical payload)")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Lifecycle and recovery:")
 	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon")
 	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
 	fmt.Fprintln(w, "  Internal compatibility helpers remain available but are omitted from the default operator usage.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Additional tools:")
-	fmt.Fprintln(w, "  read                       List inbox messages or access archived/dead-letter messages")
-	fmt.Fprintln(w, "  todo                       Manage owner TODO files and print live session summaries")
-	fmt.Fprintln(w, "  timeline                   Print current-generation journal timeline (redacted by default)")
-	fmt.Fprintln(w, "  replay                     Rebuild journal-backed projections without mutating runtime state")
-	fmt.Fprintln(w, "  schema [command]           Print JSON Schema for config or supported command surfaces")
-	fmt.Fprintln(w, "  help [topic]               Show help overview or topic-based help")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Global Flags:")
 	fmt.Fprintln(w, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
@@ -178,8 +170,6 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")
 	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
 	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
-	fmt.Fprintln(w, "  tmux-a2a-postman timeline --limit 20                # Inspect recent redacted journal events")
-	fmt.Fprintln(w, "  tmux-a2a-postman schema send                         # Show send JSON Schema")
-	fmt.Fprintln(w, "  tmux-a2a-postman --base-dir /tmp/test read           # Override state directory")
+	fmt.Fprintln(w, "  tmux-a2a-postman status --json                       # Inspect runtime status as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")
 }

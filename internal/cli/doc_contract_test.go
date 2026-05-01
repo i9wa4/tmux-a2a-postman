@@ -37,35 +37,32 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "The default operator surface is `send`, `pop`, `get-health`, and `get-health-oneline`.")
-	assertContainsNormalized(t, commandsDoc, "Use this page as the exact public CLI reference, not as the first-time tutorial.")
+	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `status`, and `--version`.")
 	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
-	assertContainsNormalized(t, commandsDoc, "Older name | Current path")
-	assertContainsNormalized(t, commandsDoc, "`get-session-status-oneline` | `get-health-oneline` | Compact all-session tokens over canonical health")
+	assertContainsNormalized(t, commandsDoc, "| `status` | Show the current runtime status |")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
-	assertContainsNormalized(t, commandsDoc, `{"status":"[0]🟣 [1]🟢"}`)
-	assertContainsNormalized(t, commandsDoc, "| `send` | N/A | `{\"sent\": \"filename.md\", \"status\": \"processed\\|queued\"}` |")
-	assertContainsNormalized(t, commandsDoc, "`--file` remains non-destructive and reads from the current session inbox only.")
-	assertContainsNormalized(t, commandsDoc, "When `read_context_mode = \"pieces\"` is enabled, bare interactive `pop` may append one read-time `Local Runtime Context` block after the stored message.")
-	assertContainsNormalized(t, commandsDoc, "| `todo` | Manage session-local owner TODO files and live summaries |")
-	assertContainsNormalized(t, commandsDoc, "| `todo summary` | `{\"nodes\":[]}` | `{\"nodes\":[{\"node\",\"token\",\"state\",\"checked\",\"total\",\"exists\",\"invalid\"}]}` |")
-	if strings.Contains(commandsDoc, "`bind`") {
-		t.Fatal("docs/commands.md still exposes bind in the public contract")
-	}
-	if strings.Contains(commandsDoc, "`supervisor-drain`") {
-		t.Fatal("docs/commands.md still exposes supervisor-drain in the public contract")
-	}
-	if strings.Contains(commandsDoc, "`--from`") {
-		t.Fatal("docs/commands.md still exposes --from in the public send contract")
-	}
-	if strings.Contains(commandsDoc, "`--bindings`") {
-		t.Fatal("docs/commands.md still exposes --bindings in the public send contract")
-	}
-	if strings.Contains(commandsDoc, "`get-context-id`") {
-		t.Fatal("docs/commands.md still exposes get-context-id in the public contract")
-	}
-	if strings.Contains(commandsDoc, "`--context-id`") {
-		t.Fatal("docs/commands.md still exposes direct context override in the public contract")
+	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}`)
+	assertContainsNormalized(t, commandsDoc, `{"id":"filename.md","from":"...","to":"...","body":"...","timestamp":"..."}`)
+	assertContainsNormalized(t, commandsDoc, "It archives the message after reading unless `--peek` or `--file` is used.")
+	for _, hidden := range []string{
+		"`get-health`",
+		"`get-health-oneline`",
+		"`read`",
+		"`todo`",
+		"`timeline`",
+		"`replay`",
+		"`schema`",
+		"`bind`",
+		"`supervisor-drain`",
+		"`get-context-id`",
+		"`--context-id`",
+		"`--from`",
+		"`--bindings`",
+		"`read_context_mode`",
+	} {
+		if strings.Contains(commandsDoc, hidden) {
+			t.Fatalf("docs/commands.md exposes hidden public surface %s", hidden)
+		}
 	}
 
 	popSource := readRepoFile(t, "internal/cli/pop.go")
@@ -114,44 +111,57 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 
 func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
-	assertContainsNormalized(t, readme, "Unified state + notification model")
-	assertContainsNormalized(t, readme, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract")
+	assertContainsNormalized(t, readme, "Runtime status model")
+	assertContainsNormalized(t, readme, "`status`, `status --json`, and the default TUI are three views over the same canonical contract")
 	assertContainsNormalized(t, readme, "Quick reading guide")
 	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
-	assertContainsNormalized(t, readme, "Policy alert such as unread summary, inactivity, unreplied message, expected-reply overdue, or a stalled reply-tracked wait")
 	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
 	assertContainsNormalized(t, readme, "The README teaches the beginner/operator loop.")
 	assertContainsNormalized(t, readme, "Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start the daemon.")
 	assertContainsNormalized(t, readme, "For stored messages written by `send`, reply guidance comes from `message_footer` in `internal/config/postman.default.toml`.")
-	assertContainsNormalized(t, readme, "Daemon alerts and heartbeat mail use `daemon_message_template`, and dead-letter notifications write their own re-send instructions.")
 	assertContainsNormalized(t, readme, "`pop` prints the stored message as written and does not add a second hard-coded reply footer.")
-	assertContainsNormalized(t, readme, "`read_context_mode`")
-	assertContainsNormalized(t, readme, "`read_context_pieces`")
-	assertContainsNormalized(t, readme, "`read_context_heading`")
-	assertContainsNormalized(t, readme, "tmux-a2a-postman todo summary")
-	assertContainsNormalized(t, readme, "todo/ # owner TODO documents for explicit summary commands")
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
-	if strings.Contains(readme, "tmux-a2a-postman bind <subcommand>") {
-		t.Fatal("README still exposes bind in the default operator surface")
-	}
-	if strings.Contains(readme, "tmux-a2a-postman get-context-id") {
-		t.Fatal("README still exposes get-context-id in the default operator surface")
+	for _, hidden := range []string{
+		"tmux-a2a-postman get-health",
+		"tmux-a2a-postman get-health-oneline",
+		"tmux-a2a-postman read",
+		"tmux-a2a-postman todo",
+		"tmux-a2a-postman timeline",
+		"tmux-a2a-postman replay",
+		"tmux-a2a-postman schema",
+		"tmux-a2a-postman bind",
+		"tmux-a2a-postman get-context-id",
+		"`read_context_mode`",
+		"`journal_health_cutover_enabled`",
+		"`journal_compatibility_cutover_enabled`",
+		"`[heartbeat].enabled`",
+	} {
+		if strings.Contains(readme, hidden) {
+			t.Fatalf("README still exposes hidden public surface %q", hidden)
+		}
 	}
 
 	sendSkill := readRepoFile(t, "skills/send-message/SKILL.md")
 	assertContainsNormalized(t, sendSkill, "tmux-a2a-postman send --to <node> --body \"message text\"")
-	assertContainsNormalized(t, sendSkill, "schema send")
-	assertContainsNormalized(t, sendSkill, "State and alert policy authority lives in README.md plus docs/guides/alert-config.md and docs/design/node-state-machine.md.")
+	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`, `idempotency-key`, `json`.")
+	if strings.Contains(sendSkill, "schema") {
+		t.Fatal("send skill still teaches schema discovery")
+	}
 
 	roleAuditorSkill := readRepoFile(t, "skills/a2a-role-auditor/SKILL.md")
 	assertContainsNormalized(t, roleAuditorSkill, "unread backlog")
 	assertContainsNormalized(t, roleAuditorSkill, "quiet node")
 	assertContainsNormalized(t, roleAuditorSkill, "late reply")
-	assertContainsNormalized(t, roleAuditorSkill, "node_spinning_seconds")
+	assertContainsNormalized(t, roleAuditorSkill, "status --json")
 	assertContainsNormalized(t, roleAuditorSkill, "`message_footer` | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}`")
-	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon alert/ping/heartbeat mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
+	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon-originated mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
 	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter re-send instructions (written by dead-letter notification code)")
+	for _, hidden := range []string{"get-health", "dropped_ball", "heartbeat mail"} {
+		if strings.Contains(roleAuditorSkill, hidden) {
+			t.Fatalf("role auditor skill still exposes hidden term %q", hidden)
+		}
+	}
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
@@ -161,7 +171,7 @@ func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	assertContainsNormalized(t, readme, "| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory state | Always preserved |")
 
 	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "### 2.4. Runtime Directory Lifecycle and Retention")
-	assertContainsNormalized(t, commandsDoc, "`retention_period_days` is the startup cleanup control for inactive runtime state. The embedded default is `90`.")
-	assertContainsNormalized(t, commandsDoc, "| Unknown entries | Preserved by default instead of pruning by name guesswork |")
+	assertContainsNormalized(t, commandsDoc, "## 7. Runtime Directory Lifecycle")
+	assertContainsNormalized(t, commandsDoc, "`retention_period_days` controls cleanup of inactive runtime state.")
+	assertContainsNormalized(t, commandsDoc, "Unknown entries are preserved by default instead of being pruned by name.")
 }

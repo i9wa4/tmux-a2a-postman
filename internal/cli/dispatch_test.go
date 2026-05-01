@@ -141,6 +141,33 @@ func TestDispatch_SendUsesCanonicalNameOnly(t *testing.T) {
 	}
 }
 
+func TestDispatch_StatusPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"status",
+		[]string{"--json"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			Status: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman status" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman status")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("status args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_HealthCommandsUseCanonicalNamesOnly(t *testing.T) {
 	t.Run("get-health", func(t *testing.T) {
 		var gotArgs []string
@@ -280,20 +307,79 @@ func TestDispatch_TodoPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
-func TestDispatch_LegacyDefaultNamesReturnUnknownCommand(t *testing.T) {
-	cases := []string{"send-message", "get-session-health", "get-session-status-oneline"}
-	for _, command := range cases {
-		t.Run(command, func(t *testing.T) {
-			result := Dispatch(command, nil, Config{}, Handlers{})
-			if result.Err == nil {
-				t.Fatal("Dispatch returned nil error for legacy command")
-			}
-			if result.Err.Error() != `unknown command "`+command+`"` {
-				t.Fatalf("error = %q, want %q", result.Err.Error(), `unknown command "`+command+`"`)
-			}
-			if !result.ShowUsage {
-				t.Fatal("ShowUsage = false, want true")
-			}
-		})
-	}
+func TestDispatch_HiddenLegacyAliasesRemainDispatchable(t *testing.T) {
+	t.Run("send-message", func(t *testing.T) {
+		var gotArgs []string
+		result := Dispatch(
+			"send-message",
+			[]string{"--to", "worker", "--body", "hello"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				SendMessage: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman send-message" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman send-message")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker", "--body", "hello"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("send-message args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("get-session-health", func(t *testing.T) {
+		var gotArgs []string
+		result := Dispatch(
+			"get-session-health",
+			[]string{"--json"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				GetSessionHealth: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-session-health" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-session-health")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-session-health args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("get-session-status-oneline", func(t *testing.T) {
+		var gotArgs []string
+		result := Dispatch(
+			"get-session-status-oneline",
+			[]string{"--json"},
+			Config{},
+			Handlers{
+				GetSessionStatusOneline: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-session-status-oneline" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-session-status-oneline")
+		}
+		wantArgs := []string{"--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-session-status-oneline args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
 }

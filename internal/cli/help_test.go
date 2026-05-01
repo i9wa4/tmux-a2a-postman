@@ -28,26 +28,13 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery:") {
 		t.Fatalf("stdout missing lifecycle split: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Older command names: send-message -> send; get-session-health -> get-health; get-session-status-oneline -> get-health-oneline") {
-		t.Fatalf("stdout missing migration map: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "status                     Show current runtime status (--json for canonical payload)") {
+		t.Fatalf("stdout missing status overview line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Print JSON Schema for the public config surface or a supported command") {
-		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "timeline                   Print current-generation journal timeline (redacted by default)") {
-		t.Fatalf("stdout missing timeline overview line: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "replay                     Rebuild journal-backed projections without mutating runtime state") {
-		t.Fatalf("stdout missing replay overview line: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "todo                       Manage owner TODO files and print live session summaries") {
-		t.Fatalf("stdout missing todo overview line: %q", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "  bind                       ") {
-		t.Fatalf("stdout still exposes bind in the default overview: %q", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "  supervisor-drain           ") {
-		t.Fatalf("stdout still exposes supervisor-drain in the default overview: %q", stdout.String())
+	for _, hidden := range []string{"get-health", "get-health-oneline", "read", "todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
+		if strings.Contains(stdout.String(), "  "+hidden) || strings.Contains(stdout.String(), "\n"+hidden+"\n") {
+			t.Fatalf("stdout exposes hidden command %q in the default overview: %q", hidden, stdout.String())
+		}
 	}
 }
 
@@ -67,47 +54,25 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("stdout missing explicit-command guidance: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-health-oneline") {
-		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "status") {
+		t.Fatalf("stdout missing status command: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
 	}
-	if strings.Contains(stdout.String(), "get-context-id") {
-		t.Fatalf("stdout still exposes get-context-id in user-facing help: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "Migration from older names") {
-		t.Fatalf("stdout missing migration section: %q", stdout.String())
-	}
 	if !strings.Contains(stdout.String(), "Shape: [0]🔷🔵:🟢 [1]🔴") {
-		t.Fatalf("stdout missing emoji oneline shape: %q", stdout.String())
+		t.Fatalf("stdout missing status shape: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Window groups are colon-separated emoji runs with no literal window labels.") {
 		t.Fatalf("stdout missing emoji group note: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `Output JSON: {"status":"[0]🟣 [1]🟢"}`) {
-		t.Fatalf("stdout missing emoji oneline json example: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "Output canonical all-session status JSON") {
+		t.Fatalf("stdout missing status json description: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Print JSON Schema for the curated public config surface or supported command surfaces.") {
-		t.Fatalf("stdout missing neutral schema description: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "\ntimeline\n") {
-		t.Fatalf("stdout missing timeline command help: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "\nreplay\n") {
-		t.Fatalf("stdout missing replay command help: %q", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "\ntodo\n") {
-		t.Fatalf("stdout missing todo command help: %q", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "\nbind\n") {
-		t.Fatalf("stdout still exposes bind in command help: %q", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "\nsupervisor-drain\n") {
-		t.Fatalf("stdout still exposes supervisor-drain in command help: %q", stdout.String())
-	}
-	if strings.Contains(stdout.String(), "--context-id") {
-		t.Fatalf("stdout still exposes direct context override in command help: %q", stdout.String())
+	for _, hidden := range []string{"get-context-id", "get-health", "get-health-oneline", "\nread\n", "\ntodo\n", "\ntimeline\n", "\nreplay\n", "\nschema", "\nbind\n", "\nsupervisor-drain\n", "--context-id"} {
+		if strings.Contains(stdout.String(), hidden) {
+			t.Fatalf("stdout exposes hidden surface %q in command help: %q", hidden, stdout.String())
+		}
 	}
 }
 
@@ -123,32 +88,19 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"Unified state + notification model:",
+		"Runtime state model:",
 		"Core visible states: ready, pending, user_input, composing, spinning, stalled",
 		"Quick reading guide:",
-		"visible_state in get-health/TUI/oneline answers what the node looks like now",
+		"visible_state in status JSON answers what the node looks like now",
 		"pane hints answer that delivery reached a recipient inbox",
-		"ui_node alerts answer that policy thresholds fired",
-		"dropped-ball is a coordination signal, not the same thing as a ui_node inbox alert",
-		"ui_node                          Human-facing inbox target for alerts and user_input waits",
-		"reminder_interval_messages       Reminder cadence after archived reads",
-		"inbox_unread_threshold           Unread-summary threshold for ui_node alerts",
-		"[node].idle_timeout_seconds      Per-node inactivity alert threshold",
-		"[node].dropped_ball_timeout_seconds  Shared late-reply timeout for unreplied-message alerts and dropped-ball detection",
-		"node_spinning_seconds            Optional early escalation from composing to spinning",
-		"[heartbeat].enabled             Optional keepalive automation (advanced)",
-		"journal_health_cutover_enabled   Enable journal-backed canonical health reads",
-		"journal_compatibility_cutover_enabled  Enable compatibility-submit reads for owned sessions",
-		"read_context_mode                Bare-pop read-time context mode (none or pieces)",
-		"read_context_pieces              Ordered built-in read-time context pieces",
-		"read_context_heading             Heading for the read-time context block",
-		"Cutover modes:",
-		"legacy                 Default. Legacy health and direct pop; send submits to owned daemons.",
-		"health-first           Enable journal-backed canonical health while pop remains direct.",
-		"compatibility-first    Enable journal-backed health plus compatibility-submit pop.",
-		"Invalid: compatibility-first without health-first. start rejects that config.",
-		"Advanced/internal shaping knobs live in docs/design/notification.md and docs/guides/alert-config.md.",
-		"get-health, get-health-oneline, and the default TUI read the same canonical health contract.",
+		"Core config:",
+		"edges                            Bidirectional routes between nodes",
+		"ui_node                          Human-facing node for daemon-originated mail",
+		"message_footer                   Footer appended to stored send mail",
+		"notification_template            Pane hint rendered when mail arrives",
+		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
+		"retention_period_days            Inactive runtime cleanup window",
+		"status, status --json, and the default TUI read the same canonical health contract.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout missing %q: %q", want, got)
@@ -160,6 +112,10 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"tmux_timeout       float64",
 		"startup_delay      float64",
 		"reminder_interval  float64",
+		"journal_health_cutover_enabled",
+		"read_context_mode",
+		"dropped-ball",
+		"[heartbeat].enabled",
 	} {
 		if strings.Contains(got, stale) {
 			t.Fatalf("stdout still contains stale config field %q: %q", stale, got)

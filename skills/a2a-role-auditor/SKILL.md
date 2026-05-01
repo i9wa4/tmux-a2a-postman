@@ -30,10 +30,9 @@ patches):
 - Node not defined in `postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`
 - Session not currently owned or enabled by the running daemon
 - Unread backlog or quiet node behavior explained by `ui_node`,
-  `inbox_unread_threshold`, `idle_timeout_seconds`, or other alert-policy
-  settings rather than by role instructions
-- Late reply escalation explained by `dropped_ball_timeout_seconds` or
-  `node_spinning_seconds` policy rather than by a template bug
+  `status --json`, or runtime state rather than by role instructions
+- Late reply behavior explained by runtime status or routing state rather than
+  by a template bug
 
 **Template-level confirmed** (node exists, edges correct, but behavior is
 wrong):
@@ -88,16 +87,16 @@ Two sub-checks:
 - PASS (also verify): template mentions `pop` for reading messages
   (read + archive in one step)
 - PASS (also verify): template does NOT reference raw filesystem paths
-  (e.g., `~/.local/state/tmux-a2a-postman/...`); use CLI commands like
-  `get-health` instead (#287: filesystem internals hidden from agents)
+  (e.g., runtime state directories); use CLI commands like `status` instead
+  (#287: filesystem internals hidden from agents)
 - FAIL: template lacks `send` instruction — agents construct messages
   manually instead of using the atomic one-step command
-- FAIL: template lacks `pop` — agents use the old `read` + manual cat workflow
+- FAIL: template lacks `pop` — agents use manual inbox inspection workflows
   instead of the streamlined command
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman pop` (auto-archives the next unread message on read)
-- FAIL: template references raw filesystem paths for monitoring (e.g.,
-  `ls ~/.local/state/.../waiting/`) — use `get-health` instead
+- FAIL: template references raw filesystem paths for monitoring — use
+  `status` instead
 
 ### 2.7. Check 6 — Pre-Approval Verification
 
@@ -119,21 +118,19 @@ Applies only to nodes that define a `draft_template` field.
   may assume all nodes listed in the template are contactable, leading to
   dead-lettered messages
 
-### 2.9. Check 8 — Late Reply Policy Alignment
+### 2.9. Check 8 — Reply Status Alignment
 
 Applies to all non-observer nodes (nodes whose role does NOT contain
 "observer").
 
-- PASS: the node's role, `dropped_ball_timeout_seconds`, and
-  `node_spinning_seconds` tell a consistent story about late reply handling
-- PASS: an intentionally quiet node or background observer is allowed to keep
-  `dropped_ball_timeout_seconds = 0` when that choice is explicit and aligned
-  with the role
-- FAIL: the role expects timely handoff or escalation, but both
-  `dropped_ball_timeout_seconds` and `node_spinning_seconds` leave late reply
-  behavior undefined
-- FAIL: the config enables noisy late reply escalation for a node whose role is
-  intentionally quiet or non-responsive by design
+- PASS: the node's role defines when to reply, what completion token to use, and
+  when to escalate ambiguity
+- PASS: an intentionally quiet or background observer states that quiet behavior
+  explicitly
+- FAIL: the role expects timely handoff but does not define reply or escalation
+  behavior
+- FAIL: the role is intentionally quiet but its instructions still imply active
+  handoff responsibility
 
 ### 2.10. Check B-I8 — Protocol Reminder Presence
 
@@ -178,16 +175,15 @@ All files are read from the user's XDG config directory:
 
 - `$XDG_CONFIG_HOME` defaults to `~/.config` if unset.
 - `postman.toml` defines `[postman]` section (edges, timing) and `[node-name]`
-  sections (structural per-node config like `dropped_ball_timeout_seconds`).
+  sections (structural per-node config).
 - `postman.md` defines templates, edges (Mermaid), common_template, and
   per-node role/template. Node sections use h2 backtick headings;
   role uses an h3 backtick heading within each node.
 - Load order: `postman.toml` -> `nodes/*.toml` -> `nodes/*.md` -> `postman.md`
   (last wins for overlapping fields).
 - `postman.default.toml` is a canonical reference listing all configurable
-  values with their defaults and comments. Consult it when auditing
-  `dropped_ball_timeout_seconds`, `node_spinning_seconds`, and other per-node
-  configurable fields (#249 policy: all values must appear explicitly here).
+  values with their defaults and comments. Consult it when auditing runtime
+  behavior (#249 policy: all values must appear explicitly here).
 
 ## 5. System-Provided Context (Do Not Duplicate in Role Templates)
 
@@ -208,7 +204,7 @@ Key templates that inject context automatically:
 | `draft_template`    | draft/send creation          | `{template}` (recipient role), frontmatter    |
 | `message_footer`    | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}` |
 | `notification_template` | sendkeys to pane on arrival | `{node}`, `{from_node}`                      |
-| `daemon_message_template` | daemon alert/ping/heartbeat mail | `{role_content}`, `{talks_to_line}`, `{reply_command}` |
+| `daemon_message_template` | daemon-originated mail | `{role_content}`, `{talks_to_line}`, `{reply_command}` |
 
 **Audit implication**: if a role template repeats any of the following, flag it
 as MINOR (unnecessary duplication, not a bug):
@@ -219,7 +215,7 @@ as MINOR (unnecessary duplication, not a bug):
   `message_footer` `{can_talk_to}`)
 - Recipient role content (provided by `draft_template` `{template}`)
 - Edge violation warnings (handled by daemon `edge_violation_warning_template`)
-- Daemon or heartbeat reply guidance (handled by `daemon_message_template`)
+- Daemon-originated reply guidance (handled by `daemon_message_template`)
 - Dead-letter re-send instructions (written by dead-letter notification code)
 
 ## 6. Workflow
