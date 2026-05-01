@@ -120,8 +120,7 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	cutoverMode, err := config.ResolveJournalCutoverMode(cfg)
-	if err != nil {
+	if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
 		return fmt.Errorf("journal cutover: %w", err)
 	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
@@ -315,7 +314,7 @@ func RunSendMessage(args []string) error {
 		content = content[:idx] + "\nidempotency_key: " + *idempotencyKey + content[idx:]
 	}
 
-	if cutoverMode == config.JournalCutoverCompatibilityFirst && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
 			Command:  projection.CompatibilitySubmitSend,
 			Filename: filename,

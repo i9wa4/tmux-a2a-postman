@@ -131,20 +131,23 @@ Always-preserved paths:
 ### 2.5. Journal Cutover Modes
 
 Two public cutover flags control how canonical health and compatibility-submit
-delivery move from legacy runtime state to journal-backed projection:
+read behavior move from legacy runtime state to journal-backed projection.
+`send` uses compatibility-submit for sessions owned by a live daemon in every
+mode, and falls back to direct `post/` handoff only when no daemon owner is
+available:
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `journal_health_cutover_enabled` | bool | false | Enable journal-backed canonical health while direct mailbox delivery remains authoritative |
-| `journal_compatibility_cutover_enabled` | bool | false | Enable compatibility-submit mailbox delivery; requires `journal_health_cutover_enabled = true` |
+| `journal_health_cutover_enabled` | bool | false | Enable journal-backed canonical health while legacy reads remain authoritative |
+| `journal_compatibility_cutover_enabled` | bool | false | Enable compatibility-submit reads for owned sessions; requires `journal_health_cutover_enabled = true` |
 
 The effective modes are:
 
 | Mode | Config | Behavior |
 | ---- | ------ | -------- |
-| `legacy` | both flags false | Legacy health and direct mailbox delivery remain authoritative |
-| `health-first` | health=true, compatibility=false | `get-health`, `get-health-oneline`, and the default TUI read journal-backed canonical health; `send` and `pop` still write mailbox state directly |
-| `compatibility-first` | health=true, compatibility=true | Canonical health stays journal-backed and `send` / `pop` use compatibility-submit for owned sessions |
+| `legacy` | both flags false | Legacy health and direct `pop`; `send` uses compatibility-submit for owned sessions |
+| `health-first` | health=true, compatibility=false | `get-health`, `get-health-oneline`, and the default TUI read journal-backed canonical health; `pop` still writes mailbox state directly |
+| `compatibility-first` | health=true, compatibility=true | Canonical health stays journal-backed and `pop` also uses compatibility-submit for owned sessions |
 | invalid | health=false, compatibility=true | `start` rejects the config before the daemon begins running |
 
 ## 3. Messaging Commands
@@ -157,11 +160,12 @@ tmux-a2a-postman send --to NODE --body TEXT [options]
 
 The primary command for agent-to-agent messaging. Composes and delivers
 a message, then reports the strongest outcome the CLI can observe during a
-short confirmation window. `status = "processed"` means the daemon consumed
-the queued `post/` file before the window closed. `status = "queued"` means
-only the local handoff to `post/` was confirmed. If a matching dead-letter is
-observed during that window, `send` returns an error instead of a success
-payload.
+short confirmation window. For daemon-owned sessions, `status = "processed"`
+means the daemon handled the compatibility-submit request. For direct fallback,
+`processed` means the daemon consumed the queued `post/` file before the window
+closed. `status = "queued"` means only the local handoff to `post/` was
+confirmed. If a matching dead-letter is observed during that window, `send`
+returns an error instead of a success payload.
 
 | Flag                | Type   | Default | --params? | Description                                   |
 | ------------------- | ------ | ------- | --------- | --------------------------------------------- |

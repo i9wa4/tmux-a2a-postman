@@ -1072,7 +1072,11 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	ownerSessionDir := filepath.Join(tmpDir, "ctx-send-direct-processed", "owner-session")
+	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -1144,7 +1148,11 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	ownerSessionDir := filepath.Join(tmpDir, "ctx-send-direct-dead-letter", "owner-session")
+	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -1293,6 +1301,148 @@ role = "worker"
 		"context=ctx-send-submit",
 		"from=messenger",
 		"to=worker",
+		"transport=compatibility-submit",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
+	}
+	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendMessage_UsesCompatibilitySubmitForOwnedSessionInLegacyMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger -- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-submit-legacy", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	mode, err := config.ResolveJournalCutoverMode(cfg)
+	if err != nil {
+		t.Fatalf("ResolveJournalCutoverMode: %v", err)
+	}
+	if mode != config.JournalCutoverLegacy {
+		t.Fatalf("cutover mode = %q, want %q", mode, config.JournalCutoverLegacy)
+	}
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-legacy", "test-session") {
+		t.Fatal("ContextOwnsSession() = false, want true")
+	}
+
+	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	serveDone := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		requestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
+		for {
+			entries, err := os.ReadDir(requestsDir)
+			if err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+						continue
+					}
+					requestPath := filepath.Join(requestsDir, entry.Name())
+					request, readErr := projection.ReadCompatibilitySubmitRequest(requestPath)
+					if readErr != nil {
+						serveDone <- fmt.Errorf("ReadCompatibilitySubmitRequest(%s): %w", requestPath, readErr)
+						return
+					}
+					requestSeen <- request
+					postDir := filepath.Join(sessionDir, "post")
+					if err := os.MkdirAll(postDir, 0o700); err != nil {
+						serveDone <- fmt.Errorf("MkdirAll postDir: %w", err)
+						return
+					}
+					postPath := filepath.Join(postDir, request.Filename)
+					if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
+						serveDone <- fmt.Errorf("WriteFile postPath: %w", err)
+						return
+					}
+					if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+						serveDone <- fmt.Errorf("Remove requestPath: %w", err)
+						return
+					}
+					inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+					if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+						serveDone <- fmt.Errorf("MkdirAll inboxDir: %w", err)
+						return
+					}
+					if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+						serveDone <- fmt.Errorf("Rename post to inbox: %w", err)
+						return
+					}
+					if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+						RequestID: request.RequestID,
+						Command:   request.Command,
+						HandledAt: time.Now().UTC().Format(time.RFC3339),
+						Filename:  request.Filename,
+					}); err != nil {
+						serveDone <- fmt.Errorf("WriteCompatibilitySubmitResponse: %w", err)
+						return
+					}
+					serveDone <- nil
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				serveDone <- fmt.Errorf("timed out waiting for compatibility submit request in %s", requestsDir)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-submit-legacy",
+			"--to", "worker",
+			"--body", "hello through submit in legacy mode",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	if serveErr := <-serveDone; serveErr != nil {
+		t.Fatal(serveErr)
+	}
+	request := <-requestSeen
+	if request.Command != projection.CompatibilitySubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	}
+	if !strings.Contains(request.Content, "hello through submit in legacy mode") {
+		t.Fatalf("request content missing body:\n%s", request.Content)
+	}
+	for _, want := range []string{
+		"status=processed",
+		"session=test-session",
+		"context=ctx-send-submit-legacy",
 		"transport=compatibility-submit",
 	} {
 		if !strings.Contains(stdout, want) {

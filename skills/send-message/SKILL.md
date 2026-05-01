@@ -87,6 +87,8 @@ tmux-a2a-postman send --to worker --body "hello" --json
 The `sent` field stays as the filename token for compatibility. Check
 `status`:
 
-- `processed` = the CLI observed the daemon consume the queued `post/` file
-- `queued` = only the local handoff to `post/` was confirmed before the
-  observation window closed
+- `processed` = the CLI observed the daemon handle the send. For daemon-owned
+  sessions this is a compatibility-submit response; for direct fallback this is
+  the daemon consuming the queued `post/` file
+- `queued` = only the direct fallback handoff to `post/` was confirmed before
+  the observation window closed

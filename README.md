@@ -231,9 +231,11 @@ Public knobs for this model live in `postman.toml`:
 - `[heartbeat].enabled`
 
 The journal cutover flags form three valid modes. `legacy` is the default with
-both flags off. `health-first` enables journal-backed canonical health while
-`send` and `pop` still write mailbox state directly. `compatibility-first`
-enables both journal-backed health and compatibility-submit mailbox delivery.
+both flags off. In all modes, `send` uses compatibility-submit when the target
+session is owned by a live daemon, and falls back to direct `post/` handoff only
+when no owner is available. `health-first` enables journal-backed canonical
+health while `pop` still writes mailbox state directly. `compatibility-first`
+enables both journal-backed health and compatibility-submit `pop` behavior.
 `journal_compatibility_cutover_enabled = true` without
 `journal_health_cutover_enabled = true` is invalid, and `start` rejects that
 config.
