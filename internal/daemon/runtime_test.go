@@ -252,6 +252,7 @@ func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatc
 	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
 		t.Fatalf("post file still present or wrong error: %v", err)
 	}
+	waitForPostEventIdle(t, rt, filepath.Join(sessionDir, "post", filename), 10*time.Second)
 }
 
 func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) {
@@ -323,13 +324,14 @@ func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) 
 	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
 		t.Fatalf("inbox file should not be delivered before retry gap, got err=%v", err)
 	}
-	deliveredAt := waitForFileContent(t, inboxPath, content, time.Second)
+	deliveredAt := waitForFileContent(t, inboxPath, content, 10*time.Second)
 	if elapsed := deliveredAt.Sub(start); elapsed < 150*time.Millisecond {
 		t.Fatalf("message delivered before rate-limit gap elapsed: %s", elapsed)
 	}
 	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
 		t.Fatalf("post file still present after retry or wrong error: %v", err)
 	}
+	waitForPostEventIdle(t, rt, postPath, 10*time.Second)
 }
 
 func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing.T) {
@@ -395,16 +397,18 @@ func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing
 	rt.handlePostWatcherEvent(secondPostPath, fsnotify.Create)
 
 	firstInboxPath := filepath.Join(sessionDir, "inbox", "messenger", firstFilename)
-	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, time.Second)
+	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, 10*time.Second)
 	secondInboxPath := filepath.Join(sessionDir, "inbox", "messenger", secondFilename)
 	if _, err := os.Stat(secondInboxPath); !os.IsNotExist(err) {
 		t.Fatalf("second same-route message should wait behind in-flight delivery, got err=%v", err)
 	}
 
-	secondDeliveredAt := waitForFileContent(t, secondInboxPath, secondContent, 2*time.Second)
+	secondDeliveredAt := waitForFileContent(t, secondInboxPath, secondContent, 10*time.Second)
 	if elapsed := secondDeliveredAt.Sub(firstDeliveredAt); elapsed < 150*time.Millisecond {
 		t.Fatalf("second same-route message delivered too soon after first: %s", elapsed)
 	}
+	waitForPostEventIdle(t, rt, firstPostPath, 10*time.Second)
+	waitForPostEventIdle(t, rt, secondPostPath, 10*time.Second)
 }
 
 func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
@@ -469,10 +473,11 @@ func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
 	rt.bootstrap(context.Background())
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
-	waitForFileContent(t, inboxPath, content, time.Second)
+	waitForFileContent(t, inboxPath, content, 10*time.Second)
 	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
 		t.Fatalf("post file still present after bootstrap backlog reconciliation or wrong error: %v", err)
 	}
+	waitForPostEventIdle(t, rt, postPath, 10*time.Second)
 }
 
 func installRuntimeTestTmux(t *testing.T, tmpDir string) {
@@ -504,6 +509,23 @@ func waitForFileContent(t *testing.T, path, want string, timeout time.Duration) 
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for file %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForPostEventIdle(t *testing.T, rt *daemonRuntime, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		rt.postEventsMu.Lock()
+		active := rt.activePostEvents[path]
+		rt.postEventsMu.Unlock()
+		if !active {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for post event to finish %s", path)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

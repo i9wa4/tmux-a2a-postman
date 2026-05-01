@@ -12,6 +12,27 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
+func TestMain(m *testing.M) {
+	configHome, err := os.MkdirTemp("", "tmux-a2a-postman-cli-test-config-*")
+	if err != nil {
+		panic(err)
+	}
+	home, err := os.MkdirTemp("", "tmux-a2a-postman-cli-test-home-*")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", configHome); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("HOME", home); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(configHome)
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
+
 func installFakeTmuxForCLI(t *testing.T, postmanHome, sessionName, paneTitle string) {
 	t.Helper()
 	t.Setenv("POSTMAN_HOME", postmanHome)
