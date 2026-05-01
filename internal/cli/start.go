@@ -178,6 +178,24 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
 
+	if ownerContext, ownerSession, ok := config.FindCurrentUserDaemon(baseDir); ok {
+		return fmt.Errorf(
+			"a postman daemon is already running for this user in tmux session %q (context: %s).\n"+
+				"Stop it first.",
+			ownerSession, ownerContext,
+		)
+	}
+
+	lockDir := filepath.Join(baseDir, "lock")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		return fmt.Errorf("creating lock directory: %w", err)
+	}
+	userLockObj, err := lock.NewSessionLock(config.CurrentUserDaemonLockPath(baseDir))
+	if err != nil {
+		return fmt.Errorf("a postman daemon is already starting or running for this user: %w", err)
+	}
+	defer func() { _ = userLockObj.Release() }()
+
 	if err := config.CreateMultiSessionDirs(contextDir, sessionName); err != nil {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
@@ -194,7 +212,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		// Issue #249: Startup guard — detect duplicate daemon for this context+session.
 		// Scope check to contextID only: same-context duplicates are rejected via postman.pid,
 		// and a tmux-session-wide lock below blocks cross-context same-session startups.
-		if config.IsSessionPIDAlive(baseDir, contextID, tmuxSessionName) {
+		if config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, tmuxSessionName) {
 			return fmt.Errorf(
 				"a postman daemon is already running in tmux session %q (context: %s).\n"+
 					"Stop it first.",
@@ -202,10 +220,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			)
 		}
 
-		lockDir := filepath.Join(baseDir, "lock")
-		if err := os.MkdirAll(lockDir, 0o700); err != nil {
-			return fmt.Errorf("creating lock directory: %w", err)
-		}
 		lockObj, err := lock.NewSessionLock(filepath.Join(lockDir, tmuxSessionName+".lock"))
 		if err != nil {
 			return fmt.Errorf("acquiring lock: %w", err)

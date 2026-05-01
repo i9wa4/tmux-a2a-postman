@@ -74,9 +74,9 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 
 func TestReducedSurfaceDocContract_DaemonModelAndAlertGuide(t *testing.T) {
 	daemonModelDoc := readRepoFile(t, "docs/design/daemon-session-model.md")
-	assertContainsNormalized(t, daemonModelDoc, "The default operator workflow assumes one daemon per observed tmux session.")
-	assertContainsNormalized(t, daemonModelDoc, "two contexts cannot start daemons against the same tmux session at the same time")
-	assertContainsNormalized(t, daemonModelDoc, "Running additional daemons elsewhere is an advanced/internal topology detail, not part of the reduced default operator surface.")
+	assertContainsNormalized(t, daemonModelDoc, "The default operator workflow assumes one daemon process per Unix user.")
+	assertContainsNormalized(t, daemonModelDoc, "concurrent starts cannot race into two daemons")
+	assertContainsNormalized(t, daemonModelDoc, "A different Unix user's daemon is still treated as alive for cleanup safety, but it is not treated as the current user's owner.")
 	assertContainsNormalized(t, daemonModelDoc, "Cross-context ownership follows the live enabled-session marker, not leftover session directories.")
 
 	alertGuide := readRepoFile(t, "docs/guides/alert-config.md")

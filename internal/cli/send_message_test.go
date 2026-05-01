@@ -1242,14 +1242,6 @@ role = "worker"
 			t.Errorf("WriteFile postPath: %v", err)
 			return
 		}
-		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
-		}
 		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
 			t.Errorf("Remove requestPath: %v", err)
 		}
@@ -1260,6 +1252,14 @@ role = "worker"
 		}
 		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
+		}
+		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
 		}
 	}()
 
@@ -1351,14 +1351,6 @@ role = "worker"
 			t.Errorf("WriteFile postPath: %v", err)
 			return
 		}
-		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
-		}
 		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
 			t.Errorf("Remove requestPath: %v", err)
 		}
@@ -1369,6 +1361,14 @@ role = "worker"
 		}
 		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
+		}
+		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
 		}
 	}()
 

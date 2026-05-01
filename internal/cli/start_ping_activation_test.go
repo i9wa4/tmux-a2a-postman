@@ -303,7 +303,7 @@ func TestFilterDiscoveredActivationNodes_PreservesSessionPrefixedKeys(t *testing
 	}
 }
 
-func TestActivateSessionForPing_RejectsForeignOwnedSession(t *testing.T) {
+func TestActivateSessionForPing_RejectsSameUserOwnedSession(t *testing.T) {
 	root := t.TempDir()
 	baseDir := filepath.Join(root, "state")
 	contextID := "ctx-self"
@@ -319,7 +319,7 @@ func TestActivateSessionForPing_RejectsForeignOwnedSession(t *testing.T) {
 	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(ownerDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerDir, "postman.pid"), []byte("1"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(ownerDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 

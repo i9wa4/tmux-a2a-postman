@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1466,6 +1467,27 @@ func writeStalePID(t *testing.T, baseDir, contextName, sessionName string) {
 	}
 }
 
+func pidFileOwnerUID(t *testing.T, baseDir, contextName, sessionName string) int {
+	t.Helper()
+	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
+	info, err := os.Stat(pidPath)
+	if err != nil {
+		t.Fatalf("Stat postman.pid: %v", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("postman.pid stat does not expose Unix ownership")
+	}
+	return int(stat.Uid)
+}
+
+func withCurrentUID(t *testing.T, uid int) {
+	t.Helper()
+	orig := currentUID
+	currentUID = func() int { return uid }
+	t.Cleanup(func() { currentUID = orig })
+}
+
 func TestResolveContextIDFromSession(t *testing.T) {
 	t.Run("exactly one live match", func(t *testing.T) {
 		baseDir := t.TempDir()
@@ -1811,6 +1833,61 @@ func TestIsSessionPIDAlive(t *testing.T) {
 	})
 }
 
+func TestIsSessionPIDOwnedByCurrentUser(t *testing.T) {
+	t.Run("live pid owned by current user returns true", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx", "sess")
+		ownerUID := pidFileOwnerUID(t, baseDir, "ctx", "sess")
+		withCurrentUID(t, ownerUID)
+
+		if !IsSessionPIDOwnedByCurrentUser(baseDir, "ctx", "sess") {
+			t.Fatal("expected true for current-user live PID, got false")
+		}
+	})
+
+	t.Run("live pid owned by another user is alive but not owned", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx", "sess")
+		ownerUID := pidFileOwnerUID(t, baseDir, "ctx", "sess")
+		withCurrentUID(t, ownerUID+1)
+
+		if !IsSessionPIDAlive(baseDir, "ctx", "sess") {
+			t.Fatal("expected liveness check to keep treating the PID as alive")
+		}
+		if IsSessionPIDOwnedByCurrentUser(baseDir, "ctx", "sess") {
+			t.Fatal("expected false for live PID owned by another user")
+		}
+	})
+}
+
+func TestFindCurrentUserDaemon(t *testing.T) {
+	t.Run("returns current-user daemon", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-owner", "main")
+		ownerUID := pidFileOwnerUID(t, baseDir, "ctx-owner", "main")
+		withCurrentUID(t, ownerUID)
+
+		contextID, sessionName, ok := FindCurrentUserDaemon(baseDir)
+		if !ok {
+			t.Fatal("FindCurrentUserDaemon() ok = false, want true")
+		}
+		if contextID != "ctx-owner" || sessionName != "main" {
+			t.Fatalf("FindCurrentUserDaemon() = (%q, %q), want (%q, %q)", contextID, sessionName, "ctx-owner", "main")
+		}
+	})
+
+	t.Run("ignores different Unix user daemon", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-owner", "main")
+		ownerUID := pidFileOwnerUID(t, baseDir, "ctx-owner", "main")
+		withCurrentUID(t, ownerUID+1)
+
+		if contextID, sessionName, ok := FindCurrentUserDaemon(baseDir); ok {
+			t.Fatalf("FindCurrentUserDaemon() = (%q, %q, true), want no current-user daemon", contextID, sessionName)
+		}
+	})
+}
+
 func TestContextOwnsSession(t *testing.T) {
 	t.Run("live daemon session itself returns true without marker", func(t *testing.T) {
 		baseDir := t.TempDir()
@@ -1844,6 +1921,24 @@ func TestContextOwnsSession(t *testing.T) {
 		}
 		if ContextOwnsSession(baseDir, "ctx-stale", "other-session") {
 			t.Fatal("expected false for stale context ownership, got true")
+		}
+	})
+
+	t.Run("different Unix user daemon session returns false but remains live", func(t *testing.T) {
+		baseDir := t.TempDir()
+		writeLivePID(t, baseDir, "ctx-other-user", "daemon-session")
+		ownerUID := pidFileOwnerUID(t, baseDir, "ctx-other-user", "daemon-session")
+		withCurrentUID(t, ownerUID+1)
+		installSessionOwnerTmux(t, map[string]string{})
+
+		if !ContextHasLiveDaemon(baseDir, "ctx-other-user") {
+			t.Fatal("expected different-user daemon to remain live for cleanup safety")
+		}
+		if ContextOwnsSession(baseDir, "ctx-other-user", "daemon-session") {
+			t.Fatal("expected false for daemon session owned by another Unix user")
+		}
+		if got := FindContextSessionName(baseDir, "ctx-other-user"); got != "" {
+			t.Fatalf("FindContextSessionName() = %q, want empty for different Unix user", got)
 		}
 	})
 }

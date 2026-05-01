@@ -51,8 +51,8 @@ func RunStop(stdout io.Writer, args []string) error {
 		return err
 	}
 
-	if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
-		_, err = fmt.Fprintln(stdout, "postman: no daemon running for this session")
+	if !config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, sessionName) {
+		_, err = fmt.Fprintln(stdout, "postman: no daemon running for this user/session")
 		return err
 	}
 

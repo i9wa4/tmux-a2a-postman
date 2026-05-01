@@ -134,8 +134,16 @@ func writeWatcherConfigFixture(t *testing.T, path string) {
 	}
 }
 
+func isolateConfigLookup(t *testing.T, root string) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Chdir(root)
+}
+
 func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	root := t.TempDir()
+	isolateConfigLookup(t, root)
 	baseDir := filepath.Join(root, "state")
 	contextID := "20260404-ctx"
 	sessionName := "main"
@@ -181,8 +189,112 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	}
 }
 
+func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) {
+	root := t.TempDir()
+	isolateConfigLookup(t, root)
+	baseDir := filepath.Join(root, "state")
+	contextID := "20260404-new"
+	sessionName := "main"
+	ownerContextID := "20260404-owner"
+	ownerSessionName := "daemon-pane"
+
+	configPath := filepath.Join(root, "postman.toml")
+	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
+		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	pidDir := filepath.Join(baseDir, ownerContextID, ownerSessionName)
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pidDir): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2 $3 $4 $5\" = \"display-message -t %11 -p #{session_name}\" ]; then\n" +
+		"  printf '%s\\n' '" + sessionName + "'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Setenv("POSTMAN_HOME", baseDir)
+	t.Setenv("TMUX_PANE", "%11")
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := RunStartWithFlags(contextID, configPath, "", true)
+	if err == nil {
+		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon rejection")
+	}
+	if !strings.Contains(err.Error(), "already running for this user") {
+		t.Fatalf("RunStartWithFlags() error = %q, want current-user daemon wording", err)
+	}
+	if !strings.Contains(err.Error(), ownerContextID) || !strings.Contains(err.Error(), ownerSessionName) {
+		t.Fatalf("RunStartWithFlags() error = %q, want owner context and session", err)
+	}
+}
+
+func TestRunStartWithFlags_RejectsCurrentUserDaemonLock(t *testing.T) {
+	root := t.TempDir()
+	isolateConfigLookup(t, root)
+	baseDir := filepath.Join(root, "state")
+	contextID := "20260404-lock"
+	sessionName := "main"
+
+	configPath := filepath.Join(root, "postman.toml")
+	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
+		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	lockDir := filepath.Join(baseDir, "lock")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(lockDir): %v", err)
+	}
+	userLockObj, err := lock.NewSessionLock(config.CurrentUserDaemonLockPath(baseDir))
+	if err != nil {
+		t.Fatalf("NewSessionLock(pre-acquire user lock): %v", err)
+	}
+	defer func() { _ = userLockObj.Release() }()
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2 $3 $4 $5\" = \"display-message -t %11 -p #{session_name}\" ]; then\n" +
+		"  printf '%s\\n' '" + sessionName + "'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+
+	t.Setenv("POSTMAN_HOME", baseDir)
+	t.Setenv("TMUX_PANE", "%11")
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err = RunStartWithFlags(contextID, configPath, "", true)
+	if err == nil {
+		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon lock rejection")
+	}
+	if !strings.Contains(err.Error(), "already starting or running for this user") {
+		t.Fatalf("RunStartWithFlags() error = %q, want user lock wording", err)
+	}
+}
+
 func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testing.T) {
 	root := t.TempDir()
+	isolateConfigLookup(t, root)
 	baseDir := filepath.Join(root, "state")
 	contextID := "20260405-ctx-b"
 	sessionName := "main"
@@ -235,6 +347,7 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 
 func TestRunStartWithFlags_RejectsInvalidJournalCutoverConfig(t *testing.T) {
 	root := t.TempDir()
+	isolateConfigLookup(t, root)
 	configPath := filepath.Join(root, "postman.toml")
 	configContent := "[postman]\n" +
 		"edges = [\"boss -- worker\"]\n" +

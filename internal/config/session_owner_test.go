@@ -80,6 +80,30 @@ func TestResolveContextIDFromSession_UsesEnabledMarkerForManagedForeignSession(t
 	}
 }
 
+func TestResolveContextIDFromSession_IgnoresDifferentUnixUserOwner(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLivePID(t, baseDir, "ctx-owner", "daemon-session")
+	ownerUID := pidFileOwnerUID(t, baseDir, "ctx-owner", "daemon-session")
+	withCurrentUID(t, ownerUID+1)
+	if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "managed-session"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(managed-session): %v", err)
+	}
+	installSessionOwnerTmux(t, map[string]string{
+		"managed-session": "ctx-owner:43210",
+	})
+
+	_, err := ResolveContextIDFromSession(baseDir, "managed-session")
+	if err == nil {
+		t.Fatal("expected no active postman when the live PID is owned by another Unix user")
+	}
+	if !strings.Contains(err.Error(), "no active postman found") {
+		t.Fatalf("ResolveContextIDFromSession() error = %q, want no active postman wording", err)
+	}
+	if got := FindSessionOwner(baseDir, "managed-session", "ctx-self"); got != "" {
+		t.Fatalf("FindSessionOwner() = %q, want empty for different Unix user", got)
+	}
+}
+
 func TestFindSessionOwner_IgnoresLiveForeignContextWithoutEnabledMarker(t *testing.T) {
 	baseDir := t.TempDir()
 	writeLivePID(t, baseDir, "ctx-owner", "daemon-session")

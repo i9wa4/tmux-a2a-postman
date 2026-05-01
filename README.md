@@ -342,13 +342,13 @@ live daemon, and preserves unknown entries by default instead of guessing.
 
 ## 7. Deployment Model
 
-The default operator model is one daemon per observed tmux session. Start the
-daemon for the session you are operating and treat that daemon as the canonical
-health and alert authority for the session.
+The default operator model is one daemon process per Unix user. Start one
+daemon and treat it as the canonical health and alert authority for the tmux
+sessions it observes.
 
-Only one live daemon may own a given tmux session at a time. Running additional
-daemons elsewhere is an advanced/internal topology detail, not part of the
-normal operator workflow or the reduced beginner surface.
+Only one live daemon may own a given tmux session at a time, and `start`
+rejects a second daemon for the same Unix user. A different Unix user's daemon
+is not treated as the current user's owner.
 
 See `docs/design/daemon-session-model.md` for the full daemon/session model.
 

@@ -18,6 +18,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
+var currentUID = os.Getuid
+
 //go:embed postman.default.toml
 var defaultConfigBytes []byte
 
@@ -1447,20 +1449,61 @@ func ValidateSessionName(name string) (string, error) {
 // Issue #249: liveness check for context disambiguation.
 func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
-	data, err := os.ReadFile(pidPath)
-	if err != nil {
+	sigErr, ok := sessionPIDSignal(pidPath)
+	if !ok {
 		return false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
+	return sigErr == nil || errors.Is(sigErr, syscall.EPERM)
+}
+
+// IsSessionPIDOwnedByCurrentUser reads postman.pid from
+// baseDir/contextName/sessionName/ and returns true only when the PID file is
+// owned by the current Unix user and the recorded process is signalable by this
+// process. EPERM still means "alive" for cleanup, but not "ours" for routing or
+// stop/ownership decisions.
+func IsSessionPIDOwnedByCurrentUser(baseDir, contextName, sessionName string) bool {
+	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
+	if !pidFileOwnedByCurrentUser(pidPath) {
 		return false
+	}
+	sigErr, ok := sessionPIDSignal(pidPath)
+	return ok && sigErr == nil
+}
+
+func sessionPIDSignal(pidPath string) (error, bool) {
+	pid, ok := readSessionPID(pidPath)
+	if !ok {
+		return nil, false
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
+		return nil, false
+	}
+	return proc.Signal(syscall.Signal(0)), true
+}
+
+func readSessionPID(pidPath string) (int, bool) {
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+func pidFileOwnedByCurrentUser(pidPath string) bool {
+	info, err := os.Stat(pidPath)
+	if err != nil {
 		return false
 	}
-	sigErr := proc.Signal(syscall.Signal(0))
-	return sigErr == nil || errors.Is(sigErr, syscall.EPERM)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return int(stat.Uid) == currentUID()
 }
 
 // isContextDaemonAlive checks if any session subdirectory under
@@ -1485,11 +1528,61 @@ func isContextDaemonAlive(baseDir, contextName string) bool {
 	return false
 }
 
+func isContextDaemonOwnedByCurrentUser(baseDir, contextName string) bool {
+	contextDir := filepath.Join(baseDir, contextName)
+	sessions, err := os.ReadDir(contextDir)
+	if err != nil {
+		return false
+	}
+	for _, s := range sessions {
+		if !s.IsDir() {
+			continue
+		}
+		if IsSessionPIDOwnedByCurrentUser(baseDir, contextName, s.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
 // ContextHasLiveDaemon reports whether any session under contextName has a live
-// postman.pid. This is the exported lifecycle guard for cleanup and ownership
-// decisions.
+// postman.pid, including a process owned by another Unix user. This is the
+// exported lifecycle guard for cleanup safety; ownership decisions use
+// current-user PID checks instead.
 func ContextHasLiveDaemon(baseDir, contextName string) bool {
 	return isContextDaemonAlive(baseDir, contextName)
+}
+
+func CurrentUserDaemonLockPath(baseDir string) string {
+	return filepath.Join(baseDir, "lock", fmt.Sprintf("user-%d.lock", currentUID()))
+}
+
+func FindCurrentUserDaemon(baseDir string) (string, string, bool) {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return "", "", false
+	}
+	for _, contextEntry := range entries {
+		if !contextEntry.IsDir() || contextEntry.Name() == "lock" {
+			continue
+		}
+		contextID := contextEntry.Name()
+		contextDir := filepath.Join(baseDir, contextID)
+		sessionEntries, err := os.ReadDir(contextDir)
+		if err != nil {
+			continue
+		}
+		for _, sessionEntry := range sessionEntries {
+			if !sessionEntry.IsDir() {
+				continue
+			}
+			sessionName := sessionEntry.Name()
+			if IsSessionPIDOwnedByCurrentUser(baseDir, contextID, sessionName) {
+				return contextID, sessionName, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func enabledSessionOwner(baseDir, sessionName string) string {
@@ -1509,7 +1602,7 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 	if owner == "" {
 		return ""
 	}
-	if !isContextDaemonAlive(baseDir, owner) {
+	if !isContextDaemonOwnedByCurrentUser(baseDir, owner) {
 		return ""
 	}
 	return owner
@@ -1517,7 +1610,7 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 
 // ContextOwnsSession reports whether contextName currently owns sessionName.
 // Ownership means the context has a subdirectory for sessionName, has a live
-// daemon PID somewhere under that context, and either:
+// current-user daemon PID somewhere under that context, and either:
 //   - the live enabled-session marker names that context, or
 //   - the queried session is the daemon's own tmux session.
 func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
@@ -1528,7 +1621,7 @@ func ContextOwnsSession(baseDir, contextName, sessionName string) bool {
 	if _, err := os.Stat(sessionDir); err != nil {
 		return false
 	}
-	if !isContextDaemonAlive(baseDir, contextName) {
+	if !isContextDaemonOwnedByCurrentUser(baseDir, contextName) {
 		return false
 	}
 	if owner := enabledSessionOwner(baseDir, sessionName); owner != "" {
@@ -1609,7 +1702,7 @@ func FindContextSessionName(baseDir, contextID string) string {
 		if !s.IsDir() {
 			continue
 		}
-		if IsSessionPIDAlive(baseDir, contextID, s.Name()) {
+		if IsSessionPIDOwnedByCurrentUser(baseDir, contextID, s.Name()) {
 			return s.Name()
 		}
 	}
