@@ -89,6 +89,44 @@ jobs:
       - name: Run govulncheck
         run: nix develop .#ci --command govulncheck ./...
 
+  security-report:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f # v31.10.5
+        with:
+          github_access_token: ${{ github.token }}
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+
+      - name: Generate govulncheck SARIF
+        id: govulncheck-sarif
+        continue-on-error: true
+        run: nix develop .#ci --command govulncheck -format=sarif ./... > govulncheck.sarif
+
+      - name: Upload govulncheck SARIF
+        if: steps.govulncheck-sarif.outcome == 'success'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+        with:
+          sarif_file: govulncheck.sarif
+
   ci:
     needs: [check, security]
     if: always()
