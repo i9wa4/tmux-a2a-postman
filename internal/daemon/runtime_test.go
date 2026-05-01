@@ -16,6 +16,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -159,6 +160,103 @@ func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
 
 	if !rt.beginPostEvent(path) {
 		t.Fatal("beginPostEvent(after finish) = false, want true")
+	}
+}
+
+func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatcherEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeBin := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("MkdirAll(fakeBin): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	manager := journal.NewManager(contextID, os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, sessionName, time.Now()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.TmuxTimeout = 0.01
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		t.Fatalf("ParseEdges: %v", err)
+	}
+
+	daemonState := NewDaemonState(0, contextID)
+	daemonState.enabledSessionsMu.Lock()
+	daemonState.enabledSessions[sessionName] = true
+	daemonState.enabledSessionsMu.Unlock()
+
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       sessionDir,
+		contextID:        contextID,
+		selfSession:      sessionName,
+		cfg:              cfg,
+		adjacency:        adjacency,
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       make(map[string]bool),
+		events:           make(chan tui.DaemonEvent, 8),
+		daemonState:      daemonState,
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      make(map[string]bool),
+		claimedPanes:     make(map[string]bool),
+		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
+	}
+	rt.nodes[sessionName+":orchestrator"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir}
+
+	filename := "20260502-004600-r1111-from-orchestrator-to-messenger.md"
+	content := "---\nparams:\n  contextId: ctx-submit\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T00:46:00+09:00\n---\n\nhello\n"
+	requestPath, err := projection.WriteCompatibilitySubmitRequest(sessionDir, projection.CompatibilitySubmitRequest{
+		RequestID: "req-send",
+		Command:   projection.CompatibilitySubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Content:   content,
+	})
+	if err != nil {
+		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
+	}
+
+	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+
+	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
+	deadline := time.Now().Add(time.Second)
+	for {
+		got, err := os.ReadFile(inboxPath)
+		if err == nil {
+			if string(got) != content {
+				t.Fatalf("inbox content = %q, want %q", string(got), content)
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("ReadFile(inbox): %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for delivered inbox file %s", inboxPath)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file still present or wrong error: %v", err)
 	}
 }
 

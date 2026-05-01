@@ -27,7 +27,7 @@ func TestProcessCompatibilitySubmitRequest_SendWritesPostFile(t *testing.T) {
 		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
 	}
 
-	if err := processCompatibilitySubmitRequest(requestPath); err != nil {
+	if _, err := processCompatibilitySubmitRequest(requestPath); err != nil {
 		t.Fatalf("processCompatibilitySubmitRequest: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestProcessCompatibilitySubmitRequest_PopArchivesUnreadMessage(t *testing.T
 		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
 	}
 
-	if err := processCompatibilitySubmitRequest(requestPath); err != nil {
+	if _, err := processCompatibilitySubmitRequest(requestPath); err != nil {
 		t.Fatalf("processCompatibilitySubmitRequest: %v", err)
 	}
 

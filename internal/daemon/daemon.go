@@ -206,9 +206,13 @@ func handleCompatibilitySubmitSend(sessionDir string, request projection.Compati
 		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
 	}
 	postPath := filepath.Join(postDir, request.Filename)
+	log.Printf("postman: compatibility submit: writing send request session=%s request=%s file=%s bytes=%d\n",
+		filepath.Base(sessionDir), request.RequestID, request.Filename, len(request.Content))
 	if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
 		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("writing post message: %w", err)
 	}
+	log.Printf("postman: compatibility submit: wrote post file session=%s request=%s file=%s\n",
+		filepath.Base(sessionDir), request.RequestID, request.Filename)
 	return projection.CompatibilitySubmitResponse{
 		RequestID: request.RequestID,
 		Command:   request.Command,
@@ -277,20 +281,41 @@ func handleCompatibilitySubmitPop(sessionDir string, request projection.Compatib
 	}, nil
 }
 
-func processCompatibilitySubmitRequest(requestPath string) error {
+type compatibilitySubmitProcessResult struct {
+	Command    projection.CompatibilitySubmitCommand
+	SessionDir string
+	Filename   string
+	PostPath   string
+}
+
+func (r compatibilitySubmitProcessResult) hasPostDispatch() bool {
+	return r.Command == projection.CompatibilitySubmitSend && r.PostPath != ""
+}
+
+func processCompatibilitySubmitRequest(requestPath string) (compatibilitySubmitProcessResult, error) {
 	sessionDir, ok := compatibilitySubmitSessionDir(requestPath)
 	if !ok {
-		return nil
+		return compatibilitySubmitProcessResult{}, nil
 	}
 	request, err := projection.ReadCompatibilitySubmitRequest(requestPath)
 	if err != nil {
-		return err
+		return compatibilitySubmitProcessResult{}, err
 	}
+	result := compatibilitySubmitProcessResult{
+		Command:    request.Command,
+		SessionDir: sessionDir,
+	}
+	log.Printf("postman: compatibility submit: processing command=%s session=%s request=%s file=%s\n",
+		request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename)
 
 	var response projection.CompatibilitySubmitResponse
 	switch request.Command {
 	case projection.CompatibilitySubmitSend:
 		response, err = handleCompatibilitySubmitSend(sessionDir, request)
+		if err == nil && response.Filename != "" {
+			result.Filename = response.Filename
+			result.PostPath = filepath.Join(sessionDir, "post", response.Filename)
+		}
 	case projection.CompatibilitySubmitPop:
 		response, err = handleCompatibilitySubmitPop(sessionDir, request)
 	default:
@@ -305,12 +330,14 @@ func processCompatibilitySubmitRequest(requestPath string) error {
 		response.Error = err.Error()
 	}
 	if _, writeErr := projection.WriteCompatibilitySubmitResponse(sessionDir, response); writeErr != nil {
-		return writeErr
+		return result, writeErr
 	}
+	log.Printf("postman: compatibility submit: responded command=%s session=%s request=%s file=%s error=%t\n",
+		request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
 	if removeErr := os.Remove(requestPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		log.Printf("postman: WARNING: failed to remove compatibility submit request %s: %v\n", requestPath, removeErr)
 	}
-	return nil
+	return result, nil
 }
 
 func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {

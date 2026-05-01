@@ -281,11 +281,16 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 
 	if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == "compatibility-submit" {
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
-			if err := processCompatibilitySubmitRequest(eventPath); err != nil {
+			submitResult, err := processCompatibilitySubmitRequest(eventPath)
+			if err != nil {
 				rt.events <- tui.DaemonEvent{
 					Type:    "error",
 					Message: fmt.Sprintf("compatibility submit %s: %v", filepath.Base(eventPath), err),
 				}
+			} else if submitResult.hasPostDispatch() {
+				log.Printf("postman: compatibility submit: dispatching send result session=%s file=%s without waiting for post watcher\n",
+					filepath.Base(submitResult.SessionDir), submitResult.Filename)
+				rt.handlePostWatcherEvent(submitResult.PostPath, fsnotify.Create)
 			}
 		}
 	} else if strings.HasSuffix(filepath.Dir(eventPath), "post") {
