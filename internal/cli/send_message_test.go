@@ -1284,8 +1284,20 @@ role = "worker"
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
-	if stdout != "Sent: "+request.Filename+"\n" {
-		t.Fatalf("stdout = %q, want %q", stdout, "Sent: "+request.Filename+"\n")
+	if !strings.Contains(stdout, "Sent: "+request.Filename) {
+		t.Fatalf("stdout = %q, want Sent line for %q", stdout, request.Filename)
+	}
+	for _, want := range []string{
+		"status=processed",
+		"session=test-session",
+		"context=ctx-send-submit",
+		"from=messenger",
+		"to=worker",
+		"transport=compatibility-submit",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout = %q, missing %q", stdout, want)
+		}
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
@@ -1398,8 +1410,13 @@ role = "worker"
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	var payload struct {
-		Sent   string `json:"sent"`
-		Status string `json:"status"`
+		Sent      string `json:"sent"`
+		Status    string `json:"status"`
+		ContextID string `json:"context_id"`
+		Session   string `json:"session"`
+		From      string `json:"from"`
+		To        string `json:"to"`
+		Transport string `json:"transport"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
@@ -1409,6 +1426,21 @@ role = "worker"
 	}
 	if payload.Status != string(sendStatusProcessed) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if payload.ContextID != "ctx-send-submit-json" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-submit-json", payload.ContextID)
+	}
+	if payload.Session != "test-session" {
+		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
+	}
+	if payload.From != "messenger" {
+		t.Fatalf("payload.From = %q, want messenger", payload.From)
+	}
+	if payload.To != "worker" {
+		t.Fatalf("payload.To = %q, want worker", payload.To)
+	}
+	if payload.Transport != "compatibility-submit" {
+		t.Fatalf("payload.Transport = %q, want compatibility-submit", payload.Transport)
 	}
 	if strings.Contains(stdout, "Sent: ") {
 		t.Fatalf("stdout unexpectedly used human output: %q", stdout)

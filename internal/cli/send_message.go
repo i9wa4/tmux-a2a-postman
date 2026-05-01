@@ -38,6 +38,17 @@ const (
 	cliNotifyNone    cliNotifyStatus = ""
 )
 
+type sendOutput struct {
+	Sent      string `json:"sent"`
+	Status    string `json:"status"`
+	ContextID string `json:"context_id,omitempty"`
+	Session   string `json:"session,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Notify    string `json:"notify,omitempty"`
+}
+
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
 
 // performCLINotification sends a synchronous pane notification from the CLI.
@@ -321,7 +332,15 @@ func RunSendMessage(args []string) error {
 		if err != nil {
 			return fmt.Errorf("send outcome: %w", err)
 		}
-		return writeSendResult(deliveredFilename, status, *jsonOut, cliNotifyNone)
+		return writeSendOutput(sendOutput{
+			Sent:      deliveredFilename,
+			Status:    string(status),
+			ContextID: resolvedContextID,
+			Session:   sessionName,
+			From:      sender,
+			To:        *to,
+			Transport: "compatibility-submit",
+		}, *jsonOut)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -364,7 +383,16 @@ func RunSendMessage(args []string) error {
 		verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
-	return writeSendResult(filename, status, *jsonOut, notifyStatus)
+	return writeSendOutput(sendOutput{
+		Sent:      filename,
+		Status:    string(status),
+		ContextID: resolvedContextID,
+		Session:   sessionName,
+		From:      sender,
+		To:        *to,
+		Transport: "post",
+		Notify:    notifyOutputValue(notifyStatus),
+	}, *jsonOut)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,
@@ -392,30 +420,82 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 }
 
 func writeSendResult(filename string, status sendStatus, jsonOut bool, notifyStatus cliNotifyStatus) error {
-	if jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(struct {
-			Sent   string `json:"sent"`
-			Status string `json:"status"`
-		}{
-			Sent:   filename,
-			Status: string(status),
-		})
+	return writeSendOutput(sendOutput{
+		Sent:   filename,
+		Status: string(status),
+		Notify: notifyOutputValue(notifyStatus),
+	}, jsonOut)
+}
+
+func notifyOutputValue(notifyStatus cliNotifyStatus) string {
+	switch notifyStatus {
+	case cliNotifyOK:
+		return "OK"
+	case cliNotifyFailed:
+		return "FAILED"
+	case cliNotifySkipped:
+		return "SKIPPED"
+	default:
+		return ""
 	}
-	if status == sendStatusProcessed {
-		switch notifyStatus {
+}
+
+func writeSendOutput(output sendOutput, jsonOut bool) error {
+	if jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(output)
+	}
+	if output.Status == string(sendStatusProcessed) {
+		switch cliNotifyStatus(output.Notify) {
 		case cliNotifyOK:
-			fmt.Printf("Sent: %s [notified: OK]\n", filename)
+			fmt.Printf("Sent: %s [notified: OK%s]\n", output.Sent, sendOutputDetails(output))
 		case cliNotifyFailed:
-			fmt.Printf("Sent: %s [notified: FAILED -- recovery pending]\n", filename)
+			fmt.Printf("Sent: %s [notified: FAILED -- recovery pending%s]\n", output.Sent, sendOutputDetails(output))
 		case cliNotifySkipped:
-			fmt.Printf("Sent: %s [notified: SKIPPED -- pane not found]\n", filename)
+			fmt.Printf("Sent: %s [notified: SKIPPED -- pane not found%s]\n", output.Sent, sendOutputDetails(output))
 		default:
-			fmt.Printf("Sent: %s\n", filename)
+			if details := sendOutputDetails(output); details != "" {
+				fmt.Printf("Sent: %s [%s]\n", output.Sent, strings.TrimPrefix(details, " "))
+			} else {
+				fmt.Printf("Sent: %s\n", output.Sent)
+			}
 		}
 		return nil
 	}
-	fmt.Printf("Queued: %s\n", filename)
+	if details := sendOutputDetails(output); details != "" {
+		fmt.Printf("Queued: %s [%s]\n", output.Sent, strings.TrimPrefix(details, " "))
+	} else {
+		fmt.Printf("Queued: %s\n", output.Sent)
+	}
 	return nil
+}
+
+func sendOutputDetails(output sendOutput) string {
+	if output.ContextID == "" && output.Session == "" && output.From == "" && output.To == "" && output.Transport == "" {
+		return ""
+	}
+	parts := make([]string, 0, 6)
+	if output.Status != "" {
+		parts = append(parts, "status="+output.Status)
+	}
+	if output.Session != "" {
+		parts = append(parts, "session="+output.Session)
+	}
+	if output.ContextID != "" {
+		parts = append(parts, "context="+output.ContextID)
+	}
+	if output.From != "" {
+		parts = append(parts, "from="+output.From)
+	}
+	if output.To != "" {
+		parts = append(parts, "to="+output.To)
+	}
+	if output.Transport != "" {
+		parts = append(parts, "transport="+output.Transport)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 func observeSendOutcome(baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
