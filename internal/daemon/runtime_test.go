@@ -599,7 +599,7 @@ func writeRuntimeLivePID(t *testing.T, baseDir, contextName, sessionName string)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pid dir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte("1"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 }
