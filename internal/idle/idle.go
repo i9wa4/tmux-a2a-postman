@@ -136,7 +136,7 @@ func statusForState(state PaneCaptureState, now time.Time, cfg *config.Config) s
 
 // GetPaneActivityStatus returns pane activity status based on idle.go logic.
 // Returns map of paneID -> status ("active"/"idle"/"stale").
-// Issue #120: Expose paneCaptureState for get-session-status-oneline command.
+// Issue #120: Expose paneCaptureState for get-health-oneline.
 func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -152,7 +152,7 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 }
 
 // ExportPaneActivityToFile writes pane activity status to a JSON file.
-// Issue #120: Export state for get-session-status-oneline command.
+// Issue #120: Export state for get-health-oneline.
 // Issue #123: Enriched format — writes map[string]PaneActivityExport instead of map[string]string.
 func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath string) error {
 	t.mu.Lock()

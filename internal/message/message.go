@@ -741,9 +741,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Continue with delivery (notification failure does not fail delivery)
 
 	// Update activity timestamps for idle detection (Issue #55)
-	// NOTE: Exclude daemon system messages from ball tracking.
+	// NOTE: Exclude daemon system messages from activity tracking.
 	// Both UpdateSendActivity and UpdateReceiveActivity skip daemon senders
-	// to prevent system-delivered messages from causing false "holding" state.
+	// to prevent system-delivered messages from causing false reply-lag state.
 	// Issue #79: Use session-prefixed keys for tracking
 	if info.From != "daemon" {
 		idleTracker.UpdateSendActivity(senderFullName)
@@ -867,7 +867,7 @@ func shadowRelativePath(sessionDir, fullPath string) string {
 // sendDeadLetterNotification writes a dead-letter notification directly to the
 // sender's inbox. Bypasses post/ to avoid re-triggering the daemon delivery loop.
 // Pattern follows the routing-denied notification at DeliverMessage:162-175.
-// Issue #208: Extended with dead-letter path, allowed neighbors, and re-send hint.
+// Issue #208: Extended with dead-letter path and recovery guidance.
 // deadLetterBasename is the actual basename of the dead-letter file (after rename).
 func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename, deadLetterBasename string) {
 	senderSimpleName := nodeaddr.Simple(senderNode)
@@ -884,14 +884,13 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
 
 	content := fmt.Sprintf(
-		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nTo re-send: tmux-a2a-postman read --dead-letters --file %s\n(or: --resend-oldest to resend the oldest dead letter)\n",
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above, then send a corrected message:\ntmux-a2a-postman send --to <node> --body \"<message>\"\n",
 		contextID,
 		senderSimpleName,
 		now.Format(time.RFC3339),
 		originalFilename,
 		reason,
 		deadLetterPath,
-		deadLetterBasename,
 	)
 	notifPath := filepath.Join(senderInbox, filename)
 	if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {

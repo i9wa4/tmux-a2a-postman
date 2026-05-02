@@ -24,7 +24,7 @@ separate policy layer for operator escalation.
 5. The recipient reads and archives the message with `pop`.
 
 Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
-re-send guidance and is separate from normal pane hints.
+manual recovery guidance and is separate from normal pane hints.
 
 ## 3. Health Model
 

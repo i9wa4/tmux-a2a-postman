@@ -145,7 +145,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, roleAuditorSkill, "get-health")
 	assertContainsNormalized(t, roleAuditorSkill, "`message_footer` | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}`")
 	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon-originated mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
-	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter re-send instructions (written by dead-letter notification code)")
+	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter recovery guidance (written by dead-letter notification code)")
 	for _, hidden := range []string{"status --json", "dropped_ball", "heartbeat mail"} {
 		if strings.Contains(roleAuditorSkill, hidden) {
 			t.Fatalf("role auditor skill still exposes hidden term %q", hidden)

@@ -276,6 +276,49 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	}
 }
 
+func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	deadLetterBasename := "20260201-030000-from-orchestrator-to-worker-dl-routing-denied.md"
+	sendDeadLetterNotification(
+		sessionDir,
+		"test-ctx",
+		"review:orchestrator",
+		"routing denied",
+		"20260201-030000-from-orchestrator-to-worker.md",
+		deadLetterBasename,
+	)
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "orchestrator")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", inboxDir, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("dead-letter notification count = %d, want 1", len(entries))
+	}
+
+	data, err := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile(notification): %v", err)
+	}
+	content := string(data)
+	for _, stale := range []string{"tmux-a2a-postman read", "--dead-letters", "--resend-oldest"} {
+		if strings.Contains(content, stale) {
+			t.Fatalf("dead-letter notification still contains stale recovery surface %q: %s", stale, content)
+		}
+	}
+	if !strings.Contains(content, "tmux-a2a-postman send --to <node> --body \"<message>\"") {
+		t.Fatalf("dead-letter notification missing public send recovery command: %s", content)
+	}
+	if !strings.Contains(content, filepath.Join(sessionDir, "dead-letter", deadLetterBasename)) {
+		t.Fatalf("dead-letter notification missing dead-letter path: %s", content)
+	}
+}
+
 func TestDeliverMessage_ExplicitUnknownRecipientSession(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "test")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -927,7 +970,7 @@ func TestDeliverMessage_FileAlreadyGone(t *testing.T) {
 }
 
 // TestDaemonMessage_NoHoldingState verifies that daemon → node messages
-// do not cause false "holding" state (Issue #87).
+// do not cause false reply-lag state (Issue #87).
 func TestDaemonMessage_NoHoldingState(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")

@@ -501,7 +501,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 				nodeStates := rt.idleTracker.GetNodeStates()
 				rt.events <- tui.DaemonEvent{
-					Type: "ball_state_update",
+					Type: "node_activity_update",
 					Details: map[string]interface{}{
 						"node_states": nodeStates,
 					},
@@ -707,8 +707,8 @@ func (rt *daemonRuntime) handleScanTick() {
 
 	nodeStates := rt.idleTracker.GetNodeStates()
 	rt.events <- tui.DaemonEvent{
-		Type:    "ball_state_update",
-		Message: "Ball states updated",
+		Type:    "node_activity_update",
+		Message: "Node activity updated",
 		Details: map[string]interface{}{
 			"node_states": nodeStates,
 		},

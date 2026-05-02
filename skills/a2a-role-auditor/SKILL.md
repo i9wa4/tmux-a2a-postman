@@ -216,7 +216,7 @@ as MINOR (unnecessary duplication, not a bug):
 - Recipient role content (provided by `draft_template` `{template}`)
 - Edge violation warnings (handled by daemon `edge_violation_warning_template`)
 - Daemon-originated reply guidance (handled by `daemon_message_template`)
-- Dead-letter re-send instructions (written by dead-letter notification code)
+- Dead-letter recovery guidance (written by dead-letter notification code)
 
 ## 6. Workflow
 

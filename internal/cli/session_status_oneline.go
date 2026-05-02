@@ -28,7 +28,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): json
-	// SYNC: schema get-health-oneline properties; alwaysExcludedParams map
+	// SYNC: params contract for get-health-oneline; alwaysExcludedParams map
 	jsonOut := fs.Bool("json", false, `output json: {"status":"..."}`)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from session)")
 	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detected)")

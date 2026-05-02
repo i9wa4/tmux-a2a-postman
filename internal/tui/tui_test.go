@@ -630,7 +630,7 @@ func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
 	// Issue #77: Use session-prefixed keys
 	m.nodeStates = map[string]string{
 		"session-a:worker":   "active",
-		"session-a:observer": "holding",
+		"session-a:observer": "ready",
 		"session-b:tester":   "gray",
 	}
 

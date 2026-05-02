@@ -361,8 +361,8 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		case !activity.LivenessConfirmed:
 			state = "stale"
 		case activity.LastReceived.After(activity.LastSent) && !activity.LastReceived.IsZero():
-			// BLOCKING FIX: Preserve existing ball possession logic
-			// LastReceived > LastSent = recipient has received but not replied
+			// LastReceived > LastSent means the node recently received mail.
+			// Unread inbox counts overlay pending state separately.
 			state = "ready"
 		default:
 			// Issue #95: Time-based color changes (only for active nodes)
@@ -569,7 +569,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if node, ok := msg.Details["node"].(string); ok {
 				m.nodeStates[node] = "active"
 			}
-		case "ball_state_update":
+		case "node_activity_update":
 			// Issue #55: Update node states from idle tracking
 			if nodeStatesRaw, ok := msg.Details["node_states"]; ok {
 				// Type assertion is tricky with maps - need to handle interface{} carefully

@@ -67,7 +67,7 @@ func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): to, body, idempotency-key, json
-	// SYNC: schema send properties; alwaysExcludedParams map
+	// SYNC: params contract for send; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")

@@ -20,7 +20,7 @@ func RunPop(args []string) error {
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	// Options struct fields (--params scope): peek, json
-	// SYNC: schema pop properties; alwaysExcludedParams map
+	// SYNC: params contract for pop; alwaysExcludedParams map
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
 	jsonOut := fs.Bool("json", false, `output json: {} (empty inbox) or {"id":"...","from":"...","to":"...","body":"...","timestamp":"..."} (message present); test id field to distinguish`)
 	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
