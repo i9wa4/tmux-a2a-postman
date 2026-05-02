@@ -30,7 +30,6 @@ var alwaysExcludedParams = map[string]bool{
 	"config":     true, // Security: config path injection
 	"session":    true, // Security: session hijack risk
 	"from":       true, // Security: sender identity spoofing
-	"bindings":   true, // Security: binding injection
 	"file":       true, // Security: arbitrary filesystem path (same class as config)
 }
 

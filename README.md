@@ -196,19 +196,17 @@ symlinks, use project-local overrides.
 
 ### 4.5. Runtime status model
 
-`get-health`, `get-health-oneline`, `status`, and the default TUI are views
-over the same canonical contract. Agents should prefer `get-health` for
-structured session JSON and `get-health-oneline` for compact coordination;
-`status` remains the human-oriented shortcut. The per-node visible states are
-`ready`, `pending`, `user_input`, `composing`, `spinning`, and `stalled`.
-Session-level `unavailable` is a fallback that means the current daemon is not
-authoritative for canonical status; it is not a per-node state.
+`get-health`, `get-health-oneline`, and the default TUI are views over the same
+canonical contract. Agents should prefer `get-health` for structured session
+JSON and `get-health-oneline` for compact coordination. The per-node visible
+states are `ready`, `pending`, `user_input`, `composing`, `spinning`, and
+`stalled`. Session-level `unavailable` is a fallback that means the current
+daemon is not authoritative for canonical status; it is not a per-node state.
 
 `get-health` includes queue counts, node-level visible states, window grouping,
-and an `input_locks` array for the current or specified tmux session.
-`status --json` includes the all-session wrapper with `schema_version` and
-daemon owner metadata. `input_locks` is usually empty when idle; during pane
-delivery it lists active input broker leases.
+and an `input_locks` array for the current or specified tmux session. During
+pane delivery, `input_locks` lists active input broker leases; it is usually
+empty when idle.
 
 Quick reading guide:
 
@@ -260,8 +258,8 @@ tmux-a2a-postman start --no-tui
 tmux-a2a-postman stop
 ```
 
-The default operator loop is `send`, `pop`, and `status`. Agent coordination
-can use `get-health` and `get-health-oneline` when it needs runtime state.
+The default operator loop is `send`, `pop`, and `get-health-oneline`. Agent
+coordination can use `get-health` when it needs structured runtime state.
 Lifecycle and recovery commands such as `start` and `stop` are also public.
 Compatibility and diagnostic helpers are internal, not CLI commands. Use
 explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start
@@ -283,8 +281,6 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
   {contextId}/
     postman.log         # disposable: startup retention may prune inactive contexts
     pane-activity.json  # disposable: startup retention may prune inactive contexts
-    phony/              # preserved: binding-backed inbox and dead-letter state
-    supervisor-memory/  # preserved: supervisor memory store and dead-letters
     {sessionName}/
       postman.pid       # live-daemon marker for this tmux session
       draft/            # internal: draft staging area (use send instead)
@@ -303,8 +299,6 @@ Runtime lifecycle classes
 | `{baseDir}/{contextId}/{sessionName}/` | Session runtime state | Eligible only when the context has no live `postman.pid` anywhere under it |
 | `{baseDir}/{contextId}/postman.log` | Context-local log | Eligible only when the context is inactive |
 | `{baseDir}/{contextId}/pane-activity.json` | Context-local pane snapshot cache | Eligible only when the context is inactive |
-| `{baseDir}/{contextId}/phony/` | Durable phony-node delivery state | Always preserved |
-| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory state | Always preserved |
 
 `retention_period_days` controls that startup cleanup window. The embedded
 default is `90`. Set it to `0` to disable the broader inactive-context sweep.
@@ -334,8 +328,6 @@ Default operator surface:
 ```text
 tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
-tmux-a2a-postman status
-tmux-a2a-postman status --json
 tmux-a2a-postman get-health
 tmux-a2a-postman get-health-oneline
 ```

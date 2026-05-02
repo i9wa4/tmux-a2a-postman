@@ -359,14 +359,6 @@ func TestMessageEventSuppressesNormalDelivery(t *testing.T) {
 			},
 			want: false,
 		},
-		{
-			name: "phony delivery",
-			event: message.DaemonEvent{
-				Type:    "message_received",
-				Message: "Phony delivery: orchestrator -> channel-a",
-			},
-			want: false,
-		},
 	}
 
 	for _, tc := range tests {
@@ -886,7 +878,7 @@ func TestScanLiveInboxCounts_CountsUnreadInboxMarkdownFiles(t *testing.T) {
 		t.Fatalf("WriteFile second unread: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(workerInbox, "notes.txt"), []byte("ignore"), 0o600); err != nil {
-		t.Fatalf("WriteFile sidecar: %v", err)
+		t.Fatalf("WriteFile ignored note: %v", err)
 	}
 
 	counts := scanLiveInboxCounts(map[string]discovery.NodeInfo{

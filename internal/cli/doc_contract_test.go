@@ -37,9 +37,8 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `status`, `get-health`, `get-health-oneline`, and `--version`.")
+	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `get-health`, `get-health-oneline`, and `--version`.")
 	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
-	assertContainsNormalized(t, commandsDoc, "| `status` | Show the current runtime status |")
 	assertContainsNormalized(t, commandsDoc, "| `get-health` | Print canonical session health JSON |")
 	assertContainsNormalized(t, commandsDoc, "| `get-health-oneline` | Print compact all-session health |")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
@@ -57,8 +56,8 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 		"`get-context-id`",
 		"`--context-id`",
 		"`--from`",
-		"`--bindings`",
 		"`read_context_mode`",
+		"`status`",
 	} {
 		if strings.Contains(commandsDoc, hidden) {
 			t.Fatalf("docs/commands.md exposes hidden public surface %s", hidden)
@@ -112,7 +111,7 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	assertContainsNormalized(t, readme, "Runtime status model")
-	assertContainsNormalized(t, readme, "`get-health`, `get-health-oneline`, `status`, and the default TUI are views over the same canonical contract")
+	assertContainsNormalized(t, readme, "`get-health`, `get-health-oneline`, and the default TUI are views over the same canonical contract")
 	assertContainsNormalized(t, readme, "Quick reading guide")
 	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
 	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
@@ -130,6 +129,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		"tmux-a2a-postman schema",
 		"tmux-a2a-postman bind",
 		"tmux-a2a-postman get-context-id",
+		"tmux-a2a-postman status",
 		"`read_context_mode`",
 		"`journal_health_cutover_enabled`",
 		"`journal_compatibility_cutover_enabled`",
@@ -151,11 +151,11 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, roleAuditorSkill, "unread backlog")
 	assertContainsNormalized(t, roleAuditorSkill, "quiet node")
 	assertContainsNormalized(t, roleAuditorSkill, "late reply")
-	assertContainsNormalized(t, roleAuditorSkill, "status --json")
+	assertContainsNormalized(t, roleAuditorSkill, "get-health")
 	assertContainsNormalized(t, roleAuditorSkill, "`message_footer` | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}`")
 	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon-originated mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
 	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter re-send instructions (written by dead-letter notification code)")
-	for _, hidden := range []string{"get-health", "dropped_ball", "heartbeat mail"} {
+	for _, hidden := range []string{"status --json", "dropped_ball", "heartbeat mail"} {
 		if strings.Contains(roleAuditorSkill, hidden) {
 			t.Fatalf("role auditor skill still exposes hidden term %q", hidden)
 		}
@@ -166,7 +166,6 @@ func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	assertContainsNormalized(t, readme, "`retention_period_days` controls that startup cleanup window. The embedded default is `90`.")
 	assertContainsNormalized(t, readme, "| `{baseDir}/lock/` | Active coordination state | Always preserved |")
-	assertContainsNormalized(t, readme, "| `{baseDir}/{contextId}/supervisor-memory/` | Durable supervisor memory state | Always preserved |")
 
 	commandsDoc := readRepoFile(t, "docs/commands.md")
 	assertContainsNormalized(t, commandsDoc, "## 7. Runtime Directory Lifecycle")

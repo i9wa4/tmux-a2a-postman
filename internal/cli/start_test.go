@@ -614,19 +614,15 @@ func TestCleanupExpiredRuntimeState_PreservesLiveAndDurablePaths(t *testing.T) {
 	staleSessionDir := filepath.Join(staleContextDir, staleSession)
 	staleLog := filepath.Join(staleContextDir, "postman.log")
 	stalePaneActivity := filepath.Join(staleContextDir, "pane-activity.json")
-	stalePhony := filepath.Join(staleContextDir, "phony")
-	staleMemory := filepath.Join(staleContextDir, "supervisor-memory")
 	staleUnknown := filepath.Join(staleContextDir, "scratch-cache")
 
 	writeRuntimeFileFixture(t, staleLog, "old log")
 	writeRuntimeFileFixture(t, stalePaneActivity, "{}")
-	writeRuntimeFileFixture(t, filepath.Join(stalePhony, "channel", "inbox", "message.json"), "{}")
-	writeRuntimeFileFixture(t, filepath.Join(staleMemory, "note.yaml"), "summary: preserve")
 	if err := os.MkdirAll(staleUnknown, 0o700); err != nil {
 		t.Fatalf("MkdirAll(scratch-cache): %v", err)
 	}
 
-	for _, path := range []string{staleSessionDir, staleLog, stalePaneActivity, stalePhony, staleMemory, staleUnknown} {
+	for _, path := range []string{staleSessionDir, staleLog, stalePaneActivity, staleUnknown} {
 		markOldRuntimePath(t, path, staleWhen)
 	}
 
@@ -644,8 +640,6 @@ func TestCleanupExpiredRuntimeState_PreservesLiveAndDurablePaths(t *testing.T) {
 	assertPathMissing(t, staleSessionDir)
 	assertPathMissing(t, staleLog)
 	assertPathMissing(t, stalePaneActivity)
-	assertPathExists(t, stalePhony)
-	assertPathExists(t, staleMemory)
 	assertPathExists(t, staleUnknown)
 }
 

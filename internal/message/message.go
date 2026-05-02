@@ -3,7 +3,6 @@ package message
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -39,22 +37,16 @@ const (
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
 const (
-	dlSuffixParseError          = "-dl-parse-error"
-	dlSuffixEnvelopeMismatch    = "-dl-envelope-mismatch"
-	dlSuffixUnknownRecipient    = "-dl-unknown-recipient"
-	dlSuffixUnknownSession      = "-dl-unknown-session"
-	dlSuffixUnknownSender       = "-dl-unknown-sender"
-	dlSuffixRoutingDenied       = "-dl-routing-denied"
-	dlSuffixSessionDisabled     = "-dl-session-disabled"
-	DlSuffixTTLExpired          = "-dl-ttl-expired"
-	dlSuffixForeignSession      = "-dl-foreign-session"
-	dlSuffixForgedSender        = "-dl-forged-sender"
-	dlSuffixPhonyDeliveryFailed = "-dl-phony-delivery-failed"
-)
-
-const (
-	phonyDeadLetterReasonRoutingDenied  = "routing_denied"
-	phonyDeadLetterReasonChannelUnbound = "channel_unbound"
+	dlSuffixParseError       = "-dl-parse-error"
+	dlSuffixEnvelopeMismatch = "-dl-envelope-mismatch"
+	dlSuffixUnknownRecipient = "-dl-unknown-recipient"
+	dlSuffixUnknownSession   = "-dl-unknown-session"
+	dlSuffixUnknownSender    = "-dl-unknown-sender"
+	dlSuffixRoutingDenied    = "-dl-routing-denied"
+	dlSuffixSessionDisabled  = "-dl-session-disabled"
+	DlSuffixTTLExpired       = "-dl-ttl-expired"
+	dlSuffixForeignSession   = "-dl-foreign-session"
+	dlSuffixForgedSender     = "-dl-forged-sender"
 )
 
 // inboxQueueCap is the maximum number of messages allowed in a recipient inbox
@@ -275,15 +267,6 @@ type EnvelopeMetadata struct {
 	ThreadID string
 }
 
-// Message carries the payload and metadata for phony-node delivery (#305).
-type Message struct {
-	Body           string
-	MessageID      string
-	SenderID       string
-	IdempotencyKey string
-	OriginalAt     time.Time
-}
-
 // SessionHash returns a 4-character hex hash of the tmux session name (#198).
 // Returns empty string if sessionName is empty.
 func SessionHash(sessionName string) string {
@@ -401,93 +384,6 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}, nil
 }
 
-// dispatchPhonyNode checks if rawRecipient is a phony node (IsPhony == true
-// in knownNodes) and, if so, delivers the message via DeliverToPhonyNode and
-// removes the post/ file.
-// NOTE: Must be called with the raw to: value, before ResolveNodeName —
-// phony nodes are stored under bare keys, but session-prefixed phony aliases
-// fall back to the same bare binding-backed node.
-// Returns true when the message was handled; the caller should return nil.
-func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID string, cfg *config.Config, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, events chan<- DaemonEvent) bool {
-	phonyRecipient := rawRecipient
-	nodeInfo, ok := knownNodes[phonyRecipient]
-	if (!ok || !nodeInfo.IsPhony) && nodeaddr.Simple(rawRecipient) != rawRecipient {
-		phonyRecipient = nodeaddr.Simple(rawRecipient)
-		nodeInfo, ok = knownNodes[phonyRecipient]
-	}
-	if !ok || !nodeInfo.IsPhony {
-		return false
-	}
-	if registry == nil {
-		log.Printf("postman: WARNING: phony node %q matched but registry is nil; dead-lettering\n", rawRecipient)
-		deadLetterMatchedPhonyPost(postPath)
-		return true
-	}
-	body, err := os.ReadFile(postPath)
-	if err != nil {
-		log.Printf("postman: WARNING: phony dispatch: failed to read %s: %v\n", filepath.Base(postPath), err)
-		deadLetterMatchedPhonyPost(postPath)
-		return true
-	}
-	var originalAt time.Time
-	if t, parseErr := time.Parse("20060102-150405", timestamp); parseErr == nil {
-		originalAt = t
-	} else {
-		originalAt = time.Now()
-	}
-	msg := Message{
-		Body:       string(body),
-		MessageID:  filepath.Base(postPath),
-		SenderID:   sender,
-		OriginalAt: originalAt,
-	}
-	if delErr := DeliverToPhonyNode(config.ResolveBaseDir(cfg.BaseDir), contextID, phonyRecipient, sender, registry, msg); delErr != nil {
-		log.Printf("postman: WARNING: phony dispatch failed %s -> %s: %v\n", sender, rawRecipient, delErr)
-		deadLetterMatchedPhonyPost(postPath)
-	} else {
-		log.Printf("postman: phony-delivered %s -> %s\n", sender, rawRecipient)
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Phony delivery: %s -> %s", sender, rawRecipient),
-			}
-		}
-		_ = store.ConsumePost(postPath)
-		sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
-		sourceSessionName := filepath.Base(sourceSessionDir)
-		recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
-			MessageID: filepath.Base(postPath),
-			From:      sender,
-			To:        rawRecipient,
-			ThreadID:  mailboxThreadIDFromContent(string(body)),
-			Path:      shadowRelativePath(sourceSessionDir, postPath),
-		})
-		syncCompatibilityMailbox(sourceSessionDir)
-	}
-	return true
-}
-
-func deadLetterMatchedPhonyPost(postPath string) {
-	dlDir := filepath.Join(filepath.Dir(filepath.Dir(postPath)), "dead-letter")
-	if err := os.MkdirAll(dlDir, 0o755); err != nil {
-		return
-	}
-	dst := filepath.Join(dlDir,
-		strings.TrimSuffix(filepath.Base(postPath), ".md")+dlSuffixPhonyDeliveryFailed+".md")
-	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
-	sourceSessionName := filepath.Base(sourceSessionDir)
-	info, err := ParseMessageFilename(filepath.Base(postPath))
-	if err != nil {
-		_ = moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filepath.Base(postPath), "", "", "")
-		return
-	}
-	content, readErr := os.ReadFile(postPath)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		log.Printf("postman: WARNING: failed to read phony dead-letter payload %s: %v\n", postPath, readErr)
-	}
-	_ = moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filepath.Base(postPath), info.From, info.To, string(content))
-}
-
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
 // Multi-session support: postPath is the full path to the message file in post/ directory.
 // The message will be delivered to the recipient's session directory based on NodeInfo.SessionDir.
@@ -497,7 +393,7 @@ func deadLetterMatchedPhonyPost(postPath string) {
 // Session check: both sender and recipient sessions must be enabled (unless sender is daemon)
 // Issue #53: Added events channel parameter for dead-letter notifications
 // Issue #71: Added idleTracker parameter for activity tracking
-func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
+func DeliverMessage(postPath string, contextID string, knownNodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, isSessionEnabled func(string) bool, events chan<- DaemonEvent, idleTracker *idle.IdleTracker, daemonSession string) error {
 	// Extract filename from postPath
 	filename := filepath.Base(postPath)
 
@@ -604,11 +500,6 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		} else if !os.IsNotExist(readErr) {
 			log.Printf("postman: WARNING: failed to read message content %s: %v\n", filename, readErr)
 		}
-	}
-
-	// NOTE: IsPhony check must precede this call — see dispatchPhonyNode.
-	if dispatchPhonyNode(info.To, info.From, info.Timestamp, postPath, contextID, cfg, knownNodes, registry, events) {
-		return nil
 	}
 
 	// Resolve recipient name (Issue #33: session-aware adjacency)
@@ -1136,116 +1027,6 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		}
 	}
 	return count
-}
-
-// generatePhonyFilename produces a dead-letter/inbox filename from the current
-// time and 2 CSPRNG bytes. Format: YYYYMMDDTHHMMSS-<4hex>.json.
-// MUST NOT derive from channel_id, sender_id, node_name, or message body (#305).
-func generatePhonyFilename() (string, error) {
-	var b [2]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	ts := time.Now().Format("20060102T150405")
-	return fmt.Sprintf("%s-%04x.json", ts, b), nil
-}
-
-// phonyDeadLetterRecord is the JSON schema v1 for phony-node dead-letters (#305).
-type phonyDeadLetterRecord struct {
-	SchemaVersion  int    `json:"schema_version"`
-	Reason         string `json:"reason"`
-	Direction      string `json:"direction"`
-	ChannelID      string `json:"channel_id"`
-	NodeName       string `json:"node_name"`
-	Body           string `json:"body"`
-	WrittenAt      string `json:"written_at"`
-	OriginalAt     string `json:"original_at"`
-	MessageID      string `json:"message_id"`
-	SenderID       string `json:"sender_id"`
-	IdempotencyKey string `json:"idempotency_key"`
-}
-
-// writePhonyDeadLetter writes a JSON dead-letter record to the phony node's
-// dead-letter directory. File mode 0600, directory mode 0700 (#305).
-func writePhonyDeadLetter(baseDir, contextID, nodeName, channelID, reason string, msg Message) error {
-	dir := filepath.Join(baseDir, contextID, "phony", nodeName, "dead-letter")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating phony dead-letter dir: %w", err)
-	}
-	filename, err := generatePhonyFilename()
-	if err != nil {
-		return fmt.Errorf("generating phony dead-letter filename: %w", err)
-	}
-	rec := phonyDeadLetterRecord{
-		SchemaVersion:  1,
-		Reason:         reason,
-		Direction:      "inbound",
-		ChannelID:      channelID,
-		NodeName:       nodeName,
-		Body:           msg.Body,
-		WrittenAt:      time.Now().Format(time.RFC3339),
-		OriginalAt:     msg.OriginalAt.Format(time.RFC3339),
-		MessageID:      msg.MessageID,
-		SenderID:       msg.SenderID,
-		IdempotencyKey: msg.IdempotencyKey,
-	}
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return fmt.Errorf("marshaling phony dead-letter: %w", err)
-	}
-	return writeDeadLetterFile(filepath.Join(dir, filename), data)
-}
-
-// DeliverToPhonyNode delivers an outbound message from a session pane to a phony
-// node inbox at <baseDir>/<contextID>/phony/<nodeName>/inbox/.
-// Routing rules (DEFAULT DENY):
-//   - Binding absent for nodeName: dead-letter routing_denied
-//   - Binding active=false: dead-letter channel_unbound
-//   - sender not in permitted_senders (including empty list): dead-letter routing_denied
-//
-// On success, msg.Body is written as a new file in the inbox directory.
-// Dead-letter filenames are generated from timestamp + CSPRNG; they MUST NOT
-// derive from channel_id, sender_id, node_name, or message body (#305).
-func DeliverToPhonyNode(baseDir, contextID, nodeName, sender string, registry *binding.BindingRegistry, msg Message) error {
-	// 1. Find binding by node name (DEFAULT DENY: absent = routing_denied)
-	var found *binding.Binding
-	for i := range registry.Bindings {
-		if registry.Bindings[i].NodeName == nodeName {
-			found = &registry.Bindings[i]
-			break
-		}
-	}
-	if found == nil {
-		return writePhonyDeadLetter(baseDir, contextID, nodeName, "", phonyDeadLetterReasonRoutingDenied, msg)
-	}
-
-	// 2. Active check (channel_unbound if inactive)
-	if !found.Active {
-		return writePhonyDeadLetter(baseDir, contextID, nodeName, found.ChannelID, phonyDeadLetterReasonChannelUnbound, msg)
-	}
-
-	// 3. permitted_senders check (DEFAULT DENY: empty list = deny all)
-	allowed := false
-	for _, s := range found.PermittedSenders {
-		if s == sender {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return writePhonyDeadLetter(baseDir, contextID, nodeName, found.ChannelID, phonyDeadLetterReasonRoutingDenied, msg)
-	}
-
-	// 4. Deliver to phony inbox
-	inboxDir := filepath.Join(baseDir, contextID, "phony", nodeName, "inbox")
-	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-		return fmt.Errorf("creating phony inbox: %w", err)
-	}
-	filename, err := generatePhonyFilename()
-	if err != nil {
-		return fmt.Errorf("generating phony inbox filename: %w", err)
-	}
-	return os.WriteFile(filepath.Join(inboxDir, filename), []byte(msg.Body), 0o600)
 }
 
 // ScanInboxMessages scans the inbox directory and returns a list of MessageInfo.

@@ -103,7 +103,7 @@ func (h *agentSessionHarness) postAndDeliver(t *testing.T, from, to string, seq 
 		t.Fatalf("postAndDeliver(seq=%d): writing post: %v", seq, err)
 	}
 	if err := message.DeliverMessage(
-		postPath, h.contextID, h.nodes, nil, h.adjacency, h.cfg,
+		postPath, h.contextID, h.nodes, h.adjacency, h.cfg,
 		func(string) bool { return true },
 		nil,
 		idle.NewIdleTracker(),

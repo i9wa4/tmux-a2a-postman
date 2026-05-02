@@ -11,41 +11,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
-// runGetContextID prints the live context ID for the current tmux session.
-// Issue #249: zero-argument discovery primitive for AI agents.
-func runGetContextID(args []string) error {
-	fs := flag.NewFlagSet("get-context-id", flag.ContinueOnError)
-	// Options struct fields (--params scope): json
-	// SYNC: schema get-context-id properties; alwaysExcludedParams map
-	jsonOut := fs.Bool("json", false, `output json: {"context_id":"..."}`)
-	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
-	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
-	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
-	configPath := fs.String("config", "", "path to config file (optional)")
-	commandName := fs.Name()
-	// Step 1: parse flags
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	// Step 2: record explicitly-set flags (for --params precedence)
-	explicitlySet := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
-		explicitlySet[f.Name] = true
-	})
-	// Steps 3+4: parse and apply --params to non-explicit flags
-	if explicitlySet["params"] {
-		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
-		if err != nil {
-			return err
-		}
-		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
-			return err
-		}
-	}
-
-	return cli.RunGetContextID(os.Stdout, *sessionFlag, *configPath, *jsonOut)
-}
-
 func splitCommand(args []string) (string, []string, bool) {
 	if len(args) == 0 {
 		return "", nil, false
@@ -113,7 +78,6 @@ func main() {
 		cli.Handlers{
 			Start:                   cli.RunStartWithFlags,
 			Pop:                     cli.RunPop,
-			Status:                  func(args []string) error { return cli.RunStatus(os.Stdout, args) },
 			GetSessionHealth:        cli.RunGetSessionHealth,
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			SendMessage:             cli.RunSendMessage,
@@ -146,7 +110,6 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Default operator surface:")
 	fmt.Fprintln(w, "  send                       Send a message in one step (--to and --body required)")
 	fmt.Fprintln(w, "  pop                        Read and archive the oldest unread inbox message")
-	fmt.Fprintln(w, "  status                     Show current runtime status (--json for canonical payload)")
 	fmt.Fprintln(w, "  get-health                 Print canonical session health JSON")
 	fmt.Fprintln(w, "  get-health-oneline         Print compact all-session health")
 	fmt.Fprintln(w, "")
@@ -163,7 +126,7 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")
 	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
 	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
-	fmt.Fprintln(w, "  tmux-a2a-postman status --json                       # Inspect runtime status as JSON")
+	fmt.Fprintln(w, "  tmux-a2a-postman get-health                          # Inspect runtime health as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman get-health-oneline                  # Inspect compact health")
 	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")
 }

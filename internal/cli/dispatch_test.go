@@ -100,33 +100,6 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
-func TestDispatch_StatusPrependsContextAndConfig(t *testing.T) {
-	var gotArgs []string
-
-	result := Dispatch(
-		"status",
-		[]string{"--json"},
-		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
-		Handlers{
-			Status: func(args []string) error {
-				gotArgs = append([]string(nil), args...)
-				return nil
-			},
-		},
-	)
-
-	if result.Err != nil {
-		t.Fatalf("Dispatch returned error: %v", result.Err)
-	}
-	if result.Label != "postman status" {
-		t.Fatalf("label = %q, want %q", result.Label, "postman status")
-	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
-	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("status args = %#v, want %#v", gotArgs, wantArgs)
-	}
-}
-
 func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 	t.Run("get-health", func(t *testing.T) {
 		var gotArgs []string
@@ -239,6 +212,7 @@ func TestDispatch_UnknownCommandReturnsUsageError(t *testing.T) {
 
 func TestDispatch_RetiredCommandsReturnUsageError(t *testing.T) {
 	for _, command := range []string{
+		"status",
 		"read",
 		"get-session-health",
 		"get-session-status-oneline",

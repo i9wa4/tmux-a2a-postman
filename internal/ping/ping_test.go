@@ -214,7 +214,7 @@ func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 	}
 	if len(entries) == 1 {
 		postPath := filepath.Join(postDir, entries[0].Name())
-		if err := message.DeliverMessage(postPath, "test-ctx", nodes, nil, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "local-daemon"); err != nil {
+		if err := message.DeliverMessage(postPath, "test-ctx", nodes, map[string][]string{}, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "local-daemon"); err != nil {
 			t.Fatalf("DeliverMessage() error = %v", err)
 		}
 	} else if len(entries) > 1 {

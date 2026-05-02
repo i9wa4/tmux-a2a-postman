@@ -531,7 +531,7 @@ func waitForPostEventIdle(t *testing.T, rt *daemonRuntime, path string, timeout 
 	}
 }
 
-func TestDetectNewNodes_ReturnsOnlyNewRealNodesWithoutAutoEnable(t *testing.T) {
+func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 	freshNodes := map[string]discovery.NodeInfo{
 		"self:known": {
 			SessionName: "self",
@@ -540,11 +540,6 @@ func TestDetectNewNodes_ReturnsOnlyNewRealNodesWithoutAutoEnable(t *testing.T) {
 		"foreign:worker": {
 			SessionName: "foreign",
 			SessionDir:  t.TempDir(),
-		},
-		"phony:helper": {
-			SessionName: "phony",
-			SessionDir:  t.TempDir(),
-			IsPhony:     true,
 		},
 	}
 	watcher, err := fsnotify.NewWatcher()

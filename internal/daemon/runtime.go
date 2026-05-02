@@ -16,7 +16,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
-	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -63,8 +62,6 @@ type daemonRuntime struct {
 	prevSessionNodes   map[string][]string
 
 	alertDeliverySignalState string
-	registry                 *binding.BindingRegistry
-	bindingWatchDirs         []string
 	postEventsMu             sync.Mutex
 	activePostEvents         map[string]bool
 }
@@ -244,21 +241,6 @@ func (rt *daemonRuntime) bootstrap(ctx context.Context) {
 
 	rt.alertDeliverySignalState = warnAlertConfig(rt.cfg, rt.nodes, rt.events)
 
-	if watchDir := bindingsWatchDir(rt.cfg.BindingsPath); watchDir != "" {
-		if updatedWatchDirs, watchErr := ensureWatchedPath(rt.bindingWatchDirs, watchDir, rt.watcher.Add); watchErr != nil {
-			log.Printf("postman: WARNING: failed to watch bindings registry dir %s: %v\n", watchDir, watchErr)
-		} else {
-			rt.bindingWatchDirs = updatedWatchDirs
-		}
-	}
-	if rt.cfg.BindingsPath != "" {
-		if reg, loadErr := binding.Load(rt.cfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
-			log.Printf("postman: WARNING: failed to load bindings registry %s: %v\n", rt.cfg.BindingsPath, loadErr)
-		} else {
-			rt.registry = reg
-		}
-	}
-	mergePhonyNodes(rt.nodes, rt.registry)
 	rt.storeSharedNodes()
 
 	installShadowJournalManager(rt.sessionDir, rt.contextID, rt.selfSession, time.Now())
@@ -324,8 +306,7 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 			break
 		}
 	}
-	isBindingsEvent := matchesBindingsEvent(eventPath, rt.cfg.BindingsPath)
-	if isConfigEvent || isNodesDirEvent || isBindingsEvent {
+	if isConfigEvent || isNodesDirEvent {
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 			if rt.configTimer != nil {
 				rt.configTimer.Stop()
@@ -415,7 +396,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		}
 	}
 
-	rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.registry, rt.adjacency, rt.cfg, reservation)
+	rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.adjacency, rt.cfg, reservation)
 }
 
 func (rt *daemonRuntime) reservePostDeliveryOrScheduleRetry(eventPath, filename string) (postDeliveryReservation, bool) {
@@ -460,8 +441,8 @@ func (rt *daemonRuntime) retryActivePostDelivery(eventPath, filename string) {
 	rt.processActivePostEvent(eventPath, filename)
 }
 
-func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
-	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry, adjacency map[string][]string, cfg *config.Config) {
+func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
+	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
 		defer func() {
 			if reservation.route != "" {
@@ -479,7 +460,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
-		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, registry, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
+		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -581,7 +562,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 				}
 			}
 		}
-	}(eventPath, filename, nodes, registry, adjacency, cfg)
+	}(eventPath, filename, nodes, adjacency, cfg)
 }
 
 func (rt *daemonRuntime) dispatchPendingPostMessages() {
@@ -686,29 +667,11 @@ func (rt *daemonRuntime) handleConfigReload() {
 
 	rt.cfg = newCfg
 	rt.adjacency = newAdjacency
-	if updatedBindingWatchDirs, watchErr := ensureWatchedPath(rt.bindingWatchDirs, bindingsWatchDir(newCfg.BindingsPath), rt.watcher.Add); watchErr != nil {
-		log.Printf("postman: WARNING: failed to watch bindings registry dir %s: %v\n", bindingsWatchDir(newCfg.BindingsPath), watchErr)
-	} else {
-		rt.bindingWatchDirs = updatedBindingWatchDirs
-	}
-
-	if newCfg.BindingsPath != "" {
-		if reg, loadErr := binding.Load(newCfg.BindingsPath, binding.AllowEmptySenders()); loadErr != nil {
-			log.Printf("postman: WARNING: failed to reload bindings registry %s: %v\n", newCfg.BindingsPath, loadErr)
-			rt.registry = nil
-		} else {
-			rt.registry = reg
-		}
-	} else {
-		rt.registry = nil
-	}
 
 	if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(rt.baseDir, rt.contextID, rt.selfSession); discErr != nil {
 		log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
-		rt.nodes = refreshNodesWithRegistry(rt.nodes, rt.registry)
 	} else {
 		filterNodesByEdges(freshNodes, rt.cfg.Edges)
-		mergePhonyNodes(freshNodes, rt.registry)
 		rt.nodes = freshNodes
 	}
 	rt.storeSharedNodes()
@@ -1004,7 +967,6 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		return nil, nil, err
 	}
 	filterNodesByEdges(freshNodes, rt.cfg.Edges)
-	mergePhonyNodes(freshNodes, rt.registry)
 	return freshNodes, collisions, nil
 }
 
@@ -1071,9 +1033,6 @@ func (rt *daemonRuntime) detectNewNodes(freshNodes map[string]discovery.NodeInfo
 			continue
 		}
 		rt.knownNodes[nodeName] = true
-		if nodeInfo.IsPhony {
-			continue
-		}
 		rt.ensureNodeWatchDirs(nodeName, nodeInfo)
 		newNodes = append(newNodes, nodeName)
 	}
@@ -1083,7 +1042,7 @@ func (rt *daemonRuntime) detectNewNodes(freshNodes map[string]discovery.NodeInfo
 func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeInfo) {
 	livePaneIDs := make(map[string]bool, len(freshNodes))
 	for _, nodeInfo := range freshNodes {
-		if !nodeInfo.IsPhony && nodeInfo.PaneID != "" {
+		if nodeInfo.PaneID != "" {
 			livePaneIDs[nodeInfo.PaneID] = true
 		}
 	}
@@ -1096,7 +1055,7 @@ func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeI
 
 func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo) {
 	for _, nodeInfo := range freshNodes {
-		if nodeInfo.IsPhony || nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
+		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
 			continue
 		}
 		claimCmd := exec.Command(
@@ -1115,7 +1074,7 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 // changed since the last cycle. Called before rt.nodes is updated to freshNodes.
 func (rt *daemonRuntime) logPaneIDChanges(freshNodes map[string]discovery.NodeInfo) {
 	for nodeKey, oldInfo := range rt.nodes {
-		if oldInfo.IsPhony || oldInfo.PaneID == "" {
+		if oldInfo.PaneID == "" {
 			continue
 		}
 		freshInfo, found := freshNodes[nodeKey]
@@ -1146,7 +1105,7 @@ func (rt *daemonRuntime) recordPendingAutoPings(nodeKeys []string, freshNodes ma
 }
 
 func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, reason string, now time.Time) {
-	if nodeInfo.IsPhony || nodeInfo.SessionDir == "" || nodeInfo.SessionName == "" {
+	if nodeInfo.SessionDir == "" || nodeInfo.SessionName == "" {
 		return
 	}
 
@@ -1245,10 +1204,6 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 
 	for _, nodeKey := range nodeKeys {
 		nodeInfo := freshNodes[nodeKey]
-		if nodeInfo.IsPhony {
-			continue
-		}
-
 		state, ok := projectedBySession[nodeInfo.SessionDir]
 		if !ok {
 			continue

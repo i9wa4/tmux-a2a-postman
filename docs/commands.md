@@ -2,7 +2,7 @@
 
 This page documents the supported public `tmux-a2a-postman` command surface.
 The public surface is intentionally small: `start`, `stop`, `send`, `pop`,
-`status`, `get-health`, `get-health-oneline`, and `--version`.
+`get-health`, `get-health-oneline`, and `--version`.
 
 Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of
 starting the daemon.
@@ -15,7 +15,6 @@ starting the daemon.
 | `stop`               | Stop the running daemon                      |
 | `send`               | Compose and send a message in one step       |
 | `pop`                | Read and archive the next inbox message      |
-| `status`             | Show the current runtime status              |
 | `get-health`         | Print canonical session health JSON          |
 | `get-health-oneline` | Print compact all-session health             |
 | `--version`          | Print the installed version string           |
@@ -209,27 +208,6 @@ With `--json`, `get-health-oneline` returns:
 | `--params`  | string | ""      | N/A       | Shorthand or JSON parameters   |
 | `--session` | string | ""      | No        | tmux session name              |
 | `--config`  | string | ""      | No        | Path to config file            |
-
-### 5.3. status
-
-```text
-tmux-a2a-postman status [--json] [--session NAME] [--config PATH]
-```
-
-`status` is the human-oriented shortcut. Without `--json`, it prints the same
-compact line as `get-health-oneline`. With `--json`, it prints the same
-canonical all-session payload used by the TUI.
-
-`status --json` includes `schema_version`, daemon owner metadata, and one
-`sessions[]` entry per observed tmux session. Use `schema_version` before
-parsing and `daemon_owner` to identify the runtime owner.
-
-| Flag        | Type   | Default | --params? | Description                  |
-| ----------- | ------ | ------- | --------- | ---------------------------- |
-| `--json`    | bool   | false   | Yes       | Output canonical status JSON |
-| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters |
-| `--session` | string | ""      | No        | tmux session name            |
-| `--config`  | string | ""      | No        | Path to config file          |
 
 ## 6. Configuration
 

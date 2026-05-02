@@ -906,9 +906,6 @@ func cleanupExpiredContextRuntime(contextDir string, cutoff time.Time) (int, err
 func isRetentionEligibleContextEntry(contextDir string, entry os.DirEntry) bool {
 	name := entry.Name()
 	if entry.IsDir() {
-		if name == "phony" || name == "supervisor-memory" {
-			return false
-		}
 		return isSessionRuntimeDir(filepath.Join(contextDir, name))
 	}
 	return name == "postman.log" || name == "pane-activity.json"

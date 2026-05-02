@@ -17,7 +17,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
-	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -718,68 +717,6 @@ func filterNodesByEdges(nodes map[string]discovery.NodeInfo, edges []string) {
 			delete(nodes, nodeName)
 		}
 	}
-}
-
-// mergePhonyNodes inserts phony NodeInfo entries from registry into nodes.
-// Keys stay bare node names so bare phony recipients and session-prefixed
-// phony aliases can both resolve back to the same binding-backed node (#306).
-func mergePhonyNodes(nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry) {
-	if registry == nil {
-		return
-	}
-	for _, b := range registry.Bindings {
-		nodes[b.NodeName] = discovery.NodeInfo{IsPhony: true}
-	}
-}
-
-func bindingsWatchDir(path string) string {
-	if path == "" {
-		return ""
-	}
-	return filepath.Dir(path)
-}
-
-func ensureWatchedPath(watchedPaths []string, path string, add func(string) error) ([]string, error) {
-	if path == "" {
-		return watchedPaths, nil
-	}
-	for _, watchedPath := range watchedPaths {
-		if watchedPath == path {
-			return watchedPaths, nil
-		}
-	}
-	if err := add(path); err != nil {
-		return watchedPaths, err
-	}
-	return append(watchedPaths, path), nil
-}
-
-func refreshNodesWithRegistry(nodes map[string]discovery.NodeInfo, registry *binding.BindingRegistry) map[string]discovery.NodeInfo {
-	realNodes := make(map[string]discovery.NodeInfo)
-	for nodeName, nodeInfo := range nodes {
-		if nodeInfo.IsPhony {
-			continue
-		}
-		realNodes[nodeName] = nodeInfo
-	}
-	mergePhonyNodes(realNodes, registry)
-	return realNodes
-}
-
-func matchesBindingsEvent(eventPath, bindingsPath string) bool {
-	if eventPath == "" || bindingsPath == "" {
-		return false
-	}
-	watchDir := bindingsWatchDir(bindingsPath)
-	if watchDir == "" {
-		return false
-	}
-	if filepath.Clean(filepath.Dir(eventPath)) != filepath.Clean(watchDir) {
-		return false
-	}
-	targetBase := filepath.Base(bindingsPath)
-	eventBase := filepath.Base(eventPath)
-	return eventBase == targetBase || eventBase == targetBase+".tmp"
 }
 
 // RunDaemonLoop runs the daemon event loop in a goroutine (Issue #71).

@@ -30,7 +30,7 @@ patches):
 - Node not defined in `postman.md`, `nodes/{node}.toml`, or `nodes/{node}.md`
 - Session not currently owned or enabled by the running daemon
 - Unread backlog or quiet node behavior explained by `ui_node`,
-  `status --json`, or runtime state rather than by role instructions
+  `get-health`, or runtime state rather than by role instructions
 - Late reply behavior explained by runtime status or routing state rather than
   by a template bug
 
@@ -87,7 +87,7 @@ Two sub-checks:
 - PASS (also verify): template mentions `pop` for reading messages
   (read + archive in one step)
 - PASS (also verify): template does NOT reference raw filesystem paths
-  (e.g., runtime state directories); use CLI commands like `status` instead
+  (e.g., runtime state directories); use CLI commands like `get-health` instead
   (#287: filesystem internals hidden from agents)
 - FAIL: template lacks `send` instruction — agents construct messages
   manually instead of using the atomic one-step command
@@ -96,7 +96,7 @@ Two sub-checks:
 - FAIL: template instructs `mv inbox/... read/` or equivalent — deprecated; use
   `tmux-a2a-postman pop` (auto-archives the next unread message on read)
 - FAIL: template references raw filesystem paths for monitoring — use
-  `status` instead
+  `get-health` instead
 
 ### 2.7. Check 6 — Pre-Approval Verification
 

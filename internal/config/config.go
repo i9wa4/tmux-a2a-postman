@@ -60,9 +60,7 @@ type Config struct {
 	ActivityWindowSeconds      float64 `toml:"activity_window_seconds"`
 
 	// Paths
-	BaseDir      string `toml:"base_dir"`
-	BindingsPath string `toml:"bindings_path"` // #306: path to bindings.toml; empty = phony dispatch disabled
-
+	BaseDir string `toml:"base_dir"`
 	// Message templates
 	NotificationTemplate            string `toml:"notification_template"`
 	DaemonMessageTemplate           string `toml:"daemon_message_template"` // Unified envelope for ping, alert, heartbeat

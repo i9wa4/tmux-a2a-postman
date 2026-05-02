@@ -51,8 +51,8 @@ tmux-a2a-postman send --params 'to=worker,body=hello' --body override
 ### 2.4. --params scope for send
 
 The public scope includes: `to`, `body`, `idempotency-key`, `json`.
-Always-excluded flags (`context-id`, `session`, `config`, `from`, `bindings`,
-`file`) cannot be set via `--params` and return an error if attempted.
+Always-excluded flags (`context-id`, `session`, `config`, `from`, `file`)
+cannot be set via `--params` and return an error if attempted.
 
 NOTE: `--params` JSON keys use hyphen form matching flag names (e.g.,
 `"idempotency-key"`). JSON output keys use underscore form (e.g.,
