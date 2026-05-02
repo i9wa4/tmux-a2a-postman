@@ -27,12 +27,14 @@ func emptySessionHealth(sessionName string) status.SessionHealth {
 		SessionName: sessionName,
 		Nodes:       []status.NodeHealth{},
 		Windows:     []status.SessionWindow{},
+		InputLocks:  []status.InputLock{},
 	}
 }
 
 func emptyAllSessionHealth() status.AllSessionHealth {
 	return status.AllSessionHealth{
-		Sessions: []status.SessionHealth{},
+		SchemaVersion: status.SchemaVersion,
+		Sessions:      []status.SessionHealth{},
 	}
 }
 
@@ -130,6 +132,7 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 	if err != nil {
 		return status.SessionHealth{}, true, err
 	}
+	normalizeSessionHealth(&result)
 	return result, true, nil
 }
 
@@ -248,8 +251,15 @@ func collectAllSessionHealthWithCollector(contextIDFlag, sessionFlag, configPath
 	}
 
 	result := status.AllSessionHealth{
-		ContextID: resolvedContextID,
-		Sessions:  make([]status.SessionHealth, 0, len(sessionNames)),
+		SchemaVersion: status.SchemaVersion,
+		ContextID:     resolvedContextID,
+		Sessions:      make([]status.SessionHealth, 0, len(sessionNames)),
+	}
+	if ownerSession := config.FindContextSessionName(baseDir, resolvedContextID); ownerSession != "" {
+		result.DaemonOwner = &status.DaemonOwner{
+			ContextID:   resolvedContextID,
+			SessionName: ownerSession,
+		}
 	}
 	for _, sessionName := range sessionNames {
 		sessionName, err = config.ValidateSessionName(sessionName)
@@ -260,8 +270,21 @@ func collectAllSessionHealthWithCollector(contextIDFlag, sessionFlag, configPath
 		if err != nil {
 			return status.AllSessionHealth{}, nil, true, err
 		}
+		normalizeSessionHealth(&health)
 		result.Sessions = append(result.Sessions, health)
 	}
 
 	return result, cfg, true, nil
+}
+
+func normalizeSessionHealth(health *status.SessionHealth) {
+	if health.Nodes == nil {
+		health.Nodes = []status.NodeHealth{}
+	}
+	if health.Windows == nil {
+		health.Windows = []status.SessionWindow{}
+	}
+	if health.InputLocks == nil {
+		health.InputLocks = []status.InputLock{}
+	}
 }

@@ -1,5 +1,7 @@
 package status
 
+const SchemaVersion = 1
+
 type NodeHealth struct {
 	Name           string `json:"name"`
 	PaneID         string `json:"pane_id,omitempty"`
@@ -20,19 +22,42 @@ type SessionWindow struct {
 	Nodes []WindowNode `json:"nodes"`
 }
 
+type SessionQueues struct {
+	PostCount       int `json:"post_count"`
+	InboxCount      int `json:"inbox_count"`
+	WaitingCount    int `json:"waiting_count"`
+	DeadLetterCount int `json:"dead_letter_count"`
+}
+
+type InputLock struct {
+	PaneID    string `json:"pane_id"`
+	NodeName  string `json:"node_name,omitempty"`
+	Owner     string `json:"owner,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
 type SessionHealth struct {
 	ContextID    string          `json:"context_id"`
 	SessionName  string          `json:"session_name"`
 	NodeCount    int             `json:"node_count"`
 	VisibleState string          `json:"visible_state"`
 	Compact      string          `json:"compact"`
+	Queues       SessionQueues   `json:"queues"`
 	Nodes        []NodeHealth    `json:"nodes"`
 	Windows      []SessionWindow `json:"windows"`
+	InputLocks   []InputLock     `json:"input_locks"`
+}
+
+type DaemonOwner struct {
+	ContextID   string `json:"context_id"`
+	SessionName string `json:"session_name"`
 }
 
 type AllSessionHealth struct {
-	ContextID string          `json:"context_id"`
-	Sessions  []SessionHealth `json:"sessions"`
+	SchemaVersion int             `json:"schema_version"`
+	ContextID     string          `json:"context_id"`
+	DaemonOwner   *DaemonOwner    `json:"daemon_owner,omitempty"`
+	Sessions      []SessionHealth `json:"sessions"`
 }
 
 var stateRank = map[string]int{

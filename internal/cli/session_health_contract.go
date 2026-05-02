@@ -149,6 +149,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneStates := loadPaneActivityStatus(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	waitingStates, waitingCounts := collectWaitingFacts(sessionDir, sessionName)
+	queues := collectSessionQueues(sessionDir)
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
 		return result, err
@@ -202,7 +203,9 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	})
 	result.NodeCount = len(result.Nodes)
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
+	result.Queues = queues
 	result.Windows = buildSessionWindows(result.Nodes, panes)
+	result.InputLocks = []status.InputLock{}
 	result.Compact = buildSessionCompact(result, panes)
 	return result, nil
 }
@@ -338,6 +341,29 @@ func countMarkdownFiles(dir string) int {
 		}
 	}
 	return count
+}
+
+func countMarkdownFilesRecursive(dir string) int {
+	count := 0
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".md") {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
+func collectSessionQueues(sessionDir string) status.SessionQueues {
+	return status.SessionQueues{
+		PostCount:       countMarkdownFiles(filepath.Join(sessionDir, "post")),
+		InboxCount:      countMarkdownFilesRecursive(filepath.Join(sessionDir, "inbox")),
+		WaitingCount:    countMarkdownFiles(filepath.Join(sessionDir, "waiting")),
+		DeadLetterCount: countMarkdownFiles(filepath.Join(sessionDir, "dead-letter")),
+	}
 }
 
 func discoverSessionPanes(sessionName string) ([]sessionPane, error) {

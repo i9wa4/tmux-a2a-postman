@@ -58,7 +58,7 @@ func TestRunStatus_ParamsCanSelectJSONButCannotRedirectSession(t *testing.T) {
 		if err := RunStatus(&stdout, []string{"--params", `{"json":true}`}); err != nil {
 			t.Fatalf("RunStatus: %v", err)
 		}
-		if stdout.String() != "{\"context_id\":\"\",\"sessions\":[]}\n" {
+		if stdout.String() != "{\"schema_version\":1,\"context_id\":\"\",\"sessions\":[]}\n" {
 			t.Fatalf("stdout = %q, want empty-session JSON", stdout.String())
 		}
 	})
@@ -98,6 +98,9 @@ func TestRunStatus_LiveRuntimeMatchesCanonicalAllSessionHealth(t *testing.T) {
 	if payload.ContextID != contextID {
 		t.Fatalf("ContextID = %q, want %q", payload.ContextID, contextID)
 	}
+	if payload.SchemaVersion != status.SchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", payload.SchemaVersion, status.SchemaVersion)
+	}
 	if len(payload.Sessions) != 1 {
 		t.Fatalf("Sessions length = %d, want 1: %#v", len(payload.Sessions), payload.Sessions)
 	}
@@ -106,6 +109,15 @@ func TestRunStatus_LiveRuntimeMatchesCanonicalAllSessionHealth(t *testing.T) {
 	}
 	if payload.Sessions[0].Compact == "" {
 		t.Fatalf("Compact = empty in payload %#v", payload.Sessions[0])
+	}
+	if payload.Sessions[0].Queues.InboxCount != 1 {
+		t.Fatalf("InboxCount = %d, want 1", payload.Sessions[0].Queues.InboxCount)
+	}
+	if payload.Sessions[0].Queues.WaitingCount != 0 {
+		t.Fatalf("WaitingCount = %d, want 0", payload.Sessions[0].Queues.WaitingCount)
+	}
+	if payload.Sessions[0].InputLocks == nil {
+		t.Fatal("InputLocks = nil, want empty slice")
 	}
 
 	wantHuman := formatAllSessionHealthOneline(payload) + "\n"

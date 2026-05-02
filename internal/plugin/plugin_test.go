@@ -79,7 +79,7 @@ func TestValidateSendBody(t *testing.T) {
 	})
 
 	t.Run("valid body with allowed characters", func(t *testing.T) {
-		body := "Decided X - vault/decisions/uma-pending/2026-03-24-example.md"
+		body := "Decided X - notes/decisions/pending/2026-03-24-example.md"
 		if err := ValidateSendBody(body); err != nil {
 			t.Errorf("expected valid, got error: %v", err)
 		}

@@ -39,7 +39,7 @@ var sendBodyPattern = regexp.MustCompile(`^[A-Za-z0-9 .,\-:_/]+$`)
 
 // ValidateSendBody checks that body is safe to pass to Plugin.Send().
 // Returns a non-nil error (dead-letter reason: body_invalid_pattern) if:
-//   - body exceeds 280 characters (Telegram hard cap)
+//   - body exceeds the provider-neutral 280-character cap
 //   - body contains characters outside [A-Za-z0-9 .,\-:_/] (includes newlines)
 func ValidateSendBody(body string) error {
 	if len(body) > 280 {

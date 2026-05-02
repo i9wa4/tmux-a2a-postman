@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -65,43 +66,19 @@ const (
 // deadLetterDst builds the dead-letter destination path with reason suffix.
 // Transforms "msg.md" → "msg-dl-{reason}.md" in dead-letter/ directory.
 func deadLetterDst(sessionDir, filename, suffix string) string {
-	base := strings.TrimSuffix(filename, ".md")
-	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
+	return store.DeadLetterPath(sessionDir, filename, suffix)
 }
 
 func validateDeadLetterTarget(dstPath string) error {
-	deadLetterDir := filepath.Dir(dstPath)
-	dirInfo, err := os.Lstat(deadLetterDir)
-	if err != nil {
-		return fmt.Errorf("lstat dead-letter dir: %w", err)
-	}
-	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("dead-letter target dir is symlink: %s", deadLetterDir)
-	}
-
-	dstInfo, err := os.Lstat(dstPath)
-	if err == nil {
-		if dstInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("dead-letter target is symlink: %s", dstPath)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("lstat dead-letter target: %w", err)
-	}
-	return nil
+	return store.ValidateDeadLetterTarget(dstPath)
 }
 
 func moveToDeadLetter(srcPath, dstPath string) error {
-	if err := validateDeadLetterTarget(dstPath); err != nil {
-		return err
-	}
-	return os.Rename(srcPath, dstPath)
+	return store.MoveToDeadLetter(srcPath, dstPath)
 }
 
 func writeDeadLetterFile(dstPath string, content []byte) error {
-	if err := validateDeadLetterTarget(dstPath); err != nil {
-		return err
-	}
-	return os.WriteFile(dstPath, content, 0o600)
+	return store.WriteDeadLetterFile(dstPath, content)
 }
 
 func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
@@ -457,7 +434,7 @@ func dispatchPhonyNode(rawRecipient, sender, timestamp, postPath, contextID stri
 				Message: fmt.Sprintf("Phony delivery: %s -> %s", sender, rawRecipient),
 			}
 		}
-		_ = os.Remove(postPath)
+		_ = store.ConsumePost(postPath)
 		sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
 		recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
@@ -795,9 +772,6 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// Ensure recipient inbox subdirectory exists (in recipient's session directory)
 	recipientSessionDir := nodeInfo.SessionDir
 	recipientInbox := filepath.Join(recipientSessionDir, "inbox", recipientSimpleName)
-	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
-		return fmt.Errorf("creating recipient inbox: %w", err)
-	}
 
 	// Enforce inbox queue cap: dead-letter overflow beyond inboxQueueCap.
 	// Protects agent-session nodes from unbounded queue growth (#agent-session).
@@ -814,9 +788,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
-	dst := filepath.Join(recipientInbox, filename)
-	if err := os.Rename(postPath, dst); err != nil {
-		return fmt.Errorf("moving to inbox: %w", err)
+	dst, err := store.DeliverPostToInbox(postPath, recipientInbox, filename)
+	if err != nil {
+		return err
 	}
 	recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
 		MessageID: filename,
@@ -985,28 +959,11 @@ func DeliverSystemMessageDirectResultToTarget(filename string, target controlpla
 // countInboxMessages returns the number of .md files in an inbox directory.
 // Returns 0, nil if the directory does not exist (empty inbox is not an error).
 func countInboxMessages(inboxDir string) (int, error) {
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			n++
-		}
-	}
-	return n, nil
+	return store.CountInboxMessages(inboxDir)
 }
 
 func shadowRelativePath(sessionDir, fullPath string) string {
-	rel, err := filepath.Rel(sessionDir, fullPath)
-	if err != nil {
-		return filepath.Base(fullPath)
-	}
-	return rel
+	return store.ShadowRelativePath(sessionDir, fullPath)
 }
 
 // sendDeadLetterNotification writes a dead-letter notification directly to the
@@ -1288,21 +1245,5 @@ func ScanInboxMessages(inboxPath string) []MessageInfo {
 }
 
 func ArchiveInboxMessage(absPath, filename string) (string, error) {
-	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(absPath))), "read")
-	if err := os.MkdirAll(readDir, 0o700); err != nil {
-		return "", fmt.Errorf("creating read directory: %w", err)
-	}
-	dst := filepath.Join(readDir, filename)
-	if _, err := os.Stat(dst); err == nil {
-		if err := os.Remove(absPath); err != nil {
-			return "", fmt.Errorf("archiving message: %w", err)
-		}
-		return dst, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("archiving message: %w", err)
-	}
-	if err := os.Rename(absPath, dst); err != nil {
-		return "", fmt.Errorf("archiving message: %w", err)
-	}
-	return dst, nil
+	return store.ArchiveInboxMessage(absPath, filename)
 }

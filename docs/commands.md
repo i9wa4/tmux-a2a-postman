@@ -139,7 +139,12 @@ Human output is the compact all-session runtime line:
 
 ```json
 {
+  "schema_version": 1,
   "context_id": "20240101-...",
+  "daemon_owner": {
+    "context_id": "20240101-...",
+    "session_name": "review"
+  },
   "sessions": [
     {
       "context_id": "20240101-...",
@@ -147,6 +152,12 @@ Human output is the compact all-session runtime line:
       "node_count": 4,
       "visible_state": "composing",
       "compact": "🟣",
+      "queues": {
+        "post_count": 0,
+        "inbox_count": 2,
+        "waiting_count": 1,
+        "dead_letter_count": 0
+      },
       "nodes": [
         {
           "name": "worker",
@@ -161,13 +172,17 @@ Human output is the compact all-session runtime line:
       ],
       "windows": [
         {"index": "0", "nodes": [{"name": "worker"}]}
-      ]
+      ],
+      "input_locks": []
     }
   ]
 }
 ```
 
-Use `sessions[*].nodes[*].visible_state` for per-node state and
+Use `schema_version` before parsing, `daemon_owner` to identify the runtime
+owner, `sessions[*].nodes[*].visible_state` for per-node state, `queues` for
+mailbox backlogs, and `input_locks` for pane input ownership. `input_locks` is
+currently an empty array until the input broker owns pane injection.
 `sessions[*].compact` for compact display tokens.
 
 | Flag        | Type   | Default | --params? | Description                       |

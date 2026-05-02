@@ -202,6 +202,10 @@ canonical contract. The per-node visible states are `ready`, `pending`,
 `unavailable` is a fallback that means the current daemon is not authoritative
 for canonical status; it is not a per-node state.
 
+`status --json` includes a `schema_version`, daemon owner metadata, per-session
+queue counts, and an `input_locks` array. `input_locks` is empty until pane
+input is routed through the input broker.
+
 Quick reading guide:
 
 | If you see | It means | Tune / read next |

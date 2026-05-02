@@ -24,8 +24,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
@@ -295,13 +297,15 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 					Message: fmt.Sprintf("compatibility submit %s: %v", filepath.Base(eventPath), err),
 				}
 			} else if submitResult.hasPostDispatch() {
-				log.Printf("postman: compatibility submit: dispatching send result session=%s file=%s without waiting for post watcher\n",
+				log.Printf("postman: compatibility submit: reconciling send result session=%s file=%s without waiting for post watcher\n",
 					filepath.Base(submitResult.SessionDir), submitResult.Filename)
-				rt.handlePostWatcherEvent(submitResult.PostPath, fsnotify.Create)
+				rt.wakePostReconciler(submitResult.PostPath)
 			}
 		}
 	} else if strings.HasSuffix(filepath.Dir(eventPath), "post") {
-		rt.handlePostWatcherEvent(eventPath, event.Op)
+		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+			rt.wakePostReconciler(eventPath)
+		}
 	} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {
 		rt.handleReadWatcherEvent(eventPath, event.Op)
 	}
@@ -350,6 +354,29 @@ func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op
 	}
 
 	rt.processActivePostEvent(eventPath, filename)
+}
+
+func (rt *daemonRuntime) wakePostReconciler(eventPath string) {
+	if _, err := rt.postReconciler().ReconcilePath(eventPath, rt.handlePendingPost); err != nil {
+		log.Printf("postman: WARNING: failed to reconcile post wake-up %s: %v\n", eventPath, err)
+	}
+}
+
+func (rt *daemonRuntime) postReconciler() reconciler.PostReconciler {
+	return reconciler.PostReconciler{
+		CoalesceRateLimitedRoutes: rt.cfg.MinDeliveryGapSeconds > 0,
+		RouteKey: func(post store.PendingPost) (string, bool) {
+			info, err := message.ParseMessageFilename(post.Filename)
+			if err != nil {
+				return "", false
+			}
+			return info.From + ":" + info.To, true
+		},
+	}
+}
+
+func (rt *daemonRuntime) handlePendingPost(post store.PendingPost) {
+	rt.handlePostWatcherEvent(post.Path, fsnotify.Create)
 }
 
 func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
@@ -558,31 +585,8 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 }
 
 func (rt *daemonRuntime) dispatchPendingPostMessages() {
-	seenRateLimitedRoutes := make(map[string]bool)
-	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
-		postDir := filepath.Join(sessionDir, "post")
-		entries, err := os.ReadDir(postDir)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				log.Printf("postman: WARNING: failed to scan pending post dir %s: %v\n", postDir, err)
-			}
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			if rt.cfg.MinDeliveryGapSeconds > 0 {
-				if info, parseErr := message.ParseMessageFilename(entry.Name()); parseErr == nil {
-					routeKey := info.From + ":" + info.To
-					if seenRateLimitedRoutes[routeKey] {
-						continue
-					}
-					seenRateLimitedRoutes[routeKey] = true
-				}
-			}
-			rt.handlePostWatcherEvent(filepath.Join(postDir, entry.Name()), fsnotify.Create)
-		}
+	if _, err := rt.postReconciler().ReconcileSessionDirs(runtimeSessionDirs(rt.sessionDir, rt.nodes), rt.handlePendingPost); err != nil {
+		log.Printf("postman: WARNING: failed to reconcile pending post messages: %v\n", err)
 	}
 }
 
