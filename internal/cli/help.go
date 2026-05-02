@@ -52,7 +52,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "Lifecycle and recovery:")
 		fmt.Fprintln(stdout, "  start                      Start the daemon (single-column TUI)")
 		fmt.Fprintln(stdout, "  stop                       Stop the running daemon for this tmux session")
-		fmt.Fprintln(stdout, "  Internal compatibility helpers remain available but are omitted from the default operator help.")
+		fmt.Fprintln(stdout, "  Compatibility and diagnostic helpers are internal, not CLI commands.")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Messaging Protocol:")
 		fmt.Fprintln(stdout, "  send --to <node> --body \"text\"          Send a message in one step")

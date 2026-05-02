@@ -18,8 +18,8 @@ starting the daemon.
 | `status`    | Show the current runtime status                      |
 | `--version` | Print the installed version string                   |
 
-Internal compatibility helpers may remain callable for migration, but they are
-not part of the public operator contract.
+Compatibility and diagnostic helpers are internal. They are not part of CLI
+dispatch or the public operator contract.
 
 ## 2. Global Flags
 

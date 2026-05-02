@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/bindcmd"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/version"
@@ -112,24 +111,14 @@ func main() {
 			NoTUI:       *noTUI,
 		},
 		cli.Handlers{
-			Start:                   cli.RunStartWithFlags,
-			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
-			Read:                    cli.RunRead,
-			Pop:                     cli.RunPop,
-			Status:                  func(args []string) error { return cli.RunStatus(os.Stdout, args) },
-			GetSessionHealth:        cli.RunGetSessionHealth,
-			Timeline:                cli.RunTimeline,
-			Replay:                  cli.RunReplay,
-			GetContextID:            runGetContextID,
-			SupervisorDrain:         cli.RunSupervisorDrain,
-			SendMessage:             cli.RunSendMessage,
-			Todo:                    cli.RunTodo,
+			Start:       cli.RunStartWithFlags,
+			Pop:         cli.RunPop,
+			Status:      func(args []string) error { return cli.RunStatus(os.Stdout, args) },
+			SendMessage: cli.RunSendMessage,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},
-			Bind:   bindcmd.Run,
-			Schema: cli.RunSchema,
-			Help:   cli.RunHelp,
+			Help: cli.RunHelp,
 		},
 	)
 	if result.Err != nil {
@@ -160,7 +149,7 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Lifecycle and recovery:")
 	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon")
 	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
-	fmt.Fprintln(w, "  Internal compatibility helpers remain available but are omitted from the default operator usage.")
+	fmt.Fprintln(w, "  Compatibility and diagnostic helpers are internal, not CLI commands.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Global Flags:")
 	fmt.Fprintln(w, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")

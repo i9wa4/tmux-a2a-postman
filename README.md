@@ -255,10 +255,9 @@ tmux-a2a-postman stop
 ```
 
 The default operator loop is `send`, `pop`, and `status`. Lifecycle and recovery
-commands such as `start` and `stop` are also public. Internal compatibility
-helpers may remain callable for migration, but they are not the main
-beginner/operator surface. Use explicit subcommands; bare `tmux-a2a-postman`
-prints usage and does not start the daemon.
+commands such as `start` and `stop` are also public. Compatibility and
+diagnostic helpers are internal, not CLI commands. Use explicit subcommands;
+bare `tmux-a2a-postman` prints usage and does not start the daemon.
 
 ## 6. Directory Structure
 

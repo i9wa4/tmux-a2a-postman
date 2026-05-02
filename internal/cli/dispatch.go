@@ -10,22 +10,12 @@ type Config struct {
 }
 
 type Handlers struct {
-	Start                   func(contextID, configPath, logFilePath string, noTUI bool) error
-	GetSessionStatusOneline func(args []string) error
-	Read                    func(args []string) error
-	Pop                     func(args []string) error
-	Status                  func(args []string) error
-	GetSessionHealth        func(args []string) error
-	Timeline                func(args []string) error
-	Replay                  func(args []string) error
-	GetContextID            func(args []string) error
-	SupervisorDrain         func(args []string) error
-	SendMessage             func(args []string) error
-	Todo                    func(args []string) error
-	Stop                    func(args []string) error
-	Bind                    func(args []string) error
-	Schema                  func(args []string) error
-	Help                    func(args []string)
+	Start       func(contextID, configPath, logFilePath string, noTUI bool) error
+	Pop         func(args []string) error
+	Status      func(args []string) error
+	SendMessage func(args []string) error
+	Stop        func(args []string) error
+	Help        func(args []string)
 }
 
 type Result struct {
@@ -41,16 +31,6 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman start",
 			Err:   handlers.Start(cfg.ContextID, cfg.ConfigPath, cfg.LogFilePath, cfg.NoTUI),
 		}
-	case "get-health-oneline", "get-session-status-oneline":
-		return Result{
-			Label: "postman " + command,
-			Err:   handlers.GetSessionStatusOneline(args),
-		}
-	case "read":
-		return Result{
-			Label: "postman read",
-			Err:   handlers.Read(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
 	case "pop":
 		return Result{
 			Label: "postman pop",
@@ -61,55 +41,15 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman status",
 			Err:   handlers.Status(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "get-health", "get-session-health":
+	case "send":
 		return Result{
-			Label: "postman " + command,
-			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "timeline":
-		return Result{
-			Label: "postman timeline",
-			Err:   handlers.Timeline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "replay":
-		return Result{
-			Label: "postman replay",
-			Err:   handlers.Replay(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "get-context-id":
-		return Result{
-			Label: "postman get-context-id",
-			Err:   handlers.GetContextID(prependConfig(cfg.ConfigPath, args)),
-		}
-	case "supervisor-drain":
-		return Result{
-			Label: "postman supervisor-drain",
-			Err:   handlers.SupervisorDrain(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "send", "send-message":
-		return Result{
-			Label: "postman " + command,
+			Label: "postman send",
 			Err:   handlers.SendMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "stop":
 		return Result{
 			Label: "postman stop",
 			Err:   handlers.Stop(prependConfig(cfg.ConfigPath, args)),
-		}
-	case "todo":
-		return Result{
-			Label: "postman todo",
-			Err:   handlers.Todo(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "bind":
-		return Result{
-			Label: "postman bind",
-			Err:   handlers.Bind(args),
-		}
-	case "schema":
-		return Result{
-			Label: "postman schema",
-			Err:   handlers.Schema(args),
 		}
 	case "help":
 		handlers.Help(args)
