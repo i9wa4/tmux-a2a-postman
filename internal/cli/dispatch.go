@@ -10,12 +10,14 @@ type Config struct {
 }
 
 type Handlers struct {
-	Start       func(contextID, configPath, logFilePath string, noTUI bool) error
-	Pop         func(args []string) error
-	Status      func(args []string) error
-	SendMessage func(args []string) error
-	Stop        func(args []string) error
-	Help        func(args []string)
+	Start                   func(contextID, configPath, logFilePath string, noTUI bool) error
+	Pop                     func(args []string) error
+	Status                  func(args []string) error
+	GetSessionHealth        func(args []string) error
+	GetSessionStatusOneline func(args []string) error
+	SendMessage             func(args []string) error
+	Stop                    func(args []string) error
+	Help                    func(args []string)
 }
 
 type Result struct {
@@ -40,6 +42,16 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman status",
 			Err:   handlers.Status(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "get-health":
+		return Result{
+			Label: "postman get-health",
+			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "get-health-oneline":
+		return Result{
+			Label: "postman get-health-oneline",
+			Err:   handlers.GetSessionStatusOneline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "send":
 		return Result{

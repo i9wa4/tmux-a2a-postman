@@ -196,22 +196,28 @@ symlinks, use project-local overrides.
 
 ### 4.5. Runtime status model
 
-`status`, `status --json`, and the default TUI are three views over the same
-canonical contract. The per-node visible states are `ready`, `pending`,
-`user_input`, `composing`, `spinning`, and `stalled`. Session-level
-`unavailable` is a fallback that means the current daemon is not authoritative
-for canonical status; it is not a per-node state.
+`get-health`, `get-health-oneline`, `status`, and the default TUI are views
+over the same canonical contract. Agents should prefer `get-health` for
+structured session JSON and `get-health-oneline` for compact coordination;
+`status` remains the human-oriented shortcut. The per-node visible states are
+`ready`, `pending`, `user_input`, `composing`, `spinning`, and `stalled`.
+Session-level `unavailable` is a fallback that means the current daemon is not
+authoritative for canonical status; it is not a per-node state.
 
-`status --json` includes a `schema_version`, daemon owner metadata, per-session
-queue counts, and an `input_locks` array. `input_locks` is usually empty when
-idle; during pane delivery it lists active input broker leases.
+`get-health` includes queue counts, node-level visible states, window grouping,
+and an `input_locks` array for the current or specified tmux session.
+`status --json` includes the all-session wrapper with `schema_version` and
+daemon owner metadata. `input_locks` is usually empty when idle; during pane
+delivery it lists active input broker leases.
 
 Quick reading guide:
 
-| If you see | It means | Tune / read next |
-| ---------- | -------- | ---------------- |
-| `pending`, `user_input`, `composing`, `spinning`, or `stalled` in `status --json` or the TUI | Canonical visible state for a node right now | `docs/design/node-state-machine.md` |
-| A pane hint telling a node to run `tmux-a2a-postman pop` | Delivery reached that node's inbox; this is a pane notification, not a new state | `docs/design/notification.md` |
+- `pending`, `user_input`, `composing`, `spinning`, or `stalled` in
+  `get-health` or the TUI means: Canonical visible state for a node right now.
+  Read `docs/design/node-state-machine.md`.
+- A pane hint telling a node to run `tmux-a2a-postman pop` means delivery
+  reached that node's inbox; this is a pane notification, not a new state.
+  Read `docs/design/notification.md`.
 
 Core public knobs for this model live in `postman.toml`:
 
@@ -254,10 +260,12 @@ tmux-a2a-postman start --no-tui
 tmux-a2a-postman stop
 ```
 
-The default operator loop is `send`, `pop`, and `status`. Lifecycle and recovery
-commands such as `start` and `stop` are also public. Compatibility and
-diagnostic helpers are internal, not CLI commands. Use explicit subcommands;
-bare `tmux-a2a-postman` prints usage and does not start the daemon.
+The default operator loop is `send`, `pop`, and `status`. Agent coordination
+can use `get-health` and `get-health-oneline` when it needs runtime state.
+Lifecycle and recovery commands such as `start` and `stop` are also public.
+Compatibility and diagnostic helpers are internal, not CLI commands. Use
+explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start
+the daemon.
 
 ## 6. Directory Structure
 
@@ -328,6 +336,8 @@ tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
 tmux-a2a-postman status
 tmux-a2a-postman status --json
+tmux-a2a-postman get-health
+tmux-a2a-postman get-health-oneline
 ```
 
 Lifecycle and recovery:

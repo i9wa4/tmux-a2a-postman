@@ -37,16 +37,16 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `status`, and `--version`.")
+	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `status`, `get-health`, `get-health-oneline`, and `--version`.")
 	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
 	assertContainsNormalized(t, commandsDoc, "| `status` | Show the current runtime status |")
+	assertContainsNormalized(t, commandsDoc, "| `get-health` | Print canonical session health JSON |")
+	assertContainsNormalized(t, commandsDoc, "| `get-health-oneline` | Print compact all-session health |")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
 	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}`)
 	assertContainsNormalized(t, commandsDoc, `{"id":"filename.md","from":"...","to":"...","body":"...","timestamp":"..."}`)
 	assertContainsNormalized(t, commandsDoc, "It archives the message after reading unless `--peek` or `--file` is used.")
 	for _, hidden := range []string{
-		"`get-health`",
-		"`get-health-oneline`",
 		"`read`",
 		"`todo`",
 		"`timeline`",
@@ -112,7 +112,7 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	assertContainsNormalized(t, readme, "Runtime status model")
-	assertContainsNormalized(t, readme, "`status`, `status --json`, and the default TUI are three views over the same canonical contract")
+	assertContainsNormalized(t, readme, "`get-health`, `get-health-oneline`, `status`, and the default TUI are views over the same canonical contract")
 	assertContainsNormalized(t, readme, "Quick reading guide")
 	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
 	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
@@ -123,8 +123,6 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
 	for _, hidden := range []string{
-		"tmux-a2a-postman get-health",
-		"tmux-a2a-postman get-health-oneline",
 		"tmux-a2a-postman read",
 		"tmux-a2a-postman todo",
 		"tmux-a2a-postman timeline",

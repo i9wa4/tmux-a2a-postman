@@ -111,10 +111,12 @@ func main() {
 			NoTUI:       *noTUI,
 		},
 		cli.Handlers{
-			Start:       cli.RunStartWithFlags,
-			Pop:         cli.RunPop,
-			Status:      func(args []string) error { return cli.RunStatus(os.Stdout, args) },
-			SendMessage: cli.RunSendMessage,
+			Start:                   cli.RunStartWithFlags,
+			Pop:                     cli.RunPop,
+			Status:                  func(args []string) error { return cli.RunStatus(os.Stdout, args) },
+			GetSessionHealth:        cli.RunGetSessionHealth,
+			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
+			SendMessage:             cli.RunSendMessage,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},
@@ -145,6 +147,8 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  send                       Send a message in one step (--to and --body required)")
 	fmt.Fprintln(w, "  pop                        Read and archive the oldest unread inbox message")
 	fmt.Fprintln(w, "  status                     Show current runtime status (--json for canonical payload)")
+	fmt.Fprintln(w, "  get-health                 Print canonical session health JSON")
+	fmt.Fprintln(w, "  get-health-oneline         Print compact all-session health")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Lifecycle and recovery:")
 	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon")
@@ -160,5 +164,6 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
 	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman status --json                       # Inspect runtime status as JSON")
+	fmt.Fprintln(w, "  tmux-a2a-postman get-health-oneline                  # Inspect compact health")
 	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")
 }

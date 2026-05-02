@@ -216,7 +216,13 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "status                     Show current runtime status (--json for canonical payload)") {
 		t.Fatalf("usage missing status command: %q", got)
 	}
-	for _, hidden := range []string{"get-health", "get-health-oneline", " read ", " todo ", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
+	if !strings.Contains(got, "get-health                 Print canonical session health JSON") {
+		t.Fatalf("usage missing get-health command: %q", got)
+	}
+	if !strings.Contains(got, "get-health-oneline         Print compact all-session health") {
+		t.Fatalf("usage missing get-health-oneline command: %q", got)
+	}
+	for _, hidden := range []string{" read ", " todo ", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("usage exposes hidden surface %q: %q", hidden, got)
 		}

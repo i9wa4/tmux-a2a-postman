@@ -31,7 +31,13 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "status                     Show current runtime status (--json for canonical payload)") {
 		t.Fatalf("stdout missing status overview line: %q", stdout.String())
 	}
-	for _, hidden := range []string{"get-health", "get-health-oneline", "read", "todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
+	if !strings.Contains(stdout.String(), "get-health                 Print canonical session health JSON") {
+		t.Fatalf("stdout missing get-health overview line: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "get-health-oneline         Print compact all-session health") {
+		t.Fatalf("stdout missing get-health-oneline overview line: %q", stdout.String())
+	}
+	for _, hidden := range []string{"read", "todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(stdout.String(), "  "+hidden) || strings.Contains(stdout.String(), "\n"+hidden+"\n") {
 			t.Fatalf("stdout exposes hidden command %q in the default overview: %q", hidden, stdout.String())
 		}
@@ -57,6 +63,12 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "status") {
 		t.Fatalf("stdout missing status command: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "get-health") {
+		t.Fatalf("stdout missing get-health command: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "get-health-oneline") {
+		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
 	}
@@ -69,7 +81,7 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Output canonical all-session status JSON") {
 		t.Fatalf("stdout missing status json description: %q", stdout.String())
 	}
-	for _, hidden := range []string{"get-context-id", "get-health", "get-health-oneline", "\nread\n", "\ntodo\n", "\ntimeline\n", "\nreplay\n", "\nschema", "\nbind\n", "\nsupervisor-drain\n", "--context-id"} {
+	for _, hidden := range []string{"get-context-id", "\nread\n", "\ntodo\n", "\ntimeline\n", "\nreplay\n", "\nschema", "\nbind\n", "\nsupervisor-drain\n", "--context-id"} {
 		if strings.Contains(stdout.String(), hidden) {
 			t.Fatalf("stdout exposes hidden surface %q in command help: %q", hidden, stdout.String())
 		}
@@ -100,7 +112,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
 		"retention_period_days            Inactive runtime cleanup window",
-		"status, status --json, and the default TUI read the same canonical health contract.",
+		"get-health, get-health-oneline, status, and the default TUI read the same canonical health contract.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout missing %q: %q", want, got)

@@ -127,6 +127,62 @@ func TestDispatch_StatusPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
+func TestDispatch_HealthCommandsArePublic(t *testing.T) {
+	t.Run("get-health", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"get-health",
+			[]string{"--json"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				GetSessionHealth: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-health" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-health")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-health args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("get-health-oneline", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"get-health-oneline",
+			[]string{"--json"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				GetSessionStatusOneline: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman get-health-oneline" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+}
+
 func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 	var gotArgs []string
 
@@ -184,8 +240,6 @@ func TestDispatch_UnknownCommandReturnsUsageError(t *testing.T) {
 func TestDispatch_RetiredCommandsReturnUsageError(t *testing.T) {
 	for _, command := range []string{
 		"read",
-		"get-health",
-		"get-health-oneline",
 		"get-session-health",
 		"get-session-status-oneline",
 		"timeline",

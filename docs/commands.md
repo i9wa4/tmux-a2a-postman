@@ -2,21 +2,23 @@
 
 This page documents the supported public `tmux-a2a-postman` command surface.
 The public surface is intentionally small: `start`, `stop`, `send`, `pop`,
-`status`, and `--version`.
+`status`, `get-health`, `get-health-oneline`, and `--version`.
 
 Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of
 starting the daemon.
 
 ## 1. Command Overview
 
-| Command     | Purpose                                              |
-| ----------- | ---------------------------------------------------- |
-| `start`     | Start the postman daemon                             |
-| `stop`      | Stop the running daemon                              |
-| `send`      | Compose and send a message in one step               |
-| `pop`       | Read and archive the next inbox message              |
-| `status`    | Show the current runtime status                      |
-| `--version` | Print the installed version string                   |
+| Command              | Purpose                                      |
+| -------------------- | -------------------------------------------- |
+| `start`              | Start the postman daemon                     |
+| `stop`               | Stop the running daemon                      |
+| `send`               | Compose and send a message in one step       |
+| `pop`                | Read and archive the next inbox message      |
+| `status`             | Show the current runtime status              |
+| `get-health`         | Print canonical session health JSON          |
+| `get-health-oneline` | Print compact all-session health             |
+| `--version`          | Print the installed version string           |
 
 Compatibility and diagnostic helpers are internal. They are not part of CLI
 dispatch or the public operator contract.
@@ -121,12 +123,70 @@ JSON output uses a two-shape contract:
 
 Test for the `id` field before treating the response as a message.
 
-## 5. Status
+## 5. Health and Status
 
-### 5.1. status
+### 5.1. get-health
 
 ```text
-tmux-a2a-postman status [--json] [--session NAME] [--config PATH]
+tmux-a2a-postman get-health [--session NAME] [--config PATH]
+```
+
+`get-health` prints the canonical status payload for the current or specified
+tmux session. This is the agent-readable shape for understanding peer state in
+that session.
+
+```json
+{
+  "context_id": "20240101-...",
+  "session_name": "review",
+  "node_count": 4,
+  "visible_state": "composing",
+  "compact": "🟣",
+  "queues": {
+    "post_count": 0,
+    "inbox_count": 2,
+    "waiting_count": 1,
+    "dead_letter_count": 0
+  },
+  "nodes": [
+    {
+      "name": "worker",
+      "pane_id": "%11",
+      "pane_state": "ready",
+      "waiting_state": "composing",
+      "visible_state": "composing",
+      "inbox_count": 2,
+      "waiting_count": 1,
+      "current_command": "claude"
+    }
+  ],
+  "windows": [
+    {"index": "0", "nodes": [{"name": "worker"}]}
+  ],
+  "input_locks": [
+    {
+      "pane_id": "%11",
+      "node_name": "worker",
+      "owner": "tmux-delivery:review:worker",
+      "expires_at": "2024-01-01T12:00:30Z"
+    }
+  ]
+}
+```
+
+Use `nodes[*].visible_state` for per-node state, `queues` for mailbox backlogs,
+`input_locks` for active pane input broker leases, and `compact` for compact
+display tokens.
+
+| Flag        | Type   | Default | --params? | Description                  |
+| ----------- | ------ | ------- | --------- | ---------------------------- |
+| `--session` | string | ""      | No        | tmux session name            |
+| `--config`  | string | ""      | No        | Path to config file          |
+
+### 5.2. get-health-oneline
+
+```text
+tmux-a2a-postman get-health-oneline [--json] [--session NAME] [--config PATH]
 ```
 
 Human output is the compact all-session runtime line:
@@ -135,68 +195,41 @@ Human output is the compact all-session runtime line:
 [0]🔷🔵:🟢 [1]🔴
 ```
 
-`--json` returns the canonical all-session status payload:
+Window groups are colon-separated emoji runs with no literal window labels.
+
+With `--json`, `get-health-oneline` returns:
 
 ```json
-{
-  "schema_version": 1,
-  "context_id": "20240101-...",
-  "daemon_owner": {
-    "context_id": "20240101-...",
-    "session_name": "review"
-  },
-  "sessions": [
-    {
-      "context_id": "20240101-...",
-      "session_name": "review",
-      "node_count": 4,
-      "visible_state": "composing",
-      "compact": "🟣",
-      "queues": {
-        "post_count": 0,
-        "inbox_count": 2,
-        "waiting_count": 1,
-        "dead_letter_count": 0
-      },
-      "nodes": [
-        {
-          "name": "worker",
-          "pane_id": "%11",
-          "pane_state": "ready",
-          "waiting_state": "composing",
-          "visible_state": "composing",
-          "inbox_count": 2,
-          "waiting_count": 1,
-          "current_command": "claude"
-        }
-      ],
-      "windows": [
-        {"index": "0", "nodes": [{"name": "worker"}]}
-      ],
-      "input_locks": [
-        {
-          "pane_id": "%11",
-          "node_name": "worker",
-          "owner": "tmux-delivery:review:worker",
-          "expires_at": "2024-01-01T12:00:30Z"
-        }
-      ]
-    }
-  ]
-}
+{"status":"[0]🔷🔵:🟢 [1]🔴"}
 ```
 
-Use `schema_version` before parsing, `daemon_owner` to identify the runtime
-owner, `sessions[*].nodes[*].visible_state` for per-node state, `queues` for
-mailbox backlogs, and `input_locks` for active pane input broker leases.
-`sessions[*].compact` for compact display tokens.
+| Flag        | Type   | Default | --params? | Description                    |
+| ----------- | ------ | ------- | --------- | ------------------------------ |
+| `--json`    | bool   | false   | Yes       | Output JSON with status string |
+| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters   |
+| `--session` | string | ""      | No        | tmux session name              |
+| `--config`  | string | ""      | No        | Path to config file            |
 
-| Flag        | Type   | Default | --params? | Description                       |
-| ----------- | ------ | ------- | --------- | --------------------------------- |
-| `--json`    | bool   | false   | Yes       | Output canonical status JSON      |
-| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters      |
-| `--session` | string | ""      | No        | tmux session name                 |
-| `--config`  | string | ""      | No        | Path to config file               |
+### 5.3. status
+
+```text
+tmux-a2a-postman status [--json] [--session NAME] [--config PATH]
+```
+
+`status` is the human-oriented shortcut. Without `--json`, it prints the same
+compact line as `get-health-oneline`. With `--json`, it prints the same
+canonical all-session payload used by the TUI.
+
+`status --json` includes `schema_version`, daemon owner metadata, and one
+`sessions[]` entry per observed tmux session. Use `schema_version` before
+parsing and `daemon_owner` to identify the runtime owner.
+
+| Flag        | Type   | Default | --params? | Description                  |
+| ----------- | ------ | ------- | --------- | ---------------------------- |
+| `--json`    | bool   | false   | Yes       | Output canonical status JSON |
+| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters |
+| `--session` | string | ""      | No        | tmux session name            |
+| `--config`  | string | ""      | No        | Path to config file          |
 
 ## 6. Configuration
 
