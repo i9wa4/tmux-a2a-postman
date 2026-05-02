@@ -109,8 +109,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "          ├── inbox/")
 		fmt.Fprintln(stdout, "          │   └── {node}/     # daemon delivers messages here")
 		fmt.Fprintln(stdout, "          ├── read/           # agent moves messages here after reading")
-		fmt.Fprintln(stdout, "          ├── dead-letter/    # unroutable messages land here")
-		fmt.Fprintln(stdout, "          └── waiting/        # per-node waiting state files")
+		fmt.Fprintln(stdout, "          └── dead-letter/    # unroutable messages land here")
 		return nil
 	case "config":
 		fmt.Fprintln(stdout, "Config — core runtime model")
@@ -121,7 +120,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "  (fall back to ~/.config/tmux-a2a-postman/...)")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Runtime state model:")
-		fmt.Fprintln(stdout, "  Core visible states: ready, pending, user_input, composing, spinning, stalled")
+		fmt.Fprintln(stdout, "  Core visible states: ready, pending, stale")
 		fmt.Fprintln(stdout, "  Session fallback: unavailable (this daemon does not own canonical health)")
 		fmt.Fprintln(stdout, "  get-health, get-health-oneline, and the default TUI read the same canonical health contract.")
 		fmt.Fprintln(stdout, "")
@@ -131,7 +130,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Core config:")
 		fmt.Fprintln(stdout, "  edges                            Bidirectional routes between nodes")
-		fmt.Fprintln(stdout, "  ui_node                          Human-facing node for daemon-originated mail")
+		fmt.Fprintln(stdout, "  ui_node                          Optional target filter for startup auto-PING")
 		fmt.Fprintln(stdout, "  message_footer                   Footer appended to stored send mail")
 		fmt.Fprintln(stdout, "  notification_template            Pane hint rendered when mail arrives")
 		fmt.Fprintln(stdout, "  min_delivery_gap_seconds         Same-route delivery gap for duplicate control")

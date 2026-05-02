@@ -62,28 +62,19 @@ enter_delay_seconds = 3.0          # Delay before sending Enter key
 enter_verify_delay_seconds = 3.0   # Delay for post-Enter capture comparison (0 = disabled)
 enter_retry_max = 2                # Max C-m retries on unchanged pane capture (0 = disabled)
 startup_delay_seconds = 10.0       # Initial startup delay
-reminder_interval_messages = 20    # Send reminder after N messages (0 = disabled)
-inbox_unread_threshold = 3         # Alert ui_node when inbox has N+ unread messages (0 = disabled)
 auto_ping_delay_seconds = 0        # Delay before first auto-PING for newly discovered/replaced nodes (0 = immediate)
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
 retention_period_days = 90            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
-# message_age_warning_seconds = 0      # Delivery latency warning threshold in seconds (0 = disabled)
-alert_cooldown_seconds = 600          # Minimum interval (seconds) between any two alert/warning sends to the same recipient node.
-pane_notify_cooldown_seconds = 600    # Minimum interval (seconds) between SendToPane calls to the same pane (0 = use default 600).
-alert_delivery_window_seconds = 60    # Suppress alerts/warnings if the recipient received a regular message within this window (seconds).
-read_context_mode = "none"            # Read-time local context block for bare interactive pop: "none" or "pieces"
-read_context_heading = "Local Runtime Context"
 
 # TUI settings
 edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
 
 # Node state thresholds
-node_active_seconds = 300          # <=5min since last pane change: internal active; display still collapses to ready unless a waiting overlay applies
+node_active_seconds = 300          # <=5min since last pane change: ready
 node_idle_seconds = 900            # >5min and <=15min since last pane change: internal idle; >15min becomes internal stale
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
-node_spinning_seconds = 0          # disabled by default; set to positive seconds to enable composing -> spinning and the expected-reply overdue alert
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
@@ -105,42 +96,11 @@ edges = []
 
 # Global settings
 reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
-ui_node = "messenger"            # TUI target node for daemon alerts
+ui_node = "messenger"            # Optional target filter for startup auto-PING
 auto_enable_new_sessions = false   # Auto-enable newly discovered sessions (default: false)
 auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
-
-# reminder_message:
-#   {node}      - Node name
-#   {count}     - Message count since last reminder
-#   {template}  - Node's role template (inline content from config)
-#   {inbox_path} - Full path to recipient's inbox directory
-#
-# NOTE: if reminder_message = "{template}" and a node has no template defined,
-#       {template} expands to "" and SendToPane is called with empty content (spurious Enter).
-#       Ensure all nodes have a template when using this pattern.
-#
-# Default stays path-free so reminder pane hints do not expose inbox directories.
-reminder_message = "Unread messages pending. Run `tmux-a2a-postman pop` to read them."
-
-# Alert action templates (appended to daemon alert messages sent to ui_node)
-# NOTE: These templates are rendered for inbox_unread_summary, node_inactivity, and
-#       unreplied_message alert types. They are only appended when the alert passes
-#       the rate-limiter and delivery-window guards.
-# Variables: {node} - target node name, {reply_command} - command to create draft
-alert_action_reachable_template = "\n\nAction: {node} is in your allowed contacts. Send a nudge now:\n\n  {reply_command}\n"
-alert_action_unreachable_template = "\n\nAction: {node} is not in your allowed contacts. Forward this alert to orchestrator immediately.\n"
-
-# Alert message body templates (used as alert content sent to ui_node)
-inbox_stagnation_alert_template = "Inbox stagnation [{severity}]: {node} has unread message in inbox for {age} (threshold: {threshold})"
-inbox_unread_summary_alert_template = "Inbox unread summary: {node} has {count} unread messages (threshold: {threshold})"
-node_inactivity_alert_template = "Node inactivity [{severity}]: {node} inactive for {inactive_duration} (threshold: {threshold}). Last sent: {last_sent}, Last received: {last_received}, Liveness confirmed: {liveness_confirmed}"
-unreplied_message_alert_template = "Unreplied message [WARNING]: {node} has message in read/ for {time_since_read} without reply (from: {from}, threshold: {threshold})"
-# Used when a reply-tracked waiting marker crosses composing -> spinning.
-spinning_alert_template = "Expected reply overdue [WARNING]: {requester} is waiting on {awaited_node} in {context_id} for {age} (threshold: {threshold}, message: {message_id})"
-# Used when a reply-tracked waiting marker crosses composing/spinning -> stalled.
-stalled_alert_template = "Reply stalled [WARNING]: {requester} is waiting on {awaited_node} in {context_id}; the pane went stale after {age} (previous state: {previous_state}, threshold: {threshold}, message: {message_id})"
 
 # Common template (prepended to all node templates)
 # common_template = ""
@@ -155,14 +115,13 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {reply_command} - reply command for the current recipient
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
-No reply needed for: DONE, ACK, HEARTBEAT_OK, or status-only messages."""
+No reply needed for: DONE, ACK, PING, or status-only messages."""
 
-# Daemon message template (shared envelope for ping, alert, and heartbeat)
-# There are no separate alert_message_template or heartbeat_message_template keys.
+# Daemon message template (shared envelope for daemon-originated PING)
 # Pass 1 variables (BuildEnvelope): {context_id}, {from_node}, {node},
 #   {iso_timestamp}, {talks_to_line}, {reply_command}, {session_name}, {session_dir}
 # Pass 2 variables (caller-injected): {message_type}, {heading}, {message},
-#   {role_content}, {alert_type} (alert only)
+#   {role_content}
 daemon_message_template = """---
 params:
   contextId: {context_id}
@@ -230,10 +189,6 @@ params:
 you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your message has been moved to dead-letter/.
 """
 
-# Dropped ball event message template (Issue #82)
-# Variables: {node}, {duration}
-dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
-
 # =============================================================================
 # Node-Specific Configuration
 # =============================================================================
@@ -248,35 +203,8 @@ dropped_ball_event_template = "Dropped ball: {node} (holding for {duration})"
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# reminder_interval_messages = 0     # Node-specific reminder interval (overrides global)
-# reminder_message = ""              # Node-specific reminder message
-# idle_timeout_seconds = 0.0         # Idle timeout (0 = disabled)
-# dropped_ball_timeout_seconds = 0   # Dropped ball detection (0 = disabled)
-# dropped_ball_cooldown_seconds = 0  # Dropped ball cooldown (default: same as timeout)
-# dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"
 # delivery_idle_timeout_seconds = 0  # Re-deliver swallowed messages after N idle seconds (0 = disabled) (#282)
 # delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message (0 = use default 3) (#282)
 
-# =============================================================================
-# Heartbeat-LLM Configuration
-# =============================================================================
-
-[heartbeat]
-enabled = false
-interval_seconds = 1800.0
-llm_node = ""
-# The heartbeat prompt becomes the Message section inside daemon_message_template.
-prompt = """Read HEARTBEAT.md if it exists. Follow it strictly. Do not infer tasks from prior history.
-
-If nothing needs attention:
-  nix run github:i9wa4/tmux-a2a-postman -- send \\
-    --to postman --body "HEARTBEAT_OK"
-
-If action is needed: reply to messenger with [HEARTBEAT ALERT] prefix:
-  nix run github:i9wa4/tmux-a2a-postman -- send \\
-    --to messenger \\
-    --body "[HEARTBEAT ALERT] <your message>""""
-
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
-dropped_ball_notification = "tui"  # "tui" (default) / "display" / "all"

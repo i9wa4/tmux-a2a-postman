@@ -60,14 +60,9 @@ func TestCompactStatusMark(t *testing.T) {
 	}{
 		{"active", "🟢"},
 		{"ready", "🟢"},
-		{"user_input", "🟣"},
 		{"pending", "🔷"},
-		{"composing", "🔵"},
 		{"idle", "🟢"},
-		{"spinning", "🟡"},
 		{"stale", "🔴"},
-		{"stalled", "🔴"},
-		{"stuck", "🔴"},
 		{"", "🔴"},
 	}
 	for _, c := range cases {
@@ -87,54 +82,12 @@ func TestCompactSessionStatusMark(t *testing.T) {
 	}
 }
 
-func TestWaitingFileVisibleState(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name:    "user_input_wins_without_reply_expectation",
-			content: "---\nstate: user_input\nexpects_reply: false\n---",
-			want:    "user_input",
-		},
-		{
-			name:    "composing_requires_reply_expectation",
-			content: "---\nstate: composing\nexpects_reply: true\n---",
-			want:    "composing",
-		},
-		{
-			name:    "composing_without_reply_expectation_is_ignored",
-			content: "---\nstate: composing\nexpects_reply: false\n---",
-			want:    "",
-		},
-		{
-			name:    "stuck_normalizes_to_stalled",
-			content: "---\nstate: stuck\nexpects_reply: true\n---",
-			want:    "stalled",
-		},
-		{
-			name:    "missing_frontmatter_is_ignored",
-			content: "state: spinning",
-			want:    "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := waitingFileVisibleState(tc.content); got != tc.want {
-				t.Fatalf("waitingFileVisibleState(%q) = %q, want %q", tc.content, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestFormatSessionHealthOneline(t *testing.T) {
 	health := status.SessionHealth{
-		Compact: "🔷🔵",
+		Compact: "🔷🟢",
 	}
 
-	if got, want := formatSessionHealthOneline(health), "🔷🔵"; got != want {
+	if got, want := formatSessionHealthOneline(health), "🔷🟢"; got != want {
 		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
 	}
 }
@@ -147,14 +100,14 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 				Compact: "🔴",
 			},
 			{
-				Compact: "🔷🔵:🟢",
+				Compact: "🔷🟢:🟢",
 			},
 		},
 	}
 
 	got := formatAllSessionHealthOneline(healths)
-	if got != "[0]🔴 [1]🔷🔵:🟢" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1]🔷🔵:🟢")
+	if got != "[0]🔴 [1]🔷🟢:🟢" {
+		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1]🔷🟢:🟢")
 	}
 }
 
@@ -179,11 +132,9 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) 
 		filepath.Join(mainSessionDir, "inbox", "messenger"),
 		filepath.Join(mainSessionDir, "inbox", "critic"),
 		filepath.Join(mainSessionDir, "inbox", "worker"),
-		filepath.Join(mainSessionDir, "waiting"),
 		filepath.Join(reviewSessionDir, "inbox", "messenger"),
 		filepath.Join(reviewSessionDir, "inbox", "critic"),
 		filepath.Join(reviewSessionDir, "inbox", "worker"),
-		filepath.Join(reviewSessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -210,14 +161,6 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) 
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(main worker inbox): %v", err)
-	}
-
-	if err := os.WriteFile(
-		filepath.Join(mainSessionDir, "waiting", "20260404-000001-s0000-from-orchestrator-to-critic.md"),
-		[]byte("---\nstate: composing\nexpects_reply: true\n---\n"),
-		0o644,
-	); err != nil {
-		t.Fatalf("WriteFile(main critic waiting): %v", err)
 	}
 
 	if err := os.WriteFile(
@@ -286,8 +229,8 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) 
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
-	if payload.Status != "[0]🔷🔵:🟢 [1]🟢🔷" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🔵:🟢 [1]🟢🔷")
+	if payload.Status != "[0]🔷🟢:🟢 [1]🟢🔷" {
+		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🟢:🟢 [1]🟢🔷")
 	}
 }
 
@@ -311,10 +254,8 @@ func TestRunGetSessionStatusOneline_JSONOutput_PreservesSessionIDIndicesAcrossSe
 	for _, dir := range []string{
 		filepath.Join(ghostSessionDir, "inbox", "messenger"),
 		filepath.Join(ghostSessionDir, "inbox", "worker"),
-		filepath.Join(ghostSessionDir, "waiting"),
 		filepath.Join(mainSessionDir, "inbox", "messenger"),
 		filepath.Join(mainSessionDir, "inbox", "worker"),
-		filepath.Join(mainSessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)

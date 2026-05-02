@@ -53,14 +53,14 @@ Example: orchestrator delegates a task to worker.
 For thread-bound review or approval traffic, add a durable `thread_id` inside
 the message `params:` block. Non-thread traffic can omit it. When present, the
 daemon preserves that `thread_id` in journal-backed mailbox shadow and
-waiting-file events, and approval projection only materializes from events that
-carry the durable thread identity.
+mailbox events, and approval projection only materializes from events that carry
+the durable thread identity.
 
 ### 3.2. ui_node
 
-`ui_node` designates the human-facing interface. The embedded defaults route
-daemon alerts to `messenger`; override `ui_node` if you want a different
-recipient, or set it to an empty string to turn the alert path off.
+`ui_node` is an optional target filter for startup auto-PING. Leave it empty to
+PING every discovered node, or set it when only one human-facing node should
+receive the daemon's startup PING.
 
 ```toml
 [postman]
@@ -199,18 +199,18 @@ symlinks, use project-local overrides.
 `get-health`, `get-health-oneline`, and the default TUI are views over the same
 canonical contract. Agents should prefer `get-health` for structured session
 JSON and `get-health-oneline` for compact coordination. The per-node visible
-states are `ready`, `pending`, `user_input`, `composing`, `spinning`, and
-`stalled`. Session-level `unavailable` is a fallback that means the current
-daemon is not authoritative for canonical status; it is not a per-node state.
+states are `ready`, `pending`, and `stale`. Session-level `unavailable` is a
+fallback that means the current daemon is not authoritative for canonical
+status; it is not a per-node state.
 
 `get-health` includes queue counts, node-level visible states, and window
 grouping for the current or specified tmux session.
 
 Quick reading guide:
 
-- `pending`, `user_input`, `composing`, `spinning`, or `stalled` in
-  `get-health` or the TUI means: Canonical visible state for a node right now.
-  Read `docs/design/node-state-machine.md`.
+- Canonical visible state for a node right now: `pending` means the node has
+  unread inbox mail.
+- `stale` means the pane is missing, stale, or otherwise not currently ready.
 - A pane hint telling a node to run `tmux-a2a-postman pop` means delivery
   reached that node's inbox; this is a pane notification, not a new state.
   Read `docs/design/notification.md`.
@@ -286,7 +286,6 @@ Falls back to `~/.local/state/tmux-a2a-postman` when `XDG_STATE_HOME` is unset
       inbox/{node}/     # daemon delivers messages here
       read/             # agent moves messages here after reading
       dead-letter/      # unroutable messages land here
-      waiting/          # per-node waiting state files
 ```
 
 Runtime lifecycle classes

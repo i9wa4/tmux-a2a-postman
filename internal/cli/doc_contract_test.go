@@ -41,7 +41,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
 	assertContainsNormalized(t, commandsDoc, "| `get-health` | Print canonical session health JSON |")
 	assertContainsNormalized(t, commandsDoc, "| `get-health-oneline` | Print compact all-session health |")
-	assertContainsNormalized(t, commandsDoc, `"compact": "🟣"`)
+	assertContainsNormalized(t, commandsDoc, `"compact": "🔷"`)
 	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}`)
 	assertContainsNormalized(t, commandsDoc, `{"id":"filename.md","from":"...","to":"...","body":"...","timestamp":"..."}`)
 	assertContainsNormalized(t, commandsDoc, "It archives the message after reading unless `--peek` or `--file` is used.")
@@ -68,34 +68,24 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, popSource, "print a specific inbox message by filename from the current session inbox (non-destructive)")
 }
 
-func TestReducedSurfaceDocContract_DaemonModelAndAlertGuide(t *testing.T) {
+func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T) {
 	daemonModelDoc := readRepoFile(t, "docs/design/daemon-session-model.md")
 	assertContainsNormalized(t, daemonModelDoc, "The default operator workflow assumes one daemon process per Unix user.")
 	assertContainsNormalized(t, daemonModelDoc, "concurrent starts cannot race into two daemons")
 	assertContainsNormalized(t, daemonModelDoc, "A different Unix user's daemon is still treated as alive for cleanup safety, but it is not treated as the current user's owner.")
 	assertContainsNormalized(t, daemonModelDoc, "Cross-context ownership follows the live enabled-session marker, not leftover session directories.")
 
-	alertGuide := readRepoFile(t, "docs/guides/alert-config.md")
-	assertContainsNormalized(t, alertGuide, "Use the daemon log as the reliable startup signal; the reduced default TUI does not expose a separate event-log pane.")
-	assertContainsNormalized(t, alertGuide, "Operator Triage Map")
-	assertContainsNormalized(t, alertGuide, "Canonical visible state, not a daemon alert by itself")
-	assertContainsNormalized(t, alertGuide, "Coordination signal separate from `ui_node` inbox alerts")
-	assertContainsNormalized(t, alertGuide, "`message_footer` controls reply guidance only for stored messages written by `send`.")
-	assertContainsNormalized(t, alertGuide, "Daemon alerts and heartbeat mail use `daemon_message_template`, and dead-letter notifications embed their own re-send instructions.")
-	assertContainsNormalized(t, alertGuide, "`pop` should print the delivered message body as stored, not invent a second hard-coded reply hint.")
-	assertContainsNormalized(t, alertGuide, "reminder_interval_messages")
-	assertContainsNormalized(t, alertGuide, "inbox_unread_threshold")
-	assertContainsNormalized(t, alertGuide, "node_spinning_seconds")
-	assertContainsNormalized(t, alertGuide, "alert_cooldown_seconds")
-	assertContainsNormalized(t, alertGuide, "alert_delivery_window_seconds")
-	assertContainsNormalized(t, alertGuide, "pane_notify_cooldown_seconds")
+	notificationDoc := readRepoFile(t, "docs/design/notification.md")
+	assertContainsNormalized(t, notificationDoc, "The daemon delivers mail to the recipient inbox, sends a pane hint to that recipient when delivery succeeds, and emits startup auto-PING messages.")
+	assertContainsNormalized(t, notificationDoc, "`ui_node` is not a general escalation channel.")
+	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
 }
 
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
 	assertContainsNormalized(t, notificationDoc, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract.")
-	assertContainsNormalized(t, notificationDoc, "This document starts from that unified operator model, then maps the notification surfaces, delivery paths, and guard policy in the current tree.")
-	assertContainsNormalized(t, notificationDoc, "## 2. Notification Surfaces in the Unified Model")
+	assertContainsNormalized(t, notificationDoc, "## 1. Surfaces")
+	assertContainsNormalized(t, notificationDoc, "## 2. Delivery Path")
 
 	if strings.Contains(notificationDoc, "There are eight distinct notification mechanisms") {
 		t.Fatal("notification design doc still opens with the old mechanism-first framing")
@@ -134,6 +124,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		"`journal_health_cutover_enabled`",
 		"`journal_compatibility_cutover_enabled`",
 		"`[heartbeat].enabled`",
+		"waiting/",
 	} {
 		if strings.Contains(readme, hidden) {
 			t.Fatalf("README still exposes hidden public surface %q", hidden)

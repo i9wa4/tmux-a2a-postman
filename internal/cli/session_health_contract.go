@@ -12,7 +12,6 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -28,17 +27,11 @@ type sessionPane struct {
 }
 
 func compactStatusMark(state string) string {
-	switch status.NormalizeWaitingState(state) {
+	switch status.NormalizeState(state) {
 	case "ready", "active", "idle":
 		return "🟢"
 	case "pending":
 		return "🔷"
-	case "composing":
-		return "🔵"
-	case "spinning":
-		return "🟡"
-	case "user_input":
-		return "🟣"
 	default:
 		return "🔴"
 	}
@@ -90,14 +83,6 @@ func orderedEdgeNodeNames(edges []string) []string {
 }
 
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
-	mode, err := config.ResolveJournalCutoverMode(cfg)
-	if err != nil {
-		return status.SessionHealth{}, err
-	}
-	if mode == config.JournalCutoverLegacy {
-		return collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
-	}
-
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		return unavailableSessionHealth(contextID, sessionName), nil
@@ -105,10 +90,7 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	if projected, ok := projectedSessionHealth(sessionDir); ok {
 		return projected, nil
 	}
-	return status.SessionHealth{
-		ContextID:   contextID,
-		SessionName: sessionName,
-	}, nil
+	return collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
 }
 
 func collectSessionHealthLegacy(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
@@ -148,7 +130,6 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	}
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneStates := loadPaneActivityStatus(filepath.Join(baseDir, contextID, "pane-activity.json"))
-	waitingStates, waitingCounts := collectWaitingFacts(sessionDir, sessionName)
 	queues := collectSessionQueues(sessionDir)
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
@@ -181,12 +162,10 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 			Name:           simpleName,
 			PaneID:         nodeInfo.PaneID,
 			PaneState:      paneStates[nodeInfo.PaneID],
-			WaitingState:   waitingStates[simpleName],
 			InboxCount:     inboxCount,
-			WaitingCount:   waitingCounts[simpleName],
 			CurrentCommand: pane.currentCommand,
 		}
-		node.VisibleState = status.VisibleState(node.PaneState, node.WaitingState, node.InboxCount)
+		node.VisibleState = status.VisibleState(node.PaneState, node.InboxCount)
 		result.Nodes = append(result.Nodes, node)
 	}
 
@@ -246,87 +225,6 @@ func loadPaneActivityStatus(stateFile string) map[string]string {
 	return result
 }
 
-func collectWaitingFacts(sessionDir, sessionName string) (map[string]string, map[string]int) {
-	states := make(map[string]string)
-	counts := make(map[string]int)
-
-	entries, err := os.ReadDir(filepath.Join(sessionDir, "waiting"))
-	if err != nil {
-		return states, counts
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-
-		fileInfo, err := message.ParseMessageFilename(entry.Name())
-		if err != nil {
-			continue
-		}
-
-		recipient := nodeaddr.Full(fileInfo.To, sessionName)
-		recipientSession, recipientName, hasSession := nodeaddr.Split(recipient)
-		if !hasSession || recipientSession != sessionName {
-			continue
-		}
-
-		counts[recipientName]++
-
-		content, err := os.ReadFile(filepath.Join(sessionDir, "waiting", entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		waitingState := waitingFileVisibleState(string(content))
-		if waitingState == "" {
-			continue
-		}
-		if status.StateRank(waitingState) >= status.StateRank(states[recipientName]) {
-			states[recipientName] = waitingState
-		}
-	}
-
-	return states, counts
-}
-
-func waitingFrontmatterBool(content, key string) bool {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return false
-	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return false
-	}
-	for _, line := range strings.Split(rest[:second], "\n") {
-		if strings.TrimSpace(line) == key+": true" {
-			return true
-		}
-	}
-	return false
-}
-
-func waitingFileVisibleState(content string) string {
-	if strings.Contains(content, "state: user_input") {
-		return "user_input"
-	}
-	if !waitingFrontmatterBool(content, "expects_reply") {
-		return ""
-	}
-	switch {
-	case strings.Contains(content, "state: stalled"), strings.Contains(content, "state: stuck"):
-		return "stalled"
-	case strings.Contains(content, "state: spinning"):
-		return "spinning"
-	case strings.Contains(content, "state: composing"):
-		return "composing"
-	default:
-		return ""
-	}
-}
-
 func countMarkdownFiles(dir string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -360,7 +258,6 @@ func collectSessionQueues(sessionDir string) status.SessionQueues {
 	return status.SessionQueues{
 		PostCount:       countMarkdownFiles(filepath.Join(sessionDir, "post")),
 		InboxCount:      countMarkdownFilesRecursive(filepath.Join(sessionDir, "inbox")),
-		WaitingCount:    countMarkdownFiles(filepath.Join(sessionDir, "waiting")),
 		DeadLetterCount: countMarkdownFiles(filepath.Join(sessionDir, "dead-letter")),
 	}
 }

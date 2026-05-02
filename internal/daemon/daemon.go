@@ -16,23 +16,18 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
-	"github.com/i9wa4/tmux-a2a-postman/internal/heartbeat"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
-	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
-	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
-const inboxCheckInterval = 30 * time.Second // Issue #239: ticker interval for inbox stagnation checks
+const inboxCheckInterval = 30 * time.Second
 
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
 func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, fn func()) *time.Timer {
@@ -51,62 +46,6 @@ func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, 
 		}()
 		fn()
 	})
-}
-
-// replaceWaitingState replaces the state field value within YAML frontmatter only,
-// and updates state_updated_at to the current time (#175).
-// Scoped to frontmatter to prevent accidental replacement of state mentions in message body.
-func replaceWaitingState(content, oldState, newState string) string {
-	// Find frontmatter boundaries
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return content
-	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return content
-	}
-	fm := rest[:second]
-	after := rest[second:]
-
-	// Replace state in frontmatter only
-	fm = strings.Replace(fm, "state: "+oldState, "state: "+newState, 1)
-
-	// Update state_updated_at
-	now := time.Now().UTC().Format(time.RFC3339)
-	if strings.Contains(fm, "state_updated_at: ") {
-		lines := strings.Split(fm, "\n")
-		for i, line := range lines {
-			if strings.HasPrefix(line, "state_updated_at: ") {
-				lines[i] = "state_updated_at: " + now
-				break
-			}
-		}
-		fm = strings.Join(lines, "\n")
-	} else {
-		fm += "\nstate_updated_at: " + now
-	}
-
-	return content[:first+4] + fm + after
-}
-
-func frontmatterBool(content, key string) bool {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return false
-	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return false
-	}
-	for _, line := range strings.Split(rest[:second], "\n") {
-		if strings.TrimSpace(line) == key+": true" {
-			return true
-		}
-	}
-	return false
 }
 
 func frontmatterValue(content, key string) string {
@@ -339,156 +278,6 @@ func processCompatibilitySubmitRequest(requestPath string) (compatibilitySubmitP
 	return result, nil
 }
 
-func waitingFileContentForRead(info *message.MessageInfo, messageContent []byte, cfg *config.Config, now time.Time) (string, bool) {
-	waitingSince := now.UTC().Format(time.RFC3339)
-	threadLine := ""
-	if metadata, err := message.ParseEnvelopeMetadata(string(messageContent)); err == nil && metadata.ThreadID != "" {
-		threadLine = "thread_id: " + metadata.ThreadID + "\n"
-	}
-	if cfg != nil && cfg.UINode != "" && info.To == cfg.UINode {
-		return fmt.Sprintf(
-			"---\nfrom: %s\nto: %s\n%swaiting_since: %s\nstate: user_input\nstate_updated_at: %s\nexpects_reply: false\n---\n",
-			info.From, info.To, threadLine, waitingSince, waitingSince,
-		), true
-	}
-	if !frontmatterBool(string(messageContent), "expects_reply") {
-		return "", false
-	}
-	return fmt.Sprintf(
-		"---\nfrom: %s\nto: %s\n%swaiting_since: %s\nstate: composing\nstate_updated_at: %s\nexpects_reply: true\n---\n",
-		info.From, info.To, threadLine, waitingSince, waitingSince,
-	), true
-}
-
-func waitingSinceFromContent(content string) time.Time {
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "waiting_since: ") {
-			ts := strings.TrimPrefix(line, "waiting_since: ")
-			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(ts)); err == nil {
-				return t
-			}
-			return time.Time{}
-		}
-	}
-	return time.Time{}
-}
-
-func advanceWaitingState(content, paneState string, now time.Time, idleThreshold, spinningThreshold time.Duration, spinningEnabled bool) (string, bool) {
-	if !frontmatterBool(content, "expects_reply") {
-		return content, false
-	}
-
-	isComposing := strings.Contains(content, "state: composing")
-	isSpinning := strings.Contains(content, "state: spinning")
-	if !isComposing && !isSpinning {
-		return content, false
-	}
-
-	if isSpinning {
-		if paneState == "stale" {
-			return replaceWaitingState(content, "spinning", "stalled"), true
-		}
-		return content, false
-	}
-
-	waitingSince := waitingSinceFromContent(content)
-	if waitingSince.IsZero() {
-		return content, false
-	}
-	if now.Sub(waitingSince) <= idleThreshold {
-		return content, false
-	}
-	if paneState == "stale" {
-		return replaceWaitingState(content, "composing", "stalled"), true
-	}
-	if spinningEnabled && now.Sub(waitingSince) > spinningThreshold && paneState == "active" {
-		return replaceWaitingState(content, "composing", "spinning"), true
-	}
-	return content, false
-}
-
-func visibleWaitingState(content string) string {
-	if strings.Contains(content, "state: user_input") {
-		return "user_input"
-	}
-	if !frontmatterBool(content, "expects_reply") {
-		return ""
-	}
-	switch {
-	case strings.Contains(content, "state: stalled"), strings.Contains(content, "state: stuck"):
-		return "stalled"
-	case strings.Contains(content, "state: spinning"):
-		return "spinning"
-	case strings.Contains(content, "state: composing"):
-		return "composing"
-	default:
-		return ""
-	}
-}
-
-func sendSpinningAlertForWaitingFile(sessionDir, contextID, waitingFilename, waitingContent string, now time.Time, spinningThreshold time.Duration, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	if cfg == nil || cfg.UINode == "" || cfg.SpinningAlertTemplate == "" {
-		return nil
-	}
-
-	requester := frontmatterValue(waitingContent, "from")
-	awaitedNode := frontmatterValue(waitingContent, "to")
-	waitingSince := waitingSinceFromContent(waitingContent)
-	if requester == "" || awaitedNode == "" || waitingSince.IsZero() {
-		return nil
-	}
-
-	age := now.Sub(waitingSince).Round(time.Second)
-	threshold := spinningThreshold.Round(time.Second)
-	alertVars := map[string]string{
-		"node":               awaitedNode,
-		"from":               requester,
-		"requester":          requester,
-		"to":                 awaitedNode,
-		"awaited_node":       awaitedNode,
-		"context_id":         contextID,
-		"spinning_duration":  age.String(),
-		"age":                age.String(),
-		"threshold":          threshold.String(),
-		"message_id":         waitingFilename,
-		"message_identifier": waitingFilename,
-	}
-	body := template.ExpandVariables(cfg.SpinningAlertTemplate, alertVars)
-	return sendAlertToUINode(sessionDir, contextID, cfg.UINode, body, "spinning", cfg, adjacency, nodes)
-}
-
-func sendStalledAlertForWaitingFile(sessionDir, contextID, waitingFilename, previousState, waitingContent string, now time.Time, idleThreshold time.Duration, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	if cfg == nil || cfg.UINode == "" || cfg.StalledAlertTemplate == "" {
-		return nil
-	}
-
-	requester := frontmatterValue(waitingContent, "from")
-	awaitedNode := frontmatterValue(waitingContent, "to")
-	waitingSince := waitingSinceFromContent(waitingContent)
-	if requester == "" || awaitedNode == "" || waitingSince.IsZero() {
-		return nil
-	}
-
-	age := now.Sub(waitingSince).Round(time.Second)
-	threshold := idleThreshold.Round(time.Second)
-	alertVars := map[string]string{
-		"node":               awaitedNode,
-		"from":               requester,
-		"requester":          requester,
-		"to":                 awaitedNode,
-		"awaited_node":       awaitedNode,
-		"context_id":         contextID,
-		"previous_state":     previousState,
-		"stalled_duration":   age.String(),
-		"age":                age.String(),
-		"threshold":          threshold.String(),
-		"message_id":         waitingFilename,
-		"message_identifier": waitingFilename,
-	}
-	body := template.ExpandVariables(cfg.StalledAlertTemplate, alertVars)
-	return sendAlertToUINode(sessionDir, contextID, cfg.UINode, body, "stalled", cfg, adjacency, nodes)
-}
-
 // EdgeActivity tracks communication timestamps for an edge (Issue #37).
 type EdgeActivity struct {
 	LastForwardAt  time.Time // A -> B last communication time
@@ -507,15 +296,9 @@ type DaemonState struct {
 	prevPaneStates                map[string]uinode.PaneInfo // Issue #98: Track previous pane states for restart detection
 	prevPaneStatesMu              sync.RWMutex               // Issue #98: Mutex for prevPaneStates
 	prevPaneToNode                map[string]string          // Track previous pane ID -> node key mapping for restart detection
-	lastAlertTimestamp            map[string]time.Time       // Issue #118: Track last alert timestamps (alertKey -> time)
-	lastAlertTimestampMu          sync.RWMutex               // Issue #118: Mutex for lastAlertTimestamp
-	lastInboxUnreadCount          map[string]int             // Issue #264: per-node last alerted inbox count
-	lastInboxUnreadCountMu        sync.RWMutex               // Issue #264
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
 	reservedDeliveryByRoute       map[string]time.Time       // Issue #393: in-flight rate-limit reservations (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
-	alertedReadFiles              map[string]struct{}        // Paths of read/ files already alerted (suppress repeats)
-	alertedReadFilesMu            sync.Mutex                 // Mutex for alertedReadFiles
 	swallowedRetryCount           map[string]int             // Issue #282: inbox file path -> re-delivery attempt count
 	swallowedRetryCountMu         sync.Mutex                 // Issue #282
 }
@@ -532,11 +315,8 @@ func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 		enabledSessions:               make(map[string]bool),
 		prevPaneStates:                make(map[string]uinode.PaneInfo), // Issue #98
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
-		lastAlertTimestamp:            make(map[string]time.Time),       // Issue #118
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		reservedDeliveryByRoute:       make(map[string]time.Time),
-		lastInboxUnreadCount:          make(map[string]int), // Issue #264
-		alertedReadFiles:              make(map[string]struct{}),
 		swallowedRetryCount:           make(map[string]int),
 	}
 }
@@ -730,14 +510,12 @@ func RunDaemonLoop(
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
-	reminderState *reminder.ReminderState,
 	events chan<- tui.DaemonEvent,
 	configPath string,
 	configPaths []string,
 	nodesDirs []string,
 	daemonState *DaemonState,
 	idleTracker *idle.IdleTracker,
-	alertRateLimiter *alert.AlertRateLimiter,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) {
@@ -754,14 +532,12 @@ func RunDaemonLoop(
 		adjacency,
 		nodes,
 		knownNodes,
-		reminderState,
 		events,
 		configPath,
 		configPaths,
 		nodesDirs,
 		daemonState,
 		idleTracker,
-		alertRateLimiter,
 		sharedNodes,
 		selfSession,
 	)
@@ -771,7 +547,7 @@ func RunDaemonLoop(
 	inboxCheckTicker := time.NewTicker(inboxCheckInterval)
 	defer inboxCheckTicker.Stop()
 
-	runtime.bootstrap(ctx)
+	runtime.bootstrap()
 
 	for {
 		select {
@@ -792,259 +568,6 @@ func RunDaemonLoop(
 			runtime.handleScanTick()
 		case <-inboxCheckTicker.C:
 			runtime.handleInboxCheckTick()
-		}
-	}
-}
-
-// sendAlertToUINode sends an alert message to the ui_node inbox.
-// Writes directly to post/ so the daemon delivery loop routes and notifies normally.
-// Uses DaemonMessageTemplate with two-pass expansion (BuildEnvelope + Pass 2).
-func sendAlertToUINode(sessionDir, contextID, uiNode, body, alertType string, cfg *config.Config, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) error {
-	tmpl := cfg.DaemonMessageTemplate
-	if tmpl == "" {
-		return nil // no template configured; silent no-op
-	}
-	sourceSessionName := filepath.Base(filepath.Dir(sessionDir))
-	now := time.Now()
-	ts := fmt.Sprintf("%s-%d", now.Format("20060102-150405"), now.UnixNano()%1000000)
-	filename := fmt.Sprintf("%s-from-daemon-to-%s.md", ts, uiNode)
-	postPath := filepath.Join(sessionDir, "post", filename)
-	scaffolded := envelope.BuildDaemonEnvelope(
-		cfg, tmpl, uiNode, "daemon",
-		contextID, postPath,
-		nil, adjacency, nodes, sourceSessionName,
-		nil,
-	)
-	content := template.ExpandVariables(scaffolded, map[string]string{
-		"message_type": "alert",
-		"heading":      "Alert: " + alertType,
-		"alert_type":   alertType,
-		"message":      body,
-		"role_content": envelope.BuildRoleContent(cfg, uiNode),
-	})
-	return os.WriteFile(postPath, []byte(content), 0o600)
-}
-
-// collectPendingStates scans inbox/ directories for unarchived messages
-// and returns a map of sessionName:nodeName -> "pending" for nodes with messages
-// waiting in their inbox. Only applies when the node has no worse waiting-file state.
-func collectPendingStates(nodes map[string]discovery.NodeInfo, priority map[string]int) map[string]string {
-	result := make(map[string]string)
-	for nodeKey, nodeInfo := range nodes {
-		parts := strings.SplitN(nodeKey, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		nodeName := parts[1]
-		inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", nodeName)
-		entries, err := os.ReadDir(inboxDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if strings.HasSuffix(entry.Name(), ".md") {
-				if priority["pending"] >= priority[result[nodeKey]] {
-					result[nodeKey] = "pending"
-				}
-				break
-			}
-		}
-	}
-	return result
-}
-
-func uiNodeDiscovered(nodes map[string]discovery.NodeInfo, uiNode string) bool {
-	if uiNode == "" {
-		return false
-	}
-	for nodeName := range nodes {
-		parts := strings.SplitN(nodeName, ":", 2)
-		if parts[len(parts)-1] == uiNode {
-			return true
-		}
-	}
-	return false
-}
-
-func hasActiveAlertTimeouts(cfg *config.Config) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.NodeDefaults.IdleTimeoutSeconds > 0 || cfg.NodeDefaults.DroppedBallTimeoutSeconds > 0 {
-		return true
-	}
-	for _, node := range cfg.Nodes {
-		if node.IdleTimeoutSeconds > 0 || node.DroppedBallTimeoutSeconds > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func alertDeliveryStatus(cfg *config.Config, nodes map[string]discovery.NodeInfo) (string, string) {
-	if cfg == nil || cfg.UINode == "" {
-		return "", ""
-	}
-	if cfg.UINode != "" && !uiNodeDiscovered(nodes, cfg.UINode) {
-		return "degraded:ui_node_missing", fmt.Sprintf(
-			"postman: WARNING: alert delivery degraded: ui_node %q is not discoverable in this session. Alerts routed to %q may dead-letter until that pane is present.",
-			cfg.UINode, cfg.UINode,
-		)
-	}
-	if !hasActiveAlertTimeouts(cfg) {
-		return "degraded:thresholds_disabled", "postman: WARNING: alert delivery degraded: no nodes have " +
-			"idle_timeout_seconds or dropped_ball_timeout_seconds set. " +
-			"Node-inactivity and unreplied-message alerts will not fire."
-	}
-	return "healthy", fmt.Sprintf(
-		"postman: INFO: alert delivery recovered: ui_node %q is discoverable and per-node alert thresholds are active.",
-		cfg.UINode,
-	)
-}
-
-func syncAlertDeliveryStatus(prev string, cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) string {
-	current, msg := alertDeliveryStatus(cfg, nodes)
-	if current == "" {
-		return ""
-	}
-	if strings.HasPrefix(current, "degraded:") {
-		if current == prev {
-			return current
-		}
-		log.Print(msg)
-		events <- tui.DaemonEvent{Type: "alert_delivery_degraded", Message: msg}
-		return current
-	}
-	if current == "healthy" {
-		if strings.HasPrefix(prev, "degraded:") {
-			log.Print(msg)
-			events <- tui.DaemonEvent{Type: "alert_delivery_recovered", Message: msg}
-		}
-		return current
-	}
-	return current
-}
-
-// warnAlertConfig emits the initial alert-delivery degradation signal at startup.
-// This is observability-only: no behavior is changed.
-func warnAlertConfig(cfg *config.Config, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) string {
-	return syncAlertDeliveryStatus("", cfg, nodes, events)
-}
-
-// checkInboxStagnation checks inbox unread count for all nodes and sends an alert to
-// cfg.UINode when the count reaches cfg.InboxUnreadThreshold.
-// Only the inbox_unread_summary count-based path is restored here (design doc #245).
-// Three guards are enforced:
-//   - Guard 1: alertRateLimiter.Allow — per-recipient cooldown
-//   - Guard 2: idleTracker.GetLastReceived — suppress if UINode received recently
-//   - Guard 3: count-based signal (distinct from stagnation / node_inactivity)
-func checkInboxStagnation(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter, ds *DaemonState) {
-	if cfg.UINode == "" || cfg.InboxUnreadThreshold <= 0 {
-		return
-	}
-
-	now := time.Now()
-
-	for nodeKey, nodeInfo := range nodes {
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
-
-		// Do not alert about UINode's own inbox here
-		if simpleName == cfg.UINode {
-			continue
-		}
-
-		inboxPath := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
-		entries, err := os.ReadDir(inboxPath)
-		if err != nil {
-			continue
-		}
-
-		inboxCount := 0
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
-				inboxCount++
-			}
-		}
-		if inboxCount < cfg.InboxUnreadThreshold {
-			ds.lastInboxUnreadCountMu.Lock()
-			delete(ds.lastInboxUnreadCount, simpleName)
-			ds.lastInboxUnreadCountMu.Unlock()
-			continue
-		}
-		ds.lastInboxUnreadCountMu.RLock()
-		lastCount := ds.lastInboxUnreadCount[simpleName]
-		ds.lastInboxUnreadCountMu.RUnlock()
-		if inboxCount <= lastCount {
-			continue
-		}
-		ds.lastInboxUnreadCountMu.Lock()
-		ds.lastInboxUnreadCount[simpleName] = inboxCount
-		ds.lastInboxUnreadCountMu.Unlock()
-
-		// Send TUI event unconditionally (no rate limit for TUI display)
-		alertVars := map[string]string{
-			"node":      simpleName,
-			"count":     fmt.Sprintf("%d", inboxCount),
-			"threshold": fmt.Sprintf("%d", cfg.InboxUnreadThreshold),
-		}
-		msg := template.ExpandVariables(cfg.InboxUnreadSummaryAlertTemplate, alertVars)
-		events <- tui.DaemonEvent{
-			Type:    "inbox_unread_summary",
-			Message: msg,
-			Details: map[string]interface{}{
-				"node":      simpleName,
-				"count":     inboxCount,
-				"threshold": cfg.InboxUnreadThreshold,
-			},
-		}
-
-		// Guard 1: per-recipient cooldown
-		if !alertRateLimiter.Allow(cfg.UINode, now) {
-			continue
-		}
-
-		// Guard 2: suppress if UINode received a message recently
-		// Use session-prefixed key matching UpdateReceiveActivity convention
-		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
-		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
-		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
-			continue
-		}
-
-		// Build action text
-		var replyCmd string
-		if cfg.ReplyCommand != "" {
-			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
-		} else {
-			replyCmd = fmt.Sprintf(
-				"nix run github:i9wa4/tmux-a2a-postman -- send --to %s --body \"<your reply>\"",
-				simpleName,
-			)
-		}
-		canReach := false
-		for _, neighbor := range adjacency[cfg.UINode] {
-			if neighbor == simpleName {
-				canReach = true
-				break
-			}
-		}
-		actionVars := map[string]string{
-			"node":          simpleName,
-			"reply_command": replyCmd,
-		}
-		var actionText string
-		if canReach && cfg.AlertActionReachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
-		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
-		}
-
-		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "inbox_unread_summary", cfg, adjacency, nodes); err == nil {
-			alertRateLimiter.Record(cfg.UINode, now)
 		}
 	}
 }
@@ -1074,283 +597,6 @@ func scanLiveInboxCounts(nodes map[string]discovery.NodeInfo) map[string]int {
 		counts[nodeKey] = n
 	}
 	return counts
-}
-
-// checkNodeInactivity alerts UINode when a monitored node has been inactive
-// (no send + no receive) for longer than its configured IdleTimeoutSeconds.
-// Three guards: TUI event (unconditional), Guard 1 (rate limiter), Guard 2 (delivery window).
-// Guard 3 (signal): excludes nodes with state:user_input waiting files.
-func checkNodeInactivity(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter) {
-	if cfg.UINode == "" || cfg.NodeInactivityAlertTemplate == "" {
-		return
-	}
-
-	now := time.Now()
-
-	for nodeKey, nodeInfo := range nodes {
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
-
-		if simpleName == cfg.UINode {
-			continue
-		}
-
-		nodeConfig, ok := cfg.Nodes[simpleName]
-		if !ok || nodeConfig.IdleTimeoutSeconds <= 0 {
-			continue
-		}
-
-		// Exclude nodes with state:user_input waiting files
-		waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-		waitingEntries, err := os.ReadDir(waitingDir)
-		if err == nil {
-			userInputFound := false
-			for _, entry := range waitingEntries {
-				if !strings.HasSuffix(entry.Name(), ".md") {
-					continue
-				}
-				filePath := filepath.Join(waitingDir, entry.Name())
-				fileContent, readErr := os.ReadFile(filePath)
-				if readErr != nil {
-					continue
-				}
-				contentStr := string(fileContent)
-				if strings.Contains(contentStr, "state: user_input") {
-					if fi, fiErr := message.ParseMessageFilename(entry.Name()); fiErr == nil && fi.From == simpleName {
-						userInputFound = true
-						break
-					}
-				}
-			}
-			if userInputFound {
-				continue
-			}
-		}
-
-		nodeStates := idleTracker.GetNodeStates()
-		activity, actOk := nodeStates[nodeKey]
-		if !actOk {
-			continue
-		}
-		lastAct := activity.LastSent
-		if activity.LastReceived.After(lastAct) {
-			lastAct = activity.LastReceived
-		}
-		if lastAct.IsZero() {
-			continue
-		}
-		idleDuration := time.Since(lastAct)
-		threshold := time.Duration(nodeConfig.IdleTimeoutSeconds * float64(time.Second))
-		if idleDuration < threshold {
-			continue
-		}
-
-		alertVars := map[string]string{
-			"node":     simpleName,
-			"duration": idleDuration.Round(time.Second).String(),
-		}
-		msg := template.ExpandVariables(cfg.NodeInactivityAlertTemplate, alertVars)
-		events <- tui.DaemonEvent{
-			Type:    "node_inactivity",
-			Message: msg,
-			Details: map[string]interface{}{
-				"node":     simpleName,
-				"duration": idleDuration.String(),
-			},
-		}
-
-		// Guard 1: per-recipient cooldown
-		if !alertRateLimiter.Allow(cfg.UINode, now) {
-			continue
-		}
-
-		// Guard 2: suppress if UINode received a message recently
-		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
-		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
-		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
-			continue
-		}
-
-		var replyCmd string
-		if cfg.ReplyCommand != "" {
-			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
-		} else {
-			replyCmd = fmt.Sprintf(
-				"nix run github:i9wa4/tmux-a2a-postman -- send --to %s --body \"<your reply>\"",
-				simpleName,
-			)
-		}
-		canReach := false
-		for _, neighbor := range adjacency[cfg.UINode] {
-			if neighbor == simpleName {
-				canReach = true
-				break
-			}
-		}
-		actionVars := map[string]string{
-			"node":          simpleName,
-			"reply_command": replyCmd,
-		}
-		var actionText string
-		if canReach && cfg.AlertActionReachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
-		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
-		}
-
-		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "node_inactivity", cfg, adjacency, nodes); err == nil {
-			alertRateLimiter.Record(cfg.UINode, now)
-		}
-	}
-}
-
-// checkUnrepliedMessages alerts UINode when a monitored node has messages in
-// read/ that are older than DroppedBallTimeoutSeconds without a reply.
-// Excludes daemon-generated messages (From == "postman" in filename).
-// Three guards: TUI event (unconditional), Guard 1 (rate limiter), Guard 2 (delivery window).
-func checkUnrepliedMessages(nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, sessionDir, contextID string, adjacency map[string][]string, idleTracker *idle.IdleTracker, alertRateLimiter *alert.AlertRateLimiter, daemonState *DaemonState) {
-	if cfg.UINode == "" || cfg.UnrepliedMessageAlertTemplate == "" {
-		return
-	}
-
-	now := time.Now()
-
-	for nodeKey, nodeInfo := range nodes {
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
-
-		if simpleName == cfg.UINode {
-			continue
-		}
-
-		nodeConfig, ok := cfg.Nodes[simpleName]
-		if !ok || nodeConfig.DroppedBallTimeoutSeconds <= 0 {
-			continue
-		}
-
-		readDir := filepath.Join(nodeInfo.SessionDir, "read")
-		entries, err := os.ReadDir(readDir)
-		if err != nil {
-			continue
-		}
-
-		unrepliedCount := 0
-		var (
-			oldestFrom          string
-			oldestTimeSinceRead time.Duration
-			newAlertPaths       []string
-		)
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
-			if parseErr != nil {
-				continue
-			}
-			if fileInfo.From == "postman" {
-				continue
-			}
-			if fileInfo.To != simpleName {
-				continue
-			}
-			entryInfo, infoErr := entry.Info()
-			if infoErr != nil {
-				continue
-			}
-			absPath := filepath.Join(readDir, entry.Name())
-			daemonState.alertedReadFilesMu.Lock()
-			_, alreadyAlerted := daemonState.alertedReadFiles[absPath]
-			daemonState.alertedReadFilesMu.Unlock()
-			if alreadyAlerted {
-				continue
-			}
-			if time.Since(entryInfo.ModTime()) >= time.Duration(nodeConfig.DroppedBallTimeoutSeconds)*time.Second {
-				unrepliedCount++
-				age := time.Since(entryInfo.ModTime())
-				if unrepliedCount == 1 || age > oldestTimeSinceRead {
-					oldestTimeSinceRead = age
-					oldestFrom = fileInfo.From
-				}
-				newAlertPaths = append(newAlertPaths, absPath)
-			}
-		}
-		if unrepliedCount == 0 {
-			continue
-		}
-
-		alertVars := map[string]string{
-			"node":            simpleName,
-			"count":           fmt.Sprintf("%d", unrepliedCount),
-			"time_since_read": oldestTimeSinceRead.Round(time.Second).String(),
-			"from":            oldestFrom,
-			"threshold":       fmt.Sprintf("%d", nodeConfig.DroppedBallTimeoutSeconds),
-		}
-		msg := template.ExpandVariables(cfg.UnrepliedMessageAlertTemplate, alertVars)
-		events <- tui.DaemonEvent{
-			Type:    "unreplied_message",
-			Message: msg,
-			Details: map[string]interface{}{
-				"node":  simpleName,
-				"count": unrepliedCount,
-			},
-		}
-		// Record newly alerted files to suppress future repeats.
-		daemonState.alertedReadFilesMu.Lock()
-		for _, p := range newAlertPaths {
-			daemonState.alertedReadFiles[p] = struct{}{}
-		}
-		daemonState.alertedReadFilesMu.Unlock()
-
-		// Guard 1: per-recipient cooldown
-		if !alertRateLimiter.Allow(cfg.UINode, now) {
-			continue
-		}
-
-		// Guard 2: suppress if UINode received a message recently
-		uiNodeFullKey := nodeInfo.SessionName + ":" + cfg.UINode
-		deliveryWindow := time.Duration(cfg.AlertDeliveryWindowSeconds) * time.Second
-		if deliveryWindow > 0 && time.Since(idleTracker.GetLastReceived(uiNodeFullKey)) < deliveryWindow {
-			continue
-		}
-
-		var replyCmd string
-		if cfg.ReplyCommand != "" {
-			replyCmd = envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, simpleName)
-			replyCmd = strings.ReplaceAll(replyCmd, "<recipient>", simpleName)
-		} else {
-			replyCmd = fmt.Sprintf(
-				"nix run github:i9wa4/tmux-a2a-postman -- send --to %s --body \"<your reply>\"",
-				simpleName,
-			)
-		}
-		canReach := false
-		for _, neighbor := range adjacency[cfg.UINode] {
-			if neighbor == simpleName {
-				canReach = true
-				break
-			}
-		}
-		actionVars := map[string]string{
-			"node":          simpleName,
-			"reply_command": replyCmd,
-		}
-		var actionText string
-		if canReach && cfg.AlertActionReachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionReachableTemplate, actionVars)
-		} else if !canReach && cfg.AlertActionUnreachableTemplate != "" {
-			actionText = template.ExpandVariables(cfg.AlertActionUnreachableTemplate, actionVars)
-		}
-
-		if err := sendAlertToUINode(sessionDir, contextID, cfg.UINode, msg+actionText, "unreplied_message", cfg, adjacency, nodes); err == nil {
-			alertRateLimiter.Record(cfg.UINode, now)
-		}
-	}
 }
 
 // checkSwallowedMessages detects inbox messages likely swallowed by a busy agent pane
@@ -1550,63 +796,13 @@ func (ds *DaemonState) hasNodeSentSince(nodeName string, since time.Time) bool {
 	return false
 }
 
-// ShouldSendAlert checks if enough time has passed since the last alert (Issue #118).
-// Returns true if the alert should be sent (cooldown expired or first time).
-func (ds *DaemonState) ShouldSendAlert(alertKey string, cooldownSeconds float64) bool {
-	ds.lastAlertTimestampMu.Lock()
-	defer ds.lastAlertTimestampMu.Unlock()
-
-	if cooldownSeconds <= 0 {
-		return true
-	}
-
-	lastSent, exists := ds.lastAlertTimestamp[alertKey]
-	if !exists {
-		return true
-	}
-
-	return time.Since(lastSent) > time.Duration(cooldownSeconds*float64(time.Second))
-}
-
-// MarkAlertSent records the current time as the last alert sent time (Issue #118).
-func (ds *DaemonState) MarkAlertSent(alertKey string) {
-	ds.lastAlertTimestampMu.Lock()
-	defer ds.lastAlertTimestampMu.Unlock()
-	ds.lastAlertTimestamp[alertKey] = time.Now()
-}
-
-// reminderShouldIncrement returns true if the message sender should trigger the reminder counter.
-// Daemon-generated messages (from="postman" or from="daemon") are excluded.
-func reminderShouldIncrement(from string) bool {
-	return from != "postman" && from != "daemon"
-}
-
 func messageEventSuppressesNormalDelivery(event message.DaemonEvent) bool {
 	return event.Type == "message_received" && strings.HasPrefix(event.Message, "Dead-letter:")
 }
 
-// startHeartbeatTrigger periodically sends heartbeat triggers to the configured LLM node.
-// Goroutine lifecycle: exits cleanly on ctx.Done() (consistent with daemon.go:275 pattern).
-func startHeartbeatTrigger(ctx context.Context, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo], contextID string, cfg *config.Config, adjacency map[string][]string) {
-	interval := time.Duration(cfg.Heartbeat.IntervalSeconds * float64(time.Second))
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := heartbeat.SendHeartbeatTrigger(sharedNodes, contextID, cfg.Heartbeat.LLMNode, cfg.Heartbeat.Prompt, cfg.Heartbeat.IntervalSeconds, cfg, adjacency); err != nil {
-				log.Printf("heartbeat: trigger error: %v", err)
-			}
-		}
-	}
-}
-
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
-// Issue #118: Added sessionDir for alert messaging.
-func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, cfg *config.Config, events chan<- tui.DaemonEvent, contextID, sessionDir string, adjacency map[string][]string, idleTracker *idle.IdleTracker) []string {
+func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) []string {
 	ds.prevPaneStatesMu.Lock()
 	defer ds.prevPaneStatesMu.Unlock()
 
@@ -1663,42 +859,6 @@ func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, 
 					"pane_info":   currentInfo,
 				},
 			}
-
-			// Issue #213: Requeue waiting/ files for restarted node back to inbox/
-			if nodeInfo, found := nodes[nodeKey]; found {
-				simpleName := nodeKey
-				if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-					simpleName = parts[1]
-				}
-				waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-				if entries, readErr := os.ReadDir(waitingDir); readErr == nil {
-					requeueCount := 0
-					deadLetterCount := 0
-					for _, e := range entries {
-						if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-							continue
-						}
-						if !strings.Contains(e.Name(), "-to-"+simpleName) {
-							continue
-						}
-						if err := requeueWaitingMessage(nodeInfo.SessionDir, nodeInfo.SessionName, simpleName, e.Name()); err != nil {
-							continue
-						}
-						deadLetterPath := filepath.Join(nodeInfo.SessionDir, "dead-letter", deadLetterMissingOriginalName(e.Name()))
-						if _, err := os.Stat(deadLetterPath); err == nil {
-							deadLetterCount++
-						} else {
-							requeueCount++
-						}
-					}
-					if requeueCount > 0 {
-						log.Printf("postman: pane restart requeued %d waiting/ files for %s\n", requeueCount, nodeKey)
-					}
-					if deadLetterCount > 0 {
-						log.Printf("postman: pane restart dead-lettered %d waiting/ files for %s (missing original artifact)\n", deadLetterCount, nodeKey)
-					}
-				}
-			}
 		}
 	}
 
@@ -1732,8 +892,7 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 		if _, stillExists := currentPaneStates[prevPaneID]; !stillExists {
 			// Pane disappeared - find the node it belonged to
 			if nodeKey, found := prevPaneToNode[prevPaneID]; found {
-				// Issue #210: Count pending inbox/waiting files for recovery hint
-				inboxCount, waitingCount := countPendingFiles(nodeKey, knownNodes)
+				inboxCount := countPendingFiles(nodeKey, knownNodes)
 
 				details := map[string]interface{}{
 					"pane_id": prevPaneID,
@@ -1742,9 +901,6 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 				if inboxCount > 0 {
 					details["pending_inbox_count"] = inboxCount
 				}
-				if waitingCount > 0 {
-					details["pending_waiting_count"] = waitingCount
-				}
 
 				// Send pane_disappeared event to TUI
 				events <- tui.DaemonEvent{
@@ -1752,7 +908,7 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 					Message: fmt.Sprintf("Pane disappeared: %s (node: %s)", prevPaneID, nodeKey),
 					Details: details,
 				}
-				log.Printf("postman: pane disappeared for node %s (paneID: %s, inbox: %d, waiting: %d)\n", nodeKey, prevPaneID, inboxCount, waitingCount)
+				log.Printf("postman: pane disappeared for node %s (paneID: %s, inbox: %d)\n", nodeKey, prevPaneID, inboxCount)
 
 				// Group by session name
 				sessionName := nodeKey
@@ -1781,12 +937,12 @@ func (ds *DaemonState) checkPaneDisappearance(currentPaneStates map[string]uinod
 	}
 }
 
-// countPendingFiles counts .md files in inbox/{node}/ and waiting/ for a given nodeKey.
+// countPendingFiles counts .md files in inbox/{node}/ for a given nodeKey.
 // Used for post-collapse recovery hints (Issue #210).
-func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo) (inboxCount, waitingCount int) {
+func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo) int {
 	nodeInfo, ok := knownNodes[nodeKey]
 	if !ok {
-		return 0, 0
+		return 0
 	}
 	simpleName := nodeKey
 	if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
@@ -1794,6 +950,7 @@ func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo)
 	}
 
 	// Count inbox files
+	inboxCount := 0
 	inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
 	if entries, err := os.ReadDir(inboxDir); err == nil {
 		for _, e := range entries {
@@ -1803,72 +960,5 @@ func countPendingFiles(nodeKey string, knownNodes map[string]discovery.NodeInfo)
 		}
 	}
 
-	// Count waiting files addressed to this node
-	waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-	if entries, err := os.ReadDir(waitingDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") && strings.Contains(e.Name(), "-to-"+simpleName) {
-				waitingCount++
-			}
-		}
-	}
-	return inboxCount, waitingCount
-}
-
-func requeueWaitingMessage(sessionDir, sessionName, simpleName, filename string) error {
-	waitingPath := filepath.Join(sessionDir, "waiting", filename)
-	inboxDir := filepath.Join(sessionDir, "inbox", simpleName)
-	inboxPath := filepath.Join(inboxDir, filename)
-	readPath := filepath.Join(sessionDir, "read", filename)
-	waitingContent, err := os.ReadFile(waitingPath)
-	if err != nil {
-		return err
-	}
-	waitingPayload := compatibilityMailboxPayloadForFile(filename, filepath.Join("waiting", filename), string(waitingContent))
-
-	if _, err := os.Stat(inboxPath); err == nil {
-		if err := os.Remove(waitingPath); err != nil {
-			return err
-		}
-		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if data, err := os.ReadFile(readPath); err == nil {
-		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(inboxPath, data, 0o600); err != nil {
-			return err
-		}
-		if err := os.Remove(waitingPath); err != nil {
-			return err
-		}
-		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
-		recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, compatibilityMailboxPayloadForFile(filename, filepath.Join("inbox", simpleName, filename), string(data)))
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Join(sessionDir, "dead-letter"), 0o700); err != nil {
-		return err
-	}
-	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterMissingOriginalName(filename))
-	if err := os.Rename(waitingPath, deadLetterPath); err != nil {
-		return err
-	}
-	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, waitingPayload)
-	deadLetterPayload := compatibilityMailboxPayloadForFile(filename, filepath.Join("dead-letter", deadLetterMissingOriginalName(filename)), string(waitingContent))
-	deadLetterPayload.SourcePath = waitingPayload.Path
-	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, deadLetterPayload)
-	return nil
-}
-
-func deadLetterMissingOriginalName(filename string) string {
-	ext := filepath.Ext(filename)
-	base := strings.TrimSuffix(filename, ext)
-	return base + "-dl-missing-original" + ext
+	return inboxCount
 }

@@ -92,13 +92,13 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"Runtime state model:",
-		"Core visible states: ready, pending, user_input, composing, spinning, stalled",
+		"Core visible states: ready, pending, stale",
 		"Quick reading guide:",
 		"visible_state in get-health JSON answers what the node looks like now",
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
-		"ui_node                          Human-facing node for daemon-originated mail",
+		"ui_node                          Optional target filter for startup auto-PING",
 		"message_footer                   Footer appended to stored send mail",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
@@ -117,6 +117,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"reminder_interval  float64",
 		"journal_health_cutover_enabled",
 		"read_context_mode",
+		"waiting/",
 		"dropped-ball",
 		"[heartbeat].enabled",
 	} {

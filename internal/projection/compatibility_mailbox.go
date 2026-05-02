@@ -23,7 +23,6 @@ type CompatibilityMailbox struct {
 	Post       map[string]ProjectedFile
 	Inbox      map[string]ProjectedFile
 	Read       map[string]ProjectedFile
-	Waiting    map[string]ProjectedFile
 	DeadLetter map[string]ProjectedFile
 }
 
@@ -63,7 +62,7 @@ type CompatibilitySubmitResponse struct {
 	Error         string                     `json:"error,omitempty"`
 }
 
-var compatibilityRoots = []string{"post", "inbox", "read", "waiting", "dead-letter"}
+var compatibilityRoots = []string{"post", "inbox", "read", "dead-letter"}
 
 func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
@@ -83,7 +82,6 @@ func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool,
 		Post:       make(map[string]ProjectedFile),
 		Inbox:      make(map[string]ProjectedFile),
 		Read:       make(map[string]ProjectedFile),
-		Waiting:    make(map[string]ProjectedFile),
 		DeadLetter: make(map[string]ProjectedFile),
 	}
 	sawLease := false
@@ -126,14 +124,6 @@ func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool,
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return CompatibilityMailbox{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
-		case "compatibility_mailbox_waiting_created":
-			fallthrough
-		case "compatibility_mailbox_waiting_updated":
-			if !setProjectedFile(projected.Waiting, payload.Path, payload.Content) {
-				return CompatibilityMailbox{}, false, fmt.Errorf("invalid waiting path %q", payload.Path)
-			}
-		case "compatibility_mailbox_waiting_cleared":
-			delete(projected.Waiting, pathKey(payload.Path))
 		case "compatibility_mailbox_dead_lettered":
 			delete(projected.Post, pathKey(payload.SourcePath))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
@@ -174,9 +164,6 @@ func SyncCompatibilityMailbox(sessionDir string) error {
 		desired[key] = file.Content
 	}
 	for key, file := range projected.Read {
-		desired[key] = file.Content
-	}
-	for key, file := range projected.Waiting {
 		desired[key] = file.Content
 	}
 	for key, file := range projected.DeadLetter {

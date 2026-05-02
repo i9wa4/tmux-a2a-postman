@@ -994,9 +994,8 @@ PING from daemon
 		t.Errorf("LastReceived should be zero for daemon → worker message, got %v", activity.LastReceived)
 	}
 
-	// Verify NOT holding (IsHoldingBall should return false)
-	if idleTracker.IsHoldingBall(nodeKey) {
-		t.Error("worker should NOT be holding ball after daemon message")
+	if !activity.LastSent.IsZero() {
+		t.Errorf("LastSent should be zero for daemon message, got %v", activity.LastSent)
 	}
 }
 

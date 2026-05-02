@@ -36,7 +36,7 @@ func TestTUI_Update_SessionHealthUpdateStoresCanonicalSnapshot(t *testing.T) {
 		Details: map[string]interface{}{
 			"health": status.SessionHealth{
 				SessionName:  "review",
-				VisibleState: "composing",
+				VisibleState: "pending",
 			},
 		},
 	}
@@ -44,8 +44,8 @@ func TestTUI_Update_SessionHealthUpdateStoresCanonicalSnapshot(t *testing.T) {
 	newModel, _ := m.Update(event)
 	m = newModel.(Model)
 
-	if got := m.sessionHealth["review"].VisibleState; got != "composing" {
-		t.Fatalf("sessionHealth[review].VisibleState = %q, want %q", got, "composing")
+	if got := m.sessionHealth["review"].VisibleState; got != "pending" {
+		t.Fatalf("sessionHealth[review].VisibleState = %q, want %q", got, "pending")
 	}
 }
 
@@ -59,10 +59,10 @@ func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
 	}
 	m.sessionHealth["review"] = status.SessionHealth{
 		SessionName:  "review",
-		VisibleState: "spinning",
+		VisibleState: "stale",
 		Nodes: []status.NodeHealth{
-			{Name: "critic", VisibleState: "composing"},
-			{Name: "worker", VisibleState: "spinning"},
+			{Name: "critic", VisibleState: "pending"},
+			{Name: "worker", VisibleState: "stale"},
 		},
 		Windows: []status.SessionWindow{
 			{
@@ -77,14 +77,14 @@ func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review 🟡") {
+	if !strings.Contains(view, "> [0] review 🔴") {
 		t.Fatalf("view missing canonical session indicator: %q", view)
 	}
-	if !strings.Contains(view, "critic  🔵  composing") {
-		t.Fatalf("view missing composing node row: %q", view)
+	if !strings.Contains(view, "critic  🔷  pending") {
+		t.Fatalf("view missing pending node row: %q", view)
 	}
-	if !strings.Contains(view, "worker  🟡  spinning") {
-		t.Fatalf("view missing spinning node row: %q", view)
+	if !strings.Contains(view, "worker  🔴  stale") {
+		t.Fatalf("view missing stale node row: %q", view)
 	}
 }
 
@@ -98,7 +98,6 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 	}
 	m.sessionNodes["review"] = []string{"critic", "worker"}
 	m.nodeStates["review:critic"] = "ready"
-	m.waitingStates["review:critic"] = "composing"
 	m.unreadInboxCounts["review:critic"] = 1
 
 	view := m.View().Content
@@ -109,8 +108,8 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 	if !strings.Contains(view, "(loading canonical health)") {
 		t.Fatalf("view missing canonical health loading state: %q", view)
 	}
-	if strings.Contains(view, "critic  🔵  composing") {
-		t.Fatalf("view unexpectedly fell back to legacy composing state: %q", view)
+	if strings.Contains(view, "critic  🔷  pending") {
+		t.Fatalf("view unexpectedly fell back to legacy pending state: %q", view)
 	}
 }
 

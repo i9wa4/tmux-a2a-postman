@@ -48,8 +48,7 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Security: Sanitizes message before passing to tmux set-buffer.
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
-// bypassCooldown skips the per-pane rate limit; pass true for direct message delivery,
-// false for periodic reminders/alerts where the cooldown should apply.
+// bypassCooldown skips the per-pane rate limit; direct message delivery passes true.
 // verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
 // captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {

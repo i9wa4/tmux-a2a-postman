@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -24,34 +22,30 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
-	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
-	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
 type daemonRuntime struct {
-	baseDir       string
-	sessionDir    string
-	contextID     string
-	configPath    string
-	selfSession   string
-	cfg           *config.Config
-	watcher       *fsnotify.Watcher
-	adjacency     map[string][]string
-	nodes         map[string]discovery.NodeInfo
-	knownNodes    map[string]bool
-	reminderState *reminder.ReminderState
-	events        chan<- tui.DaemonEvent
-	configPaths   []string
-	nodesDirs     []string
-	daemonState   *DaemonState
-	idleTracker   *idle.IdleTracker
+	baseDir     string
+	sessionDir  string
+	contextID   string
+	configPath  string
+	selfSession string
+	cfg         *config.Config
+	watcher     *fsnotify.Watcher
+	adjacency   map[string][]string
+	nodes       map[string]discovery.NodeInfo
+	knownNodes  map[string]bool
+	events      chan<- tui.DaemonEvent
+	configPaths []string
+	nodesDirs   []string
+	daemonState *DaemonState
+	idleTracker *idle.IdleTracker
 
-	alertRateLimiter *alert.AlertRateLimiter
-	sharedNodes      *atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
 	configTimer        *time.Timer
 	watchedDirs        map[string]bool
@@ -61,9 +55,8 @@ type daemonRuntime struct {
 	prevSessionNames   []string
 	prevSessionNodes   map[string][]string
 
-	alertDeliverySignalState string
-	postEventsMu             sync.Mutex
-	activePostEvents         map[string]bool
+	postEventsMu     sync.Mutex
+	activePostEvents map[string]bool
 }
 
 type runtimeStatusSnapshot struct {
@@ -89,14 +82,12 @@ func newDaemonRuntime(
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
-	reminderState *reminder.ReminderState,
 	events chan<- tui.DaemonEvent,
 	configPath string,
 	configPaths []string,
 	nodesDirs []string,
 	daemonState *DaemonState,
 	idleTracker *idle.IdleTracker,
-	alertRateLimiter *alert.AlertRateLimiter,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) *daemonRuntime {
@@ -111,13 +102,11 @@ func newDaemonRuntime(
 		adjacency:        adjacency,
 		nodes:            nodes,
 		knownNodes:       knownNodes,
-		reminderState:    reminderState,
 		events:           events,
 		configPaths:      configPaths,
 		nodesDirs:        nodesDirs,
 		daemonState:      daemonState,
 		idleTracker:      idleTracker,
-		alertRateLimiter: alertRateLimiter,
 		sharedNodes:      sharedNodes,
 		watchedDirs:      make(map[string]bool),
 		claimedPanes:     make(map[string]bool),
@@ -234,13 +223,7 @@ func resumeCompatibilityMailboxProjections(primarySessionDir string, nodes map[s
 	return nil
 }
 
-func (rt *daemonRuntime) bootstrap(ctx context.Context) {
-	if config.BoolVal(rt.cfg.Heartbeat.Enabled, false) && rt.cfg.Heartbeat.LLMNode != "" && rt.cfg.Heartbeat.IntervalSeconds > 0 {
-		go startHeartbeatTrigger(ctx, rt.sharedNodes, rt.contextID, rt.cfg, rt.adjacency)
-	}
-
-	rt.alertDeliverySignalState = warnAlertConfig(rt.cfg, rt.nodes, rt.events)
-
+func (rt *daemonRuntime) bootstrap() {
 	rt.storeSharedNodes()
 
 	installShadowJournalManager(rt.sessionDir, rt.contextID, rt.selfSession, time.Now())
@@ -495,43 +478,6 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 
 		if !suppressNormalDelivery {
-			senderSessionDir := filepath.Dir(filepath.Dir(eventPath))
-			clearedWaiting := false
-			if senderInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-				waitingDir := filepath.Join(senderSessionDir, "waiting")
-				pattern := filepath.Join(waitingDir, "*-to-"+senderInfo.From+".md")
-				if matches, globErr := filepath.Glob(pattern); globErr == nil {
-					for _, match := range matches {
-						waitingInfo, waitingParseErr := message.ParseMessageFilename(filepath.Base(match))
-						waitingContent, readErr := os.ReadFile(match)
-						if readErr != nil && !os.IsNotExist(readErr) {
-							log.Printf("postman: WARNING: failed to read waiting file %s: %v\n", match, readErr)
-						}
-						if removeErr := os.Remove(match); removeErr != nil {
-							log.Printf("postman: WARNING: failed to remove waiting file %s: %v\n", match, removeErr)
-							continue
-						}
-						from := ""
-						to := senderInfo.From
-						if waitingParseErr == nil {
-							from = waitingInfo.From
-							to = waitingInfo.To
-						}
-						recordCompatibilityMailboxPayload(senderSessionDir, filepath.Base(senderSessionDir), "compatibility_mailbox_waiting_cleared", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
-							MessageID: filepath.Base(match),
-							From:      from,
-							To:        to,
-							Path:      shadowRelativePath(senderSessionDir, match),
-							Content:   string(waitingContent),
-						})
-						clearedWaiting = true
-					}
-				}
-			}
-			if clearedWaiting {
-				syncCompatibilityMailboxProjection(senderSessionDir)
-			}
-
 			rt.events <- tui.DaemonEvent{
 				Type:    "message_received",
 				Message: fmt.Sprintf("Delivered: %s", filename),
@@ -611,28 +557,6 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 	}
 
 	prefixedKey := sourceSessionName + ":" + info.To
-	if info.From != "postman" && info.From != "daemon" {
-		waitingDir := filepath.Join(sourceSessionDir, "waiting")
-		waitingFile := filepath.Join(waitingDir, filename)
-		readContent, readErr := os.ReadFile(eventPath)
-		if readErr != nil {
-			log.Printf("postman: WARNING: failed to inspect read file %s for waiting semantics: %v\n", eventPath, readErr)
-		} else if waitingContent, ok := waitingFileContentForRead(info, readContent, rt.cfg, time.Now()); ok {
-			if writeErr := os.WriteFile(waitingFile, []byte(waitingContent), 0o600); writeErr != nil {
-				log.Printf("postman: WARNING: failed to create waiting file %s: %v\n", waitingFile, writeErr)
-			} else {
-				recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_waiting_created", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
-					MessageID: filename,
-					From:      info.From,
-					To:        info.To,
-					Path:      shadowRelativePath(sourceSessionDir, waitingFile),
-					Content:   waitingContent,
-				})
-				syncCompatibilityMailboxProjection(sourceSessionDir)
-			}
-		}
-	}
-
 	rt.idleTracker.MarkNodeAlive(prefixedKey)
 	rt.events <- tui.DaemonEvent{
 		Type: "node_alive",
@@ -640,9 +564,6 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 			"node":   prefixedKey,
 			"source": "read_move",
 		},
-	}
-	if reminderShouldIncrement(info.From) {
-		rt.reminderState.Increment(info.To, sourceSessionName, rt.nodes, rt.cfg)
 	}
 }
 
@@ -675,7 +596,6 @@ func (rt *daemonRuntime) handleConfigReload() {
 		rt.nodes = freshNodes
 	}
 	rt.storeSharedNodes()
-	rt.alertDeliverySignalState = syncAlertDeliveryStatus(rt.alertDeliverySignalState, rt.cfg, rt.nodes, rt.events)
 
 	allSessions, _ := discovery.DiscoverAllSessions()
 	if allSessions == nil {
@@ -714,18 +634,14 @@ func (rt *daemonRuntime) handleScanTick() {
 	rt.pruneClaimedPanes(freshNodes)
 	rt.claimNewPanes(freshNodes)
 	for _, collision := range scanCollisions {
-		alertKey := "pane_collision:" + collision.WinnerPaneID + ":" + collision.LoserPaneID
-		if rt.daemonState.ShouldSendAlert(alertKey, 300) {
-			rt.events <- tui.DaemonEvent{
-				Type:    "pane_collision",
-				Message: fmt.Sprintf("[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID),
-				Details: map[string]interface{}{
-					"node":           collision.NodeKey,
-					"winner_pane_id": collision.WinnerPaneID,
-					"loser_pane_id":  collision.LoserPaneID,
-				},
-			}
-			rt.daemonState.MarkAlertSent(alertKey)
+		rt.events <- tui.DaemonEvent{
+			Type:    "pane_collision",
+			Message: fmt.Sprintf("[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID),
+			Details: map[string]interface{}{
+				"node":           collision.NodeKey,
+				"winner_pane_id": collision.WinnerPaneID,
+				"loser_pane_id":  collision.LoserPaneID,
+			},
 		}
 	}
 
@@ -734,7 +650,6 @@ func (rt *daemonRuntime) handleScanTick() {
 	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
-	rt.alertDeliverySignalState = syncAlertDeliveryStatus(rt.alertDeliverySignalState, rt.cfg, rt.nodes, rt.events)
 
 	allSessions, err := discovery.DiscoverAllSessions()
 	if err != nil {
@@ -761,55 +676,6 @@ func (rt *daemonRuntime) handleScanTick() {
 		rt.prevSessionNodes = snapshot.NormalizedSessionNodes
 	}
 
-	nodeConfigs := make(map[string]config.NodeConfig)
-	for fullName := range rt.nodes {
-		parts := strings.SplitN(fullName, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if nodeConfig, ok := rt.cfg.Nodes[parts[1]]; ok {
-			nodeConfigs[parts[1]] = nodeConfig
-		}
-	}
-
-	droppedNodes := rt.idleTracker.CheckDroppedBalls(nodeConfigs)
-	for nodeKey, duration := range droppedNodes {
-		rt.idleTracker.MarkDroppedBallNotified(nodeKey)
-
-		simpleName := nodeKey
-		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-			simpleName = parts[1]
-		}
-
-		eventTemplate := rt.cfg.DroppedBallEventTemplate
-		if eventTemplate == "" {
-			eventTemplate = "Dropped ball: {node} (holding for {duration})"
-		}
-		timeout := time.Duration(rt.cfg.TmuxTimeout * float64(time.Second))
-		eventMessage := template.ExpandTemplate(eventTemplate, map[string]string{
-			"node":     nodeKey,
-			"duration": duration.Round(time.Second).String(),
-		}, timeout, rt.cfg.AllowShellForDroppedBallEventTemplate())
-
-		rt.events <- tui.DaemonEvent{
-			Type:    "dropped_ball",
-			Message: eventMessage,
-			Details: map[string]interface{}{
-				"node":     nodeKey,
-				"duration": duration.Seconds(),
-			},
-		}
-
-		nodeConfig := nodeConfigs[simpleName]
-		notification := nodeConfig.DroppedBallNotification
-		if notification == "" {
-			notification = "tui"
-		}
-		if notification == "display" || notification == "all" {
-			_ = exec.Command("tmux", "display-message", eventMessage).Run()
-		}
-	}
-
 	paneStates, err := uinode.GetAllPanesInfo()
 	if err == nil {
 		currentJSON, _ := json.Marshal(paneStates)
@@ -830,7 +696,7 @@ func (rt *daemonRuntime) handleScanTick() {
 			}
 
 			rt.daemonState.checkPaneDisappearance(paneStates, rt.daemonState.prevPaneToNode, rt.nodes, rt.events)
-			restartedNodes := rt.daemonState.checkPaneRestarts(paneStates, paneToNode, rt.nodes, rt.cfg, rt.events, rt.contextID, rt.sessionDir, rt.adjacency, rt.idleTracker)
+			restartedNodes := rt.daemonState.checkPaneRestarts(paneStates, paneToNode, rt.nodes, rt.events)
 			rt.recordPendingAutoPings(restartedNodes, rt.nodes, "pane_restart", time.Now())
 			rt.prevPaneStatesJSON = currentJSONStr
 		}
@@ -839,124 +705,23 @@ func (rt *daemonRuntime) handleScanTick() {
 	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, time.Now())
 	rt.dispatchPendingPostMessages()
 
-	droppedNodeMap := rt.idleTracker.GetCurrentlyDroppedNodes(nodeConfigs)
 	nodeStates := rt.idleTracker.GetNodeStates()
 	rt.events <- tui.DaemonEvent{
 		Type:    "ball_state_update",
 		Message: "Ball states updated",
 		Details: map[string]interface{}{
-			"node_states":   nodeStates,
-			"dropped_nodes": droppedNodeMap,
+			"node_states": nodeStates,
 		},
 	}
 }
 
 func (rt *daemonRuntime) handleInboxCheckTick() {
-	checkInboxStagnation(rt.nodes, rt.cfg, rt.events, rt.sessionDir, rt.contextID, rt.adjacency, rt.idleTracker, rt.alertRateLimiter, rt.daemonState)
-	checkNodeInactivity(rt.nodes, rt.cfg, rt.events, rt.sessionDir, rt.contextID, rt.adjacency, rt.idleTracker, rt.alertRateLimiter)
-	checkUnrepliedMessages(rt.nodes, rt.cfg, rt.events, rt.sessionDir, rt.contextID, rt.adjacency, rt.idleTracker, rt.alertRateLimiter, rt.daemonState)
 	checkSwallowedMessages(rt.nodes, rt.cfg, rt.events, rt.contextID, rt.adjacency, rt.idleTracker, rt.daemonState)
 
 	rt.events <- tui.DaemonEvent{
 		Type: "inbox_unread_count_update",
 		Details: map[string]interface{}{
 			"unread_counts": scanLiveInboxCounts(rt.nodes),
-		},
-	}
-
-	paneStatus := rt.idleTracker.GetPaneActivityStatus(rt.cfg)
-	now := time.Now()
-	idleThreshold := time.Duration(rt.cfg.NodeIdleSeconds * float64(time.Second))
-	spinningEnabled := rt.cfg.NodeSpinningSeconds > 0
-	spinningThreshold := time.Duration(rt.cfg.NodeSpinningSeconds * float64(time.Second))
-
-	for _, nodeInfo := range rt.nodes {
-		waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-		entries, err := os.ReadDir(waitingDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			filePath := filepath.Join(waitingDir, entry.Name())
-			fileContent, readErr := os.ReadFile(filePath)
-			if readErr != nil {
-				continue
-			}
-			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
-			if parseErr != nil {
-				continue
-			}
-			recipientKey := nodeInfo.SessionName + ":" + fileInfo.To
-			recipientInfo, ok := rt.nodes[recipientKey]
-			if !ok {
-				continue
-			}
-			paneState := paneStatus[recipientInfo.PaneID]
-			contentStr := string(fileContent)
-			if updated, changed := advanceWaitingState(contentStr, paneState, now, idleThreshold, spinningThreshold, spinningEnabled); changed {
-				_ = os.WriteFile(filePath, []byte(updated), 0o600)
-				recordCompatibilityMailboxPayload(nodeInfo.SessionDir, nodeInfo.SessionName, "compatibility_mailbox_waiting_updated", journal.VisibilityOperatorVisible, compatibilityMailboxPayloadForFile(entry.Name(), filepath.Join("waiting", entry.Name()), updated))
-				previousState := visibleWaitingState(contentStr)
-				updatedState := visibleWaitingState(updated)
-				if previousState == "composing" && updatedState == "spinning" {
-					_ = sendSpinningAlertForWaitingFile(rt.sessionDir, rt.contextID, entry.Name(), updated, now, spinningThreshold, rt.cfg, rt.adjacency, rt.nodes)
-				}
-				if (previousState == "composing" || previousState == "spinning") && updatedState == "stalled" {
-					_ = sendStalledAlertForWaitingFile(rt.sessionDir, rt.contextID, entry.Name(), previousState, updated, now, idleThreshold, rt.cfg, rt.adjacency, rt.nodes)
-				}
-			}
-		}
-	}
-
-	waitingStates := make(map[string]string)
-	worstStatePriority := map[string]int{
-		"user_input": 0,
-		"pending":    1,
-		"composing":  2,
-		"spinning":   3,
-		"stalled":    4,
-	}
-	for _, nodeInfo := range rt.nodes {
-		waitingDir := filepath.Join(nodeInfo.SessionDir, "waiting")
-		entries, err := os.ReadDir(waitingDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, readErr := os.ReadFile(filepath.Join(waitingDir, entry.Name()))
-			if readErr != nil {
-				continue
-			}
-			fileState := visibleWaitingState(string(content))
-			if fileState == "" {
-				continue
-			}
-			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
-			if parseErr != nil {
-				continue
-			}
-			recipientKey := nodeInfo.SessionName + ":" + fileInfo.To
-			if worstStatePriority[fileState] >= worstStatePriority[waitingStates[recipientKey]] {
-				waitingStates[recipientKey] = fileState
-			}
-		}
-	}
-	for key, state := range collectPendingStates(rt.nodes, worstStatePriority) {
-		if worstStatePriority[state] >= worstStatePriority[waitingStates[key]] {
-			waitingStates[key] = state
-		}
-	}
-	rt.events <- tui.DaemonEvent{
-		Type:    "waiting_state_update",
-		Message: "Waiting states updated",
-		Details: map[string]interface{}{
-			"waiting_states": waitingStates,
 		},
 	}
 }

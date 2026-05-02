@@ -17,7 +17,7 @@ import (
 // Shared logic: role-template resolution, sentinel obfuscation, talks_to_line construction
 // (session-aware, same-session priority, liveness-filtered), and reply_command building.
 //
-// tmpl is caller-provided: pass cfg.DaemonMessageTemplate for ping/alert/heartbeat,
+// tmpl is caller-provided: pass cfg.DaemonMessageTemplate for daemon PING
 // or cfg.NotificationTemplate for pane notification hints.
 //
 // NOTE: resolveNodeName is inlined here as accepted debt from #141.
@@ -205,7 +205,7 @@ func buildEnvelope(
 }
 
 // RenderReplyCommand normalizes the configured reply command and expands the
-// placeholders used by envelope, daemon alerts, and draft templates.
+// placeholders used by envelope and draft templates.
 func RenderReplyCommand(replyCmd, contextID, recipient string) string {
 	replyCmd = legacySendMessageTokenRe.ReplaceAllString(replyCmd, "${1}send${2}")
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
@@ -217,7 +217,7 @@ var legacySendMessageTokenRe = regexp.MustCompile(`(^|[[:space:]])send-message([
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.
 // Resolution: config template with CommonTemplate prepend.
-// Used by sendAlertToUINode, SendPingToNode, heartbeat, idle.
+// Used by SendPingToNode and message envelope rendering.
 func BuildRoleContent(cfg *config.Config, nodeName string) string {
 	nc := cfg.GetNodeConfig(nodeName)
 	nodeTemplate := nc.Template

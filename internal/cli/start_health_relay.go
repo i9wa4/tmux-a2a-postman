@@ -78,7 +78,7 @@ func sortedSessionNames(knownSessions map[string]struct{}) []string {
 
 func shouldRefreshSessionHealth(eventType string) bool {
 	switch eventType {
-	case "status_update", "config_update", "ball_state_update", "waiting_state_update", "inbox_unread_count_update", "node_alive", "pane_disappeared", "pane_restart", "session_collapsed":
+	case "status_update", "config_update", "ball_state_update", "inbox_unread_count_update", "node_alive", "pane_disappeared", "pane_restart", "session_collapsed":
 		return true
 	default:
 		return false

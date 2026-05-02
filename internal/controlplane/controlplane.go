@@ -100,21 +100,10 @@ type SystemMessageResult struct {
 	Delivered bool
 }
 
-type HeartbeatTrigger struct {
-	Filename string
-	Content  string
-	TTL      time.Duration
-}
-
-type HeartbeatTriggerResult struct {
-	Written bool
-}
-
 type HandAdapter interface {
 	Kind() HandKind
 	Deliver(target Target, delivery PaneDelivery) error
 	DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error)
-	WriteHeartbeatTrigger(target Target, trigger HeartbeatTrigger) (HeartbeatTriggerResult, error)
 }
 
 type TmuxHandAdapter struct {
@@ -188,47 +177,6 @@ func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessag
 	syncCompatibilityMailbox(target.SessionDir)
 
 	return SystemMessageResult{Delivered: true}, nil
-}
-
-func (TmuxHandAdapter) WriteHeartbeatTrigger(target Target, trigger HeartbeatTrigger) (HeartbeatTriggerResult, error) {
-	inboxDir := target.InboxDir()
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil && !os.IsNotExist(err) {
-		return HeartbeatTriggerResult{}, fmt.Errorf("reading inbox %s: %w", inboxDir, err)
-	}
-
-	now := time.Now()
-	unread := 0
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		age := now.Sub(info.ModTime())
-		filePath := filepath.Join(inboxDir, entry.Name())
-		if age > trigger.TTL {
-			deadLetter := filepath.Join(target.SessionDir, "dead-letter", entry.Name())
-			if err := os.Rename(filePath, deadLetter); err != nil {
-				return HeartbeatTriggerResult{}, fmt.Errorf("recycling stale trigger: %w", err)
-			}
-		} else {
-			unread++
-		}
-	}
-
-	if unread > 0 {
-		return HeartbeatTriggerResult{}, nil
-	}
-
-	filePath := target.PostPath(trigger.Filename)
-	if err := os.WriteFile(filePath, []byte(trigger.Content), 0o600); err != nil {
-		return HeartbeatTriggerResult{}, fmt.Errorf("writing trigger: %w", err)
-	}
-	return HeartbeatTriggerResult{Written: true}, nil
 }
 
 func DefaultHandAdapter(target Target) (HandAdapter, error) {

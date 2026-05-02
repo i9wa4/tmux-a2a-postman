@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -34,7 +33,6 @@ type Config struct {
 	EnterDelay       float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
 	StartupDelay     float64 `toml:"startup_delay_seconds"`
-	ReminderInterval float64 `toml:"reminder_interval_messages"`
 	EnterVerifyDelay float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax    int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
@@ -45,8 +43,6 @@ type Config struct {
 	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds: active (green)
 	NodeIdleSeconds           float64 `toml:"node_idle_seconds"`            // N+ seconds: idle (orange) or stale (red)
 	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
-	NodeSpinningSeconds       float64 `toml:"node_spinning_seconds"`        // Hard ceiling for active-but-no-reply detection; 0 = disabled
-	MessageAgeWarningSeconds  float64 `toml:"message_age_warning_seconds"`  // Delivery latency warning threshold; 0 = disabled
 	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
 	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
@@ -62,39 +58,20 @@ type Config struct {
 	// Paths
 	BaseDir string `toml:"base_dir"`
 	// Message templates
-	NotificationTemplate            string `toml:"notification_template"`
-	DaemonMessageTemplate           string `toml:"daemon_message_template"` // Unified envelope for ping, alert, heartbeat
-	DraftTemplate                   string `toml:"draft_template"`
-	ReminderMessage                 string `toml:"reminder_message"`
-	CommonTemplate                  string `toml:"common_template"`                     // Issue #49: Shared template for all nodes
-	EdgeViolationWarningTemplate    string `toml:"edge_violation_warning_template"`     // Issue #80: Warning message for routing denied
-	EdgeViolationWarningMode        string `toml:"edge_violation_warning_mode"`         // Issue #92: "compact" or "verbose" (default: compact)
-	DroppedBallEventTemplate        string `toml:"dropped_ball_event_template"`         // Issue #82: Dropped ball event message
-	AlertActionReachableTemplate    string `toml:"alert_action_reachable_template"`     // Action text when ui_node can reach the target node
-	AlertActionUnreachableTemplate  string `toml:"alert_action_unreachable_template"`   // Action text when ui_node cannot reach the target node
-	InboxStagnationAlertTemplate    string `toml:"inbox_stagnation_alert_template"`     // Alert message body for inbox stagnation
-	InboxUnreadSummaryAlertTemplate string `toml:"inbox_unread_summary_alert_template"` // Alert message body for inbox unread summary
-	NodeInactivityAlertTemplate     string `toml:"node_inactivity_alert_template"`      // Alert message body for node inactivity
-	UnrepliedMessageAlertTemplate   string `toml:"unreplied_message_alert_template"`    // Alert message body for unreplied messages
-	SpinningAlertTemplate           string `toml:"spinning_alert_template"`             // Alert body for spinning detection
-	StalledAlertTemplate            string `toml:"stalled_alert_template"`              // Alert body for stalled waiting-state detection
-	MessageFooter                   string `toml:"message_footer"`                      // Footer appended to outgoing messages by `send` after message content
+	NotificationTemplate         string `toml:"notification_template"`
+	DaemonMessageTemplate        string `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
+	DraftTemplate                string `toml:"draft_template"`                  // Draft body used by send
+	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
+	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
+	EdgeViolationWarningMode     string `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
+	MessageFooter                string `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                              []string `toml:"edges"`
-	ReplyCommand                       string   `toml:"reply_command"`
-	UINode                             string   `toml:"ui_node"`                               // Issue #46: Generalized target node name
-	InboxUnreadThreshold               int      `toml:"inbox_unread_threshold"`                // Inbox unread count threshold for summary notification (default: 3, 0 = disabled)
-	AlertCooldownSeconds               int      `toml:"alert_cooldown_seconds"`                // min seconds between any alert/warning to same recipient
-	AlertDeliveryWindowSeconds         int      `toml:"alert_delivery_window_seconds"`         // suppress alert if recipient received msg within this window
-	PaneNotifyCooldownSeconds          int      `toml:"pane_notify_cooldown_seconds"`          // min seconds between SendToPane calls to the same pane; 0 = use default (600)
-	ReadContextMode                    string   `toml:"read_context_mode"`                     // Read-time context rendering mode for bare interactive pop
-	ReadContextPieces                  []string `toml:"read_context_pieces"`                   // Ordered built-in pieces rendered for bare interactive pop
-	ReadContextHeading                 string   `toml:"read_context_heading"`                  // Heading for the rendered read-time context block
-	AutoEnableNewSessions              *bool    `toml:"auto_enable_new_sessions"`              // nil = use default (false) (#219)
-	AutoEnableNewAgents                *bool    `toml:"auto_enable_new_agents"`                // nil = use default (true) (#219)
-	JournalHealthCutoverEnabled        *bool    `toml:"journal_health_cutover_enabled"`        // nil = use default (false) (#379)
-	JournalCompatibilityCutoverEnabled *bool    `toml:"journal_compatibility_cutover_enabled"` // nil = use default (false) (#379)
+	Edges                 []string `toml:"edges"`
+	ReplyCommand          string   `toml:"reply_command"`
+	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false) (#219)
+	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -103,9 +80,6 @@ type Config struct {
 
 	// Node-level defaults applied to all nodes (loaded from [node_defaults] section)
 	NodeDefaults NodeConfig
-
-	// Heartbeat
-	Heartbeat HeartbeatConfig
 
 	// Shell template execution opt-in (#security)
 	AllowShellTemplates bool `toml:"allow_shell_templates"`
@@ -119,12 +93,6 @@ type Config struct {
 type NodeConfig struct {
 	Template                   string  `toml:"template"`
 	Role                       string  `toml:"role"`
-	ReminderInterval           float64 `toml:"reminder_interval_messages"`
-	ReminderMessage            string  `toml:"reminder_message"`
-	IdleTimeoutSeconds         float64 `toml:"idle_timeout_seconds"`
-	DroppedBallTimeoutSeconds  int     `toml:"dropped_ball_timeout_seconds"`  // Issue #56: 0 = disabled (default)
-	DroppedBallCooldownSeconds int     `toml:"dropped_ball_cooldown_seconds"` // Issue #56: default: same as timeout
-	DroppedBallNotification    string  `toml:"dropped_ball_notification"`     // Issue #56: "tui" (default) / "display" / "all"
 	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
@@ -146,17 +114,6 @@ type AgentCard struct {
 	Template    string   `toml:"template"`
 	Role        string   `toml:"role"`
 }
-
-// HeartbeatConfig holds configuration for the HEARTBEAT-LLM integration.
-type HeartbeatConfig struct {
-	Enabled         *bool   `toml:"enabled"` // nil = use default (false) (#219)
-	IntervalSeconds float64 `toml:"interval_seconds"`
-	LLMNode         string  `toml:"llm_node"`
-	Prompt          string  `toml:"prompt"`
-}
-
-// boolPtr returns a pointer to a bool value (#219).
-func boolPtr(v bool) *bool { return &v }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
 func BoolVal(p *bool, defaultVal bool) bool {
@@ -193,7 +150,7 @@ func appendUniqueNodeNames(order []string, names ...string) []string {
 }
 
 func isReservedNodeSection(name string) bool {
-	return name == "postman" || name == "heartbeat" || name == "node_defaults"
+	return name == "postman" || name == "node_defaults"
 }
 
 func orderedTOMLNodeNames(md toml.MetaData) []string {
@@ -261,10 +218,6 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
 func warnDeprecatedKeys(rawBytes []byte, path string) {
-	if bytes.Contains(rawBytes, []byte("reminder_interval_seconds")) {
-		log.Printf("config warning: 'reminder_interval_seconds' is deprecated; "+
-			"rename to 'reminder_interval_messages' in %s", path)
-	}
 }
 
 // loadEmbeddedConfig loads configuration from embedded default_postman.toml.
@@ -286,7 +239,7 @@ func loadEmbeddedConfig() (*Config, error) {
 		}
 	}
 
-	// Decode [nodename] sections (everything except postman and heartbeat)
+	// Decode [nodename] sections (everything except reserved sections)
 	cfg.Nodes = make(map[string]NodeConfig)
 	for _, name := range orderedTOMLNodeNames(md) {
 		prim := rootSections[name]
@@ -296,13 +249,6 @@ func loadEmbeddedConfig() (*Config, error) {
 		}
 		cfg.Nodes[name] = node
 		cfg.recordNodeNames(name)
-	}
-
-	// Decode [heartbeat] section if exists
-	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
-		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
-			return nil, fmt.Errorf("decoding embedded [heartbeat] section: %w", err)
-		}
 	}
 
 	// Decode [node_defaults] section if exists
@@ -475,12 +421,6 @@ func loadConfigFile(path string) (*Config, error) {
 		cfg.recordNodeNames(name)
 	}
 
-	if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
-		if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
-			return nil, fmt.Errorf("decoding [heartbeat] in %s: %w", path, err)
-		}
-	}
-
 	// Decode [node_defaults] section if exists
 	if nodeDefaultsPrim, ok := rootSections["node_defaults"]; ok {
 		if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
@@ -515,8 +455,6 @@ func markLocalExplicitZeroInventory(cfg *Config, md toml.MetaData) {
 			if localNodeDefaultsExplicitZero(cfg.NodeDefaults, field) {
 				inventory.nodeDefaults[field] = true
 			}
-		case "heartbeat":
-			continue
 		default:
 			node := cfg.Nodes[section]
 			if localNodeExplicitZero(node, field) {
@@ -532,16 +470,10 @@ func markLocalExplicitZeroInventory(cfg *Config, md toml.MetaData) {
 
 func localPostmanExplicitZero(cfg *Config, field string) bool {
 	switch field {
-	case "reminder_interval_messages":
-		return cfg.ReminderInterval == 0
 	case "enter_verify_delay_seconds":
 		return cfg.EnterVerifyDelay == 0
 	case "enter_retry_max":
 		return cfg.EnterRetryMax == 0
-	case "node_spinning_seconds":
-		return cfg.NodeSpinningSeconds == 0
-	case "message_age_warning_seconds":
-		return cfg.MessageAgeWarningSeconds == 0
 	case "message_ttl_seconds":
 		return cfg.MessageTTLSeconds == 0
 	case "retention_period_days":
@@ -554,10 +486,6 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 		return cfg.AutoPingDelaySeconds == 0
 	case "pane_capture_max_panes":
 		return cfg.PaneCaptureMaxPanes == 0
-	case "inbox_unread_threshold":
-		return cfg.InboxUnreadThreshold == 0
-	case "pane_notify_cooldown_seconds":
-		return cfg.PaneNotifyCooldownSeconds == 0
 	default:
 		return false
 	}
@@ -565,12 +493,6 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 
 func localNodeExplicitZero(node NodeConfig, field string) bool {
 	switch field {
-	case "idle_timeout_seconds":
-		return node.IdleTimeoutSeconds == 0
-	case "dropped_ball_timeout_seconds":
-		return node.DroppedBallTimeoutSeconds == 0
-	case "dropped_ball_cooldown_seconds":
-		return node.DroppedBallCooldownSeconds == 0
 	case "enter_count":
 		return node.EnterCount == 0
 	case "enter_delay_seconds":
@@ -599,16 +521,10 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 	}
 	for field := range override.projectLocalExplicitZero.postman {
 		switch field {
-		case "reminder_interval_messages":
-			base.ReminderInterval = 0
 		case "enter_verify_delay_seconds":
 			base.EnterVerifyDelay = 0
 		case "enter_retry_max":
 			base.EnterRetryMax = 0
-		case "node_spinning_seconds":
-			base.NodeSpinningSeconds = 0
-		case "message_age_warning_seconds":
-			base.MessageAgeWarningSeconds = 0
 		case "message_ttl_seconds":
 			base.MessageTTLSeconds = 0
 		case "retention_period_days":
@@ -621,22 +537,12 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 			base.AutoPingDelaySeconds = 0
 		case "pane_capture_max_panes":
 			base.PaneCaptureMaxPanes = 0
-		case "inbox_unread_threshold":
-			base.InboxUnreadThreshold = 0
-		case "pane_notify_cooldown_seconds":
-			base.PaneNotifyCooldownSeconds = 0
 		}
 	}
 	for name, fields := range override.projectLocalExplicitZero.nodes {
 		node := base.Nodes[name]
 		for field := range fields {
 			switch field {
-			case "idle_timeout_seconds":
-				node.IdleTimeoutSeconds = 0
-			case "dropped_ball_timeout_seconds":
-				node.DroppedBallTimeoutSeconds = 0
-			case "dropped_ball_cooldown_seconds":
-				node.DroppedBallCooldownSeconds = 0
 			case "enter_count":
 				node.EnterCount = 0
 			case "enter_delay_seconds":
@@ -704,9 +610,6 @@ func mergeConfig(base, override *Config) {
 	if override.DraftTemplate != "" {
 		base.DraftTemplate = override.DraftTemplate
 	}
-	if override.ReminderMessage != "" {
-		base.ReminderMessage = override.ReminderMessage
-	}
 	if override.CommonTemplate != "" {
 		base.CommonTemplate = override.CommonTemplate
 	}
@@ -715,33 +618,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.EdgeViolationWarningMode != "" {
 		base.EdgeViolationWarningMode = override.EdgeViolationWarningMode
-	}
-	if override.DroppedBallEventTemplate != "" {
-		base.DroppedBallEventTemplate = override.DroppedBallEventTemplate
-	}
-	if override.AlertActionReachableTemplate != "" {
-		base.AlertActionReachableTemplate = override.AlertActionReachableTemplate
-	}
-	if override.AlertActionUnreachableTemplate != "" {
-		base.AlertActionUnreachableTemplate = override.AlertActionUnreachableTemplate
-	}
-	if override.InboxStagnationAlertTemplate != "" {
-		base.InboxStagnationAlertTemplate = override.InboxStagnationAlertTemplate
-	}
-	if override.InboxUnreadSummaryAlertTemplate != "" {
-		base.InboxUnreadSummaryAlertTemplate = override.InboxUnreadSummaryAlertTemplate
-	}
-	if override.NodeInactivityAlertTemplate != "" {
-		base.NodeInactivityAlertTemplate = override.NodeInactivityAlertTemplate
-	}
-	if override.UnrepliedMessageAlertTemplate != "" {
-		base.UnrepliedMessageAlertTemplate = override.UnrepliedMessageAlertTemplate
-	}
-	if override.SpinningAlertTemplate != "" {
-		base.SpinningAlertTemplate = override.SpinningAlertTemplate
-	}
-	if override.StalledAlertTemplate != "" {
-		base.StalledAlertTemplate = override.StalledAlertTemplate
 	}
 	if override.MessageFooter != "" {
 		base.MessageFooter = override.MessageFooter
@@ -753,24 +629,12 @@ func mergeConfig(base, override *Config) {
 		base.UINode = override.UINode
 		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
 	}
-	if override.ReadContextMode != "" {
-		base.ReadContextMode = override.ReadContextMode
-	}
-	if override.ReadContextHeading != "" {
-		base.ReadContextHeading = override.ReadContextHeading
-	}
 	// *bool merge: bidirectional override — nil = unset (use base), non-nil = explicit (#219)
 	if override.AutoEnableNewSessions != nil {
 		base.AutoEnableNewSessions = override.AutoEnableNewSessions
 	}
 	if override.AutoEnableNewAgents != nil {
 		base.AutoEnableNewAgents = override.AutoEnableNewAgents
-	}
-	if override.JournalHealthCutoverEnabled != nil {
-		base.JournalHealthCutoverEnabled = override.JournalHealthCutoverEnabled
-	}
-	if override.JournalCompatibilityCutoverEnabled != nil {
-		base.JournalCompatibilityCutoverEnabled = override.JournalCompatibilityCutoverEnabled
 	}
 
 	// Float64 fields
@@ -785,9 +649,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.StartupDelay != 0 {
 		base.StartupDelay = override.StartupDelay
-	}
-	if override.ReminderInterval != 0 {
-		base.ReminderInterval = override.ReminderInterval
 	}
 	if override.EnterVerifyDelay != 0 {
 		base.EnterVerifyDelay = override.EnterVerifyDelay
@@ -806,12 +667,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeStaleSeconds != 0 {
 		base.NodeStaleSeconds = override.NodeStaleSeconds
-	}
-	if override.NodeSpinningSeconds != 0 {
-		base.NodeSpinningSeconds = override.NodeSpinningSeconds
-	}
-	if override.MessageAgeWarningSeconds != 0 {
-		base.MessageAgeWarningSeconds = override.MessageAgeWarningSeconds
 	}
 	if override.MessageTTLSeconds != 0 {
 		base.MessageTTLSeconds = override.MessageTTLSeconds
@@ -839,18 +694,6 @@ func mergeConfig(base, override *Config) {
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
 	}
-	if override.InboxUnreadThreshold != 0 {
-		base.InboxUnreadThreshold = override.InboxUnreadThreshold
-	}
-	if override.AlertCooldownSeconds != 0 {
-		base.AlertCooldownSeconds = override.AlertCooldownSeconds
-	}
-	if override.AlertDeliveryWindowSeconds != 0 {
-		base.AlertDeliveryWindowSeconds = override.AlertDeliveryWindowSeconds
-	}
-	if override.PaneNotifyCooldownSeconds != 0 {
-		base.PaneNotifyCooldownSeconds = override.PaneNotifyCooldownSeconds
-	}
 
 	// *bool fields: bidirectional override (#219)
 	if override.PaneCaptureEnabled != nil {
@@ -860,9 +703,6 @@ func mergeConfig(base, override *Config) {
 	// Edges: replace if override is non-empty
 	if len(override.Edges) > 0 {
 		base.Edges = override.Edges
-	}
-	if len(override.ReadContextPieces) > 0 {
-		base.ReadContextPieces = append([]string{}, override.ReadContextPieces...)
 	}
 	base.recordNodeNames(override.NodeOrder...)
 
@@ -874,24 +714,6 @@ func mergeConfig(base, override *Config) {
 		}
 		if overNode.Role != "" {
 			baseNode.Role = overNode.Role
-		}
-		if overNode.ReminderInterval != 0 {
-			baseNode.ReminderInterval = overNode.ReminderInterval
-		}
-		if overNode.ReminderMessage != "" {
-			baseNode.ReminderMessage = overNode.ReminderMessage
-		}
-		if overNode.IdleTimeoutSeconds != 0 {
-			baseNode.IdleTimeoutSeconds = overNode.IdleTimeoutSeconds
-		}
-		if overNode.DroppedBallTimeoutSeconds != 0 {
-			baseNode.DroppedBallTimeoutSeconds = overNode.DroppedBallTimeoutSeconds
-		}
-		if overNode.DroppedBallCooldownSeconds != 0 {
-			baseNode.DroppedBallCooldownSeconds = overNode.DroppedBallCooldownSeconds
-		}
-		if overNode.DroppedBallNotification != "" {
-			baseNode.DroppedBallNotification = overNode.DroppedBallNotification
 		}
 		if overNode.EnterCount != 0 {
 			baseNode.EnterCount = overNode.EnterCount
@@ -911,19 +733,6 @@ func mergeConfig(base, override *Config) {
 	// NodeDefaults: field-level merge
 	if override.NodeDefaults.EnterCount != 0 {
 		base.NodeDefaults.EnterCount = override.NodeDefaults.EnterCount
-	}
-
-	if override.Heartbeat.Enabled != nil {
-		base.Heartbeat.Enabled = override.Heartbeat.Enabled
-	}
-	if override.Heartbeat.IntervalSeconds != 0 {
-		base.Heartbeat.IntervalSeconds = override.Heartbeat.IntervalSeconds
-	}
-	if override.Heartbeat.LLMNode != "" {
-		base.Heartbeat.LLMNode = override.Heartbeat.LLMNode
-	}
-	if override.Heartbeat.Prompt != "" {
-		base.Heartbeat.Prompt = override.Heartbeat.Prompt
 	}
 }
 
@@ -1012,7 +821,7 @@ func LoadConfig(path string) (*Config, error) {
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
 		}
 
-		// Decode [nodename] sections (everything except postman and heartbeat)
+		// Decode [nodename] sections (everything except reserved sections)
 		cfg.Nodes = make(map[string]NodeConfig)
 		cfg.NodeOrder = []string{}
 		for _, name := range orderedTOMLNodeNames(md) {
@@ -1023,13 +832,6 @@ func LoadConfig(path string) (*Config, error) {
 			}
 			cfg.Nodes[name] = node
 			cfg.recordNodeNames(name)
-		}
-
-		// Decode [heartbeat] section if exists
-		if heartbeatPrim, ok := rootSections["heartbeat"]; ok {
-			if err := md.PrimitiveDecode(heartbeatPrim, &cfg.Heartbeat); err != nil {
-				return nil, fmt.Errorf("decoding [heartbeat] section: %w", err)
-			}
 		}
 
 		// Decode [node_defaults] section if exists
@@ -1149,9 +951,6 @@ func LoadConfig(path string) (*Config, error) {
 					if err := md2.PrimitiveDecode(prim, &node); err != nil {
 						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
 						continue
-					}
-					if node.ReminderMessage != "" {
-						cfg.directTemplateRootTrust[reminderTemplateRoot(name)] = false
 					}
 					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
 					cfg.recordNodeNames(name)
@@ -1364,7 +1163,7 @@ func ResolveBaseDir(configBaseDir string) string {
 
 // CreateSessionDirs creates the session directory structure.
 // Legacy signature for backward compatibility with tests.
-// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting,todo}
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -1372,8 +1171,6 @@ func CreateSessionDirs(sessionDir string) error {
 		filepath.Join(sessionDir, "draft"),
 		filepath.Join(sessionDir, "read"),
 		filepath.Join(sessionDir, "dead-letter"),
-		filepath.Join(sessionDir, "waiting"),
-		filepath.Join(sessionDir, "todo"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -1385,7 +1182,7 @@ func CreateSessionDirs(sessionDir string) error {
 
 // CreateMultiSessionDirs creates the multi-session directory structure.
 // For multi-session support: contextDir = baseDir/contextID, sessionName = tmux session name
-// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting,todo}
+// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter}
 func CreateMultiSessionDirs(contextDir, sessionName string) error {
 	sessionDir := filepath.Join(contextDir, sessionName)
 	return CreateSessionDirs(sessionDir)
@@ -1795,24 +1592,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.Role != "" {
 		result.Role = specific.Role
-	}
-	if specific.ReminderInterval != 0 {
-		result.ReminderInterval = specific.ReminderInterval
-	}
-	if specific.ReminderMessage != "" {
-		result.ReminderMessage = specific.ReminderMessage
-	}
-	if specific.IdleTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "idle_timeout_seconds") {
-		result.IdleTimeoutSeconds = specific.IdleTimeoutSeconds
-	}
-	if specific.DroppedBallTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "dropped_ball_timeout_seconds") {
-		result.DroppedBallTimeoutSeconds = specific.DroppedBallTimeoutSeconds
-	}
-	if specific.DroppedBallCooldownSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "dropped_ball_cooldown_seconds") {
-		result.DroppedBallCooldownSeconds = specific.DroppedBallCooldownSeconds
-	}
-	if specific.DroppedBallNotification != "" {
-		result.DroppedBallNotification = specific.DroppedBallNotification
 	}
 	if specific.EnterCount != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "enter_count") {
 		result.EnterCount = specific.EnterCount

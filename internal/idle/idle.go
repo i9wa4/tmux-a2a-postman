@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -24,11 +23,10 @@ const compactionPingCooldown = 30 * time.Second
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
-	LastReceived        time.Time
-	LastSent            time.Time
-	LivenessConfirmed   bool
-	LastNotifiedDropped time.Time // Issue #56: cooldown tracking for dropped-ball alerts
-	LastScreenChange    time.Time // Last screen content change (for debug/display only, not used for idle detection)
+	LastReceived      time.Time
+	LastSent          time.Time
+	LivenessConfirmed bool
+	LastScreenChange  time.Time // Last screen content change (for debug/display only, not used for idle detection)
 }
 
 // PaneActivityExport holds pane activity data for JSON export.
@@ -82,17 +80,6 @@ func (t *IdleTracker) UpdateReceiveActivity(nodeKey string) {
 	activity := t.nodeActivity[nodeKey]
 	activity.LastReceived = time.Now()
 	t.nodeActivity[nodeKey] = activity
-}
-
-// GetLastReceived returns the last time the given node received a message.
-// Returns zero time if the node has no recorded activity.
-func (t *IdleTracker) GetLastReceived(nodeKey string) time.Time {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if a, ok := t.nodeActivity[nodeKey]; ok {
-		return a.LastReceived
-	}
-	return time.Time{}
 }
 
 // MarkNodeAlive marks that a node has confirmed liveness (Issue #55).
@@ -184,169 +171,6 @@ func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath stri
 		return fmt.Errorf("marshaling pane activity: %w", err)
 	}
 	return os.WriteFile(filePath, data, 0o600)
-}
-
-// IsHoldingBall returns true if the node received a message but hasn't sent a reply yet (Issue #55).
-// NOTE: IsHoldingBall uses simple timestamp comparison (LastReceived > LastSent).
-// This is a heuristic - it may misjudge in multi-sender scenarios.
-// For precise tracking, consider per-sender counters (future #56).
-// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
-func (t *IdleTracker) IsHoldingBall(nodeKey string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	activity, exists := t.nodeActivity[nodeKey]
-	if !exists {
-		return false
-	}
-	return !activity.LastReceived.IsZero() && activity.LastReceived.After(activity.LastSent)
-}
-
-// extractSimpleName extracts the simple node name from a session-prefixed key.
-// Returns the part after ":" if present, otherwise returns the key as-is.
-func extractSimpleName(nodeKey string) string {
-	if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
-		return parts[1]
-	}
-	return nodeKey
-}
-
-// CheckDroppedBalls detects nodes holding the ball for too long (Issue #56).
-// Returns map of nodeKey -> holding duration for nodes exceeding threshold.
-// NOTE: Uses simple timestamp comparison (same limitation as IsHoldingBall).
-// Multi-sender scenarios may trigger false positives.
-// Issue #79: Use session-prefixed keys for tracking, extract simple name for config lookup.
-func (t *IdleTracker) CheckDroppedBalls(nodeConfigs map[string]config.NodeConfig) map[string]time.Duration {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	dropped := make(map[string]time.Duration)
-	now := time.Now()
-
-	for nodeKey, activity := range t.nodeActivity {
-		simpleName := extractSimpleName(nodeKey)
-		cfg, exists := nodeConfigs[simpleName]
-		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
-			continue
-		}
-		// Skip if liveness not yet confirmed
-		if !activity.LivenessConfirmed {
-			continue
-		}
-		// Check holding: LastReceived > LastSent
-		if activity.LastReceived.IsZero() || !activity.LastReceived.After(activity.LastSent) {
-			continue
-		}
-		// Check duration
-		holdingDuration := now.Sub(activity.LastReceived)
-		threshold := time.Duration(cfg.DroppedBallTimeoutSeconds) * time.Second
-		if holdingDuration <= threshold {
-			continue
-		}
-		// Check cooldown
-		cooldown := time.Duration(cfg.DroppedBallCooldownSeconds) * time.Second
-		if cooldown <= 0 {
-			cooldown = threshold // default: same as timeout
-		}
-		if !activity.LastNotifiedDropped.IsZero() && now.Sub(activity.LastNotifiedDropped) < cooldown {
-			continue
-		}
-		dropped[nodeKey] = holdingDuration
-	}
-	return dropped
-}
-
-// MarkDroppedBallNotified marks that a dropped-ball alert was sent for the node (Issue #56).
-// Issue #79: Use session-prefixed key (sessionName:nodeName) for tracking.
-func (t *IdleTracker) MarkDroppedBallNotified(nodeKey string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if activity, exists := t.nodeActivity[nodeKey]; exists {
-		activity.LastNotifiedDropped = time.Now()
-		t.nodeActivity[nodeKey] = activity
-	}
-}
-
-// GetCurrentlyDroppedNodes returns nodes currently in dropped-ball state (Issue #56).
-// Unlike CheckDroppedBalls, this does NOT check cooldown - used for TUI display only.
-// Issue #79: Use session-prefixed keys for tracking, extract simple name for config lookup.
-func (t *IdleTracker) GetCurrentlyDroppedNodes(nodeConfigs map[string]config.NodeConfig) map[string]bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	dropped := make(map[string]bool)
-	now := time.Now()
-
-	for nodeKey, activity := range t.nodeActivity {
-		simpleName := extractSimpleName(nodeKey)
-		cfg, exists := nodeConfigs[simpleName]
-		if !exists || cfg.DroppedBallTimeoutSeconds <= 0 {
-			continue
-		}
-		// Skip if liveness not yet confirmed
-		if !activity.LivenessConfirmed {
-			continue
-		}
-		// Check holding: LastReceived > LastSent
-		if activity.LastReceived.IsZero() || !activity.LastReceived.After(activity.LastSent) {
-			continue
-		}
-		// Check duration (NO cooldown check for TUI display)
-		holdingDuration := now.Sub(activity.LastReceived)
-		threshold := time.Duration(cfg.DroppedBallTimeoutSeconds) * time.Second
-		if holdingDuration > threshold {
-			dropped[nodeKey] = true
-		}
-	}
-	return dropped
-}
-
-// StartIdleCheck starts a goroutine that periodically checks for idle nodes (Issue #71).
-func (t *IdleTracker) StartIdleCheck(ctx context.Context, cfg *config.Config, adjacency map[string][]string, sessionDir string, contextID string, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) {
-	ticker := time.NewTicker(10 * time.Second)
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				t.checkIdleNodes(cfg, adjacency, sessionDir, contextID, sharedNodes)
-			}
-		}
-	}()
-}
-
-// checkIdleNodes checks all nodes for idle timeout and sends reminders.
-// Issue #79: Iterate nodeActivity (session-prefixed keys), extract simple name for config lookup.
-func (t *IdleTracker) checkIdleNodes(cfg *config.Config, adjacency map[string][]string, sessionDir string, contextID string, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	now := time.Now()
-
-	for nodeKey, activity := range t.nodeActivity {
-		simpleName := extractSimpleName(nodeKey)
-		nodeConfig, exists := cfg.Nodes[simpleName]
-		if !exists || nodeConfig.IdleTimeoutSeconds <= 0 {
-			continue
-		}
-
-		// Use max of LastSent and LastReceived for idle detection
-		lastAct := activity.LastSent
-		if activity.LastReceived.After(lastAct) {
-			lastAct = activity.LastReceived
-		}
-		if lastAct.IsZero() {
-			continue
-		}
-
-		// Check if idle threshold exceeded
-		idleDuration := now.Sub(lastAct)
-		if idleDuration.Seconds() < nodeConfig.IdleTimeoutSeconds {
-			continue
-		}
-
-	}
 }
 
 // hashContentCRC32 computes CRC32 hash of the content.

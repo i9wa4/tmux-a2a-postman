@@ -17,7 +17,7 @@ starting the daemon.
 | `pop`                | Read and archive the next inbox message      |
 | `get-health`         | Print canonical session health JSON          |
 | `get-health-oneline` | Print compact all-session health             |
-| `--version`          | Print the installed version string           |
+| `--version`          | Print the build version string               |
 
 Compatibility and diagnostic helpers are internal. They are not part of CLI
 dispatch or the public operator contract.
@@ -139,12 +139,11 @@ that session.
   "context_id": "20240101-...",
   "session_name": "review",
   "node_count": 4,
-  "visible_state": "composing",
-  "compact": "🟣",
+  "visible_state": "pending",
+  "compact": "🔷",
   "queues": {
     "post_count": 0,
     "inbox_count": 2,
-    "waiting_count": 1,
     "dead_letter_count": 0
   },
   "nodes": [
@@ -152,10 +151,8 @@ that session.
       "name": "worker",
       "pane_id": "%11",
       "pane_state": "ready",
-      "waiting_state": "composing",
-      "visible_state": "composing",
+      "visible_state": "pending",
       "inbox_count": 2,
-      "waiting_count": 1,
       "current_command": "claude"
     }
   ],
@@ -182,7 +179,7 @@ tmux-a2a-postman get-health-oneline [--json] [--session NAME] [--config PATH]
 Human output is the compact all-session runtime line:
 
 ```text
-[0]🔷🔵:🟢 [1]🔴
+[0]🔷:🟢 [1]🔴
 ```
 
 Window groups are colon-separated emoji runs with no literal window labels.
@@ -190,7 +187,7 @@ Window groups are colon-separated emoji runs with no literal window labels.
 With `--json`, `get-health-oneline` returns:
 
 ```json
-{"status":"[0]🔷🔵:🟢 [1]🔴"}
+{"status":"[0]🔷:🟢 [1]🔴"}
 ```
 
 | Flag        | Type   | Default | --params? | Description                    |
@@ -208,14 +205,14 @@ project-local overrides in `.tmux-a2a-postman/`.
 
 Core public settings:
 
-| Field                      | Purpose                                  |
-| -------------------------- | ---------------------------------------- |
-| `edges`                    | Bidirectional routes between nodes       |
-| `ui_node`                  | Human-facing node for daemon-originated mail |
-| `message_footer`           | Footer appended to stored `send` mail    |
-| `notification_template`    | Pane hint rendered when mail arrives     |
+| Field                      | Purpose                                       |
+| -------------------------- | --------------------------------------------- |
+| `edges`                    | Bidirectional routes between nodes            |
+| `ui_node`                  | Optional target filter for startup auto-PING  |
+| `message_footer`           | Footer appended to stored `send` mail         |
+| `notification_template`    | Pane hint rendered when mail arrives          |
 | `min_delivery_gap_seconds` | Same-route delivery gap for duplicate control |
-| `retention_period_days`    | Inactive runtime cleanup window          |
+| `retention_period_days`    | Inactive runtime cleanup window               |
 
 Edge syntax:
 
@@ -249,7 +246,6 @@ Runtime layout:
       inbox/{node}/     # delivered unread messages
       read/             # archived messages
       dead-letter/      # unroutable messages
-      waiting/          # per-node waiting state files
 ```
 
 `retention_period_days` controls cleanup of inactive runtime state. Unknown

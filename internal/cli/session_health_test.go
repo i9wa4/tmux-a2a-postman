@@ -166,7 +166,6 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
 		filepath.Join(sessionDir, "inbox", "critic"),
-		filepath.Join(sessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -190,14 +189,6 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(worker inbox): %v", err)
-	}
-
-	if err := os.WriteFile(
-		filepath.Join(sessionDir, "waiting", "20260404-000001-s0000-from-orchestrator-to-critic.md"),
-		[]byte("---\nstate: composing\nexpects_reply: true\n---\n"),
-		0o644,
-	); err != nil {
-		t.Fatalf("WriteFile(critic waiting): %v", err)
 	}
 
 	scriptDir := t.TempDir()
@@ -266,11 +257,11 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 		t.Fatalf("json.Unmarshal(%q): %v", string(out), err)
 	}
 
-	if got := payload["visible_state"]; got != "composing" {
-		t.Fatalf("visible_state = %#v, want %q", got, "composing")
+	if got := payload["visible_state"]; got != "pending" {
+		t.Fatalf("visible_state = %#v, want %q", got, "pending")
 	}
-	if got := payload["compact"]; got != "🔷🔵" {
-		t.Fatalf("compact = %#v, want %q", got, "🔷🔵")
+	if got := payload["compact"]; got != "🔷🟢" {
+		t.Fatalf("compact = %#v, want %q", got, "🔷🟢")
 	}
 
 	windows, ok := payload["windows"].([]any)
@@ -296,8 +287,8 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := nodeByName["worker"]["visible_state"]; got != "pending" {
 		t.Fatalf("worker visible_state = %#v, want %q", got, "pending")
 	}
-	if got := nodeByName["critic"]["visible_state"]; got != "composing" {
-		t.Fatalf("critic visible_state = %#v, want %q", got, "composing")
+	if got := nodeByName["critic"]["visible_state"]; got != "ready" {
+		t.Fatalf("critic visible_state = %#v, want %q", got, "ready")
 	}
 }
 
@@ -321,7 +312,6 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
 		filepath.Join(sessionDir, "inbox", "critic"),
-		filepath.Join(sessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -461,11 +451,9 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 		filepath.Join(mainSessionDir, "inbox", "messenger"),
 		filepath.Join(mainSessionDir, "inbox", "critic"),
 		filepath.Join(mainSessionDir, "inbox", "worker"),
-		filepath.Join(mainSessionDir, "waiting"),
 		filepath.Join(reviewSessionDir, "inbox", "messenger"),
 		filepath.Join(reviewSessionDir, "inbox", "critic"),
 		filepath.Join(reviewSessionDir, "inbox", "worker"),
-		filepath.Join(reviewSessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -492,14 +480,6 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(main worker inbox): %v", err)
-	}
-
-	if err := os.WriteFile(
-		filepath.Join(mainSessionDir, "waiting", "20260406-000001-s0000-from-orchestrator-to-critic.md"),
-		[]byte("---\nstate: composing\nexpects_reply: true\n---\n"),
-		0o644,
-	); err != nil {
-		t.Fatalf("WriteFile(main critic waiting): %v", err)
 	}
 
 	if err := os.WriteFile(
@@ -569,8 +549,8 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "review" {
 		t.Fatalf("session order = %#v, want main then review to match numeric tmux session_id order", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🔷🔵:🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🔵:🟢")
+	if payload.Sessions[0].Compact != "🔷🟢:🟢" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🟢:🟢")
 	}
 	if payload.Sessions[1].Compact != "🟢🔷" {
 		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🟢🔷")
@@ -597,10 +577,8 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	for _, dir := range []string{
 		filepath.Join(ghostSessionDir, "inbox", "messenger"),
 		filepath.Join(ghostSessionDir, "inbox", "worker"),
-		filepath.Join(ghostSessionDir, "waiting"),
 		filepath.Join(mainSessionDir, "inbox", "messenger"),
 		filepath.Join(mainSessionDir, "inbox", "worker"),
-		filepath.Join(mainSessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)

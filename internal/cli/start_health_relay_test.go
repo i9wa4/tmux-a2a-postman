@@ -40,7 +40,6 @@ func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
 		filepath.Join(sessionDir, "inbox", "critic"),
-		filepath.Join(sessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -140,7 +139,6 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 		filepath.Join(sessionDir, "inbox", "worker"),
 		filepath.Join(sessionDir, "inbox", "critic"),
 		filepath.Join(sessionDir, "read"),
-		filepath.Join(sessionDir, "waiting"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("MkdirAll(%q): %v", dir, err)
@@ -208,10 +206,9 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 		t.Fatalf("initial health.VisibleState = %q, want %q", initialHealth.VisibleState, "ready")
 	}
 
-	waitingPath := filepath.Join(sessionDir, "waiting", "20260405-000001-s0000-from-worker-to-critic.md")
-	waitingContent := "---\nfrom: worker\nto: critic\nwaiting_since: 2026-04-05T00:00:00Z\nstate: composing\nstate_updated_at: 2026-04-05T00:00:00Z\nexpects_reply: true\n---\n"
-	if err := os.WriteFile(waitingPath, []byte(waitingContent), 0o644); err != nil {
-		t.Fatalf("WriteFile(waiting): %v", err)
+	criticInboxPath := filepath.Join(sessionDir, "inbox", "critic", "20260405-000001-s0000-from-worker-to-critic.md")
+	if err := os.WriteFile(criticInboxPath, []byte("body"), 0o644); err != nil {
+		t.Fatalf("WriteFile(critic inbox): %v", err)
 	}
 
 	rawEvents <- tui.DaemonEvent{
@@ -235,15 +232,15 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 	if !ok {
 		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
 	}
-	if health.VisibleState != "composing" {
-		t.Fatalf("health.VisibleState = %q, want %q", health.VisibleState, "composing")
+	if health.VisibleState != "pending" {
+		t.Fatalf("health.VisibleState = %q, want %q", health.VisibleState, "pending")
 	}
 	if len(health.Nodes) != 2 {
 		t.Fatalf("health.Nodes length = %d, want 2", len(health.Nodes))
 	}
 	for _, node := range health.Nodes {
-		if node.Name == "critic" && node.WaitingState != "composing" {
-			t.Fatalf("critic waiting state = %q, want %q", node.WaitingState, "composing")
+		if node.Name == "critic" && node.VisibleState != "pending" {
+			t.Fatalf("critic visible state = %q, want %q", node.VisibleState, "pending")
 		}
 	}
 }
@@ -260,7 +257,6 @@ func TestRelayDaemonEventsToTUI_SkipsCanonicalHealthForForeignOwnedSession(t *te
 	for _, dir := range []string{
 		filepath.Join(tmpDir, contextID, sessionName, "inbox", "worker"),
 		filepath.Join(tmpDir, contextID, sessionName, "inbox", "critic"),
-		filepath.Join(tmpDir, contextID, sessionName, "waiting"),
 		filepath.Join(tmpDir, ownerContextID, sessionName, "inbox", "worker"),
 		filepath.Join(tmpDir, ownerContextID, sessionName, "inbox", "critic"),
 	} {

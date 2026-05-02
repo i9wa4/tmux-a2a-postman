@@ -43,22 +43,9 @@ var (
 	activeNodeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("10")) // green
 
-	ballHolderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("226")) // yellow
-
-	// Issue #56: Dropped ball style
-	droppedNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")) // red
-
-	composingNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("33")) // Blue: explicit reply-tracked work
-
 	// Issue #286: New state styles
 	pendingNodeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("51")) // Cyan: inbox message waiting
-
-	userInputNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("141")) // Purple: node awaiting user input
 
 	// Issue #89: Selected session row highlight
 	selectedSessionStyle = lipgloss.NewStyle().
@@ -77,18 +64,6 @@ var (
 	eventDroppedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")) // gray
 )
-
-// waitingStateRank defines priority for waiting/ state color override.
-// Higher rank = worse state = takes visual priority.
-// spinning is rank 3 (active-failure, more urgent than idle/user_input).
-var waitingStateRank = map[string]int{
-	"user_input": 0,
-	"pending":    1,
-	"composing":  2,
-	"spinning":   3,
-	"stale":      3,
-	"stalled":    4,
-}
 
 // ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
 // Supports both directed ("-->") and undirected ("--") edges.
@@ -190,7 +165,6 @@ type Model struct {
 
 	// Node state tracking (Issue #55)
 	nodeStates        map[string]string // "active" / "idle" / "stale"
-	waitingStates     map[string]string // "composing" / "spinning" / "stuck" / "user_input"
 	unreadInboxCounts map[string]int    // live unread inbox depth per node
 
 	// Shared state
@@ -321,7 +295,6 @@ func (m Model) sessionHealthFor(sessionName string) (status.SessionHealth, bool)
 }
 
 // getSessionWorstState returns the worst node state for a session (Issue #97).
-// Priority: stuck/stale > spinning/idle > composing > active
 func (m Model) getSessionWorstState(sessionName string) string {
 	if health, ok := m.sessionHealthFor(sessionName); ok {
 		if health.VisibleState != "" {
@@ -340,26 +313,23 @@ func (m Model) getSessionWorstState(sessionName string) string {
 	for _, nodeName := range nodes {
 		key := sessionName + ":" + nodeName
 		healthNodes = append(healthNodes, status.NodeHealth{
-			Name:         nodeName,
-			PaneState:    m.nodeStates[key],
-			WaitingState: m.waitingStates[key],
-			InboxCount:   m.unreadInboxCounts[key],
+			Name:       nodeName,
+			PaneState:  m.nodeStates[key],
+			InboxCount: m.unreadInboxCounts[key],
 		})
 	}
 	return status.SessionVisibleState(healthNodes)
 }
 
 // effectiveNodeState returns the display state for a session-prefixed node key.
-// waiting/ state overrides nodeStates when it represents an equal or worse condition.
 func (m Model) effectiveNodeState(key string) string {
-	return status.VisibleState(m.nodeStates[key], m.waitingStates[key], m.unreadInboxCounts[key])
+	return status.VisibleState(m.nodeStates[key], m.unreadInboxCounts[key])
 }
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
-// Issue #56: Added droppedNodes parameter for dropped-ball detection.
 // Issue #77: Use session-prefixed keys to avoid collision across sessions.
 // Issue #79: Simplified - nodeActivity keys are already session-prefixed, no reverse index needed.
-func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedNodes map[string]bool) {
+func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 	// Type assertion: nodeStatesRaw should be map[string]idle.NodeActivity
 	nodeActivities, ok := nodeStatesRaw.(map[string]idle.NodeActivity)
 	if !ok {
@@ -388,8 +358,6 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}, droppedN
 		// Determine state
 		var state string
 		switch {
-		case droppedNodes != nil && droppedNodes[nodeKey]:
-			state = "stale"
 		case !activity.LivenessConfirmed:
 			state = "stale"
 		case activity.LastReceived.After(activity.LastSent) && !activity.LastReceived.IsZero():
@@ -446,7 +414,6 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
 		sessionHealth:       make(map[string]status.SessionHealth),
 		nodeStates:          make(map[string]string), // Issue #55: Node state tracking
-		waitingStates:       make(map[string]string),
 		unreadInboxCounts:   make(map[string]int),
 		config:              cfg,
 		daemonEvents:        daemonEvents,
@@ -537,20 +504,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
-		case "dropped_ball":
-			// Issue #56: Dropped ball event
-			m.lastEvent = msg.Message
-			sessionName := m.resolveSessionFromDetails(msg.Details)
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: sessionName,
-				Timestamp:   time.Now(),
-				Severity:    "", // Issue #101: Default severity
-			})
-			// Keep only last 10 events
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
 		case "status_update":
 			if session, ok := msg.Details["session"].(string); ok {
 				m.sessionStatus[session] = msg.Message
@@ -618,20 +571,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "ball_state_update":
 			// Issue #55: Update node states from idle tracking
-			// Issue #56: Extract dropped_nodes for dropped-ball detection
-			var droppedNodes map[string]bool
-			if droppedNodesRaw, ok := msg.Details["dropped_nodes"].(map[string]bool); ok {
-				droppedNodes = droppedNodesRaw
-			}
 			if nodeStatesRaw, ok := msg.Details["node_states"]; ok {
 				// Type assertion is tricky with maps - need to handle interface{} carefully
 				// The map comes from idle.GetNodeStates() which returns map[string]NodeActivity
 				// We need to extract state from each NodeActivity
-				m.updateNodeStatesFromActivity(nodeStatesRaw, droppedNodes)
-			}
-		case "waiting_state_update":
-			if wsRaw, ok := msg.Details["waiting_states"].(map[string]string); ok {
-				m.waitingStates = wsRaw
+				m.updateNodeStatesFromActivity(nodeStatesRaw)
 			}
 		case "inbox_unread_count_update":
 			if counts, ok := msg.Details["unread_counts"].(map[string]int); ok {
@@ -647,103 +591,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
 			}
-		// Issue #101: Handle abnormal event types
-		case "inbox_stagnation_warning":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "inbox_stagnation_critical":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityCritical,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "node_inactivity":
-			sessionName := m.resolveSessionFromDetails(msg.Details)
-			if sessionName != "" {
-				m.sessionStatus[sessionName] = msg.Message
-			}
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: sessionName,
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "node_inactivity_warning":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "node_inactivity_critical":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityCritical,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "node_inactivity_dropped":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityDropped,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "unreplied_message":
-			sessionName := m.resolveSessionFromDetails(msg.Details)
-			if sessionName != "" {
-				m.sessionStatus[sessionName] = msg.Message
-			}
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: sessionName,
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
 		case "swallowed_redelivery": // Issue #282
 			m.events = append(m.events, EventEntry{
 				Message:     msg.Message,
 				SessionName: extractSessionFromDetails(msg.Details),
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "inbox_unread_summary":
-			sessionName := m.resolveSessionFromDetails(msg.Details)
-			if sessionName != "" {
-				m.sessionStatus[sessionName] = msg.Message
-			}
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: sessionName,
 				Timestamp:   time.Now(),
 				Severity:    SeverityWarning,
 			})
@@ -807,36 +658,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				SessionName: sessionName,
 				Timestamp:   time.Now(),
 				Severity:    SeverityCritical,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "alert_config_warning": // Issue #352: misconfigured alert system warning
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: "",
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "alert_delivery_degraded":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: "",
-				Timestamp:   time.Now(),
-				Severity:    SeverityWarning,
-			})
-			if len(m.events) > 10 {
-				m.events = m.events[len(m.events)-10:]
-			}
-		case "alert_delivery_recovered":
-			m.events = append(m.events, EventEntry{
-				Message:     msg.Message,
-				SessionName: "",
-				Timestamp:   time.Now(),
-				Severity:    SeverityInfo,
 			})
 			if len(m.events) > 10 {
 				m.events = m.events[len(m.events)-10:]
@@ -911,13 +732,7 @@ func sessionIndicator(state string, enabled bool) string {
 		return "⚪"
 	case "pending":
 		return "🔷"
-	case "composing":
-		return "🔵"
-	case "spinning":
-		return "🟡"
-	case "user_input":
-		return "🟣"
-	case "stale", "stalled", "stuck":
+	case "stale":
 		return "🔴"
 	default:
 		return "🟢"
@@ -952,10 +767,8 @@ func nodeStateLabel(state string) string {
 	switch state {
 	case "", "ready", "active", "idle":
 		return "ready"
-	case "user_input":
-		return "input"
-	case "stale", "stalled", "stuck":
-		return "stalled"
+	case "stale":
+		return "stale"
 	default:
 		return state
 	}
@@ -1012,7 +825,7 @@ func visibleStateLabel(node status.NodeHealth) string {
 	if node.VisibleState != "" {
 		return node.VisibleState
 	}
-	return status.VisibleState(node.PaneState, node.WaitingState, node.InboxCount)
+	return status.VisibleState(node.PaneState, node.InboxCount)
 }
 
 func orderedHealthNodeNames(health status.SessionHealth) []string {
@@ -1141,22 +954,15 @@ func (m Model) renderLeftPane(width, height int) string {
 
 			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
 
-			// Issue #97: Apply session color based on worst node state
-			// Priority: stalled (red) > spinning (yellow) > pending/composing > ready (green)
+			// Issue #97: Apply session color based on worst node state.
 			if i != m.selectedSession && sess.Enabled {
 				worstState := m.getSessionWorstState(sess.Name)
 				var sessionStyle lipgloss.Style
 				switch worstState {
-				case "stale", "stalled":
-					sessionStyle = droppedNodeStyle
-				case "spinning":
-					sessionStyle = ballHolderStyle
-				case "user_input":
-					sessionStyle = userInputNodeStyle
+				case "stale":
+					sessionStyle = eventCriticalStyle
 				case "pending":
 					sessionStyle = pendingNodeStyle
-				case "composing":
-					sessionStyle = composingNodeStyle
 				case "ready", "active":
 					sessionStyle = activeNodeStyle
 				default:
@@ -1216,10 +1022,7 @@ func (m Model) renderRightPane(width, height int) string {
 		legend := "Legend: " +
 			activeNodeStyle.Render("Ready") + " | " +
 			pendingNodeStyle.Render("Pending") + " | " +
-			composingNodeStyle.Render("Composing") + " | " +
-			ballHolderStyle.Render("Spinning") + " | " +
-			droppedNodeStyle.Render("Stalled") + " | " +
-			userInputNodeStyle.Render("User Input")
+			eventCriticalStyle.Render("Stale")
 		b.WriteString(legend + "\n\n")
 		b.WriteString(m.renderRoutingView(width, height-7))
 	}
@@ -1262,14 +1065,8 @@ func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
 						nodeStyle = activeNodeStyle
 					case "pending":
 						nodeStyle = pendingNodeStyle
-					case "composing":
-						nodeStyle = composingNodeStyle
-					case "spinning":
-						nodeStyle = ballHolderStyle
-					case "stale", "stalled", "stuck":
-						nodeStyle = droppedNodeStyle
-					case "user_input":
-						nodeStyle = userInputNodeStyle
+					case "stale":
+						nodeStyle = eventCriticalStyle
 					}
 				}
 				builder.WriteString(nodeStyle.Render(node))

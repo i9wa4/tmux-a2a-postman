@@ -5,16 +5,15 @@ tmux-a2a-postman is becoming a simple session runtime for agent teams in tmux.
 The message lane remains the center:
 
 - `send`
-- `pop` and `read`
+- `pop`
 - routing and reply flow
 - dead-letter handling
 
 Around that core, the product is gaining runtime surfaces:
 
-- canonical health and alerts
-- replay and projection views
-- local runtime context on approved read paths
-- explicit summary surfaces such as TODO status
+- canonical health JSON
+- compact all-session health
+- a default TUI over the same health contract
 
 It is not becoming:
 
@@ -28,7 +27,7 @@ and the broader runtime shape is not settled enough to justify rename churn.
 Internal terminology should become more precise:
 
 - `message lane`: stored-message delivery and reading
-- `session runtime`: live health, alerts, projections, and other session state
+- `session runtime`: live health, projections, and other session state
 - `runtime surface`: explicit operator views outside stored messages
 
 Design rule: keep stored messages simple and durable. Add runtime surfaces

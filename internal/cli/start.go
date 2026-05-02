@@ -20,7 +20,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
-	"github.com/i9wa4/tmux-a2a-postman/internal/alert"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
@@ -29,10 +28,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
-	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
-	"github.com/i9wa4/tmux-a2a-postman/internal/reminder"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
@@ -128,9 +125,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
-	}
-	if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
-		return fmt.Errorf("journal cutover: %w", err)
 	}
 
 	// Parse edge definitions for routing
@@ -455,9 +449,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		knownNodes[nodeName] = true
 	}
 
-	// Reminder state for per-node message counters
-	reminderState := reminder.NewReminderState()
-
 	// Issue #71: Create state management instances
 	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
 	daemonState.AutoEnableSessionIfNew(sessionName)
@@ -468,11 +459,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		log.Printf("postman: startup drain window active (%.0fs) — session-enabled check bypassed (#217)\n", cfg.StartupDrainWindowSeconds)
 	}
 	idleTracker := idle.NewIdleTracker()
-	alertRateLimiter := alert.NewAlertRateLimiter(time.Duration(cfg.AlertCooldownSeconds) * time.Second)
-	notification.InitPaneCooldown(time.Duration(cfg.PaneNotifyCooldownSeconds) * time.Second)
-
-	// Start idle check goroutine
-	idleTracker.StartIdleCheck(ctx, cfg, adjacency, sessionDir, contextID, &sharedNodes)
 
 	// Start pane capture check goroutine (hybrid idle detection)
 	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName, func(nodes map[string]discovery.NodeInfo, targetNodeKeys []string) {
@@ -489,7 +475,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
 	})
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, reminderState, daemonEvents, resolvedConfigPath, watchedConfigPaths, watchedNodesDirs, daemonState, idleTracker, alertRateLimiter, &sharedNodes, sessionName)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, daemonEvents, resolvedConfigPath, watchedConfigPaths, watchedNodesDirs, daemonState, idleTracker, &sharedNodes, sessionName)
 	})
 
 	// Issue #117: Discover all tmux sessions
@@ -938,7 +924,7 @@ func isSessionRuntimeDir(path string) bool {
 
 func isKnownSessionRuntimeSubdir(name string) bool {
 	switch name {
-	case "inbox", "post", "draft", "read", "dead-letter", "waiting", "todo":
+	case "inbox", "post", "draft", "read", "dead-letter":
 		return true
 	default:
 		return false

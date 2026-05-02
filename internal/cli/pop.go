@@ -13,7 +13,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
-	"github.com/i9wa4/tmux-a2a-postman/internal/readcontext"
 )
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
@@ -63,9 +62,6 @@ func RunPop(args []string) error {
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
-		if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
-			return fmt.Errorf("journal cutover: %w", err)
-		}
 		baseDir := config.ResolveBaseDir(cfg.BaseDir)
 		sessionName := config.GetTmuxSessionName()
 		if sessionName == "" {
@@ -109,12 +105,7 @@ func RunPop(args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	cutoverMode, err := config.ResolveJournalCutoverMode(cfg)
-	if err != nil {
-		return fmt.Errorf("journal cutover: %w", err)
-	}
-
-	if !*peek && cutoverMode == config.JournalCutoverCompatibilityFirst && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+	if !*peek && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
 			Command: projection.CompatibilitySubmitPop,
 			Node:    nodeName,
@@ -134,9 +125,6 @@ func RunPop(args []string) error {
 			return json.NewEncoder(os.Stdout).Encode(parsed)
 		}
 		output := response.Content
-		if shouldRenderReadContext(*peek, *jsonOut, *file, cfg) {
-			output = appendReadContextBlock(output, readcontext.BuildBlock(cfg.ReadContextHeading, cfg.ReadContextPieces, readcontext.CurrentOptions(nodeName)))
-		}
 		fmt.Fprintf(os.Stderr, "[1/%d unread]\n", response.UnreadBefore)
 		fmt.Print(output)
 		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", response.UnreadBefore-1)
@@ -200,9 +188,6 @@ func RunPop(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "[1/%d unread]\n", len(msgs))
 	output := string(data)
-	if shouldRenderReadContext(*peek, *jsonOut, *file, cfg) {
-		output = appendReadContextBlock(output, readcontext.BuildBlock(cfg.ReadContextHeading, cfg.ReadContextPieces, readcontext.CurrentOptions(nodeName)))
-	}
 	fmt.Print(output)
 
 	if *peek {
@@ -246,17 +231,6 @@ func findInboxFileByName(baseDir, sessionName, contextID, filename string) (stri
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
 	return message.ArchiveInboxMessage(absPath, filename)
-}
-
-func shouldRenderReadContext(peek, jsonOut bool, file string, cfg *config.Config) bool {
-	return !peek && !jsonOut && file == "" && cfg != nil && cfg.ReadContextMode == "pieces"
-}
-
-func appendReadContextBlock(content, block string) string {
-	if block == "" {
-		return content
-	}
-	return strings.TrimRight(content, "\n") + "\n\n" + block + "\n"
 }
 
 // messageJSON holds JSON-serializable fields for a message (used by pop --json).

@@ -136,10 +136,10 @@ func TestTUI_View(t *testing.T) {
 	}
 	m.sessionHealth["review"] = status.SessionHealth{
 		SessionName:  "review",
-		VisibleState: "user_input",
+		VisibleState: "stale",
 		Nodes: []status.NodeHealth{
 			{Name: "critic", VisibleState: "pending"},
-			{Name: "worker", VisibleState: "user_input"},
+			{Name: "worker", VisibleState: "stale"},
 		},
 		Windows: []status.SessionWindow{
 			{
@@ -754,42 +754,6 @@ func TestTUI_Update_SessionCollapsedRecordsCriticalEvent(t *testing.T) {
 	}
 }
 
-func TestTUI_Update_NodeInactivityRecordsWarningForUniqueSession(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic"},
-		"main":   {"worker"},
-	}
-
-	event := DaemonEventMsg{
-		Type:    "node_inactivity",
-		Message: "Node critic inactive for 10m0s",
-		Details: map[string]interface{}{
-			"node":     "critic",
-			"duration": "10m0s",
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if got := m.sessionStatus["review"]; got != event.Message {
-		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
-	}
-	if len(m.events) != 1 {
-		t.Fatalf("len(events) = %d, want 1", len(m.events))
-	}
-	if got := m.events[0].SessionName; got != "review" {
-		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
-	}
-	if got := m.events[0].Severity; got != SeverityWarning {
-		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
-	}
-}
-
 func TestTUI_Update_PaneCollisionRecordsWarningForSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
@@ -821,42 +785,6 @@ func TestTUI_Update_PaneCollisionRecordsWarningForSession(t *testing.T) {
 	}
 	if got := m.events[0].Severity; got != SeverityWarning {
 		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
-	}
-}
-
-func TestTUI_Update_DroppedBallRecordsSessionForQualifiedNode(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic"},
-		"main":   {"worker"},
-	}
-
-	event := DaemonEventMsg{
-		Type:    "dropped_ball",
-		Message: "Dropped ball: review:critic inactive for 30m0s",
-		Details: map[string]interface{}{
-			"node":     "review:critic",
-			"duration": "30m0s",
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if got := m.lastEvent; got != event.Message {
-		t.Fatalf("lastEvent = %q, want %q", got, event.Message)
-	}
-	if len(m.events) != 1 {
-		t.Fatalf("len(events) = %d, want 1", len(m.events))
-	}
-	if got := m.events[0].Message; got != event.Message {
-		t.Fatalf("events[0].Message = %q, want %q", got, event.Message)
-	}
-	if got := m.events[0].SessionName; got != "review" {
-		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
 	}
 }
 
@@ -895,78 +823,5 @@ func TestTUI_Update_PaneDisappearedRecordsDroppedStatusForSession(t *testing.T) 
 	}
 	if got := m.events[0].Severity; got != SeverityDropped {
 		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityDropped)
-	}
-}
-
-func TestTUI_Update_InboxUnreadSummaryRecordsWarningForUniqueSession(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic"},
-		"main":   {"worker"},
-	}
-
-	event := DaemonEventMsg{
-		Type:    "inbox_unread_summary",
-		Message: "Node critic has 3 unread messages",
-		Details: map[string]interface{}{
-			"node":      "critic",
-			"count":     3,
-			"threshold": 2,
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if got := m.sessionStatus["review"]; got != event.Message {
-		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
-	}
-	if len(m.events) != 1 {
-		t.Fatalf("len(events) = %d, want 1", len(m.events))
-	}
-	if got := m.events[0].SessionName; got != "review" {
-		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
-	}
-	if got := m.events[0].Severity; got != SeverityWarning {
-		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
-	}
-}
-
-func TestTUI_Update_UnrepliedMessageRecordsWarningForUniqueSession(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic"},
-		"main":   {"worker"},
-	}
-
-	event := DaemonEventMsg{
-		Type:    "unreplied_message",
-		Message: "Node critic has 2 unreplied messages",
-		Details: map[string]interface{}{
-			"node":  "critic",
-			"count": 2,
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if got := m.sessionStatus["review"]; got != event.Message {
-		t.Fatalf("sessionStatus[review] = %q, want %q", got, event.Message)
-	}
-	if len(m.events) != 1 {
-		t.Fatalf("len(events) = %d, want 1", len(m.events))
-	}
-	if got := m.events[0].SessionName; got != "review" {
-		t.Fatalf("events[0].SessionName = %q, want %q", got, "review")
-	}
-	if got := m.events[0].Severity; got != SeverityWarning {
-		t.Fatalf("events[0].Severity = %q, want %q", got, SeverityWarning)
 	}
 }

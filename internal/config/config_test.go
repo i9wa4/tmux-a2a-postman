@@ -80,7 +80,7 @@ func TestCreateSessionDirs(t *testing.T) {
 		t.Fatalf("CreateSessionDirs failed: %v", err)
 	}
 
-	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting", "todo"}
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(sessionDir, d)
 		info, err := os.Stat(path)
@@ -104,7 +104,7 @@ func TestCreateMultiSessionDirs(t *testing.T) {
 	}
 
 	sessionDir := filepath.Join(contextDir, sessionName)
-	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter", "waiting", "todo"}
+	expectedDirs := []string{"inbox", "post", "draft", "read", "dead-letter"}
 	for _, d := range expectedDirs {
 		path := filepath.Join(sessionDir, d)
 		info, err := os.Stat(path)
@@ -132,12 +132,10 @@ scan_interval_seconds = 2.0
 enter_delay_seconds = 1.0
 tmux_timeout_seconds = 10.0
 startup_delay_seconds = 3.0
-reminder_interval_messages = 60.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
 daemon_message_template = "Custom daemon"
 draft_template = "Custom draft"
-reminder_message = "Custom reminder"
 reply_command = "custom-reply"
 edges = ["orchestrator --> worker", "worker --> observer"]
 
@@ -175,9 +173,6 @@ role = "observer"
 	if cfg.StartupDelay != 3.0 {
 		t.Errorf("StartupDelay: got %v, want 3.0", cfg.StartupDelay)
 	}
-	if cfg.ReminderInterval != 60.0 {
-		t.Errorf("ReminderInterval: got %v, want 60.0", cfg.ReminderInterval)
-	}
 	if cfg.BaseDir != "/custom/base" {
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/custom/base")
 	}
@@ -189,9 +184,6 @@ role = "observer"
 	}
 	if cfg.DraftTemplate != "Custom draft" {
 		t.Errorf("DraftTemplate: got %q, want %q", cfg.DraftTemplate, "Custom draft")
-	}
-	if cfg.ReminderMessage != "Custom reminder" {
-		t.Errorf("ReminderMessage: got %q, want %q", cfg.ReminderMessage, "Custom reminder")
 	}
 	if cfg.ReplyCommand != "custom-reply" {
 		t.Errorf("ReplyCommand: got %q, want %q", cfg.ReplyCommand, "custom-reply")
@@ -241,9 +233,6 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
-	}
-	if cfg.StalledAlertTemplate == "" {
-		t.Error("default StalledAlertTemplate: got empty, want non-empty")
 	}
 	if cfg.RetentionPeriodDays != 90 {
 		t.Errorf("default RetentionPeriodDays: got %d, want 90", cfg.RetentionPeriodDays)
@@ -1118,12 +1107,10 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base.A2AVersion = "0.9"
 
 	override := &Config{
-		Nodes:                 make(map[string]NodeConfig),
-		ScanInterval:          5.0,
-		BaseDir:               "/project/base",
-		A2AVersion:            "1.0",
-		NodeSpinningSeconds:   1800.0,
-		SpinningAlertTemplate: "custom spinning alert",
+		Nodes:        make(map[string]NodeConfig),
+		ScanInterval: 5.0,
+		BaseDir:      "/project/base",
+		A2AVersion:   "1.0",
 	}
 
 	mergeConfig(base, override)
@@ -1136,12 +1123,6 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	}
 	if base.A2AVersion != "1.0" {
 		t.Errorf("A2AVersion: got %q, want %q", base.A2AVersion, "1.0")
-	}
-	if base.NodeSpinningSeconds != 1800.0 {
-		t.Errorf("NodeSpinningSeconds: got %v, want 1800.0", base.NodeSpinningSeconds)
-	}
-	if base.SpinningAlertTemplate != "custom spinning alert" {
-		t.Errorf("SpinningAlertTemplate: got %q, want %q", base.SpinningAlertTemplate, "custom spinning alert")
 	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {
@@ -1400,47 +1381,6 @@ func TestLoadConfig_MalformedTOML(t *testing.T) {
 	}
 }
 
-func TestHeartbeatNodesExclusion(t *testing.T) {
-	// Fix 1 regression guard: [heartbeat] in nodes/*.toml must NOT be parsed as a node.
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "postman.toml")
-	nodesDir := filepath.Join(tmpDir, "nodes")
-	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll nodes: %v", err)
-	}
-
-	// Minimal config with one real node
-	configContent := `
-[worker]
-role = "test"
-template = ""
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
-		t.Fatalf("WriteFile config: %v", err)
-	}
-
-	// nodes/heartbeat.toml containing a [heartbeat] section
-	nodeContent := `
-[heartbeat]
-enabled = true
-interval_seconds = 60.0
-llm_node = "heartbeat-llm"
-prompt = "test"
-`
-	if err := os.WriteFile(filepath.Join(nodesDir, "heartbeat.toml"), []byte(nodeContent), 0o644); err != nil {
-		t.Fatalf("WriteFile node: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-
-	if _, exists := cfg.Nodes["heartbeat"]; exists {
-		t.Errorf("cfg.Nodes[\"heartbeat\"] should not exist (heartbeat is a reserved section name)")
-	}
-}
-
 // writeLivePID writes the current process PID to baseDir/contextName/sessionName/postman.pid.
 func writeLivePID(t *testing.T, baseDir, contextName, sessionName string) {
 	t.Helper()
@@ -1645,25 +1585,17 @@ func zeroValueInventoryBaseConfig() string {
 	return `
 [postman]
 edges = ["worker -- orchestrator"]
-reminder_interval_messages = 7.0
 enter_verify_delay_seconds = 1.5
 enter_retry_max = 4
-node_spinning_seconds = 30.0
-message_age_warning_seconds = 45.0
 message_ttl_seconds = 600.0
 retention_period_days = 90
 min_delivery_gap_seconds = 2.0
 startup_drain_window_seconds = 11.0
 pane_capture_max_panes = 5
-inbox_unread_threshold = 9
-pane_notify_cooldown_seconds = 33
 enter_delay_seconds = 8.0
 
 [worker]
 role = "worker-base"
-idle_timeout_seconds = 5.0
-dropped_ball_timeout_seconds = 6
-dropped_ball_cooldown_seconds = 7
 enter_count = 3
 enter_delay_seconds = 1.25
 delivery_idle_timeout_seconds = 12.0
@@ -1673,9 +1605,6 @@ delivery_idle_retry_max = 5
 role = "orchestrator-base"
 
 [node_defaults]
-idle_timeout_seconds = 15.0
-dropped_ball_timeout_seconds = 16
-dropped_ball_cooldown_seconds = 17
 enter_count = 2
 enter_delay_seconds = 2.5
 delivery_idle_timeout_seconds = 22.0
@@ -1686,27 +1615,19 @@ delivery_idle_retry_max = 8
 func zeroValueInventoryLocalPostmanConfig() string {
 	return `
 [postman]
-reminder_interval_messages = 0
 enter_verify_delay_seconds = 0
 enter_retry_max = 0
-node_spinning_seconds = 0
-message_age_warning_seconds = 0
 message_ttl_seconds = 0
 retention_period_days = 0
 min_delivery_gap_seconds = 0
 startup_drain_window_seconds = 0
 pane_capture_max_panes = 0
-inbox_unread_threshold = 0
-pane_notify_cooldown_seconds = 0
 `
 }
 
 func zeroValueInventoryLocalNodeConfig() string {
 	return `
 [worker]
-idle_timeout_seconds = 0
-dropped_ball_timeout_seconds = 0
-dropped_ball_cooldown_seconds = 0
 enter_count = 0
 enter_delay_seconds = 0
 delivery_idle_timeout_seconds = 0
@@ -1727,20 +1648,11 @@ func zeroValueInventoryLocalAllConfig() string {
 
 func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
 	t.Helper()
-	if cfg.ReminderInterval != 0 {
-		t.Fatalf("ReminderInterval: got %v, want 0", cfg.ReminderInterval)
-	}
 	if cfg.EnterVerifyDelay != 0 {
 		t.Fatalf("EnterVerifyDelay: got %v, want 0", cfg.EnterVerifyDelay)
 	}
 	if cfg.EnterRetryMax != 0 {
 		t.Fatalf("EnterRetryMax: got %d, want 0", cfg.EnterRetryMax)
-	}
-	if cfg.NodeSpinningSeconds != 0 {
-		t.Fatalf("NodeSpinningSeconds: got %v, want 0", cfg.NodeSpinningSeconds)
-	}
-	if cfg.MessageAgeWarningSeconds != 0 {
-		t.Fatalf("MessageAgeWarningSeconds: got %v, want 0", cfg.MessageAgeWarningSeconds)
 	}
 	if cfg.MessageTTLSeconds != 0 {
 		t.Fatalf("MessageTTLSeconds: got %v, want 0", cfg.MessageTTLSeconds)
@@ -1757,25 +1669,10 @@ func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
 	if cfg.PaneCaptureMaxPanes != 0 {
 		t.Fatalf("PaneCaptureMaxPanes: got %d, want 0", cfg.PaneCaptureMaxPanes)
 	}
-	if cfg.InboxUnreadThreshold != 0 {
-		t.Fatalf("InboxUnreadThreshold: got %d, want 0", cfg.InboxUnreadThreshold)
-	}
-	if cfg.PaneNotifyCooldownSeconds != 0 {
-		t.Fatalf("PaneNotifyCooldownSeconds: got %d, want 0", cfg.PaneNotifyCooldownSeconds)
-	}
 }
 
 func assertZeroValueNodeInventory(t *testing.T, cfg NodeConfig) {
 	t.Helper()
-	if cfg.IdleTimeoutSeconds != 0 {
-		t.Fatalf("IdleTimeoutSeconds: got %v, want 0", cfg.IdleTimeoutSeconds)
-	}
-	if cfg.DroppedBallTimeoutSeconds != 0 {
-		t.Fatalf("DroppedBallTimeoutSeconds: got %d, want 0", cfg.DroppedBallTimeoutSeconds)
-	}
-	if cfg.DroppedBallCooldownSeconds != 0 {
-		t.Fatalf("DroppedBallCooldownSeconds: got %d, want 0", cfg.DroppedBallCooldownSeconds)
-	}
 	if cfg.EnterCount != 0 {
 		t.Fatalf("EnterCount: got %d, want 0", cfg.EnterCount)
 	}

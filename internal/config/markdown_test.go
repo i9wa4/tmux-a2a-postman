@@ -706,7 +706,7 @@ scan_interval_seconds = 5.0
 
 [worker]
 template = "from toml"
-idle_timeout_seconds = 300
+delivery_idle_timeout_seconds = 300
 `)
 	writeFile(t, filepath.Join(xdgDir, "postman.md"), "## `worker` Node\n\nfrom markdown\n")
 
@@ -717,8 +717,8 @@ idle_timeout_seconds = 300
 	if cfg.Nodes["worker"].Template != "from markdown" {
 		t.Errorf("worker.Template: got %q, want %q", cfg.Nodes["worker"].Template, "from markdown")
 	}
-	if cfg.Nodes["worker"].IdleTimeoutSeconds != 300 {
-		t.Errorf("worker.IdleTimeoutSeconds: got %v, want 300", cfg.Nodes["worker"].IdleTimeoutSeconds)
+	if cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds != 300 {
+		t.Errorf("worker.DeliveryIdleTimeoutSeconds: got %v, want 300", cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds)
 	}
 	if cfg.ScanInterval != 5.0 {
 		t.Errorf("ScanInterval: got %v, want 5.0", cfg.ScanInterval)
@@ -747,7 +747,7 @@ scan_interval_seconds = 1.0
 `)
 	writeFile(t, filepath.Join(nodesDir, "worker.toml"), `[worker]
 template = "from nodes/worker.toml"
-idle_timeout_seconds = 42
+delivery_idle_timeout_seconds = 42
 `)
 	writeFile(t, filepath.Join(nodesDir, "worker.md"), "---\nrole: md-role\n---\n\nfrom nodes/worker.md\n")
 	writeFile(t, filepath.Join(localCfgDir, "postman.md"), "## `worker` Node\n\nfrom postman.md\n")
@@ -772,8 +772,8 @@ idle_timeout_seconds = 42
 		t.Errorf("worker.Role: got %q, want %q", cfg.Nodes["worker"].Role, "md-role")
 	}
 	// TOML structural field preserved
-	if cfg.Nodes["worker"].IdleTimeoutSeconds != 42 {
-		t.Errorf("worker.IdleTimeoutSeconds: got %v, want 42", cfg.Nodes["worker"].IdleTimeoutSeconds)
+	if cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds != 42 {
+		t.Errorf("worker.DeliveryIdleTimeoutSeconds: got %v, want 42", cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds)
 	}
 }
 

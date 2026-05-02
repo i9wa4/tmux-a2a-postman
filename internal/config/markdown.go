@@ -351,7 +351,7 @@ func loadMarkdownConfig(path string) (*Config, error) {
 			continue
 		}
 		// Validate against reserved names
-		if key == "postman" || key == "heartbeat" {
+		if key == "postman" {
 			log.Printf("warning: skipping reserved node name %q in %s", key, path)
 			continue
 		}

@@ -120,9 +120,6 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if _, err := config.ResolveJournalCutoverMode(cfg); err != nil {
-		return fmt.Errorf("journal cutover: %w", err)
-	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
 	sender := config.GetTmuxPaneName()

@@ -35,7 +35,6 @@ func TestGetHealthProjectionParity(t *testing.T) {
 		name         string
 		paneStates   map[string]string
 		liveInbox    map[string]int
-		waitingFiles map[string]string
 		journalSteps []projectionJournalStep
 	}{
 		{
@@ -71,7 +70,7 @@ func TestGetHealthProjectionParity(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := writeSessionHealthProjectionFixture(t, tc.paneStates, tc.liveInbox, tc.waitingFiles, tc.journalSteps)
+			fixture := writeSessionHealthProjectionFixture(t, tc.paneStates, tc.liveInbox, tc.journalSteps)
 
 			legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 			if err != nil {
@@ -93,7 +92,6 @@ func TestGetHealthOnelineProjectionParity(t *testing.T) {
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"critic": 1},
-		nil,
 		[]projectionJournalStep{
 			{kind: "deliver", to: "worker"},
 			{kind: "resume"},
@@ -157,7 +155,6 @@ func TestTUIProjectionParity(t *testing.T) {
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
-		nil,
 		[]projectionJournalStep{
 			{kind: "deliver", to: "worker"},
 		},
@@ -197,14 +194,11 @@ func TestTUIProjectionParity(t *testing.T) {
 	assertSessionHealthParity(t, legacy, got)
 }
 
-func TestGetHealthDoesNotFallbackWithoutSnapshot(t *testing.T) {
+func TestGetHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
-		map[string]string{
-			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
-		},
 		[]projectionJournalStep{
 			{kind: "deliver", to: "worker"},
 		},
@@ -221,11 +215,11 @@ func TestGetHealthDoesNotFallbackWithoutSnapshot(t *testing.T) {
 	if projected.SessionName != fixture.sessionName {
 		t.Fatalf("SessionName = %q, want %q", projected.SessionName, fixture.sessionName)
 	}
-	if projected.VisibleState != "" || projected.Compact != "" || projected.NodeCount != 0 {
-		t.Fatalf("unexpected fallback payload: %#v", projected)
+	if projected.VisibleState != "pending" || projected.Compact != "🔷🟢" || projected.NodeCount != 2 {
+		t.Fatalf("unexpected live health payload: %#v", projected)
 	}
-	if len(projected.Nodes) != 0 || len(projected.Windows) != 0 {
-		t.Fatalf("unexpected fallback topology: %#v", projected)
+	if len(projected.Nodes) != 2 || len(projected.Windows) != 1 {
+		t.Fatalf("unexpected live health topology: %#v", projected)
 	}
 }
 
@@ -234,9 +228,6 @@ func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 		t,
 		map[string]string{"worker": "active", "critic": "idle"},
 		map[string]int{"worker": 1},
-		map[string]string{
-			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
-		},
 		nil,
 	)
 
@@ -262,9 +253,6 @@ func TestGetHealthOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"critic": 1},
-		map[string]string{
-			"worker": "---\nstate: composing\nexpects_reply: true\n---\n",
-		},
 		nil,
 	)
 
@@ -295,9 +283,6 @@ func TestTUIProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
-		map[string]string{
-			"critic": "---\nstate: composing\nexpects_reply: true\n---\n",
-		},
 		nil,
 	)
 
@@ -354,7 +339,7 @@ func assertSessionHealthParity(t *testing.T, legacy, projected status.SessionHea
 	t.Fatalf("session health mismatch:\nlegacy:\n%s\nprojected:\n%s", string(legacyJSON), string(projectedJSON))
 }
 
-func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]string, liveInbox map[string]int, waitingFiles map[string]string, journalSteps []projectionJournalStep) sessionHealthProjectionFixture {
+func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]string, liveInbox map[string]int, journalSteps []projectionJournalStep) sessionHealthProjectionFixture {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -367,7 +352,7 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"worker -- critic\"]\njournal_health_cutover_enabled = true\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
@@ -376,7 +361,6 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
 		filepath.Join(sessionDir, "inbox", "critic"),
-		filepath.Join(sessionDir, "waiting"),
 		filepath.Join(sessionDir, "read"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -401,13 +385,6 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 			if err := os.WriteFile(filename, []byte("body"), 0o644); err != nil {
 				t.Fatalf("WriteFile(%q): %v", filename, err)
 			}
-		}
-	}
-
-	for nodeName, content := range waitingFiles {
-		filename := filepath.Join(sessionDir, "waiting", waitingFixtureName(nodeName))
-		if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
-			t.Fatalf("WriteFile(%q): %v", filename, err)
 		}
 	}
 
@@ -445,8 +422,6 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 
 	cfg := config.DefaultConfig()
 	cfg.Edges = []string{"worker -- critic"}
-	healthCutoverEnabled := true
-	cfg.JournalHealthCutoverEnabled = &healthCutoverEnabled
 
 	return sessionHealthProjectionFixture{
 		baseDir:     tmpDir,
@@ -566,9 +541,6 @@ func removeLiveSessionHealthArtifacts(t *testing.T, fixture sessionHealthProject
 	if err := os.Remove(filepath.Join(fixture.baseDir, fixture.contextID, "pane-activity.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("Remove(pane-activity.json): %v", err)
 	}
-	if err := os.RemoveAll(filepath.Join(sessionDir, "waiting")); err != nil {
-		t.Fatalf("RemoveAll(waiting): %v", err)
-	}
 	if err := os.RemoveAll(filepath.Join(sessionDir, "inbox")); err != nil {
 		t.Fatalf("RemoveAll(inbox): %v", err)
 	}
@@ -576,8 +548,4 @@ func removeLiveSessionHealthArtifacts(t *testing.T, fixture sessionHealthProject
 
 func unreadFixtureName(nodeName string, index int) string {
 	return "20260414-00000" + string(rune('1'+index)) + "-s0000-from-boss-to-" + nodeName + ".md"
-}
-
-func waitingFixtureName(nodeName string) string {
-	return "20260414-000100-s0000-from-orchestrator-to-" + nodeName + ".md"
 }

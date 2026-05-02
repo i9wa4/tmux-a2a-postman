@@ -132,11 +132,11 @@ Applies to all non-observer nodes (nodes whose role does NOT contain
 - FAIL: the role is intentionally quiet but its instructions still imply active
   handoff responsibility
 
-### 2.10. Check B-I8 — Protocol Reminder Presence
+### 2.10. Check B-I8 — Protocol Cue Presence
 
 - PASS: template references the postman protocol (e.g., contains
   "tmux-a2a-postman --help", "protocol", "tmux-a2a-postman", or "send")
-- FAIL: template lacks any protocol reminder — agents may ignore messaging
+- FAIL: template lacks any protocol cue — agents may ignore messaging
   conventions, leading to malformed messages or manual file creation
 
 ## 3. Findings Format
