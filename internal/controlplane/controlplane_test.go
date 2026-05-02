@@ -9,7 +9,6 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/inputbroker"
 )
 
 func TestTargetForNodeSeparatesActorRunBrainAndHand(t *testing.T) {
@@ -122,49 +121,6 @@ func TestTmuxHandAdapterDeliverUsesHandAttachment(t *testing.T) {
 	}
 	if probeCalls != 1 {
 		t.Fatalf("ProbeRuntime calls = %d, want %d", probeCalls, 1)
-	}
-}
-
-func TestTmuxHandAdapterDeliverRejectsBusyInputLease(t *testing.T) {
-	sessionDir := t.TempDir()
-	broker := inputbroker.New(sessionDir)
-	lease, ok, err := broker.Acquire(inputbroker.Request{
-		PaneID:   "%99",
-		NodeName: "worker",
-		Owner:    "other",
-		TTL:      time.Minute,
-	})
-	if err != nil || !ok {
-		t.Fatalf("Acquire() = ok %v, err %v; want true", ok, err)
-	}
-	defer func() {
-		if err := lease.Release(); err != nil {
-			t.Fatalf("Release() error = %v", err)
-		}
-	}()
-
-	var sendCalled bool
-	adapter := TmuxHandAdapter{
-		ProbeRuntime: func(string) (string, error) { return "bash", nil },
-		SendToPane: func(string, string, time.Duration, time.Duration, int, bool, time.Duration, int) error {
-			sendCalled = true
-			return nil
-		},
-	}
-
-	err = adapter.Deliver(Target{
-		ActorID:     "worker",
-		RunID:       "notify-session:worker",
-		SessionName: "notify-session",
-		SessionDir:  sessionDir,
-		Brain:       Brain{Runtime: "bash"},
-		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%99"},
-	}, PaneDelivery{Content: "notice worker", BypassCooldown: true})
-	if err == nil {
-		t.Fatal("Deliver() error = nil, want busy lease error")
-	}
-	if sendCalled {
-		t.Fatal("SendToPane was called while input lease was busy")
 	}
 }
 

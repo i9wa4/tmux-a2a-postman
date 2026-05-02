@@ -27,7 +27,6 @@ func emptySessionHealth(sessionName string) status.SessionHealth {
 		SessionName: sessionName,
 		Nodes:       []status.NodeHealth{},
 		Windows:     []status.SessionWindow{},
-		InputLocks:  []status.InputLock{},
 	}
 }
 
@@ -283,8 +282,5 @@ func normalizeSessionHealth(health *status.SessionHealth) {
 	}
 	if health.Windows == nil {
 		health.Windows = []status.SessionWindow{}
-	}
-	if health.InputLocks == nil {
-		health.InputLocks = []status.InputLock{}
 	}
 }

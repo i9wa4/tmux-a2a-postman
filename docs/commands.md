@@ -161,21 +161,12 @@ that session.
   ],
   "windows": [
     {"index": "0", "nodes": [{"name": "worker"}]}
-  ],
-  "input_locks": [
-    {
-      "pane_id": "%11",
-      "node_name": "worker",
-      "owner": "tmux-delivery:review:worker",
-      "expires_at": "2024-01-01T12:00:30Z"
-    }
   ]
 }
 ```
 
 Use `nodes[*].visible_state` for per-node state, `queues` for mailbox backlogs,
-`input_locks` for active pane input broker leases, and `compact` for compact
-display tokens.
+and `compact` for compact display tokens.
 
 | Flag        | Type   | Default | --params? | Description                  |
 | ----------- | ------ | ------- | --------- | ---------------------------- |

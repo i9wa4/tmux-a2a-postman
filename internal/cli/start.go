@@ -938,7 +938,7 @@ func isSessionRuntimeDir(path string) bool {
 
 func isKnownSessionRuntimeSubdir(name string) bool {
 	switch name {
-	case "inbox", "post", "draft", "read", "dead-letter", "waiting", "todo", "input-locks":
+	case "inbox", "post", "draft", "read", "dead-letter", "waiting", "todo":
 		return true
 	default:
 		return false

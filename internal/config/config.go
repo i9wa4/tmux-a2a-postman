@@ -1364,7 +1364,7 @@ func ResolveBaseDir(configBaseDir string) string {
 
 // CreateSessionDirs creates the session directory structure.
 // Legacy signature for backward compatibility with tests.
-// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting,todo,input-locks}
+// Creates: sessionDir/{inbox,post,draft,read,dead-letter,waiting,todo}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{
 		filepath.Join(sessionDir, "inbox"),
@@ -1374,7 +1374,6 @@ func CreateSessionDirs(sessionDir string) error {
 		filepath.Join(sessionDir, "dead-letter"),
 		filepath.Join(sessionDir, "waiting"),
 		filepath.Join(sessionDir, "todo"),
-		filepath.Join(sessionDir, "input-locks"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -1386,7 +1385,7 @@ func CreateSessionDirs(sessionDir string) error {
 
 // CreateMultiSessionDirs creates the multi-session directory structure.
 // For multi-session support: contextDir = baseDir/contextID, sessionName = tmux session name
-// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting,todo,input-locks}
+// Creates: contextDir/sessionName/{inbox,post,draft,read,dead-letter,waiting,todo}
 func CreateMultiSessionDirs(contextDir, sessionName string) error {
 	sessionDir := filepath.Join(contextDir, sessionName)
 	return CreateSessionDirs(sessionDir)

@@ -9,11 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/inputbroker"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -105,13 +103,11 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 		return unavailableSessionHealth(contextID, sessionName), nil
 	}
 	if projected, ok := projectedSessionHealth(sessionDir); ok {
-		projected.InputLocks = collectInputLocks(sessionDir)
 		return projected, nil
 	}
 	return status.SessionHealth{
 		ContextID:   contextID,
 		SessionName: sessionName,
-		InputLocks:  collectInputLocks(sessionDir),
 	}, nil
 }
 
@@ -209,7 +205,6 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Queues = queues
 	result.Windows = buildSessionWindows(result.Nodes, panes)
-	result.InputLocks = collectInputLocks(sessionDir)
 	result.Compact = buildSessionCompact(result, panes)
 	return result, nil
 }
@@ -368,14 +363,6 @@ func collectSessionQueues(sessionDir string) status.SessionQueues {
 		WaitingCount:    countMarkdownFiles(filepath.Join(sessionDir, "waiting")),
 		DeadLetterCount: countMarkdownFiles(filepath.Join(sessionDir, "dead-letter")),
 	}
-}
-
-func collectInputLocks(sessionDir string) []status.InputLock {
-	locks, err := inputbroker.ActiveLocks(sessionDir, time.Now())
-	if err != nil {
-		return []status.InputLock{}
-	}
-	return locks
 }
 
 func discoverSessionPanes(sessionName string) ([]sessionPane, error) {

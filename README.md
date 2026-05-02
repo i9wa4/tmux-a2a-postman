@@ -203,10 +203,8 @@ states are `ready`, `pending`, `user_input`, `composing`, `spinning`, and
 `stalled`. Session-level `unavailable` is a fallback that means the current
 daemon is not authoritative for canonical status; it is not a per-node state.
 
-`get-health` includes queue counts, node-level visible states, window grouping,
-and an `input_locks` array for the current or specified tmux session. During
-pane delivery, `input_locks` lists active input broker leases; it is usually
-empty when idle.
+`get-health` includes queue counts, node-level visible states, and window
+grouping for the current or specified tmux session.
 
 Quick reading guide:
 

@@ -29,13 +29,6 @@ type SessionQueues struct {
 	DeadLetterCount int `json:"dead_letter_count"`
 }
 
-type InputLock struct {
-	PaneID    string `json:"pane_id"`
-	NodeName  string `json:"node_name,omitempty"`
-	Owner     string `json:"owner,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
-}
-
 type SessionHealth struct {
 	ContextID    string          `json:"context_id"`
 	SessionName  string          `json:"session_name"`
@@ -45,7 +38,6 @@ type SessionHealth struct {
 	Queues       SessionQueues   `json:"queues"`
 	Nodes        []NodeHealth    `json:"nodes"`
 	Windows      []SessionWindow `json:"windows"`
-	InputLocks   []InputLock     `json:"input_locks"`
 }
 
 type DaemonOwner struct {
