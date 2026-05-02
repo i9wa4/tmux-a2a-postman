@@ -203,8 +203,8 @@ canonical contract. The per-node visible states are `ready`, `pending`,
 for canonical status; it is not a per-node state.
 
 `status --json` includes a `schema_version`, daemon owner metadata, per-session
-queue counts, and an `input_locks` array. `input_locks` is empty until pane
-input is routed through the input broker.
+queue counts, and an `input_locks` array. `input_locks` is usually empty when
+idle; during pane delivery it lists active input broker leases.
 
 Quick reading guide:
 

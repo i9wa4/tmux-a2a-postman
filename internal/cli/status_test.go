@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputbroker"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -117,7 +119,16 @@ func TestRunStatus_LiveRuntimeMatchesCanonicalAllSessionHealth(t *testing.T) {
 		t.Fatalf("WaitingCount = %d, want 0", payload.Sessions[0].Queues.WaitingCount)
 	}
 	if payload.Sessions[0].InputLocks == nil {
-		t.Fatal("InputLocks = nil, want empty slice")
+		t.Fatal("InputLocks = nil, want populated slice")
+	}
+	if len(payload.Sessions[0].InputLocks) != 1 {
+		t.Fatalf("InputLocks length = %d, want 1: %#v", len(payload.Sessions[0].InputLocks), payload.Sessions[0].InputLocks)
+	}
+	if payload.Sessions[0].InputLocks[0].PaneID != "%11" {
+		t.Fatalf("InputLocks[0].PaneID = %q, want %%11", payload.Sessions[0].InputLocks[0].PaneID)
+	}
+	if payload.Sessions[0].InputLocks[0].NodeName != "worker" {
+		t.Fatalf("InputLocks[0].NodeName = %q, want worker", payload.Sessions[0].InputLocks[0].NodeName)
 	}
 
 	wantHuman := formatAllSessionHealthOneline(payload) + "\n"
@@ -173,6 +184,14 @@ func installStatusLiveFixture(t *testing.T) (string, string, string) {
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(pane-activity.json): %v", err)
+	}
+	if _, ok, err := inputbroker.New(sessionDir).Acquire(inputbroker.Request{
+		PaneID:   "%11",
+		NodeName: "worker",
+		Owner:    "test",
+		TTL:      time.Hour,
+	}); err != nil || !ok {
+		t.Fatalf("Acquire(input lock) = ok %v, err %v; want true", ok, err)
 	}
 
 	scriptDir := t.TempDir()

@@ -173,7 +173,14 @@ Human output is the compact all-session runtime line:
       "windows": [
         {"index": "0", "nodes": [{"name": "worker"}]}
       ],
-      "input_locks": []
+      "input_locks": [
+        {
+          "pane_id": "%11",
+          "node_name": "worker",
+          "owner": "tmux-delivery:review:worker",
+          "expires_at": "2024-01-01T12:00:30Z"
+        }
+      ]
     }
   ]
 }
@@ -181,8 +188,7 @@ Human output is the compact all-session runtime line:
 
 Use `schema_version` before parsing, `daemon_owner` to identify the runtime
 owner, `sessions[*].nodes[*].visible_state` for per-node state, `queues` for
-mailbox backlogs, and `input_locks` for pane input ownership. `input_locks` is
-currently an empty array until the input broker owns pane injection.
+mailbox backlogs, and `input_locks` for active pane input broker leases.
 `sessions[*].compact` for compact display tokens.
 
 | Flag        | Type   | Default | --params? | Description                       |

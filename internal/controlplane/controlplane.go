@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputbroker"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -149,6 +150,31 @@ func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
 		}
 		return probeRuntime(target.Hand.Address)
 	})
+
+	leaseOwner := target.RunID
+	if leaseOwner == "" {
+		leaseOwner = target.ActorID
+	}
+	if leaseOwner == "" {
+		leaseOwner = target.Hand.Address
+	}
+	lease, acquired, err := inputbroker.New(target.SessionDir).Acquire(inputbroker.Request{
+		PaneID:   target.Hand.Address,
+		NodeName: target.ActorID,
+		Owner:    "tmux-delivery:" + leaseOwner,
+		TTL:      inputbroker.DefaultLeaseTTL,
+	})
+	if err != nil {
+		return fmt.Errorf("acquiring input lease for pane %s: %w", target.Hand.Address, err)
+	}
+	if !acquired {
+		return fmt.Errorf("input lease busy for pane %s", target.Hand.Address)
+	}
+	defer func() {
+		if err := lease.Release(); err != nil {
+			log.Printf("postman: WARNING: failed to release input lease for pane %s: %v\n", target.Hand.Address, err)
+		}
+	}()
 
 	return sendToPane(
 		target.Hand.Address,
