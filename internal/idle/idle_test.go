@@ -677,21 +677,79 @@ func TestGetLivenessMap(t *testing.T) {
 func TestContainsCompactionTrigger(t *testing.T) {
 	tests := []struct {
 		name    string
+		runtime string
 		content string
 		want    bool
 	}{
 		{
-			name:    "matches compacting case-insensitively",
+			name:    "ignores claude compacting line",
+			runtime: "claude",
 			content: "Compacting conversation history",
+			want:    false,
+		},
+		{
+			name:    "ignores claude compacting status line with bullet",
+			runtime: "claude",
+			content: "• Compacting conversation history",
+			want:    false,
+		},
+		{
+			name:    "ignores claude spinner compacting line",
+			runtime: "claude",
+			content: "✽ Compacting conversation… (28s)",
+			want:    false,
+		},
+		{
+			name:    "matches claude compacted completion line",
+			runtime: "claude",
+			content: "✻ Conversation compacted (ctrl+o for history)",
 			want:    true,
 		},
 		{
-			name:    "matches compaction substring broadly",
-			content: "autoCompaction finished",
+			name:    "matches claude compact command result",
+			runtime: "claude",
+			content: "⎿  Compacted (ctrl+o to see full summary)",
 			want:    true,
+		},
+		{
+			name:    "ignores unrelated claude compacting status",
+			runtime: "claude",
+			content: "✽ Compacting files…",
+			want:    false,
+		},
+		{
+			name:    "ignores claude compaction prose",
+			runtime: "claude",
+			content: "The compaction plan is ready.",
+			want:    false,
+		},
+		{
+			name:    "matches codex compacted notice",
+			runtime: "codex",
+			content: "• Context compacted",
+			want:    true,
+		},
+		{
+			name:    "ignores codex compacted prose",
+			runtime: "codex",
+			content: "I compacted this explanation.",
+			want:    false,
+		},
+		{
+			name:    "ignores codex compaction prose",
+			runtime: "codex",
+			content: "The compaction plan is ready.",
+			want:    false,
+		},
+		{
+			name:    "ignores unknown runtime compaction text",
+			runtime: "bash",
+			content: "Compacting conversation history",
+			want:    false,
 		},
 		{
 			name:    "ignores unrelated text",
+			runtime: "claude",
 			content: "writing response",
 			want:    false,
 		},
@@ -699,8 +757,8 @@ func TestContainsCompactionTrigger(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := containsCompactionTrigger(tt.content); got != tt.want {
-				t.Fatalf("containsCompactionTrigger(%q) = %v, want %v", tt.content, got, tt.want)
+			if got := containsCompactionTrigger(tt.runtime, tt.content); got != tt.want {
+				t.Fatalf("containsCompactionTrigger(%q, %q) = %v, want %v", tt.runtime, tt.content, got, tt.want)
 			}
 		})
 	}
@@ -752,12 +810,12 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNode(t *testing.T) {
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}' ]; then\n" +
-		"  printf '%s\\n' '%11'\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
-		"  printf '%s\\n' 'Compacting transcript now'\n" +
+		"  printf '%s\\n' '✻ Conversation compacted (ctrl+o for history)'\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"exit 1\n"
@@ -796,5 +854,129 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNode(t *testing.T) {
 	tracker.mu.Unlock()
 	if state.LastCompactionPingAt.IsZero() {
 		t.Fatal("checkPaneCapture() did not record the compaction-triggered ping timestamp")
+	}
+	if state.LastCompactionHash != state.LastHash {
+		t.Fatal("checkPaneCapture() did not record the compaction-triggered pane hash")
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhileMarkerRemainsVisible(t *testing.T) {
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  printf '%s\\n' '✻ Conversation compacted (ctrl+o for history)'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	state.LastCompactionPingAt = time.Now().Add(-compactionPingCooldown - time.Second)
+	tracker.paneCaptureState["%11"] = state
+	tracker.mu.Unlock()
+
+	secondTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(secondTargets) != 0 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 0 while marker remains visible", len(secondTargets))
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameCaptureAfterMarkerClears(t *testing.T) {
+	scriptDir := t.TempDir()
+	capturePath := filepath.Join(scriptDir, "capture.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_CAPTURE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_CAPTURE", capturePath)
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	marker := "✻ Conversation compacted (ctrl+o for history)"
+	if err := os.WriteFile(capturePath, []byte(marker), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture marker): %v", err)
+	}
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+
+	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture ready): %v", err)
+	}
+	clearedTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(clearedTargets) != 0 {
+		t.Fatalf("clearing checkPaneCapture() returned %d targets, want 0", len(clearedTargets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	state.LastCompactionPingAt = time.Now().Add(-compactionPingCooldown - time.Second)
+	tracker.paneCaptureState["%11"] = state
+	tracker.mu.Unlock()
+
+	if err := os.WriteFile(capturePath, []byte(marker), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture marker again): %v", err)
+	}
+	repeatedTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(repeatedTargets) != 0 {
+		t.Fatalf("repeated checkPaneCapture() returned %d targets, want 0 for the same compaction capture", len(repeatedTargets))
 	}
 }

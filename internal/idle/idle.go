@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -39,11 +40,13 @@ type PaneActivityExport struct {
 
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
-	LastHash             uint32    // CRC32 hash of pane content
-	LastChangeAt         time.Time // Last time content change was detected
-	ChangeCount          int       // Consecutive change count (2 = active)
-	LastCaptureAt        time.Time // Last capture time
-	LastCompactionPingAt time.Time // Last compaction-triggered PING for this pane
+	LastHash              uint32    // CRC32 hash of pane content
+	LastChangeAt          time.Time // Last time content change was detected
+	ChangeCount           int       // Consecutive change count (2 = active)
+	LastCaptureAt         time.Time // Last capture time
+	LastCompactionPingAt  time.Time // Last compaction-triggered PING for this pane
+	LastCompactionTrigger string    // Non-empty while a compaction marker remains visible
+	LastCompactionHash    uint32    // Full pane hash for the most recent compaction ping
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -351,9 +354,53 @@ func hashContentCRC32(content string) uint32 {
 	return crc32.ChecksumIEEE([]byte(content))
 }
 
-func containsCompactionTrigger(content string) bool {
-	lower := strings.ToLower(content)
-	return strings.Contains(lower, "compacting") || strings.Contains(lower, "compaction")
+func containsCompactionTrigger(runtime, content string) bool {
+	return compactionTrigger(runtime, content) != ""
+}
+
+func compactionTrigger(runtime, content string) string {
+	switch strings.ToLower(strings.TrimSpace(runtime)) {
+	case "claude":
+		return claudeCompactionTrigger(content)
+	case "codex":
+		return codexCompactionTrigger(content)
+	default:
+		return ""
+	}
+}
+
+func claudeCompactionTrigger(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		normalized := normalizeStatusLine(line)
+		if strings.HasPrefix(normalized, "conversation compacted") {
+			return "claude:conversation-compaction"
+		}
+		if strings.HasPrefix(normalized, "compacted (ctrl+o") {
+			return "claude:conversation-compaction"
+		}
+	}
+	return ""
+}
+
+func codexCompactionTrigger(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if isCodexCompactionLine(line) {
+			return "codex:context-compaction"
+		}
+	}
+	return ""
+}
+
+func isCodexCompactionLine(line string) bool {
+	return normalizeStatusLine(line) == "context compacted"
+}
+
+func normalizeStatusLine(line string) string {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	normalized = strings.TrimLeftFunc(normalized, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)
+	})
+	return strings.TrimSpace(normalized)
 }
 
 func filterPaneCaptureNodes(nodes map[string]discovery.NodeInfo, edgeNodes map[string]bool) map[string]discovery.NodeInfo {
@@ -377,8 +424,8 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Get all pane IDs
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}")
+	// Get all pane IDs and runtimes.
+	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Failed to list panes - skip this check
@@ -394,10 +441,15 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	// Parse pane IDs and filter to node panes only (MUST 3: node panes first)
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var nodePaneIDs []string
+	paneRuntimes := make(map[string]string)
 	for _, line := range lines {
-		paneID := strings.TrimSpace(line)
+		parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		paneID := strings.TrimSpace(parts[0])
 		if paneID == "" {
 			continue
+		}
+		if len(parts) == 2 {
+			paneRuntimes[paneID] = strings.TrimSpace(parts[1])
 		}
 		// Only include panes that belong to nodes
 		if _, isNode := paneToNode[paneID]; isNode {
@@ -436,9 +488,13 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				ChangeCount:   0,
 				LastCaptureAt: now,
 			}
-			if nodeKey, hasNode := paneToNode[paneID]; hasNode && containsCompactionTrigger(content) {
-				state.LastCompactionPingAt = now
-				compactionTargets[nodeKey] = struct{}{}
+			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+				if trigger := compactionTrigger(paneRuntimes[paneID], content); trigger != "" {
+					state.LastCompactionTrigger = trigger
+					state.LastCompactionPingAt = now
+					state.LastCompactionHash = currentHash
+					compactionTargets[nodeKey] = struct{}{}
+				}
 			}
 			t.paneCaptureState[paneID] = state
 			continue
@@ -447,13 +503,15 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
-			if containsCompactionTrigger(content) {
-				if state.LastCompactionPingAt.IsZero() || now.Sub(state.LastCompactionPingAt) >= compactionPingCooldown {
+			if trigger := compactionTrigger(paneRuntimes[paneID], content); trigger != "" {
+				if state.LastCompactionTrigger == "" && state.LastCompactionHash != currentHash && (state.LastCompactionPingAt.IsZero() || now.Sub(state.LastCompactionPingAt) >= compactionPingCooldown) {
 					state.LastCompactionPingAt = now
+					state.LastCompactionHash = currentHash
 					compactionTargets[nodeKey] = struct{}{}
 				}
+				state.LastCompactionTrigger = trigger
 			} else {
-				state.LastCompactionPingAt = time.Time{}
+				state.LastCompactionTrigger = ""
 			}
 		}
 
