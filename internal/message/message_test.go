@@ -277,6 +277,38 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	}
 }
 
+func TestDeliverMessage_ExplicitUnknownRecipientSession(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	filename := "20260201-030000-from-orchestrator-to-missing-session:worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: missing-session:worker\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"missing-session:worker"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, nil, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-030000-from-orchestrator-to-missing-session:worker-dl-unknown-session.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not in unknown-session dead-letter: %v", err)
+	}
+}
+
 func TestDeliverMessage_CrossSessionExplicitRecipient(t *testing.T) {
 	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
 	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {

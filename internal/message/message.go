@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/router"
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
@@ -30,6 +31,7 @@ import (
 const (
 	deadLetterReasonEnvelopeMismatch         = "envelope mismatch"
 	deadLetterReasonUnknownRecipient         = "unknown recipient"
+	deadLetterReasonUnknownRecipientSession  = "unknown recipient session"
 	deadLetterReasonSenderSessionDisabled    = "sender session disabled"
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 	deadLetterReasonForeignSession           = "foreign session"
@@ -40,6 +42,7 @@ const (
 	dlSuffixParseError          = "-dl-parse-error"
 	dlSuffixEnvelopeMismatch    = "-dl-envelope-mismatch"
 	dlSuffixUnknownRecipient    = "-dl-unknown-recipient"
+	dlSuffixUnknownSession      = "-dl-unknown-session"
 	dlSuffixUnknownSender       = "-dl-unknown-sender"
 	dlSuffixRoutingDenied       = "-dl-routing-denied"
 	dlSuffixSessionDisabled     = "-dl-session-disabled"
@@ -223,6 +226,21 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 	})
 	syncCompatibilityMailbox(sessionDir)
 	return nil
+}
+
+func resolveRuntimeNode(address, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) router.Resolution {
+	sessions := map[string]bool{sourceSessionName: true}
+	for _, nodeInfo := range knownNodes {
+		if nodeInfo.SessionName != "" {
+			sessions[nodeInfo.SessionName] = true
+		}
+	}
+	return router.Resolve(address, sourceSessionName, func(key string) bool {
+		_, found := knownNodes[key]
+		return found
+	}, func(sessionName string) bool {
+		return sessions[sessionName]
+	})
 }
 
 // StripDeadLetterSuffix removes the -dl-{reason} suffix from a dead-letter filename.
@@ -594,16 +612,25 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Resolve recipient name (Issue #33: session-aware adjacency)
-	recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, knownNodes)
-	if recipientFullName == "" {
+	recipientResolution := resolveRuntimeNode(info.To, sourceSessionName, knownNodes)
+	recipientFullName := recipientResolution.Address
+	if !recipientResolution.Found {
 		// Unknown recipient: move to dead-letter/ in source session
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownRecipient)
-		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonUnknownRecipient, filename, filepath.Base(dst))
+		deadLetterReason := deadLetterReasonUnknownRecipient
+		deadLetterSuffix := dlSuffixUnknownRecipient
+		eventReason := "unknown recipient"
+		if recipientResolution.FailureReason == router.FailureUnknownSession {
+			deadLetterReason = deadLetterReasonUnknownRecipientSession
+			deadLetterSuffix = dlSuffixUnknownSession
+			eventReason = "unknown recipient session"
+		}
+		dst := deadLetterDst(sourceSessionDir, filename, deadLetterSuffix)
+		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReason, filename, filepath.Base(dst))
 		// Issue #53: Notify dead-letter event
 		if events != nil {
 			events <- DaemonEvent{
 				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown recipient)", info.From, info.To),
+				Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, eventReason),
 			}
 		}
 		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
@@ -627,8 +654,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	}
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
-	senderFullName := discovery.ResolveNodeName(info.From, sourceSessionName, knownNodes)
-	if senderFullName == "" && info.From != "daemon" {
+	senderResolution := resolveRuntimeNode(info.From, sourceSessionName, knownNodes)
+	senderFullName := senderResolution.Address
+	if !senderResolution.Found && info.From != "daemon" {
 		// Unknown sender: move to dead-letter/ in source session
 		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownSender)
 		// Issue #53: Notify dead-letter event

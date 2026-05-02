@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/router"
 )
 
 // NodeInfo holds information about a discovered node.
@@ -234,21 +236,14 @@ func DiscoverNodes(baseDir, contextID, selfSession string) (map[string]NodeInfo,
 // NOTE: Cross-session fallback is intentionally absent (F2). Bare names are
 // session-scoped only; cross-session delivery requires explicit "session:node" syntax.
 func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]NodeInfo) string {
-	// If already prefixed (contains ":"), use as-is
-	if strings.Contains(nodeName, ":") {
-		if _, found := knownNodes[nodeName]; found {
-			return nodeName
-		}
-		return "" // Prefixed but not found
+	resolution := router.Resolve(nodeName, sourceSessionName, func(key string) bool {
+		_, found := knownNodes[key]
+		return found
+	}, nil)
+	if !resolution.Found {
+		return ""
 	}
-
-	// Try same-session first (priority)
-	sameSessionKey := sourceSessionName + ":" + nodeName
-	if _, found := knownNodes[sameSessionKey]; found {
-		return sameSessionKey
-	}
-
-	return "" // Not found: cross-session delivery requires explicit "session:node" syntax (F2)
+	return resolution.Address
 }
 
 // DiscoverAllSessions returns all tmux session names.

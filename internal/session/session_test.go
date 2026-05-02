@@ -111,6 +111,48 @@ func TestBuildSessionList_NodeWithoutSession(t *testing.T) {
 	}
 }
 
+func TestBuildSessionList_IncludesNodeSessionMissingFromTmuxList(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"zeta:worker": {PaneID: "%1", SessionName: "zeta"},
+		"alpha:boss":  {PaneID: "%2", SessionName: "alpha"},
+	}
+
+	got := BuildSessionList(nodes, []string{"main"}, alwaysEnabled)
+
+	wantNames := []string{"main", "alpha", "zeta"}
+	if len(got) != len(wantNames) {
+		t.Fatalf("len(got) = %d, want %d (%#v)", len(got), len(wantNames), got)
+	}
+	for i, want := range wantNames {
+		if got[i].Name != want {
+			t.Fatalf("got[%d].Name = %q, want %q (full=%#v)", i, got[i].Name, want, got)
+		}
+	}
+	if got[1].NodeCount != 1 || got[2].NodeCount != 1 {
+		t.Fatalf("missing session node counts = %d/%d, want 1/1", got[1].NodeCount, got[2].NodeCount)
+	}
+}
+
+func TestBuildRegistry_ReturnsRecordsCopy(t *testing.T) {
+	registry := BuildRegistry(map[string]discovery.NodeInfo{
+		"main:worker": {PaneID: "%1", SessionName: "main"},
+	}, []string{"main"}, alwaysEnabled)
+
+	records := registry.Records()
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].Key != Key("main") {
+		t.Fatalf("Key = %q, want main", records[0].Key)
+	}
+
+	records[0].Name = "mutated"
+	again := registry.Records()
+	if again[0].Name != "main" {
+		t.Fatalf("registry Records leaked backing slice, name = %q", again[0].Name)
+	}
+}
+
 func TestBuildSessionList_ReturnType(t *testing.T) {
 	// Verify return type is []tui.SessionInfo (compile-time check)
 	_ = BuildSessionList(nil, nil, alwaysEnabled)
