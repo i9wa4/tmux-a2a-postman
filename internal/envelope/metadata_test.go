@@ -357,40 +357,43 @@ func TestExplicitParamsReplyPolicy(t *testing.T) {
 	}
 }
 
-func TestExplicitParamsReplyPolicyFromExpandedTemplate(t *testing.T) {
+func TestExplicitParamsReplyPolicyIgnoringGenerated(t *testing.T) {
+	generated := "__generated_reply_policy__"
 	tests := []struct {
-		name     string
-		template string
-		expanded string
-		want     string
-		wantOK   bool
+		name    string
+		content string
+		want    string
+		wantOK  bool
 	}{
 		{
-			name:     "expanded explicit value wins over generated alias",
-			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: $(printf required)\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
-			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: none\n---\n\nbody\n",
-			want:     "required",
-			wantOK:   true,
+			name:    "explicit value wins over generated alias",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: __generated_reply_policy__\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
 		},
 		{
-			name:     "last explicit alias wins",
-			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
-			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
-			want:     "required",
-			wantOK:   true,
+			name:    "expanded-only field is explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: __generated_reply_policy__\n  reply_obligation: none\n---\n\nbody\n",
+			want:    "none",
+			wantOK:  true,
 		},
 		{
-			name:     "placeholder only is not explicit",
-			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: {reply_policy}\n---\n\nbody\n",
-			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n---\n\nbody\n",
+			name:    "last expanded explicit alias wins",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
+		},
+		{
+			name:    "generated only is not explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: __generated_reply_policy__\n---\n\nbody\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ExplicitParamsReplyPolicyFromExpandedTemplate(tt.template, tt.expanded)
+			got, ok := ExplicitParamsReplyPolicyIgnoringGenerated(tt.content, generated)
 			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("ExplicitParamsReplyPolicyFromExpandedTemplate() = %q, %v; want %q, %v", got, ok, tt.want, tt.wantOK)
+				t.Fatalf("ExplicitParamsReplyPolicyIgnoringGenerated() = %q, %v; want %q, %v", got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

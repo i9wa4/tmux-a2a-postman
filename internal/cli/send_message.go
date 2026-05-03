@@ -216,8 +216,7 @@ func RunSendMessage(args []string) error {
 	if content == "" {
 		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
-	templateContent := content
-	generatedReplyPolicyField := envelope.ParamsReplyPolicyUsesPlaceholder(content)
+	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
 		"context_id":     resolvedContextID,
@@ -228,7 +227,7 @@ func RunSendMessage(args []string) error {
 		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
 		"message_id":     filename,
-		"reply_policy":   replyPolicy,
+		"reply_policy":   generatedReplyPolicyMarker,
 		"reply_to":       *replyTo,
 		"template":       getNodeTemplate(cfg, *to),
 		"session_name":   sessionName,
@@ -245,15 +244,17 @@ func RunSendMessage(args []string) error {
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	if !*noReply && !*replyRequired {
 		if metadata, err := envelope.ParseMetadata(content); err == nil {
-			if explicitReplyPolicy, ok := envelope.ExplicitParamsReplyPolicyFromExpandedTemplate(templateContent, content); ok {
+			if explicitReplyPolicy, ok := envelope.ExplicitParamsReplyPolicyIgnoringGenerated(content, generatedReplyPolicyMarker); ok {
 				metadata.ReplyPolicy = explicitReplyPolicy
-			} else if generatedReplyPolicyField && strings.EqualFold(strings.TrimSpace(metadata.ReplyPolicy), replyPolicy) {
+			} else if strings.EqualFold(strings.TrimSpace(metadata.ReplyPolicy), generatedReplyPolicyMarker) {
 				metadata.ReplyPolicy = ""
 			}
 			replyPolicy = envelope.ResolveReplyPolicyFromMetadata(metadata)
 			vars["reply_policy"] = replyPolicy
 		}
 	}
+	content = strings.ReplaceAll(content, generatedReplyPolicyMarker, replyPolicy)
+	vars["reply_policy"] = replyPolicy
 	content = message.EnsureEnvelopeParams(content, map[string]string{
 		"messageId":   filename,
 		"replyPolicy": replyPolicy,
@@ -367,6 +368,20 @@ func RunSendMessage(args []string) error {
 		SubmitPath:  projection.SubmitPathPost,
 		Notify:      notifyOutputValue(notifyStatus),
 	})
+}
+
+func generatedReplyPolicyPlaceholder(filename string) string {
+	var b strings.Builder
+	b.WriteString("__TMUX_A2A_POSTMAN_GENERATED_REPLY_POLICY_")
+	for _, r := range filename {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	b.WriteString("__")
+	return b.String()
 }
 
 func validateReplyToMessageID(replyTo string) error {

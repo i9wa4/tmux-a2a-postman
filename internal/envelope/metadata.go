@@ -98,32 +98,18 @@ func directParamsChild(line string, childIndent int) (string, string, bool) {
 }
 
 func ExplicitParamsReplyPolicy(content string) (string, bool) {
+	return ExplicitParamsReplyPolicyIgnoringGenerated(content, "")
+}
+
+func ExplicitParamsReplyPolicyIgnoringGenerated(content, generatedValue string) (string, bool) {
 	fields := paramsReplyPolicyFields(content)
 	explicitPolicy := ""
 	hasExplicitPolicy := false
 	for _, field := range fields {
-		if field.Value == "" || field.Value == "{reply_policy}" {
+		if field.Value == "" || field.Value == "{reply_policy}" || field.Value == generatedValue {
 			continue
 		}
 		explicitPolicy = field.Value
-		hasExplicitPolicy = true
-	}
-	return explicitPolicy, hasExplicitPolicy
-}
-
-func ExplicitParamsReplyPolicyFromExpandedTemplate(templateContent, expandedContent string) (string, bool) {
-	templateFields := paramsReplyPolicyFields(templateContent)
-	expandedFields := paramsReplyPolicyFields(expandedContent)
-	explicitPolicy := ""
-	hasExplicitPolicy := false
-	for idx, templateField := range templateFields {
-		if templateField.Value == "" || templateField.Value == "{reply_policy}" {
-			continue
-		}
-		explicitPolicy = templateField.Value
-		if idx < len(expandedFields) {
-			explicitPolicy = expandedFields[idx].Value
-		}
 		hasExplicitPolicy = true
 	}
 	return explicitPolicy, hasExplicitPolicy

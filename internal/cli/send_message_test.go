@@ -1325,6 +1325,126 @@ role = "worker"
 	}
 }
 
+func TestRunSendMessage_PreservesShellGeneratedReplyPolicyLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+allow_shell_templates = true
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: {reply_policy}
+$(printf '  reply_obligation: none')
+  timestamp: {timestamp}
+  messageType: status_request
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-shell-generated-reply-policy-line",
+			"--to", "worker",
+			"--body", "status only",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-shell-generated-reply-policy-line", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), "reply_obligation: none") {
+		t.Fatalf("content missing shell-generated reply_obligation:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_PreservesLastExplicitPolicyWhenShellAddsPolicyFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+allow_shell_templates = true
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: $(printf 'required\n  replyPolicy: none')
+  reply_obligation: required
+  timestamp: {timestamp}
+  messageType: status_update
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-shell-added-reply-policy-fields",
+			"--to", "worker",
+			"--body", "please reply",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-shell-added-reply-policy-fields", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), "reply_obligation: required") {
+		t.Fatalf("content missing reply_obligation required:\n%s", string(content))
+	}
+}
+
 func TestRunSendMessage_ReplyPolicyFlagsUpdatePlaceholderAliases(t *testing.T) {
 	tests := []struct {
 		name        string
