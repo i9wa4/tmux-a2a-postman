@@ -48,16 +48,17 @@ Example:
 ---
 ui_node: messenger
 reply_command: tmux-a2a-postman send --to {from_node} --body
-skill_path: ../../nix/home-manager/agents/skills
+skill_path: ~/.claude/skills
 ---
 ```
 
 `skill_path` points to a directory containing one subdirectory per skill, each
 with a `SKILL.md` file. Relative paths are resolved from the directory
-containing the `postman.md` file. The generated catalog reads `name` and
-`description` from each `SKILL.md` frontmatter and appends an aligned Markdown
-table to `common_template`. Skill frontmatter may use single-line
-`description`, `description: |`, or `description: >-`.
+containing the `postman.md` file, `~/...` expands to the current user's home
+directory, and symlinked skill directories are followed. The generated catalog
+reads `name` and `description` from each `SKILL.md` frontmatter and appends an
+aligned Markdown table to `common_template`. Skill frontmatter may use
+single-line `description`, `description: |`, or `description: >-`.
 
 ## 3. H2 Section Parsing
 

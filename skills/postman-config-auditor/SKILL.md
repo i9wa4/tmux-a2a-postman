@@ -90,8 +90,9 @@ Important merge rules:
 - Confirm role text lives under an h3 `role` section or in supported
   frontmatter.
 - Confirm frontmatter only uses the supported one-line `key: value` subset.
-- If `skill_path` is set, confirm it resolves from the declaring `postman.md`
-  directory and points to skill subdirectories containing `SKILL.md`.
+- If `skill_path` is set, confirm relative paths resolve from the declaring
+  `postman.md` directory, `~/...` points to the current user's home directory,
+  and the target points to skill subdirectories containing `SKILL.md`.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
   `description`, rather than hand-maintained stale lists.
 

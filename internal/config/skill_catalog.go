@@ -13,6 +13,8 @@ type skillCatalogEntry struct {
 	Description string
 }
 
+var skillCatalogUserHomeDir = os.UserHomeDir
+
 func appendSkillCatalogToCommonTemplate(commonTemplate, markdownPath, skillPath string) (string, error) {
 	entries, resolvedPath, err := loadSkillCatalog(markdownPath, skillPath)
 	if err != nil {
@@ -26,7 +28,10 @@ func appendSkillCatalogToCommonTemplate(commonTemplate, markdownPath, skillPath 
 }
 
 func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, string, error) {
-	resolvedPath := resolveSkillPath(markdownPath, skillPath)
+	resolvedPath, err := resolveSkillPath(markdownPath, skillPath)
+	if err != nil {
+		return nil, "", err
+	}
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
 		return nil, resolvedPath, fmt.Errorf("stat skill path %s: %w", skillPath, err)
@@ -57,12 +62,25 @@ func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, stri
 	return entries, resolvedPath, nil
 }
 
-func resolveSkillPath(markdownPath, skillPath string) string {
+func resolveSkillPath(markdownPath, skillPath string) (string, error) {
 	path := strings.TrimSpace(skillPath)
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := skillCatalogUserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand skill path %s: %w", skillPath, err)
+		}
+		if home == "" {
+			return "", fmt.Errorf("expand skill path %s: home directory is empty", skillPath)
+		}
+		if path == "~" {
+			return filepath.Clean(home), nil
+		}
+		return filepath.Clean(filepath.Join(home, path[2:])), nil
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(markdownPath), path))
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(markdownPath), path)), nil
 }
 
 func skillPathDisplay(skillPath, resolvedPath string) string {

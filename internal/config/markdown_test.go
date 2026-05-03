@@ -579,6 +579,58 @@ Shared instructions.
 	assertContains(t, cfg.CommonTemplate, "| `find-docs` | Retrieves current documentation for developer tools. Use for API syntax questions.")
 }
 
+func TestLoadMarkdownConfig_SkillPathReadsSymlinkedSkillDirectories(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real-skills", "bash")
+	writeFile(t, filepath.Join(target, "SKILL.md"), `---
+name: bash
+description: Bash rules from a symlinked skill.
+---
+
+# Bash
+`)
+	linkParent := filepath.Join(dir, "linked-skills")
+	if err := os.MkdirAll(linkParent, 0o755); err != nil {
+		t.Fatalf("MkdirAll(linkParent): %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(linkParent, "bash")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	content := `---
+skill_path: linked-skills
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "| `bash` | Bash rules from a symlinked skill.")
+}
+
+func TestResolveSkillPathExpandsHome(t *testing.T) {
+	old := skillCatalogUserHomeDir
+	home := t.TempDir()
+	skillCatalogUserHomeDir = func() (string, error) {
+		return home, nil
+	}
+	t.Cleanup(func() {
+		skillCatalogUserHomeDir = old
+	})
+
+	got, err := resolveSkillPath(filepath.Join(t.TempDir(), "postman.md"), "~/.claude/skills")
+	if err != nil {
+		t.Fatalf("resolveSkillPath error: %v", err)
+	}
+	want := filepath.Join(home, ".claude", "skills")
+	if got != want {
+		t.Fatalf("resolveSkillPath = %q, want %q", got, want)
+	}
+}
+
 func TestParseSkillFrontmatter(t *testing.T) {
 	content := `---
 name: find-docs
