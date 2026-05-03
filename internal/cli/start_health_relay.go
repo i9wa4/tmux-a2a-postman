@@ -25,8 +25,8 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 				return
 			}
 
-			if tuiEvents != nil {
-				tuiEvents <- event
+			if !forwardTUIEvent(ctx, tuiEvents, event) {
+				return
 			}
 			refreshKnownSessions(knownSessions, event)
 			if !shouldRefreshSessionHealth(event.Type) || len(knownSessions) == 0 {
@@ -39,16 +39,30 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 					log.Printf("postman: session health relay skipped %s: %v\n", sessionName, err)
 					continue
 				}
-				if tuiEvents != nil {
-					tuiEvents <- tui.DaemonEvent{
-						Type: "session_health_update",
-						Details: map[string]interface{}{
-							"health": health,
-						},
-					}
+				if !forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{
+					Type: "session_health_update",
+					Details: map[string]interface{}{
+						"health": health,
+					},
+				}) {
+					return
 				}
 			}
 		}
+	}
+}
+
+func forwardTUIEvent(ctx context.Context, tuiEvents chan<- tui.DaemonEvent, event tui.DaemonEvent) bool {
+	if tuiEvents == nil {
+		return true
+	}
+	select {
+	case tuiEvents <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+		return true
 	}
 }
 

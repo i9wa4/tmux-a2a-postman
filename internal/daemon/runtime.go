@@ -238,6 +238,7 @@ func (rt *daemonRuntime) bootstrap() {
 	if err := resumeMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
+	rt.dispatchPendingDaemonSubmitRequests()
 	rt.recordPendingAutoPings(runtimeNodeKeys(rt.nodes), rt.nodes, "startup", time.Now())
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
@@ -264,17 +265,7 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 
 	if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon) {
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
-			submitResult, err := processDaemonSubmitRequest(eventPath)
-			if err != nil {
-				rt.events <- tui.DaemonEvent{
-					Type:    "error",
-					Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(eventPath), err),
-				}
-			} else if submitResult.hasPostDispatch() {
-				log.Printf("postman: component=%s event=send_reconcile submit_path=%s session=%s file=%s\n",
-					projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(submitResult.SessionDir), submitResult.Filename)
-				rt.wakePostReconciler(submitResult.PostPath)
-			}
+			rt.handleDaemonSubmitRequest(eventPath)
 		}
 	} else if strings.HasSuffix(filepath.Dir(eventPath), "post") {
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
@@ -306,6 +297,47 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 			rt.configTimer = safeAfterFunc(200*time.Millisecond, "config-reload", rt.events, func() {
 				rt.handleConfigReload()
 			})
+		}
+	}
+}
+
+func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
+	submitResult, err := processDaemonSubmitRequest(requestPath)
+	if err != nil {
+		rt.events <- tui.DaemonEvent{
+			Type:    "error",
+			Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(requestPath), err),
+		}
+		return
+	}
+	if submitResult.hasPostDispatch() {
+		log.Printf("postman: component=%s event=send_reconcile submit_path=%s session=%s file=%s\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(submitResult.SessionDir), submitResult.Filename)
+		rt.wakePostReconciler(submitResult.PostPath)
+	}
+}
+
+func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
+	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
+		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
+		entries, err := os.ReadDir(requestsDir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Printf("postman: WARNING: component=%s event=request_scan_failed submit_path=%s session=%s err=%v\n",
+					projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), err)
+			}
+			continue
+		}
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			names = append(names, entry.Name())
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			rt.handleDaemonSubmitRequest(filepath.Join(requestsDir, name))
 		}
 	}
 }
@@ -702,6 +734,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, time.Now())
+	rt.dispatchPendingDaemonSubmitRequests()
 	rt.dispatchPendingPostMessages()
 
 	nodeStates := rt.idleTracker.GetNodeStates()

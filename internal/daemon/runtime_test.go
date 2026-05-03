@@ -261,6 +261,128 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 	waitForPostEventIdle(t, rt, filepath.Join(sessionDir, "post", filename), 10*time.Second)
 }
 
+func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-scan"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260502-004700-r1111-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-05-02T00:47:00+09:00\n---\n\nhello\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-scan",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:    baseDir,
+		sessionDir: sessionDir,
+		contextID:  contextID,
+		nodes:      map[string]discovery.NodeInfo{},
+		events:     make(chan tui.DaemonEvent, 8),
+	}
+
+	rt.dispatchPendingDaemonSubmitRequests()
+
+	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
+		t.Fatalf("request file still present or wrong error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "read", filename)); err != nil {
+		t.Fatalf("archived read file missing: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-scan"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != filename {
+		t.Fatalf("response.Filename = %q, want %q", response.Filename, filename)
+	}
+}
+
+func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-cross-session"
+	primarySessionDir := filepath.Join(baseDir, contextID, "primary-session")
+	nodeSessionDir := filepath.Join(baseDir, contextID, "node-session")
+	for _, sessionDir := range []string{primarySessionDir, nodeSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+
+	inboxDir := filepath.Join(nodeSessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260502-004800-r1111-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-05-02T00:48:00+09:00\n---\n\nhello from another session\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(nodeSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-cross-session",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:    baseDir,
+		sessionDir: primarySessionDir,
+		contextID:  contextID,
+		nodes: map[string]discovery.NodeInfo{
+			"node-session:worker": {
+				SessionName: "node-session",
+				SessionDir:  nodeSessionDir,
+			},
+		},
+		events: make(chan tui.DaemonEvent, 8),
+	}
+
+	rt.dispatchPendingDaemonSubmitRequests()
+
+	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
+		t.Fatalf("cross-session request file still present or wrong error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nodeSessionDir, "read", filename)); err != nil {
+		t.Fatalf("cross-session read file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxDir, filename)); !os.IsNotExist(err) {
+		t.Fatalf("cross-session inbox file still present or wrong error: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(nodeSessionDir, "req-pop-cross-session"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != filename {
+		t.Fatalf("response.Filename = %q, want %q", response.Filename, filename)
+	}
+}
+
 func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeTestTmux(t, tmpDir)

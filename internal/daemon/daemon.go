@@ -230,12 +230,31 @@ func (r daemonSubmitProcessResult) hasPostDispatch() bool {
 	return r.Command == projection.DaemonSubmitSend && r.PostPath != ""
 }
 
+func claimDaemonSubmitRequest(requestPath string) (string, bool, error) {
+	if !strings.HasSuffix(filepath.Base(requestPath), ".json") {
+		return "", false, nil
+	}
+	claimedPath := requestPath + ".processing"
+	if err := os.Rename(requestPath, claimedPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return claimedPath, true, nil
+}
+
 func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, error) {
-	sessionDir, ok := daemonSubmitSessionDir(requestPath)
+	claimedPath, claimed, err := claimDaemonSubmitRequest(requestPath)
+	if err != nil || !claimed {
+		return daemonSubmitProcessResult{}, err
+	}
+
+	sessionDir, ok := daemonSubmitSessionDir(claimedPath)
 	if !ok {
 		return daemonSubmitProcessResult{}, nil
 	}
-	request, err := projection.ReadDaemonSubmitRequest(requestPath)
+	request, err := projection.ReadDaemonSubmitRequest(claimedPath)
 	if err != nil {
 		return daemonSubmitProcessResult{}, err
 	}
@@ -272,8 +291,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	}
 	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
-	if removeErr := os.Remove(requestPath); removeErr != nil && !os.IsNotExist(removeErr) {
-		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, requestPath, removeErr)
+	if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
 	}
 	return result, nil
 }

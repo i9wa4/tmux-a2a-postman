@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -25,6 +26,47 @@ func writeLiveSessionPID(t *testing.T, baseDir, contextID, sessionName string) {
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+}
+
+func TestRelayDaemonEventsToTUI_DoesNotBlockWhenTUIChannelIsFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rawEvents := make(chan tui.DaemonEvent)
+	tuiEvents := make(chan tui.DaemonEvent)
+	go relayDaemonEventsToTUI(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig())
+
+	send := func(event tui.DaemonEvent) {
+		t.Helper()
+		select {
+		case rawEvents <- event:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("relay blocked while forwarding %q with a full TUI channel", event.Type)
+		}
+	}
+
+	send(tui.DaemonEvent{Type: "message_received", Message: "first"})
+	send(tui.DaemonEvent{Type: "message_received", Message: "second"})
+}
+
+func TestForwardTUIEvent_DropsWhenChannelIsFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tuiEvents := make(chan tui.DaemonEvent)
+	done := make(chan bool, 1)
+	go func() {
+		done <- forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{Type: "session_health_update"})
+	}()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("forwardTUIEvent returned false for an active context")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("forwardTUIEvent blocked on a full TUI channel")
 	}
 }
 

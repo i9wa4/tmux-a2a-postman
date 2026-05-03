@@ -36,9 +36,9 @@ Use `--reply-required` when the recipient must answer. Use `--no-reply` to force
 an informational message. Without either flag, the reply policy is resolved from
 message metadata and ordinary message bodies are usually no-reply.
 
-`pop` reads and archives the next unread inbox message in one step. Use
-`pop --peek` only for a targeted diagnostic where archiving would be wrong.
-Never move runtime `post/`, `inbox/`, `read/`, or dead-letter files manually.
+`pop` reads and archives the next unread inbox message in one step. Do not run
+it for diagnostics where archiving would be wrong. Never move runtime `post/`,
+`inbox/`, `read/`, or dead-letter files manually.
 
 Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body
