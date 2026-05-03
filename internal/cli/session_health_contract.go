@@ -154,6 +154,9 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 			node.WaitingOnReplyCount = obligations.WaitingOnReplyCounts[simpleName]
 			node.InfoUnreadCount = obligations.InfoUnreadCounts[simpleName]
 			actionRequiredCount = node.ActionRequiredCount
+			if node.InboxCount > obligations.UnreadCounts[simpleName] {
+				actionRequiredCount = -1
+			}
 		}
 		node.VisibleState = status.VisibleStateWithObligations(node.PaneState, node.InboxCount, actionRequiredCount, node.WaitingOnReplyCount)
 		result.Nodes = append(result.Nodes, node)

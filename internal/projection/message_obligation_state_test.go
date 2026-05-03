@@ -196,7 +196,7 @@ func TestProjectMessageObligationState_TracksMultipleRecipients(t *testing.T) {
 	}
 }
 
-func TestProjectMessageObligationState_ExactReplyToMatchesSessionQualifiedRecipient(t *testing.T) {
+func TestProjectMessageObligationState_ReplyToDoesNotMatchSessionQualifiedRecipientBySimpleName(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 50, 0, 0, time.UTC)
 
@@ -209,6 +209,32 @@ func TestProjectMessageObligationState_ExactReplyToMatchesSessionQualifiedRecipi
 	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
 	reply := obligationContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
 	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(2*time.Second))
+
+	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+	}
+	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	}
+}
+
+func TestProjectMessageObligationState_ExactReplyToMatchesSessionQualifiedParticipant(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 3, 9, 51, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	request := obligationContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
+	reply := obligationContent("remote:worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "remote:worker", "orchestrator", reply, now.Add(2*time.Second))
 
 	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
 	if err != nil {

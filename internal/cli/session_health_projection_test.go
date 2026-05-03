@@ -306,6 +306,45 @@ func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	}
 }
 
+func TestGetHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"worker": 1, "critic": 1},
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 20, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 505, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, map[string]string{
+		"message_id": "legacy.md",
+		"to":         "worker",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(legacy delivered): %v", err)
+	}
+	content := sessionHealthObligationContent("worker", "critic", "info.md", "none", "", "FYI")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "info.md", "worker", "critic", content, now.Add(2*time.Second))
+
+	health, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealth() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if nodeByName["worker"].VisibleState != "pending" {
+		t.Fatalf("worker health = %#v, want pending from unread fallback", nodeByName["worker"])
+	}
+	if nodeByName["critic"].VisibleState != "ready" || nodeByName["critic"].InfoUnreadCount != 1 {
+		t.Fatalf("critic health = %#v, want ready info_unread=1", nodeByName["critic"])
+	}
+}
+
 func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,

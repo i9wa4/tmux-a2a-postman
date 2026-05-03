@@ -149,29 +149,9 @@ func resolveOutboundObligation(state MessageObligationState, openOutbound map[st
 }
 
 func findObligation(open map[string]projectedObligation, messageID, participant string) (string, projectedObligation, bool) {
-	if obligation, ok := open[obligationKey(messageID, participant)]; ok {
-		return obligationKey(messageID, participant), obligation, true
-	}
-
-	var foundKey string
-	var foundObligation projectedObligation
-	found := false
-	for key, obligation := range open {
-		if obligation.MessageID != messageID || !sameParticipant(obligation.To, participant) {
-			continue
-		}
-		if found {
-			return "", projectedObligation{}, false
-		}
-		foundKey = key
-		foundObligation = obligation
-		found = true
-	}
-	return foundKey, foundObligation, found
-}
-
-func sameParticipant(left, right string) bool {
-	return left == right || nodeaddr.Simple(left) == nodeaddr.Simple(right)
+	key := obligationKey(messageID, participant)
+	obligation, ok := open[key]
+	return key, obligation, ok
 }
 
 func simpleNameForSession(name, sessionName string) string {

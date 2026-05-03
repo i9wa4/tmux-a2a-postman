@@ -241,6 +241,12 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("--body contains invalid UTF-8: %w", err)
 	}
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
+	if !*noReply && !*replyRequired {
+		if metadata, err := envelope.ParseMetadata(content); err == nil && strings.TrimSpace(metadata.ReplyPolicy) == "" {
+			replyPolicy = envelope.ResolveReplyPolicyFromMetadata(metadata)
+			vars["reply_policy"] = replyPolicy
+		}
+	}
 	content = message.EnsureEnvelopeParams(content, map[string]string{
 		"messageId":   filename,
 		"replyPolicy": replyPolicy,
