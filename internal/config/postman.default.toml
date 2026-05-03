@@ -67,8 +67,7 @@ min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in second
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
 
 # Node state thresholds
-node_active_seconds = 300          # <=5min since last pane change: ready
-node_idle_seconds = 900            # >5min and <=15min since last pane change: internal idle; >15min becomes internal stale
+node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
 
 # Pane capture settings (hybrid idle detection)

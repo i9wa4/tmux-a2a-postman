@@ -124,14 +124,10 @@ func statusForState(state PaneCaptureState, now time.Time, cfg *config.Config) s
 	if state.LastChangeAt.IsZero() {
 		return "stale"
 	}
-	switch elapsed := now.Sub(state.LastChangeAt); {
-	case elapsed <= time.Duration(cfg.NodeActiveSeconds)*time.Second:
+	if now.Sub(state.LastChangeAt) <= time.Duration(cfg.NodeActiveSeconds)*time.Second {
 		return "active"
-	case elapsed <= time.Duration(cfg.NodeIdleSeconds)*time.Second:
-		return "idle"
-	default:
-		return "stale"
 	}
+	return "idle"
 }
 
 // GetPaneActivityStatus returns pane activity status based on idle.go logic.

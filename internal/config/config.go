@@ -37,8 +37,7 @@ type Config struct {
 	EnterRetryMax    int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
 	// Node state thresholds (Issue #xxx)
-	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds: active (green)
-	NodeIdleSeconds           float64 `toml:"node_idle_seconds"`            // N+ seconds: idle (orange) or stale (red)
+	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds since pane change: active
 	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
 	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
@@ -720,9 +719,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeActiveSeconds != 0 {
 		base.NodeActiveSeconds = override.NodeActiveSeconds
-	}
-	if override.NodeIdleSeconds != 0 {
-		base.NodeIdleSeconds = override.NodeIdleSeconds
 	}
 	if override.NodeStaleSeconds != 0 {
 		base.NodeStaleSeconds = override.NodeStaleSeconds

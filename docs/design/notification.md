@@ -33,11 +33,14 @@ manual recovery guidance and is separate from normal pane hints.
 get-health, get-health-oneline, and the default TUI are three views over the
 same canonical contract.
 
-| State     | Meaning                                  | Compact mark |
-| --------- | ---------------------------------------- | ------------ |
-| `ready`   | Pane is live and has no unread inbox mail | green mark   |
-| `pending` | Node has unread inbox mail               | blue diamond |
-| `stale`   | Pane is stale, missing, or unavailable   | red mark     |
+| State     | Meaning                                             | Compact mark |
+| --------- | --------------------------------------------------- | ------------ |
+| `ready`   | Pane is live and has no unread inbox mail           | green mark   |
+| `pending` | Node has unread inbox mail                          | blue diamond |
+| `stale`   | Pane or session is missing, unavailable, or unknown | red mark     |
+
+A live pane that simply has not changed for a long time is internally `idle`
+and remains `ready` in the visible health model.
 
 The health payload exposes `queues.post_count`, `queues.inbox_count`, and
 `queues.dead_letter_count` for mailbox backlog checks. Per-node state is

@@ -53,7 +53,6 @@ func TestExportPaneActivityToFile(t *testing.T) {
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 300.0,
-		NodeIdleSeconds:   900.0,
 	}
 	now := time.Now()
 
@@ -67,7 +66,7 @@ func TestExportPaneActivityToFile(t *testing.T) {
 	}
 	tracker.paneCaptureState["%21"] = PaneCaptureState{
 		LastHash:      222,
-		LastChangeAt:  now.Add(-500 * time.Second), // idle (between 300s and 900s)
+		LastChangeAt:  now.Add(-500 * time.Second), // idle: beyond active threshold
 		ChangeCount:   0,
 		LastCaptureAt: now,
 	}
@@ -116,7 +115,6 @@ func TestGetPaneActivityStatus_ChangeCountZeroAfterActive(t *testing.T) {
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 300.0,
-		NodeIdleSeconds:   900.0,
 	}
 	now := time.Now()
 	tracker.mu.Lock()
@@ -139,7 +137,6 @@ func TestGetPaneActivityStatus_StaleWhenLastChangeAtZero(t *testing.T) {
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 300.0,
-		NodeIdleSeconds:   900.0,
 	}
 	tracker.mu.Lock()
 	tracker.paneCaptureState["%11"] = PaneCaptureState{
@@ -157,17 +154,16 @@ func TestGetPaneActivityStatus_StaleWhenLastChangeAtZero(t *testing.T) {
 }
 
 func TestGetPaneActivityStatus_IdlePane(t *testing.T) {
-	// LastChangeAt between active and idle thresholds -> "idle".
+	// LastChangeAt older than active threshold -> "idle".
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 60.0,
-		NodeIdleSeconds:   600.0,
 	}
 	now := time.Now()
 	tracker.mu.Lock()
 	tracker.paneCaptureState["%12"] = PaneCaptureState{
 		LastHash:      999,
-		LastChangeAt:  now.Add(-120 * time.Second), // 2 min ago: beyond active (60s), within idle (600s)
+		LastChangeAt:  now.Add(-120 * time.Second), // 2 min ago: beyond active (60s)
 		ChangeCount:   0,
 		LastCaptureAt: now,
 	}
@@ -179,26 +175,25 @@ func TestGetPaneActivityStatus_IdlePane(t *testing.T) {
 	}
 }
 
-func TestGetPaneActivityStatus_StalePane(t *testing.T) {
-	// LastChangeAt older than idle threshold -> "stale".
+func TestGetPaneActivityStatus_LongUnchangedLivePaneStaysIdle(t *testing.T) {
+	// A live pane with no recent screen change should stay idle, not stale.
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 60.0,
-		NodeIdleSeconds:   600.0,
 	}
 	now := time.Now()
 	tracker.mu.Lock()
 	tracker.paneCaptureState["%13"] = PaneCaptureState{
 		LastHash:      111,
-		LastChangeAt:  now.Add(-700 * time.Second), // beyond idle threshold
+		LastChangeAt:  now.Add(-700 * time.Second), // long after active threshold
 		ChangeCount:   0,
 		LastCaptureAt: now,
 	}
 	tracker.mu.Unlock()
 
 	result := tracker.GetPaneActivityStatus(cfg)
-	if result["%13"] != "stale" {
-		t.Errorf("expected 'stale' for old LastChangeAt, got %q", result["%13"])
+	if result["%13"] != "idle" {
+		t.Errorf("expected 'idle' for old LastChangeAt on live pane, got %q", result["%13"])
 	}
 }
 
@@ -207,7 +202,6 @@ func TestGetPaneActivityStatus_EmptyState(t *testing.T) {
 	tracker := NewIdleTracker()
 	cfg := &config.Config{
 		NodeActiveSeconds: 300.0,
-		NodeIdleSeconds:   900.0,
 	}
 	result := tracker.GetPaneActivityStatus(cfg)
 	if len(result) != 0 {

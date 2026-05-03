@@ -5,14 +5,15 @@ needed by agents and the operator TUI.
 
 ## 1. States
 
-| State     | Meaning                                  | Source fact                  |
-| --------- | ---------------------------------------- | ---------------------------- |
-| `ready`   | Pane is live and has no unread inbox mail | tmux pane activity           |
-| `pending` | Node has unread inbox mail               | `inbox/{node}/` file count   |
-| `stale`   | Pane is stale, missing, or unavailable   | pane discovery/activity data |
+| State     | Meaning                                             | Source fact                  |
+| --------- | --------------------------------------------------- | ---------------------------- |
+| `ready`   | Pane is live and has no unread inbox mail           | tmux pane activity           |
+| `pending` | Node has unread inbox mail                          | `inbox/{node}/` file count   |
+| `stale`   | Pane or session is missing, unavailable, or unknown | pane discovery/activity data |
 
-`active` and `idle` pane facts normalize to `ready`. Missing state also
-normalizes to `stale` so unknown nodes do not look healthy by accident.
+`active` and `idle` pane facts normalize to `ready`. A live pane that has not
+changed for a long time remains `idle` internally. Missing state normalizes to
+`stale` so unknown nodes do not look healthy by accident.
 
 ## 2. Transitions
 
@@ -21,8 +22,8 @@ stateDiagram-v2
     [*] --> ready
     ready --> pending: unread inbox file appears
     pending --> ready: message is archived by pop
-    ready --> stale: pane disappears or becomes stale
-    pending --> stale: pane disappears or becomes stale
+    ready --> stale: pane/session unavailable
+    pending --> stale: pane/session unavailable
     stale --> ready: pane returns and inbox is empty
     stale --> pending: pane returns and inbox has unread mail
 ```

@@ -217,32 +217,9 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 			// Unread inbox counts overlay pending state separately.
 			state = "ready"
 		default:
-			// Issue #95: Time-based color changes (only for active nodes)
-			// Calculate idle duration from max(LastSent, LastReceived)
-			now := time.Now()
-			lastActivity := activity.LastSent
-			if activity.LastReceived.After(lastActivity) {
-				lastActivity = activity.LastReceived
-			}
-
-			idleDuration := time.Duration(0)
-			if !lastActivity.IsZero() {
-				idleDuration = now.Sub(lastActivity)
-			}
-
-			// Time-based state determination (3-stage transition)
-			// Default: 0-5min active, 5-15min idle, 15min+ stale
-			activeThreshold := time.Duration(m.config.NodeActiveSeconds * float64(time.Second))
-			idleThreshold := time.Duration(m.config.NodeIdleSeconds * float64(time.Second))
-
-			switch {
-			case idleDuration >= idleThreshold:
-				state = "stale"
-			case idleDuration >= activeThreshold:
-				state = "ready"
-			default:
-				state = "ready"
-			}
+			// A live node with confirmed liveness is ready. Unread inbox counts
+			// overlay pending separately; stale is reserved for unavailable panes.
+			state = "ready"
 		}
 
 		// Direct assignment with session-prefixed key
