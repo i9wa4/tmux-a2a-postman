@@ -4,36 +4,38 @@
 
 tmux agent-to-agent message delivery daemon.
 
-It runs one daemon per Unix user, treats tmux pane titles as agent node names,
-and delivers `send` messages to filesystem-backed inboxes. Agents read mail with
-`pop` and inspect shared health with `get-health` or `get-health-oneline`.
+It runs one daemon per Unix user, treats tmux pane titles as role/node names,
+and delivers `send` messages to filesystem-backed inboxes. Any AI coding agent
+that runs in tmux can take any role; agents read mail with `pop` and inspect
+shared health with `get-health` or `get-health-oneline`.
 
 ## 1. Concept
 
 ```mermaid
-sequenceDiagram
-    participant Human as human operator
-    participant Config as postman.md / postman.toml
-    participant Daemon as postman daemon
-    participant Orchestrator as orchestrator tmux pane (Codex CLI)
-    participant Inbox as filesystem inboxes
-    participant Worker as worker tmux pane (Claude Code)
-    participant Health as TUI / get-health
+---
+title: tmux-a2a-postman architecture
+---
+graph TD
+    human["human operator\nstarts one daemon"]
+    config["postman.md / postman.toml\nroles, edges, templates"]
+    daemon["postman daemon\nroutes by edges"]
+    mailbox["filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/"]
+    health["status views\nTUI / get-health / get-health-oneline"]
 
-    Human->>Daemon: tmux-a2a-postman start
-    Daemon->>Config: load edges and templates
-    Daemon-->>Orchestrator: discover pane title = orchestrator
-    Daemon-->>Worker: discover pane title = worker
-    Orchestrator->>Daemon: send --to worker --body "implement X"
-    Daemon->>Config: validate orchestrator --- worker
-    Daemon->>Inbox: write inbox/worker/message.md
-    Daemon-->>Worker: pane notification
-    Inbox-->>Worker: message footer says run pop
-    Worker->>Inbox: tmux-a2a-postman pop
-    Inbox-->>Worker: JSON message and archived read/
-    Worker->>Daemon: send --to orchestrator --body "DONE ..."
-    Daemon->>Inbox: deliver reply to orchestrator
-    Daemon-->>Health: publish ready / pending / stale
+    subgraph tmux["tmux session: any AI coding agent can take any role"]
+        messenger["messenger\nClaude Code"]
+        orchestrator["orchestrator\nCodex CLI"]
+        worker["worker\nClaude Code"]
+        critic["critic\nany AI coding agent"]
+    end
+
+    human --> daemon
+    config --> daemon
+    tmux -->|send / reply| daemon
+    daemon -->|deliver / notify| tmux
+    daemon <--> mailbox
+    mailbox -->|pop reads mail| tmux
+    daemon --> health
 ```
 
 ## 2. Prerequisites
@@ -65,7 +67,16 @@ skills help agents discover the first command and audit configuration:
 These skills are published through GitHub Releases; no separate skill registry
 is required. Install GitHub CLI 2.90.0 or newer first; see the
 [GitHub CLI installation guide](https://github.com/cli/cli#installation). Then
-install all bundled skills for Codex:
+install all bundled skills for your agent.
+
+For Claude Code:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent claude-code --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent claude-code --scope user
+```
+
+For Codex:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
@@ -85,7 +96,8 @@ tmux-a2a-postman start
 ```
 
 Agents then run commands from their own tmux panes. The pane title identifies
-the sending node:
+the sending role/node, independent of whether the pane is Claude Code, Codex, or
+another AI coding agent:
 
 ```sh
 tmux-a2a-postman send --to worker --body "implement X"
@@ -116,6 +128,9 @@ JSON and `get-health-oneline` for compact coordination.
 `postman.md` can contain only Mermaid edges:
 
 ```mermaid
+---
+title: postman.md edge topology
+---
 graph LR
     messenger --- orchestrator
     orchestrator --- worker

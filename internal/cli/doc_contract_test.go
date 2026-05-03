@@ -132,6 +132,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	assertContainsAllNormalized(t, readme,
 		"postman daemon",
 		"tmux pane",
+		"Any AI coding agent",
 		"filesystem-backed inboxes",
 		"send",
 		"pop",
@@ -142,6 +143,8 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"message footer",
 		"pane notification",
 		"gh skill install",
+		"--agent codex",
+		"--agent claude-code",
 		"postman-send-message",
 		"postman-config-auditor",
 	)
