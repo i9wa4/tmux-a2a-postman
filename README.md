@@ -22,10 +22,10 @@ graph TD
     mailbox["filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/"]
 
     subgraph tmux["tmux session: any AI coding agent can take any role"]
-        messenger["messenger\nClaude Code\nhuman-facing ui_node"]
-        orchestrator["orchestrator\nCodex CLI"]
-        worker["worker\nClaude Code"]
-        critic["critic\nany AI coding agent"]
+        messenger["messenger\nhuman-facing ui_node"]
+        orchestrator["orchestrator"]
+        worker["worker"]
+        critic["critic"]
     end
 
     human --> daemon
