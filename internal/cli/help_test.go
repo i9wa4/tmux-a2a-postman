@@ -105,6 +105,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
 		"ui_node                          Optional target filter for startup auto-PING",
+		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
 		"message_footer                   Footer appended to stored send mail",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",

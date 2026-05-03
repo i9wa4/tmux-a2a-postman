@@ -231,7 +231,7 @@ func (rt *daemonRuntime) bootstrap() {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
 	rt.recordPendingAutoPings(runtimeNodeKeys(rt.nodes), rt.nodes, "startup", time.Now())
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
 	rt.dispatchPendingPostMessages()
 }
@@ -362,7 +362,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		rt.logPaneIDChanges(freshNodes)
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
-		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), time.Now())
+		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), time.Now())
 
 		allSessions, _ := discovery.DiscoverAllSessions()
 		if allSessions == nil {
@@ -634,7 +634,7 @@ func (rt *daemonRuntime) handleScanTick() {
 		}
 	}
 
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	newNodes := rt.detectNewNodes(freshNodes)
 	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 	rt.nodes = freshNodes

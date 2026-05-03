@@ -538,7 +538,7 @@ func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing
 	}
 	source := string(sourceBytes)
 
-	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)") {
+	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)") {
 		t.Fatal("runtime.handleScanTick no longer derives session auto-enable from cfg.AutoEnableNewSessions")
 	}
 	if !strings.Contains(source, "newNodes := rt.detectNewNodes(freshNodes)") {

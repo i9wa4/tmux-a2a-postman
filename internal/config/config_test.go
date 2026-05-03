@@ -327,6 +327,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.RetentionPeriodDays != 50 {
 		t.Errorf("default RetentionPeriodDays: got %d, want 50", cfg.RetentionPeriodDays)
 	}
+	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
+		t.Errorf("default AutoEnableNewSessions: got %v, want true", cfg.AutoEnableNewSessions)
+	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
 	}

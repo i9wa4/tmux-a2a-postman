@@ -19,7 +19,7 @@ func activateStartupSessions(baseDir, contextDir, contextID, selfSession string,
 	if cfg == nil {
 		return nil
 	}
-	if !config.BoolVal(cfg.AutoEnableNewSessions, false) {
+	if !config.BoolVal(cfg.AutoEnableNewSessions, true) {
 		return nil
 	}
 

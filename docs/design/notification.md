@@ -47,13 +47,16 @@ reported as `nodes[*].visible_state`.
 
 The remaining notification-related public settings are:
 
-| Field                     | Purpose                                           |
-| ------------------------- | ------------------------------------------------- |
-| `notification_template`   | Pane hint rendered when mail arrives              |
-| `message_footer`          | Reply guidance appended to stored `send` mail     |
-| `daemon_message_template` | Envelope body for daemon-originated startup PING  |
-| `ui_node`                 | Optional target filter for startup auto-PING      |
+| Field                      | Purpose                                          |
+| -------------------------- | ------------------------------------------------ |
+| `notification_template`    | Pane hint rendered when mail arrives             |
+| `message_footer`           | Reply guidance appended to stored `send` mail    |
+| `daemon_message_template`  | Envelope body for daemon-originated startup PING |
+| `ui_node`                  | Optional target filter for startup auto-PING     |
+| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes  |
 
 `ui_node` is not a general escalation channel. When empty, startup auto-PING may
 target all discovered nodes. When set, startup auto-PING is limited to that node
-if it is discovered in the active session.
+if it is discovered in an enabled session. `auto_enable_new_sessions` defaults
+to true, so a single user daemon can discover project sessions that already have
+configured node panes.
