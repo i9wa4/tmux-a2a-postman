@@ -110,6 +110,8 @@ Edge rules:
 - Mermaid node decorations such as labels, shapes, classes, and quoted names
   are normalized to the node id.
 - Arrows such as `-->` are not valid postman edges.
+- Node ids are configuration-owned protocol names. The parser does not know
+  that `critic`, `reviewer`, or other role-like words are synonyms.
 
 Equivalent normalized edge output:
 

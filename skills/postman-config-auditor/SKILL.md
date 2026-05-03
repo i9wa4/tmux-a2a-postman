@@ -60,6 +60,9 @@ Important merge rules:
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
+- A `postman.toml` file is optional. Treat a TOML file that only restates
+  embedded defaults as deletion-worthy unless it documents an intentional local
+  override.
 
 ## 3. Audit Checklist
 
@@ -71,6 +74,9 @@ Important merge rules:
   templates.
 - Confirm node names in templates are reachable from the sender when the text
   instructs an agent to contact that node.
+- Treat node names as local protocol identifiers, not generic job titles. Do
+  not rename nodes such as `critic` to `reviewer` unless the graph, pane
+  titles, and user intent all require that rename.
 
 ### 3.2. postman.md Syntax
 
@@ -92,13 +98,17 @@ Important merge rules:
 - Confirm templates do not duplicate context injected by system templates:
   `message_footer`, `draft_template`, `daemon_message_template`,
   `notification_template`, or dead-letter notification text.
+- Distinguish postman node names from generic prose. For example, a repo may
+  use a `critic` node while still describing generated subagents as reviewers.
 
 ### 3.4. Runtime Symptoms
 
 - Use `tmux-a2a-postman get-health` for structured state and
   `tmux-a2a-postman get-health-oneline` for compact coordination.
 - Treat `pending` as unread inbox mail.
-- Treat `stale` as a pane/session discovery issue before changing templates.
+- Treat `stale` as missing, unavailable, or unknown pane/session state before
+  changing templates. A live pane that is merely quiet should not be diagnosed
+  as stale.
 - Treat dead-letter as a routing/config issue until edges prove otherwise.
 
 ## 4. Findings Format
