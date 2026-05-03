@@ -216,8 +216,8 @@ func RunSendMessage(args []string) error {
 	if content == "" {
 		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
+	templateContent := content
 	generatedReplyPolicyField := envelope.ParamsReplyPolicyUsesPlaceholder(content)
-	explicitReplyPolicy, hasExplicitReplyPolicy := envelope.ExplicitParamsReplyPolicy(content)
 
 	vars := map[string]string{
 		"context_id":     resolvedContextID,
@@ -245,7 +245,7 @@ func RunSendMessage(args []string) error {
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	if !*noReply && !*replyRequired {
 		if metadata, err := envelope.ParseMetadata(content); err == nil {
-			if hasExplicitReplyPolicy {
+			if explicitReplyPolicy, ok := envelope.ExplicitParamsReplyPolicyFromExpandedTemplate(templateContent, content); ok {
 				metadata.ReplyPolicy = explicitReplyPolicy
 			} else if generatedReplyPolicyField && strings.EqualFold(strings.TrimSpace(metadata.ReplyPolicy), replyPolicy) {
 				metadata.ReplyPolicy = ""

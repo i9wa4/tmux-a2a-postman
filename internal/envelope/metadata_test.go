@@ -125,6 +125,55 @@ func TestParseMetadataIgnoresNestedParamsFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsWiderDirectParamsIndent(t *testing.T) {
+	content := "---\nparams:\n    from: orchestrator\n    to: worker\n    replyPolicy: required\n    messageType: status_request\n    audit:\n        replyPolicy: none\n---\n\nplain update\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.From != "orchestrator" || got.To != "worker" {
+		t.Fatalf("from/to = %q/%q, want orchestrator/worker", got.From, got.To)
+	}
+	if got.ReplyPolicy != "required" {
+		t.Fatalf("ReplyPolicy = %q, want required", got.ReplyPolicy)
+	}
+	if got.MessageType != "status_request" {
+		t.Fatalf("MessageType = %q, want status_request", got.MessageType)
+	}
+}
+
+func TestParseMetadataReplyPolicyAliasesUseLastWins(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "reply obligation after reply policy",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			want:    "required",
+		},
+		{
+			name:    "reply policy after reply obligation",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: required\n  replyPolicy: none\n---\n\nbody\n",
+			want:    "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseMetadata(tt.content)
+			if err != nil {
+				t.Fatalf("ParseMetadata() error = %v", err)
+			}
+			if got.ReplyPolicy != tt.want {
+				t.Fatalf("ReplyPolicy = %q, want %q", got.ReplyPolicy, tt.want)
+			}
+		})
+	}
+}
+
 func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: old.md\n  replyPolicy: none\n---\n\nplease review\n"
 
@@ -147,6 +196,34 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("EnsureParams() kept %q:\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestEnsureParamsPreservesWiderDirectParamsIndent(t *testing.T) {
+	content := "---\nparams:\n    from: orchestrator\n    to: worker\n    messageId: old.md\n    audit:\n        replyPolicy: display-only\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"messageId":   "new.md",
+		"replyPolicy": "required",
+	})
+
+	for _, want := range []string{
+		"    messageId: new.md",
+		"    replyPolicy: required",
+		"    audit:\n        replyPolicy: display-only",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("EnsureParams() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"\n  messageId: new.md",
+		"\n  replyPolicy: required",
+		"messageId: old.md",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("EnsureParams() contains unwanted %q:\n%s", unwanted, got)
 		}
 	}
 }
@@ -185,6 +262,11 @@ func TestParamsReplyPolicyUsesPlaceholder(t *testing.T) {
 		{
 			name:    "params alias placeholder",
 			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			want:    true,
+		},
+		{
+			name:    "wider direct params placeholder",
+			content: "---\nparams:\n    from: orchestrator\n    to: worker\n    replyPolicy: {reply_policy}\n---\n\nbody\n",
 			want:    true,
 		},
 		{
@@ -245,6 +327,24 @@ func TestExplicitParamsReplyPolicy(t *testing.T) {
 			want:    "required",
 			wantOK:  true,
 		},
+		{
+			name:    "last explicit alias wins over earlier explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
+		},
+		{
+			name:    "last explicit reply policy wins over earlier alias",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: required\n  replyPolicy: none\n---\n\nbody\n",
+			want:    "none",
+			wantOK:  true,
+		},
+		{
+			name:    "wider direct explicit",
+			content: "---\nparams:\n    from: orchestrator\n    to: worker\n    replyPolicy: required\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -252,6 +352,45 @@ func TestExplicitParamsReplyPolicy(t *testing.T) {
 			got, ok := ExplicitParamsReplyPolicy(tt.content)
 			if got != tt.want || ok != tt.wantOK {
 				t.Fatalf("ExplicitParamsReplyPolicy() = %q, %v; want %q, %v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestExplicitParamsReplyPolicyFromExpandedTemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		expanded string
+		want     string
+		wantOK   bool
+	}{
+		{
+			name:     "expanded explicit value wins over generated alias",
+			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: $(printf required)\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: none\n---\n\nbody\n",
+			want:     "required",
+			wantOK:   true,
+		},
+		{
+			name:     "last explicit alias wins",
+			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			want:     "required",
+			wantOK:   true,
+		},
+		{
+			name:     "placeholder only is not explicit",
+			template: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: {reply_policy}\n---\n\nbody\n",
+			expanded: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n---\n\nbody\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ExplicitParamsReplyPolicyFromExpandedTemplate(tt.template, tt.expanded)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("ExplicitParamsReplyPolicyFromExpandedTemplate() = %q, %v; want %q, %v", got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

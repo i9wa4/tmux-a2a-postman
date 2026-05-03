@@ -1202,6 +1202,212 @@ role = "worker"
 	}
 }
 
+func TestRunSendMessage_StrictMessageTypePreservesExplicitNoReplyWithPlaceholderAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: none
+  reply_obligation: {reply_policy}
+  timestamp: {timestamp}
+  messageType: status_request
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-explicit-no-reply-placeholder-alias",
+			"--to", "worker",
+			"--body", "status-only",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-explicit-no-reply-placeholder-alias", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	for _, want := range []string{
+		"replyPolicy: none",
+		"reply_obligation: none",
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("content missing %q:\n%s", want, string(content))
+		}
+	}
+}
+
+func TestRunSendMessage_PreservesShellExpandedExplicitReplyPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+allow_shell_templates = true
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: $(printf required)
+  timestamp: {timestamp}
+  messageType: status_update
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-shell-expanded-reply-policy",
+			"--to", "worker",
+			"--body", "please reply",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-shell-expanded-reply-policy", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), "replyPolicy: required") {
+		t.Fatalf("content missing expanded replyPolicy:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_ReplyPolicyFlagsUpdatePlaceholderAliases(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantPolicy  string
+		wantContext string
+	}{
+		{
+			name:        "no reply",
+			args:        []string{"--no-reply"},
+			wantPolicy:  "none",
+			wantContext: "ctx-flag-no-reply-placeholder-alias",
+		},
+		{
+			name:        "reply required",
+			args:        []string{"--reply-required"},
+			wantPolicy:  "required",
+			wantContext: "ctx-flag-reply-required-placeholder-alias",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+			t.Setenv("HOME", tmpDir)
+			t.Setenv("XDG_CONFIG_HOME", tmpDir)
+			configPath := filepath.Join(tmpDir, "postman.toml")
+			configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  reply_obligation: {reply_policy}
+  timestamp: {timestamp}
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+			if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+				t.Fatalf("WriteFile config: %v", err)
+			}
+			installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+			args := []string{
+				"--config", configPath,
+				"--context-id", tt.wantContext,
+				"--to", "worker",
+				"--body", "flag-controlled policy",
+			}
+			args = append(args, tt.args...)
+			stdout, _, err := captureCommandOutput(t, func() error {
+				return RunSendMessage(args)
+			})
+			if err != nil {
+				t.Fatalf("RunSendMessage: %v", err)
+			}
+			payload := decodeSendOutputForTest(t, stdout)
+			if payload.ReplyPolicy != tt.wantPolicy {
+				t.Fatalf("payload.ReplyPolicy = %q, want %q", payload.ReplyPolicy, tt.wantPolicy)
+			}
+
+			content, err := os.ReadFile(filepath.Join(tmpDir, tt.wantContext, "test-session", "post", payload.Sent))
+			if err != nil {
+				t.Fatalf("ReadFile post: %v", err)
+			}
+			if !strings.Contains(string(content), "reply_obligation: "+tt.wantPolicy) {
+				t.Fatalf("content missing reply_obligation %q:\n%s", tt.wantPolicy, string(content))
+			}
+		})
+	}
+}
+
 func TestRunSendMessage_NoReplyFlagStoresNoReplyPolicy(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -1785,12 +1991,15 @@ role = "worker"
 		}
 	}()
 
+	replyTo := "20260503-090000-sabcd-r1234-from-worker-to-messenger.md"
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunSendMessage([]string{
 			"--config", configPath,
 			"--context-id", "ctx-send-submit-json",
 			"--to", "worker",
 			"--body", "hello through submit json",
+			"--reply-required",
+			"--reply-to", replyTo,
 		})
 	})
 	if err != nil {
@@ -1806,21 +2015,18 @@ role = "worker"
 	if !strings.Contains(request.Content, "hello through submit json") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
+	for _, want := range []string{
+		"replyPolicy: required",
+		"replyTo: " + replyTo,
+	} {
+		if !strings.Contains(request.Content, want) {
+			t.Fatalf("request content missing %q:\n%s", want, request.Content)
+		}
+	}
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
-	var payload struct {
-		Sent       string                `json:"sent"`
-		Status     string                `json:"status"`
-		ContextID  string                `json:"context_id"`
-		Session    string                `json:"session"`
-		From       string                `json:"from"`
-		To         string                `json:"to"`
-		SubmitPath projection.SubmitPath `json:"submit_path"`
-	}
-	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
-		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
-	}
+	payload := decodeSendOutputForTest(t, stdout)
 	if payload.Sent != request.Filename {
 		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
 	}
@@ -1839,11 +2045,14 @@ role = "worker"
 	if payload.To != "worker" {
 		t.Fatalf("payload.To = %q, want worker", payload.To)
 	}
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+	if payload.ReplyTo != replyTo {
+		t.Fatalf("payload.ReplyTo = %q, want %q", payload.ReplyTo, replyTo)
+	}
 	if payload.SubmitPath != projection.SubmitPathDaemon {
 		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
-	}
-	if strings.Contains(stdout, "Sent: ") {
-		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {

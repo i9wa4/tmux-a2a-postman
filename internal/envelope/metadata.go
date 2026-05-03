@@ -46,8 +46,9 @@ func ParseMetadata(content string) (Metadata, error) {
 	lines := strings.Split(frontmatter, "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex >= 0 {
+		childIndent := paramsChildIndent(lines, paramsIndex, paramsEnd)
 		for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
-			key, value, ok := directParamsChild(lines[idx])
+			key, value, ok := directParamsChild(lines[idx], childIndent)
 			if !ok {
 				continue
 			}
@@ -80,35 +81,77 @@ func ParseMetadata(content string) (Metadata, error) {
 	return metadata, nil
 }
 
-func directParamsChild(line string) (string, string, bool) {
+func directParamsChild(line string, childIndent int) (string, string, bool) {
 	line = strings.TrimRight(line, "\r")
-	if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+	if childIndent <= 0 || leadingSpaces(line) != childIndent {
 		return "", "", false
 	}
 	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
 	if !ok {
 		return "", "", false
 	}
+	key = strings.TrimSpace(key)
+	if key == "" || strings.HasPrefix(key, "#") {
+		return "", "", false
+	}
 	return key, strings.TrimSpace(value), true
 }
 
 func ExplicitParamsReplyPolicy(content string) (string, bool) {
+	fields := paramsReplyPolicyFields(content)
+	explicitPolicy := ""
+	hasExplicitPolicy := false
+	for _, field := range fields {
+		if field.Value == "" || field.Value == "{reply_policy}" {
+			continue
+		}
+		explicitPolicy = field.Value
+		hasExplicitPolicy = true
+	}
+	return explicitPolicy, hasExplicitPolicy
+}
+
+func ExplicitParamsReplyPolicyFromExpandedTemplate(templateContent, expandedContent string) (string, bool) {
+	templateFields := paramsReplyPolicyFields(templateContent)
+	expandedFields := paramsReplyPolicyFields(expandedContent)
+	explicitPolicy := ""
+	hasExplicitPolicy := false
+	for idx, templateField := range templateFields {
+		if templateField.Value == "" || templateField.Value == "{reply_policy}" {
+			continue
+		}
+		explicitPolicy = templateField.Value
+		if idx < len(expandedFields) {
+			explicitPolicy = expandedFields[idx].Value
+		}
+		hasExplicitPolicy = true
+	}
+	return explicitPolicy, hasExplicitPolicy
+}
+
+type paramsReplyPolicyField struct {
+	Value string
+}
+
+func paramsReplyPolicyFields(content string) []paramsReplyPolicyField {
 	first := strings.Index(content, "---\n")
 	if first < 0 {
-		return "", false
+		return nil
 	}
 	rest := content[first+4:]
 	second := strings.Index(rest, "\n---")
 	if second < 0 {
-		return "", false
+		return nil
 	}
 	lines := strings.Split(rest[:second], "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex < 0 {
-		return "", false
+		return nil
 	}
+	childIndent := paramsChildIndent(lines, paramsIndex, paramsEnd)
+	fields := []paramsReplyPolicyField{}
 	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
-		key, value, ok := directParamsChild(lines[idx])
+		key, value, ok := directParamsChild(lines[idx], childIndent)
 		if !ok {
 			continue
 		}
@@ -116,12 +159,9 @@ func ExplicitParamsReplyPolicy(content string) (string, bool) {
 		if !ok || fieldKey != "replyPolicy" {
 			continue
 		}
-		if value == "" || value == "{reply_policy}" {
-			continue
-		}
-		return value, true
+		fields = append(fields, paramsReplyPolicyField{Value: value})
 	}
-	return "", false
+	return fields
 }
 
 func ResolveReplyPolicyFromContent(content string) string {
@@ -204,6 +244,11 @@ func EnsureParams(content string, fields map[string]string) string {
 	if paramsIndex < 0 {
 		return content
 	}
+	childIndent := paramsChildIndent(lines, paramsIndex, paramsEnd)
+	if childIndent <= 0 {
+		childIndent = 2
+	}
+	paramsIndent := strings.Repeat(" ", childIndent)
 
 	existing := make(map[string]bool)
 	changed := false
@@ -211,14 +256,14 @@ func EnsureParams(content string, fields map[string]string) string {
 		if idx <= paramsIndex || idx >= paramsEnd {
 			continue
 		}
-		key, _, ok := directParamsChild(line)
+		key, _, ok := directParamsChild(line, childIndent)
 		if !ok {
 			continue
 		}
 		if fieldKey, ok := managedParamFieldKey(key); ok {
 			existing[fieldKey] = true
 			if value := strings.TrimSpace(fields[fieldKey]); value != "" {
-				updatedLine := "  " + key + ": " + value
+				updatedLine := paramsIndent + key + ": " + value
 				if lines[idx] != updatedLine {
 					lines[idx] = updatedLine
 					changed = true
@@ -235,7 +280,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		if value == "" || existing[key] {
 			continue
 		}
-		insert = append(insert, "  "+key+": "+value)
+		insert = append(insert, paramsIndent+key+": "+value)
 	}
 	if len(insert) == 0 {
 		if !changed {
@@ -266,9 +311,10 @@ func ParamsReplyPolicyUsesPlaceholder(content string) bool {
 	if paramsIndex < 0 {
 		return false
 	}
+	childIndent := paramsChildIndent(lines, paramsIndex, paramsEnd)
 	foundPlaceholder := false
 	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
-		key, value, ok := directParamsChild(lines[idx])
+		key, value, ok := directParamsChild(lines[idx], childIndent)
 		if !ok {
 			continue
 		}
@@ -309,6 +355,40 @@ func paramsBlockRange(lines []string) (int, int) {
 		}
 	}
 	return paramsIndex, end
+}
+
+func paramsChildIndent(lines []string, paramsIndex, paramsEnd int) int {
+	childIndent := -1
+	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
+		line := strings.TrimRight(lines[idx], "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, ":")
+		if !ok || strings.TrimSpace(key) == "" {
+			continue
+		}
+		indent := leadingSpaces(line)
+		if indent == 0 {
+			continue
+		}
+		if childIndent < 0 || indent < childIndent {
+			childIndent = indent
+		}
+	}
+	return childIndent
+}
+
+func leadingSpaces(line string) int {
+	count := 0
+	for count < len(line) && line[count] == ' ' {
+		count++
+	}
+	return count
 }
 
 func managedParamFieldKey(key string) (string, bool) {
