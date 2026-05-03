@@ -61,12 +61,14 @@ graph TD
     classDef daemonType fill:#e0f2fe,stroke:#0369a1,color:#0f172a
     classDef storageType fill:#ecfdf5,stroke:#047857,color:#0f172a
     classDef agentType fill:#f8fafc,stroke:#475569,color:#0f172a
+    classDef uiNodeType fill:#fef9c3,stroke:#ca8a04,color:#0f172a
 
     class operator operatorType
     class config configType
     class daemon daemonType
     class mailbox storageType
-    class a_messenger,a_orchestrator,a_worker,a_reviewer,b_messenger,b_orchestrator,b_worker,b_reviewer agentType
+    class a_orchestrator,a_worker,a_reviewer,b_orchestrator,b_worker,b_reviewer agentType
+    class a_messenger,b_messenger uiNodeType
     style project_a fill:#ffffff,stroke:#94a3b8,color:#0f172a
     style project_b fill:#ffffff,stroke:#94a3b8,color:#0f172a
 ```
