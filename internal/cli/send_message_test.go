@@ -1035,6 +1035,7 @@ role = "worker"
 	if strings.Contains(string(content), "replyPolicy: none") {
 		t.Fatalf("content kept generated replyPolicy none:\n%s", string(content))
 	}
+	assertNoGeneratedReplyPolicyMarker(t, string(content), "post content")
 }
 
 func TestRunSendMessage_StrictMessageTypeOverridesSpacedGeneratedReplyPolicyPlaceholder(t *testing.T) {
@@ -1383,6 +1384,7 @@ role = "worker"
 	if !strings.Contains(string(content), "reply_obligation: none") {
 		t.Fatalf("content missing shell-generated reply_obligation:\n%s", string(content))
 	}
+	assertNoGeneratedReplyPolicyMarker(t, string(content), "post content")
 }
 
 func TestRunSendMessage_PreservesLastExplicitPolicyWhenShellAddsPolicyFields(t *testing.T) {
@@ -1443,6 +1445,7 @@ role = "worker"
 	if !strings.Contains(string(content), "reply_obligation: required") {
 		t.Fatalf("content missing reply_obligation required:\n%s", string(content))
 	}
+	assertNoGeneratedReplyPolicyMarker(t, string(content), "post content")
 }
 
 func TestRunSendMessage_ReplyPolicyFlagsUpdatePlaceholderAliases(t *testing.T) {
@@ -2143,6 +2146,7 @@ role = "worker"
 			t.Fatalf("request content missing %q:\n%s", want, request.Content)
 		}
 	}
+	assertNoGeneratedReplyPolicyMarker(t, request.Content, "daemon submit request content")
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
@@ -2177,6 +2181,127 @@ role = "worker"
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendMessage_DaemonSubmitResolvesGeneratedReplyPolicyMarker(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: {reply_policy}
+  timestamp: {timestamp}
+  messageType: status_request
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-send-submit-marker-resolution", "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-marker-resolution", "test-session") {
+		t.Fatal("ContextOwnsSession() = false, want true")
+	}
+
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
+	go func() {
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+		requestSeen <- request
+		postDir := filepath.Join(sessionDir, "post")
+		if err := os.MkdirAll(postDir, 0o700); err != nil {
+			t.Errorf("MkdirAll postDir: %v", err)
+			return
+		}
+		postPath := filepath.Join(postDir, request.Filename)
+		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
+			t.Errorf("WriteFile postPath: %v", err)
+			return
+		}
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+			t.Errorf("MkdirAll inboxDir: %v", err)
+			return
+		}
+		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+			t.Errorf("Rename post to inbox: %v", err)
+		}
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-send-submit-marker-resolution",
+			"--to", "worker",
+			"--body", "current status?",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	request := <-requestSeen
+	if request.Command != projection.DaemonSubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
+	}
+	for _, want := range []string{
+		"messageType: status_request",
+		"replyPolicy: required",
+	} {
+		if !strings.Contains(request.Content, want) {
+			t.Fatalf("request content missing %q:\n%s", want, request.Content)
+		}
+	}
+	assertNoGeneratedReplyPolicyMarker(t, request.Content, "daemon submit request content")
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Sent != request.Filename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	}
+	if payload.Status != string(sendStatusProcessed) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
 	}
 }
 
@@ -2280,6 +2405,7 @@ func TestWriteSendResult_QueuedHasNoNotifySuffix(t *testing.T) {
 
 func decodeSendOutputForTest(t *testing.T, stdout string) sendOutput {
 	t.Helper()
+	assertNoGeneratedReplyPolicyMarker(t, stdout, "send stdout")
 	var payload sendOutput
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
@@ -2288,4 +2414,11 @@ func decodeSendOutputForTest(t *testing.T, stdout string) sendOutput {
 		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
 	}
 	return payload
+}
+
+func assertNoGeneratedReplyPolicyMarker(t *testing.T, value, label string) {
+	t.Helper()
+	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_REPLY_POLICY_") {
+		t.Fatalf("%s leaked generated reply policy marker:\n%s", label, value)
+	}
 }
