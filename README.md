@@ -20,11 +20,10 @@ Or with Nix:
 nix run github:i9wa4/tmux-a2a-postman
 ```
 
-### 2.1. Agent Skills
+### 2.1. (Optional) Agent Skills
 
-The `skills/` directory contains optional AI assistant skills. The postman
-binary works without them, but they help agents discover the first command and
-audit configuration:
+The postman binary works without the `skills/` directory. These AI assistant
+skills help agents discover the first command and audit configuration:
 
 - `postman-send-message`: minimal entry point for sending the first postman
   message.
