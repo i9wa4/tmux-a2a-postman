@@ -107,7 +107,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"ui_node                          Optional target filter for startup auto-PING",
 		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
 		"message_footer                   Footer appended to stored send mail",
-		"skill_path                       postman.md frontmatter path for generated skill catalog",
+		"skill_path                       postman.md YAML frontmatter skill catalog sources",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
 		"retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)",

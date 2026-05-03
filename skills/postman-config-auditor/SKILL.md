@@ -61,9 +61,10 @@ Important merge rules:
 - Split `nodes/*.toml` files replace that node at their layer.
 - Project-local `postman.md` appends `message_footer` to the effective base
   footer.
-- `postman.md` frontmatter `skill_path` generates an aligned skill catalog
-  from `*/SKILL.md` files and appends it to that Markdown layer's
-  `common_template`.
+- `postman.md` frontmatter `skill_path` generates compact skill catalogs from
+  selected `SKILL.md` files and appends them to that Markdown layer's
+  `common_template`. `skill_path` accepts YAML list entries with `path` and
+  `skills`; `skills` is either `all` or an explicit YAML list.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
@@ -93,10 +94,13 @@ Important merge rules:
 - Confirm the `edges` section contains a fenced `mermaid` block.
 - Confirm role text lives under an h3 `role` section or in supported
   frontmatter.
-- Confirm frontmatter only uses the supported one-line `key: value` subset.
+- Confirm global `postman.md` frontmatter stays within the supported YAML
+  surface: scalar settings plus `skill_path` path entries.
 - If `skill_path` is set, confirm relative paths resolve from the declaring
   `postman.md` directory, `~/...` points to the current user's home directory,
-  and the target points to skill subdirectories containing `SKILL.md`.
+  and each selected skill name maps to a subdirectory containing `SKILL.md`.
+- Confirm `skills` uses `all` or explicit YAML list items. Glob patterns such
+  as `postman-*` are unsupported.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
   `description`, rather than hand-maintained stale lists.
 
@@ -145,8 +149,8 @@ choose a skill:
 - state-machine semantics that affect `get-health` or `get-health-oneline`
 - role-specific authority boundaries, such as who may approve or implement
 - compact reminders that prevent prompt deadlocks or broken message flow
-- the `skill_path` declaration and a short rule to read matching `SKILL.md`
-  files before execution
+- the `skill_path` declaration and a short rule to read listed `SKILL.md` files
+  before execution
 
 Move content to `SKILL.md` when it is reusable procedure rather than routing
 contract:
@@ -170,7 +174,7 @@ they can be selected by skill:
 
 Flag these imbalance patterns:
 
-- hand-maintained skill lists that duplicate the generated `skill_path`
+- hand-maintained skill tables that duplicate the generated `skill_path`
   catalog
 - `postman.md` sections that inline full skill bodies or long examples
 - role templates that repeat the same procedural checklist across nodes

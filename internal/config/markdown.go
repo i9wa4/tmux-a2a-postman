@@ -370,8 +370,8 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	content := string(raw)
 	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
 
-	// Parse global frontmatter
-	fm, err := parseFrontmatter(content)
+	// Parse global frontmatter.
+	fm, skillCatalogSpecs, err := parsePostmanFrontmatter(content)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -398,8 +398,8 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	if commonBody, ok := sections["common_template"]; ok {
 		cfg.CommonTemplate = strings.TrimSpace(commonBody)
 	}
-	if skillPath, ok := fm["skill_path"]; ok && strings.TrimSpace(skillPath) != "" {
-		commonTemplate, err := appendSkillCatalogToCommonTemplate(cfg.CommonTemplate, path, skillPath)
+	if len(skillCatalogSpecs) > 0 {
+		commonTemplate, err := appendSkillCatalogsToCommonTemplate(cfg.CommonTemplate, path, skillCatalogSpecs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}

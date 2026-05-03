@@ -28,6 +28,13 @@ func assertContains(t *testing.T, content, want string) {
 	}
 }
 
+func assertNotContains(t *testing.T, content, want string) {
+	t.Helper()
+	if strings.Contains(content, want) {
+		t.Fatalf("content unexpectedly contains %q:\n%s", want, content)
+	}
+}
+
 // TestMarkdownFrontmatterAccept covers the supported syntax subset for
 // Markdown frontmatter.
 func TestMarkdownFrontmatterAccept(t *testing.T) {
@@ -574,9 +581,8 @@ Shared instructions.
 	assertContains(t, cfg.CommonTemplate, "Shared instructions.")
 	assertContains(t, cfg.CommonTemplate, "### Available Skills")
 	assertContains(t, cfg.CommonTemplate, "Skill files live under `skills`.")
-	assertContains(t, cfg.CommonTemplate, "| Skill       | Description")
-	assertContains(t, cfg.CommonTemplate, "| `bash`      | Bash scripting rules for commands.")
-	assertContains(t, cfg.CommonTemplate, "| `find-docs` | Retrieves current documentation for developer tools. Use for API syntax questions.")
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash scripting rules for commands.")
+	assertContains(t, cfg.CommonTemplate, "- `find-docs`: Retrieves current documentation for developer tools. Use for API syntax questions.")
 }
 
 func TestLoadMarkdownConfig_SkillPathReadsSymlinkedSkillDirectories(t *testing.T) {
@@ -608,7 +614,132 @@ skill_path: linked-skills
 		t.Fatalf("loadMarkdownConfig error: %v", err)
 	}
 
-	assertContains(t, cfg.CommonTemplate, "| `bash` | Bash rules from a symlinked skill.")
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash rules from a symlinked skill.")
+}
+
+func TestLoadMarkdownConfig_SkillPathYAMLListSelectsSkills(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills-a", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills-a", "python", "SKILL.md"), `---
+name: python
+description: Python rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills-b", "postman-config-auditor", "SKILL.md"), `---
+name: postman-config-auditor
+description: Audit postman configs.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills-b", "postman-session-operator", "SKILL.md"), `---
+name: postman-session-operator
+description: Operate postman sessions.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills-b", "noise", "SKILL.md"), `---
+name: noise
+description: Unselected skill.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills-a
+    skills:
+      - bash
+  - path: skills-b
+    skills:
+      - postman-config-auditor
+      - postman-session-operator
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "Skill files live under `skills-a`, `skills-b`.")
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash rules.")
+	assertContains(t, cfg.CommonTemplate, "- `postman-config-auditor`: Audit postman configs.")
+	assertContains(t, cfg.CommonTemplate, "- `postman-session-operator`: Operate postman sessions.")
+	assertNotContains(t, cfg.CommonTemplate, "Python rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Unselected skill.")
+}
+
+func TestLoadMarkdownConfig_SkillPathYAMLListAll(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills", "markdown", "SKILL.md"), `---
+name: markdown
+description: Markdown rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+    skills: all
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash rules.")
+	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathRejectsGlobSkillSelector(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+skill_path:
+  - path: skills
+    skills:
+      - postman-*
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), "does not support glob patterns") {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
+func TestLoadMarkdownConfig_SkillPathRejectsScalarSkillName(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+skill_path:
+  - path: skills
+    skills: bash
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), "skills must be all or a YAML list") {
+		t.Fatalf("error mismatch: %v", err)
+	}
 }
 
 func TestResolveSkillPathExpandsHome(t *testing.T) {

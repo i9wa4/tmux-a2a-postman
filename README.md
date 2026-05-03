@@ -234,15 +234,27 @@ inlining full skill bodies, add frontmatter to `postman.md`:
 ```markdown
 ---
 ui_node: messenger
-skill_path: ~/.claude/skills
+skill_path:
+  - path: ~/ghq/github.com/i9wa4/dotfiles/nix/home-manager/agents/skills
+    skills:
+      - repo-local
+      - bash
+      - github
+      - markdown
+  - path: ~/.claude/skills
+    skills:
+      - postman-config-auditor
+      - postman-session-operator
 ---
 ```
 
 `ui_node` is the node that receives startup PINGs for the human operator.
 Relative `skill_path` values are resolved from the `postman.md` directory,
 `~/...` expands to the current user's home directory, and symlinked skill
-directories are followed. The catalog is generated as an aligned table from
-each `*/SKILL.md` frontmatter `name` and `description`.
+directories are followed. The catalog is generated as a compact Markdown list
+from selected `SKILL.md` frontmatter `name` and `description` values. Use
+`skills: all` to include every skill under a source path. Glob patterns are not
+supported; list skill names explicitly.
 
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax

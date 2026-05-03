@@ -13,18 +13,59 @@ type skillCatalogEntry struct {
 	Description string
 }
 
+type skillCatalogSpec struct {
+	Path  string
+	All   bool
+	Names []string
+}
+
 var skillCatalogUserHomeDir = os.UserHomeDir
 
 func appendSkillCatalogToCommonTemplate(commonTemplate, markdownPath, skillPath string) (string, error) {
-	entries, resolvedPath, err := loadSkillCatalog(markdownPath, skillPath)
-	if err != nil {
-		return "", err
+	return appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath, []skillCatalogSpec{
+		{Path: skillPath, All: true},
+	})
+}
+
+func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, specs []skillCatalogSpec) (string, error) {
+	entriesByName := make(map[string]skillCatalogEntry)
+	var orderedEntries []skillCatalogEntry
+	var sourceDisplays []string
+	for _, spec := range specs {
+		if strings.TrimSpace(spec.Path) == "" {
+			continue
+		}
+		entries, resolvedPath, err := loadSkillCatalogSpec(markdownPath, spec)
+		if err != nil {
+			return "", err
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		sourceDisplays = append(sourceDisplays, skillPathDisplay(spec.Path, resolvedPath))
+		for _, entry := range entries {
+			if _, ok := entriesByName[entry.Name]; ok {
+				continue
+			}
+			entriesByName[entry.Name] = entry
+			orderedEntries = append(orderedEntries, entry)
+		}
 	}
-	if len(entries) == 0 {
+	if len(orderedEntries) == 0 {
 		return commonTemplate, nil
 	}
-	catalog := renderSkillCatalog(skillPathDisplay(skillPath, resolvedPath), entries)
+	sort.SliceStable(orderedEntries, func(i, j int) bool {
+		return orderedEntries[i].Name < orderedEntries[j].Name
+	})
+	catalog := renderSkillCatalogFromSources(sourceDisplays, orderedEntries)
 	return joinTemplateSections(commonTemplate, catalog), nil
+}
+
+func loadSkillCatalogSpec(markdownPath string, spec skillCatalogSpec) ([]skillCatalogEntry, string, error) {
+	if spec.All {
+		return loadSkillCatalog(markdownPath, spec.Path)
+	}
+	return loadSelectedSkillCatalog(markdownPath, spec.Path, spec.Names)
 }
 
 func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, string, error) {
@@ -32,27 +73,38 @@ func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, stri
 	if err != nil {
 		return nil, "", err
 	}
-	info, err := os.Stat(resolvedPath)
-	if err != nil {
-		return nil, resolvedPath, fmt.Errorf("stat skill path %s: %w", skillPath, err)
+	if err := validateSkillPathDir(skillPath, resolvedPath); err != nil {
+		return nil, resolvedPath, err
 	}
-	if !info.IsDir() {
-		return nil, resolvedPath, fmt.Errorf("skill path %s is not a directory", skillPath)
-	}
-	matches, err := filepath.Glob(filepath.Join(resolvedPath, "*", "SKILL.md"))
+
+	dirEntries, err := os.ReadDir(resolvedPath)
 	if err != nil {
 		return nil, resolvedPath, fmt.Errorf("reading skill path %s: %w", skillPath, err)
 	}
-	sort.Strings(matches)
+	sort.SliceStable(dirEntries, func(i, j int) bool {
+		return dirEntries[i].Name() < dirEntries[j].Name()
+	})
 
-	entries := make([]skillCatalogEntry, 0, len(matches))
-	for _, match := range matches {
-		entry, err := parseSkillCatalogEntry(match)
+	entries := make([]skillCatalogEntry, 0, len(dirEntries))
+	for _, dirEntry := range dirEntries {
+		skillDir := filepath.Join(resolvedPath, dirEntry.Name())
+		info, err := os.Stat(skillDir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		skillFile := filepath.Join(skillDir, "SKILL.md")
+		if _, err := os.Stat(skillFile); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, resolvedPath, fmt.Errorf("stat skill file %s: %w", skillFile, err)
+		}
+		entry, err := parseSkillCatalogEntry(skillFile)
 		if err != nil {
 			return nil, resolvedPath, err
 		}
 		if entry.Name == "" {
-			entry.Name = filepath.Base(filepath.Dir(match))
+			entry.Name = dirEntry.Name()
 		}
 		entries = append(entries, entry)
 	}
@@ -60,6 +112,67 @@ func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, stri
 		return entries[i].Name < entries[j].Name
 	})
 	return entries, resolvedPath, nil
+}
+
+func loadSelectedSkillCatalog(markdownPath, skillPath string, names []string) ([]skillCatalogEntry, string, error) {
+	resolvedPath, err := resolveSkillPath(markdownPath, skillPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := validateSkillPathDir(skillPath, resolvedPath); err != nil {
+		return nil, resolvedPath, err
+	}
+
+	entries := make([]skillCatalogEntry, 0, len(names))
+	for _, name := range names {
+		if err := validateSkillName(name); err != nil {
+			return nil, resolvedPath, err
+		}
+		skillFile := filepath.Join(resolvedPath, name, "SKILL.md")
+		entry, err := parseSkillCatalogEntry(skillFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, resolvedPath, fmt.Errorf("skill %q not found under %s", name, skillPath)
+			}
+			return nil, resolvedPath, fmt.Errorf("skill %q under %s: %w", name, skillPath, err)
+		}
+		if entry.Name == "" {
+			entry.Name = name
+		}
+		entries = append(entries, entry)
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
+	return entries, resolvedPath, nil
+}
+
+func validateSkillPathDir(skillPath, resolvedPath string) error {
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return fmt.Errorf("stat skill path %s: %w", skillPath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("skill path %s is not a directory", skillPath)
+	}
+	return nil
+}
+
+func validateSkillName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("skill name must be non-empty")
+	}
+	if containsGlobMeta(name) {
+		return fmt.Errorf("skill %q uses a glob pattern; list skill names explicitly", name)
+	}
+	if filepath.Base(name) != name || name == "." || name == ".." {
+		return fmt.Errorf("skill %q must be a directory name, not a path", name)
+	}
+	return nil
+}
+
+func containsGlobMeta(value string) bool {
+	return strings.ContainsAny(value, "*?[")
 }
 
 func resolveSkillPath(markdownPath, skillPath string) (string, error) {
@@ -195,52 +308,45 @@ func compactSkillDescription(description string) string {
 }
 
 func renderSkillCatalog(skillPath string, entries []skillCatalogEntry) string {
-	rows := make([][]string, 0, len(entries)+1)
-	rows = append(rows, []string{"Skill", "Description"})
-	for _, entry := range entries {
-		rows = append(rows, []string{
-			"`" + escapeMarkdownTableCell(entry.Name) + "`",
-			escapeMarkdownTableCell(entry.Description),
-		})
-	}
+	return renderSkillCatalogFromSources([]string{skillPath}, entries)
+}
 
-	widths := []int{0, 0}
-	for _, row := range rows {
-		for i, cell := range row {
-			if len(cell) > widths[i] {
-				widths[i] = len(cell)
-			}
-		}
-	}
-
+func renderSkillCatalogFromSources(skillPaths []string, entries []skillCatalogEntry) string {
 	var b strings.Builder
 	b.WriteString("### Available Skills\n\n")
-	b.WriteString("Read every applicable skill before starting work. Skill files live under `")
-	b.WriteString(escapeInlineCode(skillPath))
-	b.WriteString("`.\n\n")
-	writeSkillCatalogRow(&b, rows[0], widths)
-	b.WriteString("| ")
-	b.WriteString(strings.Repeat("-", widths[0]))
-	b.WriteString(" | ")
-	b.WriteString(strings.Repeat("-", widths[1]))
-	b.WriteString(" |\n")
-	for _, row := range rows[1:] {
-		writeSkillCatalogRow(&b, row, widths)
+	b.WriteString("Read every applicable skill before starting work. Skill files live under ")
+	b.WriteString(formatInlineCodeList(skillPaths))
+	b.WriteString(".\n\n")
+	for _, entry := range entries {
+		b.WriteString("- `")
+		b.WriteString(escapeInlineCode(entry.Name))
+		b.WriteString("`: ")
+		b.WriteString(escapeSkillListDescription(entry.Description))
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func writeSkillCatalogRow(b *strings.Builder, row []string, widths []int) {
-	fmt.Fprintf(b, "| %-*s | %-*s |\n", widths[0], row[0], widths[1], row[1])
-}
-
-func escapeMarkdownTableCell(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	return strings.ReplaceAll(value, "|", "\\|")
+func formatInlineCodeList(values []string) string {
+	if len(values) == 0 {
+		return "the configured skill paths"
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, "`"+escapeInlineCode(value)+"`")
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts, ", ")
 }
 
 func escapeInlineCode(value string) string {
 	return strings.ReplaceAll(value, "`", "\\`")
+}
+
+func escapeSkillListDescription(value string) string {
+	return strings.ReplaceAll(value, "\n", " ")
 }
 
 func joinTemplateSections(first, second string) string {

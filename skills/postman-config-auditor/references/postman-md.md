@@ -7,8 +7,8 @@ in `internal/config/config.go`.
 ## 1. Purpose
 
 `postman.md` is a Markdown overlay for topology, shared templates, node role
-text, and a small set of frontmatter settings. It is not a general Markdown
-configuration language and its frontmatter is not YAML.
+text, and a small set of YAML frontmatter settings. It is not a general
+Markdown configuration language.
 
 Supported files:
 
@@ -19,8 +19,9 @@ Supported files:
 
 ## 2. Global Frontmatter
 
-Only a leading `---` block is parsed. The parser supports one single-line
-`key: value` pair per non-empty line.
+Only a leading `---` block is parsed. The main `postman.md` frontmatter is
+YAML. Keep it small: scalar settings plus the `skill_path` list are the
+supported public surface.
 
 Supported global keys in `postman.md`:
 
@@ -28,18 +29,18 @@ Supported global keys in `postman.md`:
 | --------------- | ------------------------------------------------------------ |
 | `ui_node`       | Sets `Config.UINode`                                         |
 | `reply_command` | Sets `Config.ReplyCommand` when non-empty                    |
-| `skill_path`    | Appends a generated skill catalog to `Config.CommonTemplate` |
+| `skill_path`    | Appends generated skill catalogs to `Config.CommonTemplate`  |
 
 Rules:
 
-- Parsing splits each entry on the first `:`.
-- Leading and trailing whitespace around keys and values is trimmed.
-- Keys are lowercased.
-- Blank lines are allowed.
-- Quotes are literal characters.
 - Empty `ui_node:` is meaningful and explicitly clears `ui_node`.
-- Lists, nested mappings, indented continuations, comments, and multiline
-  values are unsupported.
+- `skill_path` may be a scalar path or a YAML list of path entries.
+- A `skill_path` list item may be a scalar path or a mapping with `path` and
+  `skills`.
+- `skills` may be `all` or a YAML list of explicit skill directory names.
+- Omitted `skills` means `all`, preserving legacy `skill_path: path` behavior.
+- Glob patterns such as `postman-*` are unsupported; list skill names
+  explicitly.
 - An unclosed frontmatter block is an error.
 
 Example:
@@ -48,16 +49,26 @@ Example:
 ---
 ui_node: messenger
 reply_command: tmux-a2a-postman send --to {from_node} --body
-skill_path: ~/.claude/skills
+skill_path:
+  - path: ~/ghq/github.com/i9wa4/dotfiles/nix/home-manager/agents/skills
+    skills:
+      - repo-local
+      - bash
+      - github
+      - markdown
+  - path: ~/.claude/skills
+    skills:
+      - postman-config-auditor
+      - postman-session-operator
 ---
 ```
 
-`skill_path` points to a directory containing one subdirectory per skill, each
+Each `path` points to a directory containing one subdirectory per skill, each
 with a `SKILL.md` file. Relative paths are resolved from the directory
 containing the `postman.md` file, `~/...` expands to the current user's home
 directory, and symlinked skill directories are followed. The generated catalog
-reads `name` and `description` from each `SKILL.md` frontmatter and appends an
-aligned Markdown table to `common_template`. Skill frontmatter may use
+reads `name` and `description` from selected `SKILL.md` frontmatter and appends
+a compact Markdown list to `common_template`. Skill frontmatter may use
 single-line `description`, `description: |`, or `description: >-`.
 
 ## 3. H2 Section Parsing
@@ -208,8 +219,8 @@ Important rules:
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
 - Project-local `postman.md` `message_footer` appends to the effective base
   footer.
-- `skill_path` is applied within the Markdown layer that declares it; the
-  generated catalog is appended to that layer's `common_template` content.
+- `skill_path` is applied within the Markdown layer that declares it; selected
+  generated catalogs are appended to that layer's `common_template` content.
 - Nodes referenced by valid edges are materialized automatically.
 
 ## 8. Minimal Valid postman.md
