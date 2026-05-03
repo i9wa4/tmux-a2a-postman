@@ -125,6 +125,103 @@ func parseMermaidEdges(mermaidBlock string) []string {
 	return edges
 }
 
+const mermaidUINodeClass = "ui_node"
+
+func parseMermaidUINode(mermaidBlock string) (string, bool, error) {
+	var found string
+	for _, statement := range mermaidStatements(mermaidBlock) {
+		statement = strings.TrimSpace(statement)
+		if statement == "" {
+			continue
+		}
+		for _, node := range parseMermaidUINodeStatement(statement) {
+			if node == "" {
+				continue
+			}
+			if found == "" {
+				found = node
+				continue
+			}
+			if found != node {
+				return "", false, fmt.Errorf("multiple Mermaid ui_node declarations: %q and %q", found, node)
+			}
+		}
+	}
+	if found == "" {
+		return "", false, nil
+	}
+	return found, true, nil
+}
+
+func parseMermaidUINodeStatement(statement string) []string {
+	if nodes := parseMermaidClassUINodeStatement(statement); len(nodes) > 0 {
+		return nodes
+	}
+	if shouldSkipMermaidStatement(statement) {
+		return nil
+	}
+	return parseMermaidInlineUINodeStatement(statement)
+}
+
+func parseMermaidClassUINodeStatement(statement string) []string {
+	fields := strings.Fields(strings.TrimSpace(strings.TrimSuffix(statement, ";")))
+	if len(fields) < 3 || strings.ToLower(fields[0]) != "class" {
+		return nil
+	}
+	if !mermaidClassTokensContain(fields[2:], mermaidUINodeClass) {
+		return nil
+	}
+	nodes := make([]string, 0, 1)
+	for _, rawNode := range strings.Split(fields[1], ",") {
+		node := normalizeMermaidNodeID(rawNode)
+		if node != "" {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
+func parseMermaidInlineUINodeStatement(statement string) []string {
+	if !strings.Contains(statement, "---") {
+		return nil
+	}
+	nodes := make([]string, 0, 1)
+	for _, rawNode := range strings.Split(statement, "---") {
+		if !mermaidNodeHasClass(rawNode, mermaidUINodeClass) {
+			continue
+		}
+		node := normalizeMermaidNodeID(rawNode)
+		if node != "" {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
+func mermaidClassTokensContain(tokens []string, want string) bool {
+	for _, token := range tokens {
+		token = strings.TrimSpace(strings.TrimSuffix(token, ";"))
+		for _, class := range strings.Split(token, ",") {
+			if strings.TrimSpace(class) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mermaidNodeHasClass(rawNode string, want string) bool {
+	idx := strings.Index(rawNode, ":::")
+	if idx < 0 {
+		return false
+	}
+	classes := strings.TrimSpace(rawNode[idx+3:])
+	if cut := strings.IndexAny(classes, " \t;"); cut >= 0 {
+		classes = classes[:cut]
+	}
+	return mermaidClassTokensContain([]string{classes}, want)
+}
+
 func mermaidStatements(block string) []string {
 	var statements []string
 	for _, line := range strings.Split(block, "\n") {
@@ -356,9 +453,11 @@ func stripFrontmatter(content string) string {
 
 // loadMarkdownConfig parses a postman.md (single-file format) into a Config.
 // Returns a zero-value Config with only explicitly-set fields populated.
-// Global frontmatter keys: ui_node → Config.UINode,
+// Global frontmatter keys: ui_node → Config.UINode override,
 // reply_command → Config.ReplyCommand,
 // skill_path → generated skill catalog appended to Config.CommonTemplate.
+// Mermaid edges may mark the UI node with the ui_node class when frontmatter
+// does not override it.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
 // Node h2 sections: "## `name`" → node template with ### `role` h3 field.
@@ -392,6 +491,16 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	if edgesBody, ok := sections["edges"]; ok {
 		mermaidBlock := extractMermaidBlock(edgesBody)
 		cfg.Edges = parseMermaidEdges(mermaidBlock)
+		if !cfg.uiNodeSet {
+			uiNode, ok, err := parseMermaidUINode(mermaidBlock)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+			if ok {
+				cfg.UINode = uiNode
+				cfg.uiNodeSet = true
+			}
+		}
 	}
 
 	// Common template section

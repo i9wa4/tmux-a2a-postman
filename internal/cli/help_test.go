@@ -104,7 +104,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
-		"ui_node                          Optional target filter for startup auto-PING",
+		"ui_node                          Optional target filter for startup auto-PING; prefer Mermaid :::ui_node",
 		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
 		"message_footer                   Footer appended to stored send mail",
 		"skill_path                       postman.md YAML frontmatter skill catalog sources",

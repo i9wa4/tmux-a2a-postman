@@ -241,8 +241,10 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
 	assertContainsNormalized(t, designDoc, "A minimal `postman.md` may contain only a Mermaid `edges` section.")
 	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
+	assertContainsNormalized(t, designDoc, "marked in Mermaid with the `ui_node` class")
 
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
 	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
+	assertContainsNormalized(t, configHelp, "Mermaid ui_node class")
 }

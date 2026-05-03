@@ -7,7 +7,8 @@ Primary files:
 
 postman.toml is optional. Embedded defaults from postman.default.toml are used
 when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
-nodes referenced by those edges are materialized automatically.
+nodes referenced by those edges are materialized automatically. Mark the
+human-facing startup PING target with the Mermaid ui_node class.
 
 Runtime state model:
   Core visible states: ready, waiting, pending, stale
@@ -20,7 +21,7 @@ Quick reading guide:
 
 Core config:
   edges                            Bidirectional routes between nodes
-  ui_node                          Optional target filter for startup auto-PING
+  ui_node                          Optional target filter for startup auto-PING; prefer Mermaid :::ui_node
   auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)
   message_footer                   Footer appended to stored send mail
   skill_path                       postman.md YAML frontmatter skill catalog sources

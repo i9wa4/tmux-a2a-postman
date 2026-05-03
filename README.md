@@ -20,7 +20,7 @@ title: tmux-a2a-postman architecture
 ---
 graph TD
     operator((human\noperator))
-    config["postman.md / postman.toml\nroles, edges, templates\nui_node = messenger"]
+    config["postman.md / postman.toml\nroles, edges, templates\nmessenger:::ui_node"]
     daemon["postman daemon\nroutes mail\nsends auto PING"]
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
@@ -189,13 +189,14 @@ JSON and `get-health-oneline` for compact coordination.
 title: postman.md edge topology
 ---
 graph LR
-    messenger --- orchestrator
+    messenger:::ui_node --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- reviewer
     orchestrator --- boss
     guardian --- reviewer
     orchestrator --- agent
+    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
 ```
 
 ````markdown
@@ -203,13 +204,14 @@ graph LR
 
 ```mermaid
 graph LR
-    messenger --- orchestrator
+    messenger:::ui_node --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- reviewer
     orchestrator --- boss
     guardian --- reviewer
     orchestrator --- agent
+    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
 ```
 ````
 
@@ -228,14 +230,14 @@ Primary task executor.
 Execute tasks from orchestrator. Report DONE or BLOCKED.
 ````
 
-To select the human-facing node and expose an agent skill catalog without
+Mark the human-facing node with the Mermaid `ui_node` class. That node receives
+startup PINGs for the human operator. To expose an agent skill catalog without
 inlining full skill bodies, add frontmatter to `postman.md`:
 
 ```markdown
 ---
-ui_node: messenger
 skill_path:
-  - path: ~/ghq/github.com/i9wa4/dotfiles/nix/home-manager/agents/skills
+  - path: ~/ghq/github.com/i9wa4/dotfiles/skills
     skills:
       - repo-local
       - bash
@@ -248,8 +250,9 @@ skill_path:
 ---
 ```
 
-`ui_node` is the node that receives startup PINGs for the human operator.
-Relative `skill_path` values are resolved from the `postman.md` directory,
+Frontmatter `ui_node` is still supported as an explicit override, but the
+Mermaid `ui_node` class keeps the normal case in the topology diagram. Relative
+`skill_path` values are resolved from the `postman.md` directory,
 `~/...` expands to the current user's home directory, and symlinked skill
 directories are followed. The catalog is generated as a compact Markdown list
 from selected `SKILL.md` frontmatter `name` and `description` values. Use

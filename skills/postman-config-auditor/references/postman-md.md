@@ -27,13 +27,16 @@ Supported global keys in `postman.md`:
 
 | Key             | Effect                                                       |
 | --------------- | ------------------------------------------------------------ |
-| `ui_node`       | Sets `Config.UINode`                                         |
+| `ui_node`       | Sets `Config.UINode` as a frontmatter override               |
 | `reply_command` | Sets `Config.ReplyCommand` when non-empty                    |
 | `skill_path`    | Appends generated skill catalogs to `Config.CommonTemplate`  |
 
 Rules:
 
-- Empty `ui_node:` is meaningful and explicitly clears `ui_node`.
+- Prefer marking the UI node in the Mermaid graph with `:::ui_node` or
+  `class <node> ui_node`. Frontmatter `ui_node` is still supported as an
+  explicit override.
+- Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
 - `skill_path` may be a scalar path or a YAML list of path entries.
 - A `skill_path` list item may be a scalar path or a mapping with `path` and
   `skills`.
@@ -47,10 +50,9 @@ Example:
 
 ```text
 ---
-ui_node: messenger
 reply_command: tmux-a2a-postman send --to {from_node} --body
 skill_path:
-  - path: ~/ghq/github.com/i9wa4/dotfiles/nix/home-manager/agents/skills
+  - path: ~/ghq/github.com/i9wa4/dotfiles/skills
     skills:
       - repo-local
       - bash
@@ -114,15 +116,18 @@ the first Mermaid fence in that section.
 
 ```mermaid
 graph LR
-    messenger --- orchestrator
+    messenger:::ui_node --- orchestrator
     orchestrator --- worker
     orchestrator --- critic
+    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
 ```
 ````
 
 Edge rules:
 
 - Only `---` is parsed as an edge operator.
+- The UI node may be marked with inline class syntax, such as
+  `messenger:::ui_node`, or with a `class messenger ui_node` statement.
 - `graph`, `flowchart`, `subgraph`, `end`, `direction`, `classDef`, `class`,
   `style`, `click`, `linkStyle`, `accTitle`, and `accDescr` statements are
   skipped.
@@ -216,6 +221,9 @@ Important rules:
 - Split `nodes/*.md` files update only non-empty role and template fields.
 - `postman.md` edges replace lower-layer edges only when the parsed edge list is
   non-empty.
+- A Mermaid `ui_node` class in the `edges` graph sets `ui_node` when
+  frontmatter does not set it. Frontmatter `ui_node` wins within the same
+  Markdown file.
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
 - Project-local `postman.md` `message_footer` appends to the effective base
   footer.

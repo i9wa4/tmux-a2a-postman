@@ -288,6 +288,83 @@ flowchart LR
 	}
 }
 
+func TestParseMermaidUINode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantSet bool
+		wantErr bool
+	}{
+		{
+			name: "inline class",
+			input: `
+graph LR
+    messenger:::ui_node --- orchestrator
+    classDef ui_node fill:#fff3bf,stroke:#f59f00
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "class statement",
+			input: `
+graph LR
+    messenger --- orchestrator
+    class messenger ui_node
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "class statement with comma separated class names",
+			input: `
+graph LR
+    messenger --- orchestrator
+    class messenger active,ui_node
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "non ui class ignored",
+			input: `
+graph LR
+    messenger:::active --- orchestrator
+    classDef ui_node fill:#fff3bf
+`,
+			wantSet: false,
+		},
+		{
+			name: "conflicting ui nodes rejected",
+			input: `
+graph LR
+    messenger:::ui_node --- orchestrator
+    class worker ui_node
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotSet, err := parseMermaidUINode(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("parseMermaidUINode() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMermaidUINode() error = %v", err)
+			}
+			if got != tt.want || gotSet != tt.wantSet {
+				t.Fatalf("parseMermaidUINode() = %q, %v; want %q, %v", got, gotSet, tt.want, tt.wantSet)
+			}
+		})
+	}
+}
+
 // TestExtractH2Sections covers: backtick node name extraction, special `edges`
 // heading, headings without backticks skipped.
 func TestExtractH2Sections(t *testing.T) {
@@ -541,6 +618,66 @@ Worker template.
 			t.Errorf("worker template: got %q", wc.Template)
 		}
 	})
+}
+
+func TestLoadMarkdownConfig_MermaidUINode(t *testing.T) {
+	content := `## ` + "`edges`" + `
+
+` + "```mermaid" + `
+graph LR
+    messenger:::ui_node --- orchestrator
+    orchestrator --- worker
+    classDef ui_node fill:#fff3bf,stroke:#f59f00
+` + "```" + `
+`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "postman.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	if cfg.UINode != "messenger" {
+		t.Fatalf("UINode: got %q, want %q", cfg.UINode, "messenger")
+	}
+	if !cfg.HasExplicitUINodeSetting() {
+		t.Fatal("Mermaid ui_node should be treated as an explicit setting")
+	}
+	if len(cfg.Edges) != 2 {
+		t.Fatalf("Edges: got %v, want 2 edges", cfg.Edges)
+	}
+}
+
+func TestLoadMarkdownConfig_FrontmatterUINodeOverridesMermaid(t *testing.T) {
+	content := `---
+ui_node: messenger
+---
+
+## ` + "`edges`" + `
+
+` + "```mermaid" + `
+graph LR
+    boss:::ui_node --- orchestrator
+` + "```" + `
+`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "postman.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	if cfg.UINode != "messenger" {
+		t.Fatalf("UINode: got %q, want frontmatter value", cfg.UINode)
+	}
 }
 
 func TestLoadMarkdownConfig_SkillPathAppendsGeneratedCatalog(t *testing.T) {

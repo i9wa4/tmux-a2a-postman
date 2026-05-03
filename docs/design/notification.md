@@ -63,8 +63,10 @@ The remaining notification-related public settings are:
 | `ui_node`                  | Optional target filter for startup auto-PING     |
 | `auto_enable_new_sessions` | Auto-enable sessions with configured node panes  |
 
-`ui_node` is not a general escalation channel. When empty, startup auto-PING may
-target all discovered nodes. When set, startup auto-PING is limited to that node
-if it is discovered in an enabled session. `auto_enable_new_sessions` defaults
-to true, so a single user daemon can discover project sessions that already have
+`ui_node` is not a general escalation channel. It is normally set by marking a
+node in the `postman.md` Mermaid graph with `:::ui_node`; frontmatter and TOML
+remain explicit override surfaces. When empty, startup auto-PING may target all
+discovered nodes. When set, startup auto-PING is limited to that node if it is
+discovered in an enabled session. `auto_enable_new_sessions` defaults to true,
+so a single user daemon can discover project sessions that already have
 configured node panes.

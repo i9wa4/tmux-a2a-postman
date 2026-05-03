@@ -80,6 +80,9 @@ Important merge rules:
 
 - Confirm every intended route appears as a bidirectional `---` edge.
 - Confirm Mermaid `postman.md` edges use `---`, not arrows such as `-->`.
+- Confirm the human-facing node is marked in the Mermaid graph with
+  `:::ui_node` or `class <node> ui_node`, unless frontmatter intentionally
+  overrides or clears `ui_node`.
 - Confirm missing routes explain dead-letter behavior before blaming role
   templates.
 - Confirm node names in templates are reachable from the sender when the text
@@ -98,6 +101,8 @@ Important merge rules:
   frontmatter.
 - Confirm global `postman.md` frontmatter stays within the supported YAML
   surface: scalar settings plus `skill_path` path entries.
+- Prefer keeping `ui_node` in the Mermaid `edges` graph. Treat frontmatter
+  `ui_node` as an explicit override, not the normal topology declaration.
 - If `skill_path` is set, confirm relative paths resolve from the declaring
   `postman.md` directory, `~/...` points to the current user's home directory,
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
