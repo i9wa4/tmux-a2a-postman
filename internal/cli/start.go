@@ -502,15 +502,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		},
 	}
 
-	// Send initial edges
-	edgeList := make([]tui.Edge, len(cfg.Edges))
-	for i, e := range cfg.Edges {
-		edgeList[i] = tui.Edge{Raw: e}
-	}
+	// Send initial session list.
 	daemonEvents <- tui.DaemonEvent{
 		Type: "config_update",
 		Details: map[string]interface{}{
-			"edges":    edgeList,
 			"sessions": sessionList,
 		},
 	}
@@ -536,7 +531,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 		// Start TUI command handler goroutine
 		safeGo("tui-command-handler", daemonEvents, func() {
-			var edgeClearTimer *time.Timer
 			for {
 				select {
 				case <-ctx.Done():
@@ -544,108 +538,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 				case cmd := <-tuiCommands:
 					// Issue #47: Handle TUI commands
 					switch cmd.Type {
-					case "session_toggle":
-						// Toggle session enable/disable
-						currentState := daemonState.GetConfiguredSessionEnabled(cmd.Target)
-						newState := !currentState
-
-						// Enforce 1-daemon-per-session: block enable if another live daemon already owns it.
-						if newState {
-							if owner := config.FindSessionOwner(baseDir, cmd.Target, contextID); owner != "" {
-								log.Printf("session_toggle blocked: %q already owned by %s\n", cmd.Target, owner)
-								// Fetch fresh sessions list so the TUI reverses the optimistic flip.
-								blockedSessions, _ := discovery.DiscoverAllSessions()
-								blockedNodes := nodes
-								if cached := sharedNodes.Load(); cached != nil {
-									blockedNodes = *cached
-								}
-								blockedSessionList := session.BuildSessionList(blockedNodes, blockedSessions, daemonState.GetConfiguredSessionEnabled)
-								ownerSession := config.FindContextSessionName(baseDir, owner)
-								blockMsg := fmt.Sprintf("BLOCKED: session %q already owned by daemon %s", cmd.Target, owner)
-								if ownerSession != "" {
-									blockMsg = fmt.Sprintf("BLOCKED: session %q owned by daemon in tmux session %q (%s)", cmd.Target, ownerSession, owner)
-								}
-								daemonEvents <- tui.DaemonEvent{
-									Type:    "status_update",
-									Message: blockMsg,
-									Details: map[string]interface{}{
-										"session":  cmd.Target,
-										"sessions": blockedSessionList,
-									},
-								}
-								continue
-							}
-							// Owner "" means no live daemon holds this session;
-							// clear any stale @a2a_session_on_ option left by a crashed daemon.
-							_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+cmd.Target).Run()
-						}
-
-						daemonState.SetSessionEnabled(cmd.Target, newState)
-						log.Printf("📮 postman: Session %s toggled to %v\n", cmd.Target, newState)
-
-						// When enabling a session: create its inbox dirs and refresh node
-						// discovery so cross-session panes become visible to send_ping.
-						if newState {
-							if err := config.CreateMultiSessionDirs(contextDir, cmd.Target); err != nil {
-								log.Printf("⚠️  postman: warning: could not create dirs for session %s: %v\n", cmd.Target, err)
-							} else {
-								// Register newly created session dirs with the watcher.
-								newSessionDir := filepath.Join(contextDir, cmd.Target)
-								for _, subdir := range []string{"post", "inbox", "read"} {
-									dirToWatch := filepath.Join(newSessionDir, subdir)
-									if !watchedDirs[dirToWatch] {
-										if err := watcher.Add(dirToWatch); err != nil {
-											log.Printf("postman: watcher.Add %s: %v\n", dirToWatch, err)
-										} else {
-											watchedDirs[dirToWatch] = true
-										}
-									}
-								}
-								// Pre-claim panes in the enabled session so the F3 guard passes.
-								activationNodes := activationNodeNames(cfg)
-								preClaimed := preclaimSessionCandidatePanes(cmd.Target, contextID, activationNodes)
-								log.Printf("postman: pre-claimed %d panes in session %s for context %s\n", preClaimed, cmd.Target, contextID)
-								refreshed, _, _ := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-								refreshed = filterDiscoveredActivationNodes(refreshed, activationNodes)
-								sharedNodes.Store(&refreshed)
-								log.Printf("postman: node snapshot refreshed after enabling session %s (%d nodes)\n", cmd.Target, len(refreshed))
-							}
-						} else {
-							// Unregister disabled session dirs from the watcher.
-							disabledSessionDir := filepath.Join(contextDir, cmd.Target)
-							for _, subdir := range []string{"post", "inbox", "read"} {
-								dirToRemove := filepath.Join(disabledSessionDir, subdir)
-								if err := watcher.Remove(dirToRemove); err != nil {
-									log.Printf("postman: watcher.Remove %s: %v\n", dirToRemove, err)
-								}
-								delete(watchedDirs, dirToRemove)
-							}
-						}
-
-						// Rebuild session list and send status update (all sessions, not just nodes)
-						allSessions, _ := discovery.DiscoverAllSessions()
-						updatedSessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
-
-						// Send status update
-						daemonEvents <- tui.DaemonEvent{
-							Type:    "status_update",
-							Message: "Running",
-							Details: map[string]interface{}{
-								"node_count": len(nodes),
-								"sessions":   updatedSessionList,
-								"session":    cmd.Target,
-							},
-						}
-
-						// Send Events pane feedback
-						stateStr := "OFF"
-						if newState {
-							stateStr = "ON"
-						}
-						daemonEvents <- tui.DaemonEvent{
-							Type:    "message_received",
-							Message: fmt.Sprintf("Session %s toggled %s", cmd.Target, stateStr),
-						}
 					case "send_ping":
 						cachedPtr := sharedNodes.Load()
 						var freshNodes map[string]discovery.NodeInfo
@@ -767,22 +659,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								}
 							})
 						}()
-					case "clear_edge_history":
-						// Debounce 200ms to prevent TUI flicker from rapid session switches (#190)
-						if edgeClearTimer != nil {
-							edgeClearTimer.Stop()
-						}
-						edgeClearTimer = time.AfterFunc(200*time.Millisecond, func() {
-							daemonState.ClearEdgeHistory()
-							edgeList := daemonState.BuildEdgeList(cfg.Edges, cfg)
-							daemonEvents <- tui.DaemonEvent{
-								Type: "edge_update",
-								Details: map[string]interface{}{
-									"edges": edgeList,
-								},
-							}
-							log.Println("postman: Edge history cleared (session switch)")
-						})
 					}
 				}
 			}

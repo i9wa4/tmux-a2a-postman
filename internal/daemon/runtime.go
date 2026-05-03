@@ -488,17 +488,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 
 		if !suppressNormalDelivery {
-			if info, err := message.ParseMessageFilename(filename); err == nil {
-				rt.daemonState.RecordEdgeActivity(info.From, info.To, time.Now())
-
-				edgeList := rt.daemonState.BuildEdgeList(cfg.Edges, cfg)
-				rt.events <- tui.DaemonEvent{
-					Type: "edge_update",
-					Details: map[string]interface{}{
-						"edges": edgeList,
-					},
-				}
-
+			if _, err := message.ParseMessageFilename(filename); err == nil {
 				nodeStates := rt.idleTracker.GetNodeStates()
 				rt.events <- tui.DaemonEvent{
 					Type: "node_activity_update",
@@ -603,11 +593,9 @@ func (rt *daemonRuntime) handleConfigReload() {
 	}
 	snapshot := buildRuntimeStatusSnapshot(rt.nodes, allSessions, rt.daemonState.GetConfiguredSessionEnabled)
 
-	edgeList := rt.daemonState.BuildEdgeList(newCfg.Edges, newCfg)
 	rt.events <- tui.DaemonEvent{
 		Type: "config_update",
 		Details: map[string]interface{}{
-			"edges":         edgeList,
 			"sessions":      snapshot.Sessions,
 			"session_nodes": snapshot.SessionNodes,
 		},

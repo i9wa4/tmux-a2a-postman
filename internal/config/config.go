@@ -36,9 +36,6 @@ type Config struct {
 	EnterVerifyDelay float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax    int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
-	// TUI settings (Issue #37)
-	EdgeActivitySeconds float64 `toml:"edge_activity_seconds"`
-
 	// Node state thresholds (Issue #xxx)
 	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds: active (green)
 	NodeIdleSeconds           float64 `toml:"node_idle_seconds"`            // N+ seconds: idle (orange) or stale (red)
@@ -256,14 +253,6 @@ func loadEmbeddedConfig() (*Config, error) {
 		if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
 			return nil, fmt.Errorf("decoding embedded [node_defaults] section: %w", err)
 		}
-	}
-
-	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
-	if cfg.EdgeActivitySeconds <= 0 {
-		cfg.EdgeActivitySeconds = 1 // Force minimum
-	}
-	if cfg.EdgeActivitySeconds > 3600 {
-		cfg.EdgeActivitySeconds = 3600 // Force maximum
 	}
 
 	return cfg, nil
@@ -656,9 +645,6 @@ func mergeConfig(base, override *Config) {
 	if override.EnterRetryMax != 0 {
 		base.EnterRetryMax = override.EnterRetryMax
 	}
-	if override.EdgeActivitySeconds != 0 {
-		base.EdgeActivitySeconds = override.EdgeActivitySeconds
-	}
 	if override.NodeActiveSeconds != 0 {
 		base.NodeActiveSeconds = override.NodeActiveSeconds
 	}
@@ -1002,14 +988,6 @@ func LoadConfig(path string) (*Config, error) {
 		} else {
 			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
 		}
-	}
-
-	// Issue #37: Validate EdgeActivitySeconds (1-3600 seconds)
-	if cfg.EdgeActivitySeconds <= 0 {
-		cfg.EdgeActivitySeconds = 1 // Force minimum
-	}
-	if cfg.EdgeActivitySeconds > 3600 {
-		cfg.EdgeActivitySeconds = 3600 // Force maximum
 	}
 
 	// Embedded defaults intentionally allow an empty topology. Preserve that

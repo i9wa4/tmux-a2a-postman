@@ -278,19 +278,11 @@ func processCompatibilitySubmitRequest(requestPath string) (compatibilitySubmitP
 	return result, nil
 }
 
-// EdgeActivity tracks communication timestamps for an edge (Issue #37).
-type EdgeActivity struct {
-	LastForwardAt  time.Time // A -> B last communication time
-	LastBackwardAt time.Time // B -> A last communication time
-}
-
 // DaemonState manages daemon state (Issue #71).
 type DaemonState struct {
 	contextID                     string        // This daemon's contextID (for tmux option writes)
 	startedAt                     time.Time     // Daemon start timestamp (#217)
 	drainWindow                   time.Duration // Startup drain window duration (#217)
-	edgeHistory                   map[string]EdgeActivity
-	edgeHistoryMu                 sync.RWMutex
 	enabledSessions               map[string]bool
 	enabledSessionsMu             sync.RWMutex
 	prevPaneStates                map[string]uinode.PaneInfo // Issue #98: Track previous pane states for restart detection
@@ -311,7 +303,6 @@ func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 		contextID:                     contextID,
 		startedAt:                     time.Now(),
 		drainWindow:                   time.Duration(drainWindowSeconds * float64(time.Second)),
-		edgeHistory:                   make(map[string]EdgeActivity),
 		enabledSessions:               make(map[string]bool),
 		prevPaneStates:                make(map[string]uinode.PaneInfo), // Issue #98
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
@@ -357,133 +348,6 @@ func (ds *DaemonState) finishDeliveryRoute(route string, reservedAt time.Time, h
 	if delivered {
 		ds.lastDeliveryBySenderRecipient[route] = finishedAt
 	}
-}
-
-// makeEdgeKey generates a sorted edge key for consistent lookups (Issue #37).
-func makeEdgeKey(nodeA, nodeB string) string {
-	nodes := []string{nodeA, nodeB}
-	sort.Strings(nodes)
-	return nodes[0] + ":" + nodes[1]
-}
-
-// RecordEdgeActivity records edge communication activity (Issue #37, #71).
-func (ds *DaemonState) RecordEdgeActivity(from, to string, timestamp time.Time) {
-	ds.edgeHistoryMu.Lock()
-	defer ds.edgeHistoryMu.Unlock()
-
-	key := makeEdgeKey(from, to)
-	activity := ds.edgeHistory[key]
-
-	// Determine direction: sort nodes and check if from is first
-	nodes := []string{from, to}
-	sort.Strings(nodes)
-	if from == nodes[0] {
-		activity.LastForwardAt = timestamp
-	} else {
-		activity.LastBackwardAt = timestamp
-	}
-
-	ds.edgeHistory[key] = activity
-}
-
-// ClearEdgeHistory clears all edge activity history (called on session switch).
-func (ds *DaemonState) ClearEdgeHistory() {
-	ds.edgeHistoryMu.Lock()
-	defer ds.edgeHistoryMu.Unlock()
-	ds.edgeHistory = make(map[string]EdgeActivity)
-}
-
-// BuildEdgeList builds edge list with activity data (Issue #37, #42, #71).
-func (ds *DaemonState) BuildEdgeList(edges []string, cfg *config.Config) []tui.Edge {
-	ds.edgeHistoryMu.RLock()
-	defer ds.edgeHistoryMu.RUnlock()
-
-	now := time.Now()
-	activityWindow := time.Duration(cfg.EdgeActivitySeconds * float64(time.Second))
-
-	edgeList := make([]tui.Edge, len(edges))
-	for i, e := range edges {
-		// Issue #42: Parse chain edge into node segments
-		nodes := tui.ParseEdgeNodes(e)
-
-		// Calculate direction for each segment
-		var segmentDirections []string
-		var lastActivityAt time.Time
-		isActive := false
-
-		// Process each adjacent pair
-		for j := 0; j < len(nodes)-1; j++ {
-			nodeA := nodes[j]
-			nodeB := nodes[j+1]
-
-			key := makeEdgeKey(nodeA, nodeB)
-			activity, exists := ds.edgeHistory[key]
-
-			segmentDir := "none"
-			if exists && nodeA != "" && nodeB != "" {
-				// Check if each direction is active (within activity window)
-				forwardActive := !activity.LastForwardAt.IsZero() && now.Sub(activity.LastForwardAt) <= activityWindow
-				backwardActive := !activity.LastBackwardAt.IsZero() && now.Sub(activity.LastBackwardAt) <= activityWindow
-
-				// Update global last activity time
-				if activity.LastForwardAt.After(lastActivityAt) {
-					lastActivityAt = activity.LastForwardAt
-				}
-				if activity.LastBackwardAt.After(lastActivityAt) {
-					lastActivityAt = activity.LastBackwardAt
-				}
-
-				// Determine segment direction
-				// NOTE: forward/backward in edgeHistory are based on sorted node order:
-				//   forward = sorted[0] -> sorted[1]
-				//   backward = sorted[1] -> sorted[0]
-				// We need to map this to nodeA->nodeB direction based on edge definition order.
-				sortedNodes := []string{nodeA, nodeB}
-				sort.Strings(sortedNodes)
-
-				var nodeAtoB, nodeBtoA bool
-				if nodeA == sortedNodes[0] {
-					// nodeA is sorted[0], nodeB is sorted[1]
-					nodeAtoB = forwardActive  // sorted[0]->sorted[1] = nodeA->nodeB
-					nodeBtoA = backwardActive // sorted[1]->sorted[0] = nodeB->nodeA
-				} else {
-					// nodeA is sorted[1], nodeB is sorted[0]
-					nodeAtoB = backwardActive // sorted[1]->sorted[0] = nodeA->nodeB
-					nodeBtoA = forwardActive  // sorted[0]->sorted[1] = nodeB->nodeA
-				}
-
-				switch {
-				case nodeAtoB && nodeBtoA:
-					segmentDir = "bidirectional"
-					isActive = true
-				case nodeAtoB:
-					segmentDir = "forward"
-					isActive = true
-				case nodeBtoA:
-					segmentDir = "backward"
-					isActive = true
-				}
-			}
-
-			segmentDirections = append(segmentDirections, segmentDir)
-		}
-
-		// For backward compatibility, set Direction to first segment direction
-		direction := "none"
-		if len(segmentDirections) > 0 {
-			direction = segmentDirections[0]
-		}
-
-		edgeList[i] = tui.Edge{
-			Raw:               e,
-			LastActivityAt:    lastActivityAt,
-			IsActive:          isActive,
-			Direction:         direction,
-			SegmentDirections: segmentDirections,
-		}
-	}
-
-	return edgeList
 }
 
 // filterNodesByEdges removes nodes from the map whose raw name (after session prefix)

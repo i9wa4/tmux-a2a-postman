@@ -1885,17 +1885,13 @@ func TestFindSessionOwner(t *testing.T) {
 	})
 }
 
-// TestStartupGuardEnabledInitialState verifies that startupGuardEnabled is false by default.
-// Issue #249: hard-disabled at code level, not config-derived.
-func TestStartupGuardEnabledInitialState(_ *testing.T) {
-	// isSessionPIDAlive is the liveness primitive; guard disabled = resolver returns error when no live daemon.
-	// This test validates the helper used by the startup guard: a freshly created context with no pid file
-	// must NOT be considered alive, ensuring the guard can't fire spuriously.
+func TestIsSessionPIDAlive_FreshContextWithoutPIDIsNotAlive(_ *testing.T) {
+	// A freshly created context with no pid file must not be considered alive.
 	baseDir := fmt.Sprintf("%s/guard-test-%d", os.TempDir(), os.Getpid())
 	_ = os.MkdirAll(filepath.Join(baseDir, "ctx", "sess"), 0o755)
 	defer func() { _ = os.RemoveAll(baseDir) }()
 	if IsSessionPIDAlive(baseDir, "ctx", "sess") {
-		panic("startup guard would fire on a fresh context with no pid — code-level initial state violated")
+		panic("fresh context with no pid file was considered alive")
 	}
 }
 

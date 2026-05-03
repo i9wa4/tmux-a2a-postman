@@ -28,10 +28,6 @@ func TestTUI_InitialModel(t *testing.T) {
 	if m.quitting {
 		t.Error("initial quitting: got true, want false")
 	}
-	// Issue #249: startup guard must be hard-disabled at code level on first launch.
-	if m.startupGuardEnabled {
-		t.Error("initial startupGuardEnabled: got true, want false (must be hard-disabled at code level)")
-	}
 }
 
 func TestTUI_Update_Quit(t *testing.T) {
@@ -253,9 +249,6 @@ func TestTUI_Update_DefaultSurfaceSessionNavigationKeys(t *testing.T) {
 			defer close(ch)
 			commands := make(chan TUICommand, 10)
 			m := InitialModel(ch, commands, config.DefaultConfig(), "")
-			m.currentView = ViewRouting
-			m.layoutMode = true
-			m.startupGuardEnabled = true
 			m.sessions = []SessionInfo{
 				{Name: "main", Enabled: true},
 				{Name: "review", Enabled: false},
@@ -374,9 +367,6 @@ func TestTUI_Update_DefaultSurfaceStillIgnoresRemovedKeys(t *testing.T) {
 	defer close(ch)
 	commands := make(chan TUICommand, 10)
 	m := InitialModel(ch, commands, config.DefaultConfig(), "")
-	m.currentView = ViewRouting
-	m.layoutMode = true
-	m.startupGuardEnabled = true
 	m.sessions = []SessionInfo{
 		{Name: "main", Enabled: true},
 		{Name: "review", Enabled: true},
@@ -398,15 +388,6 @@ func TestTUI_Update_DefaultSurfaceStillIgnoresRemovedKeys(t *testing.T) {
 		m = newModel.(Model)
 	}
 
-	if m.currentView != ViewRouting {
-		t.Fatalf("currentView = %v, want unchanged %v", m.currentView, ViewRouting)
-	}
-	if !m.layoutMode {
-		t.Fatal("layoutMode changed unexpectedly")
-	}
-	if !m.startupGuardEnabled {
-		t.Fatal("startupGuardEnabled changed unexpectedly")
-	}
 	if m.selectedSession != 0 {
 		t.Fatalf("selectedSession = %d, want unchanged 0", m.selectedSession)
 	}
@@ -433,241 +414,6 @@ func TestTUI_MessageTruncation(t *testing.T) {
 
 	if len(m.events) != 10 {
 		t.Errorf("event truncation: got %d events, want 10", len(m.events))
-	}
-}
-
-func TestTUI_RoutingView_AddEdge(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.currentView = ViewRouting
-
-	// Send config_update event with edges
-	edgeList := []Edge{
-		{Raw: "orchestrator -- worker"},
-		{Raw: "worker -- observer"},
-	}
-	event := DaemonEventMsg{
-		Type: "config_update",
-		Details: map[string]interface{}{
-			"edges": edgeList,
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if len(m.edges) != 2 {
-		t.Errorf("edges length: got %d, want 2", len(m.edges))
-	}
-	if m.edges[0].Raw != "orchestrator -- worker" {
-		t.Errorf("first edge: got %q, want %q", m.edges[0].Raw, "orchestrator -- worker")
-	}
-}
-
-func TestTUI_RoutingView_RemoveEdge(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.currentView = ViewRouting
-	m.edges = []Edge{
-		{Raw: "orchestrator -- worker"},
-		{Raw: "worker -- observer"},
-	}
-	m.selectedEdge = 0
-
-	// Send config_update event with one edge removed
-	edgeList := []Edge{
-		{Raw: "worker -- observer"},
-	}
-	event := DaemonEventMsg{
-		Type: "config_update",
-		Details: map[string]interface{}{
-			"edges": edgeList,
-		},
-	}
-
-	newModel, _ := m.Update(event)
-	m = newModel.(Model)
-
-	if len(m.edges) != 1 {
-		t.Errorf("edges length after removal: got %d, want 1", len(m.edges))
-	}
-	if m.selectedEdge != 0 {
-		t.Errorf("selectedEdge clamping: got %d, want 0", m.selectedEdge)
-	}
-}
-
-func TestRenderEdgeLine_LabelsUnreadInboxCounts(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic", "guardian"},
-	}
-	m.unreadInboxCounts["review:critic"] = 2
-
-	got := m.renderEdgeLine(Edge{
-		Raw:               "critic -- guardian",
-		SegmentDirections: []string{"none"},
-	}, "review")
-
-	if !strings.Contains(got, "critic") || !strings.Contains(got, "[inbox:2]") {
-		t.Fatalf("renderEdgeLine = %q, want critic label plus explicit unread inbox label", got)
-	}
-}
-
-func TestTUI_GetSessionWorstState_UsesUnreadPending(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.sessionNodes = map[string][]string{
-		"review": {"critic"},
-	}
-	m.nodeStates["review:critic"] = "ready"
-	m.unreadInboxCounts["review:critic"] = 2
-
-	if got := m.getSessionWorstState("review"); got != "pending" {
-		t.Fatalf("getSessionWorstState(%q) = %q, want %q", "review", got, "pending")
-	}
-}
-
-func TestTUI_HotReload(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-
-	// Initial edges
-	edgeList1 := []Edge{
-		{Raw: "A -- B"},
-	}
-	event1 := DaemonEventMsg{
-		Type: "config_update",
-		Details: map[string]interface{}{
-			"edges": edgeList1,
-		},
-	}
-	newModel, _ := m.Update(event1)
-	m = newModel.(Model)
-
-	if len(m.edges) != 1 {
-		t.Errorf("initial edges length: got %d, want 1", len(m.edges))
-	}
-
-	// Hot reload with new edges
-	edgeList2 := []Edge{
-		{Raw: "A -- B"},
-		{Raw: "B -- C"},
-	}
-	event2 := DaemonEventMsg{
-		Type: "config_update",
-		Details: map[string]interface{}{
-			"edges": edgeList2,
-		},
-	}
-	newModel, _ = m.Update(event2)
-	m = newModel.(Model)
-
-	if len(m.edges) != 2 {
-		t.Errorf("hot reloaded edges length: got %d, want 2", len(m.edges))
-	}
-	if m.edges[1].Raw != "B -- C" {
-		t.Errorf("second edge after reload: got %q, want %q", m.edges[1].Raw, "B -- C")
-	}
-}
-
-func TestParseEdgeNodes(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected []string
-	}{
-		{"undirected simple", "A -- B", []string{"A", "B"}},
-		{"directed simple", "A --> B", []string{"A", "B"}},
-		{"undirected chain", "A -- B -- C", []string{"A", "B", "C"}},
-		{"directed chain", "A --> B --> C", []string{"A", "B", "C"}},
-		{"whitespace", "  A  --  B  ", []string{"A", "B"}},
-		{"no separator", "A B", nil},
-		{"empty string", "", nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ParseEdgeNodes(tt.input)
-			if len(result) != len(tt.expected) {
-				t.Errorf("ParseEdgeNodes(%q): got %d nodes, want %d", tt.input, len(result), len(tt.expected))
-				return
-			}
-			for i := range result {
-				if result[i] != tt.expected[i] {
-					t.Errorf("ParseEdgeNodes(%q)[%d]: got %q, want %q", tt.input, i, result[i], tt.expected[i])
-				}
-			}
-		})
-	}
-}
-
-func TestRenderLeftPane_EmojiIndicators(t *testing.T) {
-	ch := make(chan DaemonEvent, 10)
-	defer close(ch)
-
-	m := InitialModel(ch, nil, config.DefaultConfig(), "")
-	m.width = 80
-	m.height = 24
-	m.sessions = []SessionInfo{
-		{Name: "session-a", NodeCount: 2, Enabled: true},
-		{Name: "session-b", NodeCount: 1, Enabled: false},
-	}
-	m.sessionNodes = map[string][]string{
-		"session-a": {"worker", "observer"},
-		"session-b": {"tester"},
-	}
-	// Issue #77: Use session-prefixed keys
-	m.nodeStates = map[string]string{
-		"session-a:worker":   "active",
-		"session-a:observer": "ready",
-		"session-b:tester":   "gray",
-	}
-
-	result := m.renderLeftPane(25, 20)
-
-	// Verify enabled session has green emoji
-	if !strings.Contains(result, "\U0001F7E2") { // 🟢
-		t.Error("renderLeftPane missing green circle emoji for enabled session")
-	}
-
-	// Verify disabled session has black emoji
-	if !strings.Contains(result, "\u26AB") { // ⚫
-		t.Error("renderLeftPane missing black circle emoji for disabled session")
-	}
-}
-
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{"short string", "hello", 10, "hello"},
-		{"exact length", "hello", 5, "hello"},
-		{"truncated", "hello world", 8, "hello..."},
-		{"very short max", "hello", 2, "he"},
-		{"unicode", "こんにちは世界", 5, "こん..."},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := truncateString(tt.input, tt.maxLen)
-			if result != tt.expected {
-				t.Errorf("truncateString(%q, %d): got %q, want %q", tt.input, tt.maxLen, result, tt.expected)
-			}
-		})
 	}
 }
 

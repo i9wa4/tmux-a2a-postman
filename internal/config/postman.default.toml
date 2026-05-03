@@ -68,9 +68,6 @@ retention_period_days = 90            # Inactive runtime cleanup threshold in da
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
 
-# TUI settings
-edge_activity_seconds = 60.0       # TUI edge glow duration (1-3600)
-
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: ready
 node_idle_seconds = 900            # >5min and <=15min since last pane change: internal idle; >15min becomes internal stale

@@ -24,88 +24,15 @@ const (
 
 // Cached style objects (Issue #35)
 var (
-	borderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("63"))
-
 	warningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("208")).
-			Bold(true)
-
-	// Issue #42: Edge arrow styles
-	grayArrowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	greenArrowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10"))
-
-	// Issue #55: Node state styles
-	activeNodeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("10")) // green
-
-	// Issue #286: New state styles
-	pendingNodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("51")) // Cyan: inbox message waiting
-
-	// Issue #89: Selected session row highlight
-	selectedSessionStyle = lipgloss.NewStyle().
-				Reverse(true)
-
-	// Issue #101: Event severity styles
-	eventInfoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("120")) // green
-
-	eventWarningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("226")) // yellow
-
-	eventCriticalStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")) // red
-
-	eventDroppedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")) // gray
+		Foreground(lipgloss.Color("208")).
+		Bold(true)
 )
-
-// ParseEdgeNodes parses an edge string into a list of node names (Issue #74).
-// Supports both directed ("-->") and undirected ("--") edges.
-// Also supports chain edges with multiple nodes (Issue #42).
-func ParseEdgeNodes(edgeString string) []string {
-	var nodes []string
-	if strings.Contains(edgeString, "-->") {
-		parts := strings.Split(edgeString, "-->")
-		for _, p := range parts {
-			nodes = append(nodes, strings.TrimSpace(p))
-		}
-	} else if strings.Contains(edgeString, "--") {
-		parts := strings.Split(edgeString, "--")
-		for _, p := range parts {
-			nodes = append(nodes, strings.TrimSpace(p))
-		}
-	}
-	return nodes
-}
 
 const (
 	minWidth  = 40
 	minHeight = 10
 )
-
-// ViewType represents the current TUI view (right pane tabs).
-// Issue #45: Removed ViewMessages and ViewSessions
-type ViewType int
-
-const (
-	ViewEvents ViewType = iota
-	ViewRouting
-)
-
-// Edge represents a routing edge definition.
-type Edge struct {
-	Raw               string    // Raw edge string (e.g., "A -- B -- C")
-	LastActivityAt    time.Time // Issue #35: Requirement 5 - last message time
-	IsActive          bool      // Issue #35: Requirement 5 - was recently used
-	Direction         string    // Issue #37: Communication direction ("none", "forward", "backward", "bidirectional")
-	SegmentDirections []string  // Issue #42: Direction for each segment in chain edges
-}
 
 // SessionInfo holds information about a tmux session.
 // Issue #35: Requirement 3 - multiple session display
@@ -126,7 +53,7 @@ type EventEntry struct {
 
 // DaemonEvent represents an event from the daemon goroutine.
 type DaemonEvent struct {
-	Type    string // "message_received", "status_update", "error", "config_update", "edge_update"
+	Type    string // "message_received", "status_update", "error", "config_update"
 	Message string
 	Details map[string]interface{}
 }
@@ -145,16 +72,9 @@ type TUICommand struct {
 // Model holds the TUI state.
 // Issue #45: Removed messageList and selectedMsg fields
 type Model struct {
-	// View state (right pane tab selection)
-	currentView ViewType
-
 	// Terminal size (Issue #35)
 	width  int
 	height int
-
-	// Routing view
-	edges        []Edge
-	selectedEdge int
 
 	// Session list view (Issue #35: Requirement 3, Issue #45: left pane)
 	sessions        []SessionInfo
@@ -177,11 +97,6 @@ type Model struct {
 	lastEvent     string
 	lastKey       string
 	quitting      bool
-	layoutMode    bool // Issue #127: false = horizontal (default), true = vertical stacking
-
-	// Issue #249: Startup guard toggle (initially disabled at code level, not config).
-	// Press 'g' to enable. Warns if a duplicate daemon is detected for the current session.
-	startupGuardEnabled bool
 
 	// Config reference (for node state thresholds)
 	config *config.Config
@@ -200,14 +115,6 @@ func (m Model) getSelectedSessionName() string {
 		return ""
 	}
 	return m.sessions[m.selectedSession].Name
-}
-
-// getSelectedBorderColor returns border color based on selection (Issue #59).
-func (m Model) getSelectedBorderColor() string {
-	if m.getSelectedSessionName() == "" {
-		return "63" // default (gray)
-	}
-	return "10" // highlight color (green, matches session selection)
 }
 
 func clampSelectedSession(sessions []SessionInfo, selected int) int {
@@ -240,30 +147,6 @@ func moveSelectedSession(sessions []SessionInfo, selected, delta int) int {
 	return candidate
 }
 
-func sessionHasCanonicalNodes(sessionName string, sessionNodes map[string][]string, sessionHealth map[string]status.SessionHealth) bool {
-	if len(sessionNodes[sessionName]) > 0 {
-		return true
-	}
-
-	health, ok := sessionHealth[sessionName]
-	if !ok {
-		return false
-	}
-
-	return health.VisibleState != "" || len(health.Nodes) > 0 || len(health.Windows) > 0
-}
-
-func filterCanonicalSessions(sessions []SessionInfo, sessionNodes map[string][]string, sessionHealth map[string]status.SessionHealth) []SessionInfo {
-	filtered := make([]SessionInfo, 0, len(sessions))
-	for _, session := range sessions {
-		if !sessionHasCanonicalNodes(session.Name, sessionNodes, sessionHealth) {
-			continue
-		}
-		filtered = append(filtered, session)
-	}
-	return filtered
-}
-
 func (m *Model) refreshVisibleSessions() {
 	// Default TUI session rows mirror tmux list-sessions order exactly.
 	m.sessions = append([]SessionInfo(nil), m.knownSessions...)
@@ -294,38 +177,6 @@ func (m Model) sessionHealthFor(sessionName string) (status.SessionHealth, bool)
 	return health, ok
 }
 
-// getSessionWorstState returns the worst node state for a session (Issue #97).
-func (m Model) getSessionWorstState(sessionName string) string {
-	if health, ok := m.sessionHealthFor(sessionName); ok {
-		if health.VisibleState != "" {
-			return health.VisibleState
-		}
-		if len(health.Nodes) == 0 {
-			return "ready"
-		}
-		return status.SessionVisibleState(health.Nodes)
-	}
-	nodes, ok := m.sessionNodes[sessionName]
-	if !ok {
-		return "active"
-	}
-	healthNodes := make([]status.NodeHealth, 0, len(nodes))
-	for _, nodeName := range nodes {
-		key := sessionName + ":" + nodeName
-		healthNodes = append(healthNodes, status.NodeHealth{
-			Name:       nodeName,
-			PaneState:  m.nodeStates[key],
-			InboxCount: m.unreadInboxCounts[key],
-		})
-	}
-	return status.SessionVisibleState(healthNodes)
-}
-
-// effectiveNodeState returns the display state for a session-prefixed node key.
-func (m Model) effectiveNodeState(key string) string {
-	return status.VisibleState(m.nodeStates[key], m.unreadInboxCounts[key])
-}
-
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
 // Issue #77: Use session-prefixed keys to avoid collision across sessions.
 // Issue #79: Simplified - nodeActivity keys are already session-prefixed, no reverse index needed.
@@ -336,22 +187,23 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 		return
 	}
 
-	// Build edge filter set (simple names)
-	edgeNodes := make(map[string]bool)
-	for _, edge := range m.edges {
-		nodes := ParseEdgeNodes(edge.Raw)
+	// Build a simple-name filter from the known session map. Canonical
+	// session-health snapshots remain the primary TUI source; this path only
+	// updates the legacy in-memory fallback while health is still loading.
+	knownNodes := make(map[string]bool)
+	for _, nodes := range m.sessionNodes {
 		for _, node := range nodes {
-			edgeNodes[node] = true
+			knownNodes[node] = true
 		}
 	}
 
 	for nodeKey, activity := range nodeActivities {
-		// Extract simple name for edge filter
+		// Extract simple name for the session-node filter.
 		simpleName := nodeKey
 		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
 			simpleName = parts[1]
 		}
-		if !edgeNodes[simpleName] {
+		if len(knownNodes) > 0 && !knownNodes[simpleName] {
 			continue
 		}
 
@@ -403,30 +255,25 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 // Issue #47: Added tuiCommands channel parameter
 func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand, cfg *config.Config, ownContextID string) Model {
 	return Model{
-		currentView:         ViewEvents,
-		width:               80, // Default width (Issue #35)
-		height:              24, // Default height (Issue #35)
-		edges:               []Edge{},
-		selectedEdge:        0,
-		sessions:            []SessionInfo{}, // Issue #35: Requirement 3
-		knownSessions:       []SessionInfo{},
-		selectedSession:     0,                         // Issue #35: Requirement 3
-		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
-		sessionHealth:       make(map[string]status.SessionHealth),
-		nodeStates:          make(map[string]string), // Issue #55: Node state tracking
-		unreadInboxCounts:   make(map[string]int),
-		config:              cfg,
-		daemonEvents:        daemonEvents,
-		tuiCommands:         tuiCommands,    // Issue #47: Command channel
-		events:              []EventEntry{}, // Issue #59: Session-tagged events
-		sessionStatus:       map[string]string{},
-		generalStatus:       "Starting...",
-		nodeCount:           0,
-		lastEvent:           "",
-		quitting:            false,
-		layoutMode:          false, // Issue #127: default horizontal layout
-		startupGuardEnabled: false, // Issue #249: hard-disabled at code level; user enables with 'g'
-		ownContextID:        ownContextID,
+		width:             80,              // Default width (Issue #35)
+		height:            24,              // Default height (Issue #35)
+		sessions:          []SessionInfo{}, // Issue #35: Requirement 3
+		knownSessions:     []SessionInfo{},
+		selectedSession:   0,                         // Issue #35: Requirement 3
+		sessionNodes:      make(map[string][]string), // Issue #59: Session-node mapping
+		sessionHealth:     make(map[string]status.SessionHealth),
+		nodeStates:        make(map[string]string), // Issue #55: Node state tracking
+		unreadInboxCounts: make(map[string]int),
+		config:            cfg,
+		daemonEvents:      daemonEvents,
+		tuiCommands:       tuiCommands,    // Issue #47: Command channel
+		events:            []EventEntry{}, // Issue #59: Session-tagged events
+		sessionStatus:     map[string]string{},
+		generalStatus:     "Starting...",
+		nodeCount:         0,
+		lastEvent:         "",
+		quitting:          false,
+		ownContextID:      ownContextID,
 	}
 }
 
@@ -530,17 +377,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sessionNodes = sessionNodesRaw
 				m.refreshVisibleSessions()
 			}
-			// Update edges from Details
-			if edgeList, ok := msg.Details["edges"].([]Edge); ok {
-				m.edges = edgeList
-				// Clamp selection
-				if m.selectedEdge >= len(m.edges) {
-					m.selectedEdge = len(m.edges) - 1
-				}
-				if m.selectedEdge < 0 {
-					m.selectedEdge = 0
-				}
-			}
 			// Issue #35: Requirement 3 - update sessions from Details
 			if sessionList, ok := msg.Details["sessions"].([]SessionInfo); ok {
 				m.knownSessions = sessionList
@@ -550,18 +386,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if health, ok := msg.Details["health"].(status.SessionHealth); ok && health.SessionName != "" {
 				m.sessionHealth[health.SessionName] = health
 				m.refreshVisibleSessions()
-			}
-		case "edge_update":
-			// Issue #40: Update edges from edge_update event
-			if edgeList, ok := msg.Details["edges"].([]Edge); ok {
-				m.edges = edgeList
-				// Clamp selection
-				if m.selectedEdge >= len(m.edges) {
-					m.selectedEdge = len(m.edges) - 1
-				}
-				if m.selectedEdge < 0 {
-					m.selectedEdge = 0
-				}
 			}
 		case "node_alive":
 			// Issue #55: Mark node as active when liveness confirmed
@@ -904,441 +728,4 @@ func (m Model) View() tea.View {
 	b.WriteString(m.renderNodesSection())
 	view.Content = b.String()
 	return view
-}
-
-// renderLeftPane renders the left pane (Sessions list).
-// Issue #45: New function for left-right split layout
-// Issue #64: Simplified with emoji status indicators
-func (m Model) renderLeftPane(width, height int) string {
-	var b strings.Builder
-
-	b.WriteString("Sessions\n")
-
-	if len(m.sessions) == 0 {
-		b.WriteString("(no sessions)\n")
-	} else {
-		maxLines := height - 5
-		if maxLines < 2 {
-			maxLines = 2
-		}
-
-		startIdx := 0
-		endIdx := len(m.sessions)
-		if len(m.sessions) > maxLines {
-			if m.selectedSession >= maxLines {
-				startIdx = m.selectedSession - maxLines + 1
-			}
-			endIdx = startIdx + maxLines
-			if endIdx > len(m.sessions) {
-				endIdx = len(m.sessions)
-			}
-		}
-
-		for i := startIdx; i < endIdx; i++ {
-			sess := m.sessions[i]
-
-			// Issue #64: Cursor prefix
-			cursor := "  "
-			if i == m.selectedSession {
-				cursor = "> "
-			}
-
-			// Status emoji
-			statusEmoji := "⚫"
-			if sess.Enabled {
-				statusEmoji = "🟢"
-			}
-
-			// Add space after emoji before session name
-			prefix := statusEmoji + " "
-
-			line := fmt.Sprintf("%s%s%s", cursor, prefix, sess.Name)
-
-			// Issue #97: Apply session color based on worst node state.
-			if i != m.selectedSession && sess.Enabled {
-				worstState := m.getSessionWorstState(sess.Name)
-				var sessionStyle lipgloss.Style
-				switch worstState {
-				case "stale":
-					sessionStyle = eventCriticalStyle
-				case "pending":
-					sessionStyle = pendingNodeStyle
-				case "ready", "active":
-					sessionStyle = activeNodeStyle
-				default:
-					sessionStyle = lipgloss.NewStyle() // No style
-				}
-				line = sessionStyle.Render(line)
-			}
-
-			// Issue #89: Apply reverse style with fixed width for full-line highlight
-			if i == m.selectedSession {
-				line = selectedSessionStyle.Width(width - 2).Render(line)
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-
-	b.WriteString("\n")
-	guardLabel := "off"
-	if m.startupGuardEnabled {
-		guardLabel = "ON"
-	}
-	b.WriteString(fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [g: guard=%s]\n", guardLabel))
-	selectedSess := m.getSelectedSessionName()
-	displayStatus := m.sessionStatus[selectedSess]
-	if displayStatus == "" {
-		displayStatus = m.generalStatus
-	}
-	if displayStatus != "" {
-		b.WriteString(displayStatus + "\n")
-	}
-
-	return b.String()
-}
-
-// renderRightPane renders the right pane (Events/Routing tabs).
-// Issue #45: New function for left-right split layout
-func (m Model) renderRightPane(width, height int) string {
-	var b strings.Builder
-
-	// Tab display (* always reserved to avoid layout shift on toggle)
-	eventsMarker := " "
-	if m.currentView == ViewEvents {
-		eventsMarker = "*"
-	}
-	routingMarker := " "
-	if m.currentView == ViewRouting {
-		routingMarker = "*"
-	}
-	b.WriteString("[1:Events" + eventsMarker + " | 2:Routing" + routingMarker + "]\n")
-
-	// Content based on current view
-	switch m.currentView {
-	case ViewEvents:
-		b.WriteString("\n")
-		b.WriteString(m.renderEventsView(width, height-7))
-	case ViewRouting:
-		legend := "Legend: " +
-			activeNodeStyle.Render("Ready") + " | " +
-			pendingNodeStyle.Render("Pending") + " | " +
-			eventCriticalStyle.Render("Stale")
-		b.WriteString(legend + "\n\n")
-		b.WriteString(m.renderRoutingView(width, height-7))
-	}
-
-	return b.String()
-}
-
-// renderEdgeLine renders a single edge line with colored node names and directional arrows.
-// sessionName is the session context for state key lookup ("" means All).
-func (m Model) renderEdgeLine(edge Edge, sessionName string) string {
-	line := edge.Raw
-	if len(edge.SegmentDirections) > 0 {
-		nodes := ParseEdgeNodes(line)
-		if len(nodes) == len(edge.SegmentDirections)+1 {
-			var builder strings.Builder
-			for j, node := range nodes {
-				nodeStyle := lipgloss.NewStyle()
-				var stateKey string
-				if sessionName != "" {
-					stateKey = sessionName + ":" + node
-				} else {
-					for sName, nodesInSession := range m.sessionNodes {
-						for _, nodeName := range nodesInSession {
-							if nodeName == node {
-								stateKey = sName + ":" + node
-								break
-							}
-						}
-						if stateKey != "" {
-							break
-						}
-					}
-					if stateKey == "" {
-						stateKey = node
-					}
-				}
-				if es := m.effectiveNodeState(stateKey); es != "" {
-					switch es {
-					case "ready", "active":
-						nodeStyle = activeNodeStyle
-					case "pending":
-						nodeStyle = pendingNodeStyle
-					case "stale":
-						nodeStyle = eventCriticalStyle
-					}
-				}
-				builder.WriteString(nodeStyle.Render(node))
-				if cnt := m.unreadInboxCounts[stateKey]; cnt > 0 {
-					builder.WriteString(fmt.Sprintf(" [inbox:%d]", cnt))
-				}
-				if j < len(edge.SegmentDirections) {
-					var arrow string
-					var arrowStyle lipgloss.Style
-					switch edge.SegmentDirections[j] {
-					case "forward":
-						arrow = " -->  "
-						arrowStyle = greenArrowStyle
-					case "backward":
-						arrow = " <--  "
-						arrowStyle = greenArrowStyle
-					case "bidirectional":
-						arrow = " <--> "
-						arrowStyle = greenArrowStyle
-					default:
-						arrow = "  --  "
-						arrowStyle = grayArrowStyle
-					}
-					builder.WriteString(arrowStyle.Render(arrow))
-				}
-			}
-			line = builder.String()
-		}
-	}
-	return line
-}
-
-// renderVerticalLayout renders all sessions stacked vertically.
-// Issue #127: Vertical layout mode — one panel per session.
-func (m Model) renderVerticalLayout(width, height int) string {
-	nSessions := len(m.sessions)
-	if nSessions < 1 {
-		nSessions = 1
-	}
-	panelHeight := (height - 1) / nSessions // reserves 1 line for footer
-
-	if panelHeight < 3 {
-		return warningStyle.Render("⚠️  Terminal too small for vertical layout (need ≥3 lines per session)")
-	}
-
-	contentLines := panelHeight - 2
-	var b strings.Builder
-
-	for i, sess := range m.sessions {
-		// Header: emoji + name + worst state
-		statusEmoji := "⚫"
-		if sess.Enabled {
-			statusEmoji = "🟢"
-		}
-		worstState := m.getSessionWorstState(sess.Name)
-		header := fmt.Sprintf("%s %s [%s]", statusEmoji, sess.Name, worstState)
-		if sessStatus := m.sessionStatus[sess.Name]; sessStatus != "" {
-			header += "  " + sessStatus
-		}
-		b.WriteString(header + "\n")
-
-		// Content: per-session events or routing (inline, not via shared helpers)
-		switch m.currentView {
-		case ViewEvents:
-			var filtered []EventEntry
-			for _, ev := range m.events {
-				if ev.SessionName == sess.Name {
-					filtered = append(filtered, ev)
-				}
-			}
-			if len(filtered) == 0 {
-				b.WriteString("  (no events)\n")
-			} else {
-				start := len(filtered) - contentLines
-				if start < 0 {
-					start = 0
-				}
-				for _, ev := range filtered[start:] {
-					b.WriteString(fmt.Sprintf("  - %s\n", truncateString(ev.Message, width-4)))
-				}
-			}
-		case ViewRouting:
-			nodesInSession := m.sessionNodes[sess.Name]
-			nodeSet := make(map[string]bool)
-			for _, n := range nodesInSession {
-				nodeSet[n] = true
-			}
-			var filtered []Edge
-			for _, edge := range m.edges {
-				nodes := ParseEdgeNodes(edge.Raw)
-				for _, n := range nodes {
-					if nodeSet[n] {
-						filtered = append(filtered, edge)
-						break
-					}
-				}
-			}
-			if len(filtered) == 0 {
-				b.WriteString("  (no edges)\n")
-			} else {
-				count := contentLines
-				if count > len(filtered) {
-					count = len(filtered)
-				}
-				for _, edge := range filtered[:count] {
-					b.WriteString(fmt.Sprintf("  %s\n", m.renderEdgeLine(edge, sess.Name)))
-				}
-			}
-		}
-
-		// Separator between panels (omit after last)
-		if i < len(m.sessions)-1 {
-			b.WriteString(strings.Repeat("─", width) + "\n")
-		}
-	}
-
-	guardLabel := "off"
-	if m.startupGuardEnabled {
-		guardLabel = "ON"
-	}
-	footer := fmt.Sprintf("[space: session on/off] [p: ping] [l: layout] [g: guard=%s]", guardLabel)
-	selectedSessName := m.getSelectedSessionName()
-	footerStatus := m.sessionStatus[selectedSessName]
-	if footerStatus == "" {
-		footerStatus = m.generalStatus
-	}
-	if footerStatus != "" {
-		footer += "  | " + footerStatus
-	}
-	b.WriteString(footer)
-	return b.String()
-}
-
-// truncateString truncates a string to maxLen runes (UTF-8 safe).
-// If truncated, appends "..." to the result.
-// Issue #60: Fix long line wrapping in Events pane
-func truncateString(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	if maxLen < 3 {
-		// Too short to add "...", just truncate
-		return string(runes[:maxLen])
-	}
-	return string(runes[:maxLen-3]) + "..."
-}
-
-// renderEventsView renders the events view (right pane content).
-// Issue #45: Adjusted for right pane layout
-// Issue #60: Fix long line wrapping with UTF-8 safe truncation
-func (m Model) renderEventsView(width, height int) string {
-	var b strings.Builder
-	b.WriteString("Recent Events:\n")
-
-	// Issue #59: Filter events by selected session
-	selectedName := m.getSelectedSessionName()
-	var filteredEvents []EventEntry
-	for _, event := range m.events {
-		if selectedName == "" || event.SessionName == selectedName {
-			filteredEvents = append(filteredEvents, event)
-		}
-	}
-
-	if len(filteredEvents) == 0 {
-		b.WriteString("  (no events yet)\n")
-	} else {
-		// Truncate list if too long
-		maxLines := height - 2 // Issue #45: Adjusted for right pane
-		if maxLines < 1 {
-			maxLines = 1
-		}
-		displayCount := len(filteredEvents)
-		if displayCount > maxLines {
-			displayCount = maxLines
-		}
-		startIdx := len(filteredEvents) - displayCount
-		for i := startIdx; i < len(filteredEvents); i++ {
-			event := filteredEvents[i]
-			msg := event.Message
-			// Truncate long lines (UTF-8 safe)
-			// Reserve 4 characters for "  - " prefix
-			maxMsgLen := width - 4
-			if maxMsgLen > 0 {
-				msg = truncateString(msg, maxMsgLen)
-			}
-			// Issue #101: Apply severity-based styling
-			styledMsg := msg
-			switch event.Severity {
-			case SeverityInfo:
-				styledMsg = eventInfoStyle.Render(msg)
-			case SeverityWarning:
-				styledMsg = eventWarningStyle.Render(msg)
-			case SeverityCritical:
-				styledMsg = eventCriticalStyle.Render(msg)
-			case SeverityDropped:
-				styledMsg = eventDroppedStyle.Render(msg)
-			}
-			b.WriteString(fmt.Sprintf("  - %s\n", styledMsg))
-		}
-	}
-	return b.String()
-}
-
-// NOTE (Issue #59 Limitations):
-// - Per-session edge activity not implemented
-// - idle.go maintains global state; per-session idle filtering not supported
-//
-// renderRoutingView renders the routing view (right pane content).
-// Issue #45: Adjusted for right pane layout, removed selection display
-func (m Model) renderRoutingView(width, height int) string {
-	var b strings.Builder
-	b.WriteString("Routing Edges:\n")
-
-	// Issue #59: Filter edges by selected session (ANY method)
-	selectedName := m.getSelectedSessionName()
-	var filteredEdges []Edge
-	if selectedName == "" {
-		// "(All)" selected - show all edges
-		filteredEdges = m.edges
-	} else {
-		// Filter edges: show if ANY node belongs to selected session
-		nodesInSession := m.sessionNodes[selectedName]
-		nodeSet := make(map[string]bool)
-		for _, nodeName := range nodesInSession {
-			nodeSet[nodeName] = true
-		}
-
-		for _, edge := range m.edges {
-			// Parse nodes from edge
-			nodes := ParseEdgeNodes(edge.Raw)
-
-			// Check if ANY node is in selected session
-			anyMatch := false
-			for _, node := range nodes {
-				if nodeSet[node] {
-					anyMatch = true
-					break
-				}
-			}
-
-			if anyMatch {
-				filteredEdges = append(filteredEdges, edge)
-			}
-		}
-	}
-
-	if len(filteredEdges) == 0 {
-		b.WriteString("  (no edges defined)\n")
-	} else {
-		// Truncate list if too long
-		maxLines := height - 2 // Issue #45: Adjusted for right pane
-		if maxLines < 1 {
-			maxLines = 1
-		}
-		displayCount := len(filteredEdges)
-		if displayCount > maxLines {
-			displayCount = maxLines
-		}
-		startIdx := 0
-		endIdx := startIdx + displayCount
-		if endIdx > len(filteredEdges) {
-			endIdx = len(filteredEdges)
-		}
-
-		for i := startIdx; i < endIdx; i++ {
-			edge := filteredEdges[i]
-			line := m.renderEdgeLine(edge, selectedName)
-
-			// Issue #45: Simplified display (no selection indicator in right pane)
-			b.WriteString(fmt.Sprintf("  %s\n", line))
-		}
-	}
-	return b.String()
 }
