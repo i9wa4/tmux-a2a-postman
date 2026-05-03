@@ -223,19 +223,21 @@ Primary task executor.
 Execute tasks from orchestrator. Report DONE or BLOCKED.
 ````
 
-To expose an agent skill catalog without inlining full skill bodies, add one
-frontmatter path to `postman.md`:
+To select the human-facing node and expose an agent skill catalog without
+inlining full skill bodies, add frontmatter to `postman.md`:
 
 ```markdown
 ---
+ui_node: messenger
 skill_path: ~/.claude/skills
 ---
 ```
 
-Relative paths are resolved from the `postman.md` directory, `~/...` expands to
-the current user's home directory, and symlinked skill directories are followed.
-The catalog is generated as an aligned table from each `*/SKILL.md`
-frontmatter `name` and `description`.
+`ui_node` is the node that receives startup PINGs for the human operator.
+Relative `skill_path` values are resolved from the `postman.md` directory,
+`~/...` expands to the current user's home directory, and symlinked skill
+directories are followed. The catalog is generated as an aligned table from
+each `*/SKILL.md` frontmatter `name` and `description`.
 
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax
