@@ -482,6 +482,8 @@ func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
 	waitForFileContent(t, inboxPath, content, 10*time.Second)
 	waitForFileGone(t, postPath, 10*time.Second)
 	waitForPostEventIdle(t, rt, postPath, 10*time.Second)
+	waitForAutoPingEventIdle(t, rt, sessionName+":orchestrator", 10*time.Second)
+	waitForAutoPingEventIdle(t, rt, sessionName+":messenger", 10*time.Second)
 }
 
 func installRuntimeTestTmux(t *testing.T, tmpDir string) {
@@ -546,6 +548,23 @@ func waitForPostEventIdle(t *testing.T, rt *daemonRuntime, path string, timeout 
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for post event to finish %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForAutoPingEventIdle(t *testing.T, rt *daemonRuntime, nodeKey string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		rt.autoPingEventsMu.Lock()
+		active := rt.activeAutoPings[nodeKey]
+		rt.autoPingEventsMu.Unlock()
+		if !active {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for auto-PING event to finish %s", nodeKey)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

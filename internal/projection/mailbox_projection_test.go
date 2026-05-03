@@ -191,6 +191,61 @@ func TestSyncMailboxProjection_PreservesUnprojectedPostFiles(t *testing.T) {
 	}
 }
 
+func TestSyncMailboxProjection_RemovesConsumedProjectedPostFiles(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 5, 45, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	projectedName := "20260414-054501-r1111-from-orchestrator-to-worker.md"
+	projectedPath := filepath.Join(sessionDir, "post", projectedName)
+	projectedRel := filepath.Join("post", projectedName)
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: projectedName,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      projectedRel,
+		Content:   "projected body",
+	}, now.Add(time.Second))
+
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(initial) error = %v", err)
+	}
+	if got, err := os.ReadFile(projectedPath); err != nil || string(got) != "projected body" {
+		t.Fatalf("projected post after initial sync = %q, %v; want projected body", string(got), err)
+	}
+
+	unprojectedPath := filepath.Join(sessionDir, "post", "20260414-054502-r2222-from-orchestrator-to-worker.md")
+	if err := os.WriteFile(unprojectedPath, []byte("live pending body"), 0o600); err != nil {
+		t.Fatalf("WriteFile(unprojected post): %v", err)
+	}
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: projectedName,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      projectedRel,
+	}, now.Add(2*time.Second))
+	appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: projectedName,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", projectedName),
+		Content:   "projected body",
+	}, now.Add(3*time.Second))
+
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(consumed) error = %v", err)
+	}
+	if _, err := os.Stat(projectedPath); !os.IsNotExist(err) {
+		t.Fatalf("consumed projected post still exists or wrong error: %v", err)
+	}
+	if got, err := os.ReadFile(unprojectedPath); err != nil || string(got) != "live pending body" {
+		t.Fatalf("unprojected post after consumed sync = %q, %v; want live pending body", string(got), err)
+	}
+}
+
 func appendMailboxEventForTest(t *testing.T, writer *journal.Writer, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, visibility, payload, now); err != nil {

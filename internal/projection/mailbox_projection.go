@@ -18,10 +18,11 @@ type ProjectedFile struct {
 }
 
 type MailboxProjection struct {
-	Post       map[string]ProjectedFile
-	Inbox      map[string]ProjectedFile
-	Read       map[string]ProjectedFile
-	DeadLetter map[string]ProjectedFile
+	Post        map[string]ProjectedFile
+	Inbox       map[string]ProjectedFile
+	Read        map[string]ProjectedFile
+	DeadLetter  map[string]ProjectedFile
+	managedPost map[string]bool
 }
 
 type mailboxProjectionMarker struct {
@@ -55,10 +56,11 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 	}
 
 	projected := MailboxProjection{
-		Post:       make(map[string]ProjectedFile),
-		Inbox:      make(map[string]ProjectedFile),
-		Read:       make(map[string]ProjectedFile),
-		DeadLetter: make(map[string]ProjectedFile),
+		Post:        make(map[string]ProjectedFile),
+		Inbox:       make(map[string]ProjectedFile),
+		Read:        make(map[string]ProjectedFile),
+		DeadLetter:  make(map[string]ProjectedFile),
+		managedPost: make(map[string]bool),
 	}
 	sawLease := false
 	sawResolution := false
@@ -89,7 +91,9 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 			if !setProjectedFile(projected.Post, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid post path %q", payload.Path)
 			}
+			rememberManagedPost(projected.managedPost, payload.Path)
 		case MailboxProjectionPostConsumedEventType:
+			rememberManagedPost(projected.managedPost, payload.Path)
 			delete(projected.Post, pathKey(payload.Path))
 		case MailboxProjectionDeliveredEventType:
 			if !setProjectedFile(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName), payload.Content) {
@@ -101,6 +105,7 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
 		case MailboxProjectionDeadLetteredEventType:
+			rememberManagedPost(projected.managedPost, payload.SourcePath)
 			delete(projected.Post, pathKey(payload.SourcePath))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)
@@ -151,7 +156,7 @@ func SyncMailboxProjection(sessionDir string) error {
 			return fmt.Errorf("ensuring %s dir: %w", root, err)
 		}
 	}
-	if err := syncDesiredMailboxFiles(sessionDir, desired); err != nil {
+	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost); err != nil {
 		return err
 	}
 	return writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
@@ -162,6 +167,16 @@ func SyncMailboxProjection(sessionDir string) error {
 
 func pathKey(path string) string {
 	return filepath.Clean(path)
+}
+
+func rememberManagedPost(managedPost map[string]bool, relativePath string) {
+	if !isAllowedProjectionPath(relativePath) {
+		return
+	}
+	key := pathKey(relativePath)
+	if strings.HasPrefix(key, "post"+string(filepath.Separator)) {
+		managedPost[key] = true
+	}
 }
 
 func decodeMailboxEventPayload(raw json.RawMessage) (journal.MailboxEventPayload, bool) {
@@ -222,7 +237,7 @@ func isAllowedProjectionPath(relativePath string) bool {
 	return false
 }
 
-func syncDesiredMailboxFiles(sessionDir string, desired map[string]string) error {
+func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, managedPost map[string]bool) error {
 	for relativePath, content := range desired {
 		if !isAllowedProjectionPath(relativePath) {
 			return fmt.Errorf("invalid desired projection path %q", relativePath)
@@ -261,7 +276,9 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string) error
 				return nil
 			}
 			if strings.HasPrefix(rel, "post"+string(filepath.Separator)) {
-				return nil
+				if !managedPost[rel] {
+					return nil
+				}
 			}
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
