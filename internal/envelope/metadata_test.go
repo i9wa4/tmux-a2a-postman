@@ -110,6 +110,21 @@ func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
 	}
 }
 
+func TestParseMetadataIgnoresNestedParamsFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: required\n    messageType: status_request\n---\n\nplain update\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ReplyPolicy != "" {
+		t.Fatalf("ReplyPolicy = %q, want empty", got.ReplyPolicy)
+	}
+	if got.MessageType != "" {
+		t.Fatalf("MessageType = %q, want empty", got.MessageType)
+	}
+}
+
 func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: old.md\n  replyPolicy: none\n---\n\nplease review\n"
 
@@ -137,7 +152,7 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 }
 
 func TestEnsureParamsUpdatesOnlyParamsBlock(t *testing.T) {
-	content := "---\nparams:\n  from: orchestrator\n  to: worker\naudit:\n  replyPolicy: display-only\n---\n\nplease review\n"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: display-only\naudit:\n  replyPolicy: display-only\n---\n\nplease review\n"
 
 	got := EnsureParams(content, map[string]string{
 		"replyPolicy": "required",
@@ -146,8 +161,13 @@ func TestEnsureParamsUpdatesOnlyParamsBlock(t *testing.T) {
 	if !strings.Contains(got, "params:\n  replyPolicy: required\n  from: orchestrator") {
 		t.Fatalf("EnsureParams() did not insert params replyPolicy:\n%s", got)
 	}
-	if !strings.Contains(got, "audit:\n  replyPolicy: display-only") {
-		t.Fatalf("EnsureParams() rewrote audit block:\n%s", got)
+	for _, want := range []string{
+		"  audit:\n    replyPolicy: display-only",
+		"audit:\n  replyPolicy: display-only",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("EnsureParams() rewrote audit block %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -177,12 +197,61 @@ func TestParamsReplyPolicyUsesPlaceholder(t *testing.T) {
 			content: "---\nparams:\n  from: orchestrator\n  to: worker\naudit:\n  replyPolicy: {reply_policy}\n---\n\nbody\n",
 			want:    false,
 		},
+		{
+			name:    "nested params placeholder does not count",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: {reply_policy}\n---\n\nbody\n",
+			want:    false,
+		},
+		{
+			name:    "explicit policy overrides placeholder alias",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			want:    false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParamsReplyPolicyUsesPlaceholder(tt.content); got != tt.want {
 				t.Fatalf("ParamsReplyPolicyUsesPlaceholder() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExplicitParamsReplyPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+		wantOK  bool
+	}{
+		{
+			name:    "direct explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
+		},
+		{
+			name:    "placeholder is not explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: {reply_policy}\n---\n\nbody\n",
+		},
+		{
+			name:    "nested explicit is ignored",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: required\n---\n\nbody\n",
+		},
+		{
+			name:    "explicit wins over placeholder alias",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			want:    "required",
+			wantOK:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ExplicitParamsReplyPolicy(tt.content)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("ExplicitParamsReplyPolicy() = %q, %v; want %q, %v", got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

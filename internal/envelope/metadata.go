@@ -43,44 +43,34 @@ func ParseMetadata(content string) (Metadata, error) {
 	frontmatter := rest[:second]
 
 	metadata := Metadata{Body: strings.TrimSpace(rest[second+4:])}
-	inParams := false
-	for _, line := range strings.Split(frontmatter, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "params:" {
-			inParams = true
-			continue
-		}
-		if !inParams {
-			continue
-		}
-		if len(line) > 0 && line[0] != ' ' {
-			inParams = false
-			continue
-		}
-		key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
-		if !ok {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		switch key {
-		case "from":
-			metadata.From = value
-		case "to":
-			metadata.To = value
-		case "messageId", "message_id":
-			metadata.MessageID = value
-		case "replyPolicy", "reply_policy":
-			metadata.ReplyPolicy = value
-		case "replyObligation", "reply_obligation":
-			metadata.ReplyPolicy = value
-		case "replyTo", "reply_to":
-			metadata.ReplyTo = value
-		case "messageType", "message_type":
-			metadata.MessageType = value
-		case "timestamp":
-			metadata.Timestamp = value
-		case "thread_id":
-			metadata.ThreadID = value
+	lines := strings.Split(frontmatter, "\n")
+	paramsIndex, paramsEnd := paramsBlockRange(lines)
+	if paramsIndex >= 0 {
+		for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
+			key, value, ok := directParamsChild(lines[idx])
+			if !ok {
+				continue
+			}
+			switch key {
+			case "from":
+				metadata.From = value
+			case "to":
+				metadata.To = value
+			case "messageId", "message_id":
+				metadata.MessageID = value
+			case "replyPolicy", "reply_policy":
+				metadata.ReplyPolicy = value
+			case "replyObligation", "reply_obligation":
+				metadata.ReplyPolicy = value
+			case "replyTo", "reply_to":
+				metadata.ReplyTo = value
+			case "messageType", "message_type":
+				metadata.MessageType = value
+			case "timestamp":
+				metadata.Timestamp = value
+			case "thread_id":
+				metadata.ThreadID = value
+			}
 		}
 	}
 
@@ -88,6 +78,50 @@ func ParseMetadata(content string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("missing from or to in params block")
 	}
 	return metadata, nil
+}
+
+func directParamsChild(line string) (string, string, bool) {
+	line = strings.TrimRight(line, "\r")
+	if !strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "   ") {
+		return "", "", false
+	}
+	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return "", "", false
+	}
+	return key, strings.TrimSpace(value), true
+}
+
+func ExplicitParamsReplyPolicy(content string) (string, bool) {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return "", false
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return "", false
+	}
+	lines := strings.Split(rest[:second], "\n")
+	paramsIndex, paramsEnd := paramsBlockRange(lines)
+	if paramsIndex < 0 {
+		return "", false
+	}
+	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
+		key, value, ok := directParamsChild(lines[idx])
+		if !ok {
+			continue
+		}
+		fieldKey, ok := managedParamFieldKey(key)
+		if !ok || fieldKey != "replyPolicy" {
+			continue
+		}
+		if value == "" || value == "{reply_policy}" {
+			continue
+		}
+		return value, true
+	}
+	return "", false
 }
 
 func ResolveReplyPolicyFromContent(content string) string {
@@ -177,8 +211,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		if idx <= paramsIndex || idx >= paramsEnd {
 			continue
 		}
-		line = strings.TrimRight(line, "\r")
-		key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+		key, _, ok := directParamsChild(line)
 		if !ok {
 			continue
 		}
@@ -233,20 +266,26 @@ func ParamsReplyPolicyUsesPlaceholder(content string) bool {
 	if paramsIndex < 0 {
 		return false
 	}
-	for idx, line := range lines {
-		if idx <= paramsIndex || idx >= paramsEnd {
-			continue
-		}
-		key, value, ok := strings.Cut(strings.TrimSpace(strings.TrimRight(line, "\r")), ":")
+	foundPlaceholder := false
+	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
+		key, value, ok := directParamsChild(lines[idx])
 		if !ok {
 			continue
 		}
 		fieldKey, ok := managedParamFieldKey(key)
-		if ok && fieldKey == "replyPolicy" && strings.TrimSpace(value) == "{reply_policy}" {
-			return true
+		if !ok || fieldKey != "replyPolicy" {
+			continue
+		}
+		switch value {
+		case "{reply_policy}":
+			foundPlaceholder = true
+		case "":
+			continue
+		default:
+			return false
 		}
 	}
-	return false
+	return foundPlaceholder
 }
 
 func paramsBlockRange(lines []string) (int, int) {
