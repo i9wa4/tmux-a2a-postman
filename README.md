@@ -24,22 +24,22 @@ graph TD
     daemon["postman daemon\nroutes mail\nsends auto PING"]
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
-    subgraph project_a["tmux session: project A"]
-        a_messenger["messenger\nhuman-facing ui_node"]
-        a_orchestrator["orchestrator"]
-        a_worker["worker"]
-        a_reviewer["reviewer"]
+    subgraph project_a["tmux session: project A\nAI coding agents"]
+        a_messenger["messenger\nAI agent + ui_node"]
+        a_orchestrator["orchestrator\nAI agent"]
+        a_worker["worker\nAI agent"]
+        a_reviewer["reviewer\nAI agent"]
 
         a_messenger <--> |brief / status| a_orchestrator
         a_orchestrator <--> |delegate / report| a_worker
         a_orchestrator <--> |review request| a_reviewer
     end
 
-    subgraph project_b["tmux session: project B"]
-        b_messenger["messenger\nhuman-facing ui_node"]
-        b_orchestrator["orchestrator"]
-        b_worker["worker"]
-        b_reviewer["reviewer"]
+    subgraph project_b["tmux session: project B\nAI coding agents"]
+        b_messenger["messenger\nAI agent + ui_node"]
+        b_orchestrator["orchestrator\nAI agent"]
+        b_worker["worker\nAI agent"]
+        b_reviewer["reviewer\nAI agent"]
 
         b_messenger <--> |brief / status| b_orchestrator
         b_orchestrator <--> |delegate / report| b_worker
@@ -73,9 +73,10 @@ graph TD
     style project_b fill:#ffffff,stroke:#94a3b8,color:#0f172a
 ```
 
-Each tmux session is a separate project workspace. Roles can share the same
-names across sessions; normal agent collaboration stays inside a project
-session.
+Each tmux session is a separate project workspace. Every role/node inside the
+session is an AI coding agent pane; `ui_node` is the agent role that the human
+operator talks to first. Roles can share the same names across sessions; normal
+agent collaboration stays inside a project session.
 
 ## 2. Prerequisites
 
