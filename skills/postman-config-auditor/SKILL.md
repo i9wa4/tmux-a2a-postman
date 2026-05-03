@@ -2,10 +2,13 @@
 name: postman-config-auditor
 license: MIT
 description: |
-  Audits tmux-a2a-postman configuration, topology, postman.md syntax, and node templates.
+  Audits tmux-a2a-postman configuration, topology, postman.md syntax, node
+  templates, and postman.md versus SKILL.md responsibility boundaries.
   Use when:
   - Reviewing or fixing postman.toml, postman.md, or nodes/* configuration
   - Checking whether Mermaid edges, node sections, or role templates match implementation behavior
+  - Deciding whether instructions belong in postman.md, a generated skill
+    catalog, or a SKILL.md body
   - Diagnosing dead-letter, missing route, quiet node, unread backlog, or late reply behavior
   - Adding or renaming nodes and needing a config consistency review
   Do not use as a generic CLI reference; use tmux-a2a-postman help for command syntax.
@@ -14,8 +17,9 @@ description: |
 # postman-config-auditor
 
 Audit tmux-a2a-postman configuration with implementation-level accuracy. This
-skill covers topology, `postman.md` syntax, merge order, and node role
-templates. For command syntax, prefer `tmux-a2a-postman help`.
+skill covers topology, `postman.md` syntax, merge order, node role templates,
+and the boundary between always-injected postman instructions and on-demand
+skill instructions. For command syntax, prefer `tmux-a2a-postman help`.
 
 When `postman.md` syntax or merge behavior matters, read
 `references/postman-md.md` before judging the file.
@@ -111,7 +115,56 @@ Important merge rules:
 - Distinguish postman node names from generic prose. For example, a repo may
   use a `critic` node while still describing generated subagents as reviewers.
 
-### 3.4. Runtime Symptoms
+### 3.4. postman.md / SKILL.md Balance
+
+Use this rubric when a config is too large, too vague, or duplicated across
+`postman.md` and skill files.
+
+Keep content in `postman.md` when it is needed before an agent can safely
+choose a skill:
+
+- topology, node names, and routing expectations
+- reply-required versus no-reply behavior, completion words, and escalation
+  rules
+- state-machine semantics that affect `get-health` or `get-health-oneline`
+- role-specific authority boundaries, such as who may approve or implement
+- compact reminders that prevent prompt deadlocks or broken message flow
+- the `skill_path` declaration and a short rule to read matching `SKILL.md`
+  files before execution
+
+Move content to `SKILL.md` when it is reusable procedure rather than routing
+contract:
+
+- tool-specific workflows, command recipes, and examples
+- repo or domain conventions that are only needed for matching tasks
+- long checklists, style guides, debugging loops, and review rubrics
+- engine-specific usage details unless they affect message delivery
+- content that can be selected from the generated skill catalog
+
+Flag these imbalance patterns:
+
+- hand-maintained skill lists that duplicate the generated `skill_path`
+  catalog
+- `postman.md` sections that inline full skill bodies or long examples
+- role templates that repeat the same procedural checklist across nodes
+- skills that redefine postman routing, topology, or state-machine behavior
+  instead of referring back to `postman.md`
+- ambiguous instructions where agents cannot tell whether a rule is a
+  transport contract, role contract, or task-specific procedure
+
+When recommending a balance fix, classify each moved or retained block as one
+of:
+
+| Class               | Destination        | Reason                                               |
+| ------------------- | ------------------ | ---------------------------------------------------- |
+| Transport contract  | `postman.md`       | Needed for delivery, replies, status, or escalation  |
+| Role contract       | `postman.md`       | Needed to behave correctly as this node              |
+| Skill index         | `skill_path`       | Generated from skill frontmatter, not hand-written   |
+| Task procedure      | `SKILL.md`         | Needed only after a relevant task is selected        |
+| Reference material  | `references/*.md`  | Too detailed for the skill body unless needed        |
+| Runtime default     | embedded TOML      | Product default, not a local role instruction        |
+
+### 3.5. Runtime Symptoms
 
 - Use `tmux-a2a-postman get-health` for structured state and
   `tmux-a2a-postman get-health-oneline` for compact coordination.
