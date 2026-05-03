@@ -1,6 +1,9 @@
 package envelope
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolveReplyPolicyFromMetadata(t *testing.T) {
 	tests := []struct {
@@ -104,5 +107,31 @@ func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
 	}
 	if got.Timestamp != "2026-05-03T09:00:00Z" {
 		t.Fatalf("Timestamp = %q, want timestamp", got.Timestamp)
+	}
+}
+
+func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: old.md\n  replyPolicy: none\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"messageId":   "new.md",
+		"replyPolicy": "required",
+	})
+
+	for _, want := range []string{
+		"messageId: new.md",
+		"replyPolicy: required",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("EnsureParams() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"messageId: old.md",
+		"replyPolicy: none",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("EnsureParams() kept %q:\n%s", unwanted, got)
+		}
 	}
 }

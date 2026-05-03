@@ -216,6 +216,7 @@ func RunSendMessage(args []string) error {
 	if content == "" {
 		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
 	}
+	generatedReplyPolicyField := draftTemplateUsesReplyPolicyPlaceholder(content)
 
 	vars := map[string]string{
 		"context_id":     resolvedContextID,
@@ -242,7 +243,10 @@ func RunSendMessage(args []string) error {
 	}
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	if !*noReply && !*replyRequired {
-		if metadata, err := envelope.ParseMetadata(content); err == nil && strings.TrimSpace(metadata.ReplyPolicy) == "" {
+		if metadata, err := envelope.ParseMetadata(content); err == nil {
+			if generatedReplyPolicyField && strings.EqualFold(strings.TrimSpace(metadata.ReplyPolicy), replyPolicy) {
+				metadata.ReplyPolicy = ""
+			}
 			replyPolicy = envelope.ResolveReplyPolicyFromMetadata(metadata)
 			vars["reply_policy"] = replyPolicy
 		}
@@ -376,6 +380,13 @@ func validateReplyToMessageID(replyTo string) error {
 		return fmt.Errorf("--reply-to must be a valid message id: %w", err)
 	}
 	return nil
+}
+
+func draftTemplateUsesReplyPolicyPlaceholder(content string) bool {
+	return strings.Contains(content, "replyPolicy: {reply_policy}") ||
+		strings.Contains(content, "reply_policy: {reply_policy}") ||
+		strings.Contains(content, "replyObligation: {reply_policy}") ||
+		strings.Contains(content, "reply_obligation: {reply_policy}")
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

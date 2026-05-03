@@ -168,6 +168,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	lines := strings.Split(frontmatter, "\n")
 	paramsIndex := -1
 	existing := make(map[string]bool)
+	changed := false
 	for idx, line := range lines {
 		line = strings.TrimRight(line, "\r")
 		if line == "params:" {
@@ -177,6 +178,17 @@ func EnsureParams(content string, fields map[string]string) string {
 		if paramsIndex >= 0 && strings.HasPrefix(line, "  ") {
 			key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
 			if ok {
+				if fieldKey, ok := managedParamFieldKey(key); ok {
+					existing[fieldKey] = true
+					if value := strings.TrimSpace(fields[fieldKey]); value != "" {
+						updatedLine := "  " + key + ": " + value
+						if lines[idx] != updatedLine {
+							lines[idx] = updatedLine
+							changed = true
+						}
+					}
+					continue
+				}
 				existing[key] = true
 			}
 		}
@@ -194,7 +206,10 @@ func EnsureParams(content string, fields map[string]string) string {
 		insert = append(insert, "  "+key+": "+value)
 	}
 	if len(insert) == 0 {
-		return content
+		if !changed {
+			return content
+		}
+		return content[:first+4] + strings.Join(lines, "\n") + rest[second:]
 	}
 
 	updated := make([]string, 0, len(lines)+len(insert))
@@ -202,4 +217,17 @@ func EnsureParams(content string, fields map[string]string) string {
 	updated = append(updated, insert...)
 	updated = append(updated, lines[paramsIndex+1:]...)
 	return content[:first+4] + strings.Join(updated, "\n") + rest[second:]
+}
+
+func managedParamFieldKey(key string) (string, bool) {
+	switch key {
+	case "messageId", "message_id":
+		return "messageId", true
+	case "replyPolicy", "reply_policy", "replyObligation", "reply_obligation":
+		return "replyPolicy", true
+	case "replyTo", "reply_to":
+		return "replyTo", true
+	default:
+		return "", false
+	}
 }
