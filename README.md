@@ -12,17 +12,23 @@ and delivers `send` messages to filesystem-backed inboxes. Agents read mail with
 
 ```mermaid
 graph TD
-    subgraph tmux["tmux session"]
-        orchestrator["orchestrator pane\nruns send"]
-        worker["worker pane\nruns pop after footer or notification"]
+    subgraph tmux["tmux session: my-project"]
+        messenger["messenger\nClaude Code"]
+        orchestrator["orchestrator\nCodex CLI"]
+        worker["worker\nClaude Code"]
+        workerAlt["worker-alt\nCodex CLI"]
     end
-    daemon["postman daemon\nroutes by edges"]
-    inbox["filesystem inbox\ninbox/worker/*.md"]
-    orchestrator -->|tmux-a2a-postman send| daemon
-    daemon -->|write mail| inbox
-    daemon -->|pane notification| worker
-    inbox -->|tmux-a2a-postman pop| worker
+    daemon["postman daemon\nroutes messages by edges"]
+    inbox["filesystem inboxes\ninbox/{node}/"]
+    messenger -->|send| daemon
+    orchestrator -->|send| daemon
     worker -->|send reply| daemon
+    workerAlt -->|send reply| daemon
+    daemon -->|deliver mail and pane notification| inbox
+    inbox -.->|pop after footer or notification| messenger
+    inbox -.->|pop after footer or notification| orchestrator
+    inbox -.->|pop after footer or notification| worker
+    inbox -.->|pop after footer or notification| workerAlt
 ```
 
 ## 2. Prerequisites
