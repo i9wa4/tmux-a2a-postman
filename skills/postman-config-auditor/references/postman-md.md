@@ -24,10 +24,11 @@ Only a leading `---` block is parsed. The parser supports one single-line
 
 Supported global keys in `postman.md`:
 
-| Key             | Effect                                      |
-| --------------- | ------------------------------------------- |
-| `ui_node`       | Sets `Config.UINode`                        |
-| `reply_command` | Sets `Config.ReplyCommand` when non-empty |
+| Key             | Effect                                                       |
+| --------------- | ------------------------------------------------------------ |
+| `ui_node`       | Sets `Config.UINode`                                         |
+| `reply_command` | Sets `Config.ReplyCommand` when non-empty                    |
+| `skill_path`    | Appends a generated skill catalog to `Config.CommonTemplate` |
 
 Rules:
 
@@ -47,8 +48,16 @@ Example:
 ---
 ui_node: messenger
 reply_command: tmux-a2a-postman send --to {from_node} --body
+skill_path: ../../nix/home-manager/agents/skills
 ---
 ```
+
+`skill_path` points to a directory containing one subdirectory per skill, each
+with a `SKILL.md` file. Relative paths are resolved from the directory
+containing the `postman.md` file. The generated catalog reads `name` and
+`description` from each `SKILL.md` frontmatter and appends an aligned Markdown
+table to `common_template`. Skill frontmatter may use single-line
+`description`, `description: |`, or `description: >-`.
 
 ## 3. H2 Section Parsing
 
@@ -198,6 +207,8 @@ Important rules:
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
 - Project-local `postman.md` `message_footer` appends to the effective base
   footer.
+- `skill_path` is applied within the Markdown layer that declares it; the
+  generated catalog is appended to that layer's `common_template` content.
 - Nodes referenced by valid edges are materialized automatically.
 
 ## 8. Minimal Valid postman.md

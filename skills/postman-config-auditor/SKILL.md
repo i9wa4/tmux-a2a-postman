@@ -57,6 +57,9 @@ Important merge rules:
 - Split `nodes/*.toml` files replace that node at their layer.
 - Project-local `postman.md` appends `message_footer` to the effective base
   footer.
+- `postman.md` frontmatter `skill_path` generates an aligned skill catalog
+  from `*/SKILL.md` files and appends it to that Markdown layer's
+  `common_template`.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
@@ -87,6 +90,10 @@ Important merge rules:
 - Confirm role text lives under an h3 `role` section or in supported
   frontmatter.
 - Confirm frontmatter only uses the supported one-line `key: value` subset.
+- If `skill_path` is set, confirm it resolves from the declaring `postman.md`
+  directory and points to skill subdirectories containing `SKILL.md`.
+- Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
+  `description`, rather than hand-maintained stale lists.
 
 ### 3.3. Node Role Templates
 
@@ -98,6 +105,8 @@ Important merge rules:
 - Confirm templates do not duplicate context injected by system templates:
   `message_footer`, `draft_template`, `daemon_message_template`,
   `notification_template`, or dead-letter notification text.
+- Confirm templates do not inline full skill bodies when `skill_path` can
+  generate a skill catalog and the full instructions can remain in `SKILL.md`.
 - Distinguish postman node names from generic prose. For example, a repo may
   use a `critic` node while still describing generated subagents as reviewers.
 

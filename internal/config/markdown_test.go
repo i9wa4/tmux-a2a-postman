@@ -21,6 +21,13 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func assertContains(t *testing.T, content, want string) {
+	t.Helper()
+	if !strings.Contains(content, want) {
+		t.Fatalf("content missing %q:\n%s", want, content)
+	}
+}
+
 // TestMarkdownFrontmatterAccept covers the supported syntax subset for
 // Markdown frontmatter.
 func TestMarkdownFrontmatterAccept(t *testing.T) {
@@ -527,6 +534,75 @@ Worker template.
 			t.Errorf("worker template: got %q", wc.Template)
 		}
 	})
+}
+
+func TestLoadMarkdownConfig_SkillPathAppendsGeneratedCatalog(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash scripting rules for commands.
+---
+
+# Bash
+`)
+	writeFile(t, filepath.Join(dir, "skills", "find-docs", "SKILL.md"), `---
+name: find-docs
+description: >-
+  Retrieves current documentation for developer tools.
+
+  Use for API syntax questions.
+---
+
+# Find Docs
+`)
+	content := `---
+skill_path: skills
+---
+
+## ` + "`common_template`" + `
+
+Shared instructions.
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "Shared instructions.")
+	assertContains(t, cfg.CommonTemplate, "### Available Skills")
+	assertContains(t, cfg.CommonTemplate, "Skill files live under `skills`.")
+	assertContains(t, cfg.CommonTemplate, "| Skill       | Description")
+	assertContains(t, cfg.CommonTemplate, "| `bash`      | Bash scripting rules for commands.")
+	assertContains(t, cfg.CommonTemplate, "| `find-docs` | Retrieves current documentation for developer tools. Use for API syntax questions.")
+}
+
+func TestParseSkillFrontmatter(t *testing.T) {
+	content := `---
+name: find-docs
+description: |-
+  First line.
+  Second line.
+license: MIT
+---
+
+# Body
+`
+	got, err := parseSkillFrontmatter(content)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatter error: %v", err)
+	}
+	if got["name"] != "find-docs" {
+		t.Fatalf("name = %q, want find-docs", got["name"])
+	}
+	if got["description"] != "First line.\nSecond line." {
+		t.Fatalf("description = %q", got["description"])
+	}
+	if got["license"] != "MIT" {
+		t.Fatalf("license = %q, want MIT", got["license"])
+	}
 }
 
 // TestLoadMarkdownConfig_NumberedHeadings covers numbered backtick headings.

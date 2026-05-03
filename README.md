@@ -223,6 +223,18 @@ Primary task executor.
 Execute tasks from orchestrator. Report DONE or BLOCKED.
 ````
 
+To expose an agent skill catalog without inlining full skill bodies, add one
+frontmatter path to `postman.md`:
+
+```markdown
+---
+skill_path: ../../nix/home-manager/agents/skills
+---
+```
+
+The path is resolved from the `postman.md` directory and generates an aligned
+table from each `*/SKILL.md` frontmatter `name` and `description`.
+
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax
 lives in

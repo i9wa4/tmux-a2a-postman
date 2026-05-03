@@ -357,7 +357,8 @@ func stripFrontmatter(content string) string {
 // loadMarkdownConfig parses a postman.md (single-file format) into a Config.
 // Returns a zero-value Config with only explicitly-set fields populated.
 // Global frontmatter keys: ui_node → Config.UINode,
-// reply_command → Config.ReplyCommand.
+// reply_command → Config.ReplyCommand,
+// skill_path → generated skill catalog appended to Config.CommonTemplate.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
 // Node h2 sections: "## `name`" → node template with ### `role` h3 field.
@@ -396,6 +397,13 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	// Common template section
 	if commonBody, ok := sections["common_template"]; ok {
 		cfg.CommonTemplate = strings.TrimSpace(commonBody)
+	}
+	if skillPath, ok := fm["skill_path"]; ok && strings.TrimSpace(skillPath) != "" {
+		commonTemplate, err := appendSkillCatalogToCommonTemplate(cfg.CommonTemplate, path, skillPath)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		cfg.CommonTemplate = commonTemplate
 	}
 
 	// Message footer section
