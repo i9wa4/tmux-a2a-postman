@@ -41,6 +41,7 @@ func ProjectMessageObligationState(sessionDir, sessionName string) (MessageOblig
 	infoUnread := make(map[string]projectedObligation)
 	sawLease := false
 	sawResolution := false
+	sawCompleteMailboxEvent := false
 
 	for _, event := range events {
 		if event.SessionKey != state.SessionKey || event.Generation != state.Generation {
@@ -61,27 +62,28 @@ func ProjectMessageObligationState(sessionDir, sessionName string) (MessageOblig
 
 		payload, ok := decodeMailboxEventPayload(event.Payload)
 		if !ok {
-			return MessageObligationState{}, false, nil
+			continue
 		}
 		meta := obligationMetadataFromPayload(payload)
 		if meta.MessageID == "" {
-			return MessageObligationState{}, false, nil
+			continue
 		}
 		if (event.Type == MailboxProjectionPostConsumedEventType || event.Type == MailboxProjectionDeliveredEventType) && payload.Content == "" {
-			return MessageObligationState{}, false, nil
+			continue
 		}
+		sawCompleteMailboxEvent = true
 		meta.From = simpleNameForSession(meta.From, sessionName)
 		meta.To = simpleNameForSession(meta.To, sessionName)
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
-			resolveInboundObligation(projected, openInbound, meta.ReplyTo, meta.From, meta.To)
+			resolveInboundObligation(projected, openInbound, meta.ReplyTo, meta.From)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
 				openOutbound[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
 				projected.WaitingOnReplyCounts[meta.From]++
 			}
 		case MailboxProjectionDeliveredEventType:
-			resolveOutboundObligation(projected, openOutbound, meta.ReplyTo, meta.To, meta.From)
+			resolveOutboundObligation(projected, openOutbound, meta.ReplyTo, meta.From)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
 				openInbound[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
@@ -99,7 +101,7 @@ func ProjectMessageObligationState(sessionDir, sessionName string) (MessageOblig
 		}
 	}
 
-	if !sawLease || !sawResolution {
+	if !sawLease || !sawResolution || !sawCompleteMailboxEvent {
 		return MessageObligationState{}, false, nil
 	}
 	return projected, true, nil
@@ -122,38 +124,54 @@ func obligationMetadataFromPayload(payload journal.MailboxEventPayload) envelope
 	return meta
 }
 
-func resolveInboundObligation(state MessageObligationState, openInbound map[string]projectedObligation, replyTo, from, to string) {
-	if replyTo != "" {
-		if obligation, ok := openInbound[obligationKey(replyTo, from)]; ok {
-			decrementCount(state.ActionRequiredCounts, obligation.To)
-			delete(openInbound, obligationKey(replyTo, from))
-			return
-		}
+func resolveInboundObligation(state MessageObligationState, openInbound map[string]projectedObligation, replyTo, from string) {
+	if replyTo == "" {
+		return
 	}
-	for messageID, obligation := range openInbound {
-		if obligation.From == to && obligation.To == from {
-			decrementCount(state.ActionRequiredCounts, obligation.To)
-			delete(openInbound, messageID)
-			return
-		}
+	key, obligation, ok := findObligation(openInbound, replyTo, from)
+	if !ok {
+		return
 	}
+	decrementCount(state.ActionRequiredCounts, obligation.To)
+	delete(openInbound, key)
 }
 
-func resolveOutboundObligation(state MessageObligationState, openOutbound map[string]projectedObligation, replyTo, to, from string) {
-	if replyTo != "" {
-		if obligation, ok := openOutbound[obligationKey(replyTo, from)]; ok {
-			decrementCount(state.WaitingOnReplyCounts, obligation.From)
-			delete(openOutbound, obligationKey(replyTo, from))
-			return
-		}
+func resolveOutboundObligation(state MessageObligationState, openOutbound map[string]projectedObligation, replyTo, from string) {
+	if replyTo == "" {
+		return
 	}
-	for messageID, obligation := range openOutbound {
-		if obligation.From == to && obligation.To == from {
-			decrementCount(state.WaitingOnReplyCounts, obligation.From)
-			delete(openOutbound, messageID)
-			return
-		}
+	key, obligation, ok := findObligation(openOutbound, replyTo, from)
+	if !ok {
+		return
 	}
+	decrementCount(state.WaitingOnReplyCounts, obligation.From)
+	delete(openOutbound, key)
+}
+
+func findObligation(open map[string]projectedObligation, messageID, participant string) (string, projectedObligation, bool) {
+	if obligation, ok := open[obligationKey(messageID, participant)]; ok {
+		return obligationKey(messageID, participant), obligation, true
+	}
+
+	var foundKey string
+	var foundObligation projectedObligation
+	found := false
+	for key, obligation := range open {
+		if obligation.MessageID != messageID || !sameParticipant(obligation.To, participant) {
+			continue
+		}
+		if found {
+			return "", projectedObligation{}, false
+		}
+		foundKey = key
+		foundObligation = obligation
+		found = true
+	}
+	return foundKey, foundObligation, found
+}
+
+func sameParticipant(left, right string) bool {
+	return left == right || nodeaddr.Simple(left) == nodeaddr.Simple(right)
 }
 
 func simpleNameForSession(name, sessionName string) string {

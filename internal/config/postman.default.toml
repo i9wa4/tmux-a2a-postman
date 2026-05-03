@@ -113,8 +113,8 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {message_id} - current message id, usable with --reply-to
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command} --reply-to {message_id}
-Reply expected by default.
-No reply needed for: DONE, ACK, PING, or status-only messages."""
+Add --reply-required only when your reply needs a response.
+No reply needed for: DONE, ACK, PING, HEARTBEAT_OK, status updates, alerts, or pane hints."""
 
 # Daemon message template (shared envelope for daemon-originated PING)
 # Pass 1 variables (BuildEnvelope): {context_id}, {from_node}, {node},

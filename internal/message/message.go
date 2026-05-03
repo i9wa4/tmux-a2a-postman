@@ -111,8 +111,8 @@ func ResolveReplyPolicyFromContent(content string) string {
 	return envelope.ResolveReplyPolicyFromContent(content)
 }
 
-func ResolveReplyPolicyForSend(body string, noReply bool) string {
-	return envelope.ResolveReplyPolicyForSend(body, noReply)
+func ResolveReplyPolicyForSend(body string, noReply, replyRequired bool) string {
+	return envelope.ResolveReplyPolicyForSend(body, noReply, replyRequired)
 }
 
 func IsNoReplyBody(content string) bool {

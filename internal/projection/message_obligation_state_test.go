@@ -83,6 +83,70 @@ func TestProjectMessageObligationState_RepliesResolveRequiredMessages(t *testing
 	}
 }
 
+func TestProjectMessageObligationState_ReplyWithoutReplyToDoesNotResolve(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 3, 9, 25, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	request := obligationContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+
+	reply := obligationContent("worker", "orchestrator", "m2.md", "none", "", "DONE")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+
+	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+	}
+	if got.ActionRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	}
+	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	}
+}
+
+func TestProjectMessageObligationState_ReplyToMissDoesNotResolve(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 3, 9, 26, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	request := obligationContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+
+	reply := obligationContent("worker", "orchestrator", "m2.md", "none", "missing.md", "DONE")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+
+	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+	}
+	if got.ActionRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	}
+	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	}
+}
+
 func TestProjectMessageObligationState_TracksMultipleRecipients(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 30, 0, 0, time.UTC)
@@ -129,6 +193,65 @@ func TestProjectMessageObligationState_TracksMultipleRecipients(t *testing.T) {
 	}
 	if got.ActionRequiredCounts["worker"] != 0 || got.ActionRequiredCounts["critic"] != 1 {
 		t.Fatalf("action counts after one reply = %#v, want worker=0 critic=1", got.ActionRequiredCounts)
+	}
+}
+
+func TestProjectMessageObligationState_ExactReplyToMatchesSessionQualifiedRecipient(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 3, 9, 50, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	request := obligationContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
+	reply := obligationContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(2*time.Second))
+
+	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+	}
+	if got.WaitingOnReplyCounts["orchestrator"] != 0 {
+		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnReplyCounts["orchestrator"])
+	}
+}
+
+func TestProjectMessageObligationState_SkipsIncompleteLegacyEvents(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 3, 9, 55, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	if _, err := writer.AppendEvent(MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, map[string]string{
+		"to": "worker",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(incomplete delivered): %v", err)
+	}
+	content := obligationContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", content, now.Add(2*time.Second))
+	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", content, now.Add(3*time.Second))
+
+	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+	}
+	if got.ActionRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	}
+	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
 	}
 }
 

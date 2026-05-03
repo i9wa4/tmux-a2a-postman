@@ -63,21 +63,25 @@ something it can do now.
 
 ## 4. Reply Policy
 
-Normal `send` is reply-required by default. Use `--no-reply` for terminal or
-informational mail that should not start another turn. A reply should include
-`--reply-to <message-id>` so health can clear the original obligation exactly.
+Normal `send` is no-reply unless the sender uses `--reply-required` or the
+message carries a strict request class such as `status_request`,
+`approval_request`, or `reply_request`. Use `--no-reply` as an explicit
+override for terminal or informational mail. A resolving reply must include
+`--reply-to <message-id>` so health can clear the original obligation exactly;
+messages without an exact `reply_to` do not close arbitrary open obligations.
 
-The resolver also treats exact first-line terminal messages as no-reply:
+The resolver treats exact first-line terminal messages as no-reply:
 
 | Body first line | Resolved policy |
 | --------------- | --------------- |
 | `ACK`           | `none`          |
 | `DONE`          | `none`          |
 | `PING`          | `none`          |
+| `HEARTBEAT_OK`  | `none`          |
 
-Daemon-originated PING and runtime notice mail also resolve to `none`.
-Ambiguous content remains reply-required unless the sender explicitly uses
-`--no-reply`.
+Daemon-originated PING, runtime notice mail, status updates, alerts, and pane
+hints also resolve to `none`. Ambiguous content remains no-reply unless the
+sender explicitly marks it reply-required.
 
 ## 5. Obligation Facts
 
@@ -97,9 +101,10 @@ so one message sent to multiple nodes can leave multiple pending replies.
 `pop` only clears unread state. It does not clear reply-required action, because
 reading a request is not the same as answering it. Sending a resolving reply
 clears the recipient's action-required obligation and the sender's
-waiting-on-reply obligation. If the journal does not contain enough structured
-message content for older events, health falls back to unread-count based
-pending behavior instead of inventing obligation state.
+waiting-on-reply obligation only when `reply_to` names the original message. If
+an older journal event does not contain enough structured message content,
+projection skips that event and continues from later complete events instead of
+inventing obligation state.
 
 ## 6. Health Projection
 

@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
@@ -144,43 +144,20 @@ func intPtr(value int) *int {
 	return &value
 }
 
-// parseMessageContent extracts JSON-friendly fields from raw message file content.
-// Parses YAML frontmatter for from/to/timestamp; body is content after frontmatter.
 func parseMessageContent(content, filename string) popMessageOutput {
-	result := popMessageOutput{Status: "message", ID: filename}
-	lines := strings.Split(content, "\n")
-	inFrontMatter := false
-	fmEnd := -1
-	for i, line := range lines {
-		if line == "---" {
-			if !inFrontMatter {
-				inFrontMatter = true
-				continue
-			}
-			fmEnd = i
-			break
-		}
-		if !inFrontMatter {
-			continue
-		}
-		if strings.HasPrefix(line, "  from: ") {
-			result.From = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
-		} else if strings.HasPrefix(line, "  to: ") {
-			result.To = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
-		} else if strings.HasPrefix(line, "  replyPolicy: ") {
-			result.ReplyPolicy = strings.TrimSpace(strings.TrimPrefix(line, "  replyPolicy: "))
-		} else if strings.HasPrefix(line, "  reply_policy: ") {
-			result.ReplyPolicy = strings.TrimSpace(strings.TrimPrefix(line, "  reply_policy: "))
-		} else if strings.HasPrefix(line, "  replyTo: ") {
-			result.ReplyTo = strings.TrimSpace(strings.TrimPrefix(line, "  replyTo: "))
-		} else if strings.HasPrefix(line, "  reply_to: ") {
-			result.ReplyTo = strings.TrimSpace(strings.TrimPrefix(line, "  reply_to: "))
-		} else if strings.HasPrefix(line, "  timestamp: ") {
-			result.Timestamp = strings.TrimSpace(strings.TrimPrefix(line, "  timestamp: "))
-		}
+	result := popMessageOutput{
+		Status: "message",
+		ID:     filename,
+		Body:   envelope.BodyFromContent(content),
 	}
-	if fmEnd >= 0 && fmEnd+1 < len(lines) {
-		result.Body = strings.TrimSpace(strings.Join(lines[fmEnd+1:], "\n"))
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil {
+		return result
 	}
+	result.From = metadata.From
+	result.To = metadata.To
+	result.ReplyPolicy = metadata.ReplyPolicy
+	result.ReplyTo = metadata.ReplyTo
+	result.Timestamp = metadata.Timestamp
 	return result
 }

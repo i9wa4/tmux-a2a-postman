@@ -167,10 +167,11 @@ tmux-a2a-postman help directories
 ```
 
 `get-health`, `get-health-oneline`, and the default TUI are views over the same
-reply-aware contract. Normal `send` expects a reply by default; `--no-reply`,
-`DONE`, `ACK`, and `PING` mark terminal or informational messages. Agents
-should prefer `get-health` for structured session JSON and
-`get-health-oneline` for compact coordination.
+reply-aware contract. Use `--reply-required` only for messages that need an
+answer; replies should include `--reply-to <message-id>` so health can clear
+the exact obligation. `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal
+no-reply messages. Agents should prefer `get-health` for structured session
+JSON and `get-health-oneline` for compact coordination.
 
 ## 5. Configuration
 

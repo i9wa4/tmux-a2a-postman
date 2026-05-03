@@ -70,6 +70,7 @@ func RunSendMessage(args []string) error {
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
+	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
@@ -88,8 +89,11 @@ func RunSendMessage(args []string) error {
 	if *body == "" {
 		return fmt.Errorf("--body is required")
 	}
-	if strings.ContainsAny(*replyTo, "/\\") {
-		return fmt.Errorf("--reply-to must be a message id, not a path")
+	if *noReply && *replyRequired {
+		return fmt.Errorf("--no-reply and --reply-required are mutually exclusive")
+	}
+	if err := validateReplyToMessageID(*replyTo); err != nil {
+		return err
 	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -205,7 +209,7 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("generating filename: %w", err)
 	}
-	replyPolicy := message.ResolveReplyPolicyForSend(*body, *noReply)
+	replyPolicy := message.ResolveReplyPolicyForSend(*body, *noReply, *replyRequired)
 	draftPath := filepath.Join(draftDir, filename)
 
 	content := cfg.DraftTemplate
@@ -350,6 +354,22 @@ func RunSendMessage(args []string) error {
 		SubmitPath:  projection.SubmitPathPost,
 		Notify:      notifyOutputValue(notifyStatus),
 	})
+}
+
+func validateReplyToMessageID(replyTo string) error {
+	if replyTo == "" {
+		return nil
+	}
+	if strings.ContainsAny(replyTo, "/\\") {
+		return fmt.Errorf("--reply-to must be a message id, not a path")
+	}
+	if strings.ContainsAny(replyTo, " \t\r\n") {
+		return fmt.Errorf("--reply-to must be a single message id token")
+	}
+	if _, err := message.ParseMessageFilename(replyTo); err != nil {
+		return fmt.Errorf("--reply-to must be a valid message id: %w", err)
+	}
+	return nil
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

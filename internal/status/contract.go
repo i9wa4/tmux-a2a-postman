@@ -1,6 +1,6 @@
 package status
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type NodeHealth struct {
 	Name                string `json:"name"`

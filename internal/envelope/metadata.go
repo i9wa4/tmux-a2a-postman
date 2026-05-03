@@ -12,6 +12,7 @@ type Metadata struct {
 	ReplyPolicy string
 	ReplyTo     string
 	MessageType string
+	Timestamp   string
 	ThreadID    string
 	Body        string
 }
@@ -70,10 +71,14 @@ func ParseMetadata(content string) (Metadata, error) {
 			metadata.MessageID = value
 		case "replyPolicy", "reply_policy":
 			metadata.ReplyPolicy = value
+		case "replyObligation", "reply_obligation":
+			metadata.ReplyPolicy = value
 		case "replyTo", "reply_to":
 			metadata.ReplyTo = value
 		case "messageType", "message_type":
 			metadata.MessageType = value
+		case "timestamp":
+			metadata.Timestamp = value
 		case "thread_id":
 			metadata.ThreadID = value
 		}
@@ -92,7 +97,7 @@ func ResolveReplyPolicyFromContent(content string) string {
 	if IsNoReplyBody(content) {
 		return "none"
 	}
-	return "required"
+	return "none"
 }
 
 func ResolveReplyPolicyFromMetadata(metadata Metadata) string {
@@ -106,23 +111,30 @@ func ResolveReplyPolicyFromMetadata(metadata Metadata) string {
 		return "none"
 	}
 	switch strings.ToLower(strings.TrimSpace(metadata.MessageType)) {
+	case "approval_request", "status_request", "reply_request":
+		return "required"
 	case "ping", "dead_letter_notification", "edge_violation_warning":
+		return "none"
+	case "status_update", "alert", "pane_hint":
 		return "none"
 	}
 	if IsNoReplyBody(metadata.Body) {
 		return "none"
 	}
-	return "required"
+	return "none"
 }
 
-func ResolveReplyPolicyForSend(body string, noReply bool) string {
+func ResolveReplyPolicyForSend(body string, noReply, replyRequired bool) string {
 	if noReply {
 		return "none"
+	}
+	if replyRequired {
+		return "required"
 	}
 	if IsNoReplyBody(body) {
 		return "none"
 	}
-	return "required"
+	return "none"
 }
 
 func IsNoReplyBody(content string) bool {
@@ -135,7 +147,7 @@ func IsNoReplyBody(content string) bool {
 		firstLine = firstLine[:idx]
 	}
 	switch strings.ToUpper(strings.TrimSpace(firstLine)) {
-	case "ACK", "DONE", "PING":
+	case "ACK", "DONE", "PING", "HEARTBEAT_OK":
 		return true
 	default:
 		return false

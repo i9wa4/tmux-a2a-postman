@@ -260,6 +260,52 @@ func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	}
 }
 
+func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{},
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+
+	staleSnapshot, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() stale snapshot error = %v", err)
+	}
+	if staleSnapshot.VisibleState != "ready" {
+		t.Fatalf("staleSnapshot.VisibleState = %q, want ready", staleSnapshot.VisibleState)
+	}
+
+	now := time.Date(2026, time.April, 14, 5, 10, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 404, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	if _, err := writer.AppendEvent(projection.SessionHealthSnapshotEventType, journal.VisibilityControlPlaneOnly, staleSnapshot, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(session health snapshot): %v", err)
+	}
+	content := sessionHealthObligationContent("critic", "worker", "m1.md", "required", "", "please review")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
+
+	health, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealth() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].ActionRequiredCount != 1 {
+		t.Fatalf("worker health = %#v, want pending action_required=1", nodeByName["worker"])
+	}
+	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnReplyCount != 1 {
+		t.Fatalf("critic health = %#v, want waiting waiting_on_reply=1", nodeByName["critic"])
+	}
+}
+
 func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,

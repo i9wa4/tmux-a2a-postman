@@ -57,10 +57,14 @@ func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Co
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		return unavailableSessionHealth(contextID, sessionName), nil
 	}
+	live, err := collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
+	if err == nil {
+		return live, nil
+	}
 	if projected, ok := projectedSessionHealth(sessionDir); ok {
 		return projected, nil
 	}
-	return collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
+	return status.SessionHealth{}, err
 }
 
 func collectSessionHealthLegacy(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {

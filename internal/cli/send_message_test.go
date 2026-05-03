@@ -83,6 +83,64 @@ func TestRunSendMessage_InvalidToNodeName(t *testing.T) {
 	assertNoMarkdownFilesInTree(t, filepath.Join(tmpDir, "ctx-send-invalid-to", "test-session"))
 }
 
+func TestRunSendMessage_InvalidReplyToRejectedBeforeWriting(t *testing.T) {
+	tests := []struct {
+		name    string
+		replyTo string
+		want    string
+	}{
+		{
+			name:    "path",
+			replyTo: "../previous.md",
+			want:    "not a path",
+		},
+		{
+			name:    "multi_token",
+			replyTo: "previous message.md",
+			want:    "single message id token",
+		},
+		{
+			name:    "bad_filename",
+			replyTo: "previous.md",
+			want:    "valid message id",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("POSTMAN_HOME", tmpDir)
+			err := RunSendMessage([]string{
+				"--to", "worker",
+				"--body", "hello",
+				"--reply-to", tt.replyTo,
+			})
+			if err == nil {
+				t.Fatal("RunSendMessage() error = nil, want validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("RunSendMessage() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunSendMessage_ReplyPolicyFlagsAreMutuallyExclusive(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+	err := RunSendMessage([]string{
+		"--to", "worker",
+		"--body", "hello",
+		"--no-reply",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want validation error")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("RunSendMessage() error = %v, want mutually exclusive", err)
+	}
+}
+
 func TestRunSendMessage_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := writeMinimalNodeConfig(t, tmpDir)
@@ -788,6 +846,7 @@ role = "worker"
 			"--context-id", "ctx-reply-policy",
 			"--to", "worker",
 			"--body", "please do this",
+			"--reply-required",
 		})
 	})
 	if err != nil {
@@ -806,11 +865,48 @@ role = "worker"
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
 		"Reply: tmux-a2a-postman send --to messenger --body \"<your message>\" --reply-to " + payload.Sent,
-		"Reply expected by default.",
+		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))
 		}
+	}
+}
+
+func TestRunSendMessage_DefaultStoresNoReplyPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-default-reply-policy",
+			"--to", "worker",
+			"--body", "plain update",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
 	}
 }
 
@@ -841,7 +937,7 @@ role = "worker"
 			"--to", "worker",
 			"--body", "status-only update",
 			"--no-reply",
-			"--reply-to", "previous.md",
+			"--reply-to", "20260503-090000-sabcd-r1234-from-worker-to-messenger.md",
 		})
 	})
 	if err != nil {
@@ -851,8 +947,8 @@ role = "worker"
 	if payload.ReplyPolicy != "none" {
 		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
 	}
-	if payload.ReplyTo != "previous.md" {
-		t.Fatalf("payload.ReplyTo = %q, want previous.md", payload.ReplyTo)
+	if payload.ReplyTo != "20260503-090000-sabcd-r1234-from-worker-to-messenger.md" {
+		t.Fatalf("payload.ReplyTo = %q, want previous message id", payload.ReplyTo)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-no-reply-policy", "test-session", "post", payload.Sent))
@@ -861,7 +957,7 @@ role = "worker"
 	}
 	for _, want := range []string{
 		"replyPolicy: none",
-		"replyTo: previous.md",
+		"replyTo: 20260503-090000-sabcd-r1234-from-worker-to-messenger.md",
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))

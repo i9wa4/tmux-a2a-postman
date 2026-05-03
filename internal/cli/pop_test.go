@@ -279,6 +279,45 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	}
 }
 
+func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-envelope-metadata"
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260415-010103-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-15T01:01:03Z\n  reply_obligation: required\n  reply_to: 20260415-010000-from-worker-to-orchestrator.md\n---\n\nReview this\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.From != "orchestrator" || payload.To != "worker" {
+		t.Fatalf("from/to = %q/%q, want orchestrator/worker", payload.From, payload.To)
+	}
+	if payload.Timestamp != "2026-04-15T01:01:03Z" {
+		t.Fatalf("Timestamp = %q, want envelope timestamp", payload.Timestamp)
+	}
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+	if payload.ReplyTo != "20260415-010000-from-worker-to-orchestrator.md" {
+		t.Fatalf("ReplyTo = %q, want reply_to alias value", payload.ReplyTo)
+	}
+	if payload.Body != "Review this" {
+		t.Fatalf("Body = %q, want Review this", payload.Body)
+	}
+}
+
 func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
