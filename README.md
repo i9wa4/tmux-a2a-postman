@@ -7,7 +7,6 @@ tmux agent-to-agent message delivery daemon.
 ## 1. Prerequisites
 
 - tmux >= 3.0
-- Go >= 1.26 for `go install`
 
 ## 2. Installation
 
