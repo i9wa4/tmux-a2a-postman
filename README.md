@@ -22,7 +22,9 @@ nix run github:i9wa4/tmux-a2a-postman
 
 ### 2.1. Agent Skills
 
-The `skills/` directory contains optional AI assistant skills:
+The `skills/` directory contains optional AI assistant skills. The postman
+binary works without them, but they help agents discover the first command and
+audit configuration:
 
 - `postman-send-message`: minimal entry point for sending the first postman
   message.
@@ -30,17 +32,34 @@ The `skills/` directory contains optional AI assistant skills:
   topology, and node templates.
 
 These skills are published through GitHub Releases; no separate skill registry
-is required. With a GitHub CLI version that includes `gh skill`:
+is required. Install GitHub CLI 2.90.0 or newer first; see the
+[GitHub CLI installation guide](https://github.com/cli/cli#installation). Then
+install all bundled skills for Codex. GitHub CLI currently documents direct
+installs per skill, so this loop installs every bundled skill explicitly:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
+for skill in \
+  postman-send-message \
+  postman-config-auditor
+do
+  gh skill install i9wa4/tmux-a2a-postman "$skill" --agent codex --scope user
+done
 ```
 
 To pin a specific release:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message@v0.6.3 --agent codex --scope user
+for skill in \
+  postman-send-message \
+  postman-config-auditor
+do
+  gh skill install i9wa4/tmux-a2a-postman "$skill" --agent codex --scope user --pin v0.6.3
+done
 ```
+
+See the
+[GitHub CLI `gh skill install` manual](https://cli.github.com/manual/gh_skill_install)
+for supported agents, scopes, and pinning.
 
 ## 3. Concept
 
