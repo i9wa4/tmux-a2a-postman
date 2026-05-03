@@ -20,7 +20,7 @@ title: tmux-a2a-postman architecture
 ---
 graph TD
     operator((human\noperator))
-    config["postman.md / postman.toml\nroles, edges, templates\nmessenger:::ui_node"]
+    config["postman.md / postman.toml\nroles, edges, templates\nclass messenger ui_node"]
     daemon["postman daemon\nroutes mail\nsends auto PING"]
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
@@ -189,14 +189,15 @@ JSON and `get-health-oneline` for compact coordination.
 title: postman.md edge topology
 ---
 graph LR
-    messenger:::ui_node --- orchestrator
+    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- reviewer
     orchestrator --- boss
     guardian --- reviewer
     orchestrator --- agent
-    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe
 ```
 
 ````markdown
@@ -204,14 +205,15 @@ graph LR
 
 ```mermaid
 graph LR
-    messenger:::ui_node --- orchestrator
+    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- reviewer
     orchestrator --- boss
     guardian --- reviewer
     orchestrator --- agent
-    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe
 ```
 ````
 

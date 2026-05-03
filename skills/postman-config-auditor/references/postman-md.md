@@ -33,8 +33,8 @@ Supported global keys in `postman.md`:
 
 Rules:
 
-- Prefer marking the UI node in the Mermaid graph with `:::ui_node` or
-  `class <node> ui_node`. Frontmatter `ui_node` is still supported as an
+- Prefer marking the UI node in the Mermaid graph with `class <node> ui_node`.
+  Inline `:::ui_node` also works. Frontmatter `ui_node` is still supported as an
   explicit override.
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
 - `skill_path` may be a scalar path or a YAML list of path entries.
@@ -116,18 +116,19 @@ the first Mermaid fence in that section.
 
 ```mermaid
 graph LR
-    messenger:::ui_node --- orchestrator
+    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- critic
-    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe
 ```
 ````
 
 Edge rules:
 
 - Only `---` is parsed as an edge operator.
-- The UI node may be marked with inline class syntax, such as
-  `messenger:::ui_node`, or with a `class messenger ui_node` statement.
+- The UI node may be marked with a `class messenger ui_node` statement, or with
+  inline class syntax such as `messenger:::ui_node`.
 - `graph`, `flowchart`, `subgraph`, `end`, `direction`, `classDef`, `class`,
   `style`, `click`, `linkStyle`, `accTitle`, and `accDescr` statements are
   skipped.

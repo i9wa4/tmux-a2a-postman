@@ -246,5 +246,5 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
 	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
-	assertContainsNormalized(t, configHelp, "Mermaid ui_node class")
+	assertContainsNormalized(t, configHelp, "Mermaid class <node> ui_node")
 }

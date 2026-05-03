@@ -301,7 +301,7 @@ func TestParseMermaidUINode(t *testing.T) {
 			input: `
 graph LR
     messenger:::ui_node --- orchestrator
-    classDef ui_node fill:#fff3bf,stroke:#f59f00
+    classDef ui_node fill:#fff3bf
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -625,9 +625,10 @@ func TestLoadMarkdownConfig_MermaidUINode(t *testing.T) {
 
 ` + "```mermaid" + `
 graph LR
-    messenger:::ui_node --- orchestrator
+    messenger --- orchestrator
     orchestrator --- worker
-    classDef ui_node fill:#fff3bf,stroke:#f59f00
+    class messenger ui_node
+    classDef ui_node fill:#fff3bf
 ` + "```" + `
 `
 

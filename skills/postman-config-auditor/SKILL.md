@@ -81,7 +81,7 @@ Important merge rules:
 - Confirm every intended route appears as a bidirectional `---` edge.
 - Confirm Mermaid `postman.md` edges use `---`, not arrows such as `-->`.
 - Confirm the human-facing node is marked in the Mermaid graph with
-  `:::ui_node` or `class <node> ui_node`, unless frontmatter intentionally
+  `class <node> ui_node` or `:::ui_node`, unless frontmatter intentionally
   overrides or clears `ui_node`.
 - Confirm missing routes explain dead-letter behavior before blaming role
   templates.

@@ -37,10 +37,11 @@ default means changing `postman.default.toml`, docs, and tests together.
 
 ```mermaid
 graph LR
-    messenger:::ui_node --- orchestrator
+    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- critic
-    classDef ui_node fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe
 ```
 ````
 
