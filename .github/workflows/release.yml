@@ -41,7 +41,7 @@ jobs:
       - name: Validate agent skills
         env:
           GH_TOKEN: ${{ github.token }}
-        run: nix run .#skill-check
+        run: nix run '.#skill-check'
 
       - name: Run GoReleaser
         env:

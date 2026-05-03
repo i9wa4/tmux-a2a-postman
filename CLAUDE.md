@@ -2,9 +2,9 @@
 
 Project-specific instructions for tmux-a2a-postman.
 
-## 1. Workflow
+## 1. Development Checks
 
-### 1.1. tmux-a2a-postman Workflow
+### 1.1. After Implementation
 
 After any implementation work:
 
@@ -16,6 +16,8 @@ After any implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not contain deprecated
   references (e.g., removed commands, renamed flags, deleted packages)
 
+### 1.2. Go Dependency Changes
+
 When changing Go dependencies, `go.mod`, `go.sum`, Go versions, or
 `vendorHash`:
 
@@ -24,18 +26,22 @@ When changing Go dependencies, `go.mod`, `go.sum`, Go versions, or
 - If Nix reports a `vendorHash` mismatch, copy the reported `got:` hash into
   `flake.nix` and rerun the build
 
-### 1.2. Cross-Platform Notes
+## 2. Runtime Portability
+
+### 2.1. Process Liveness
 
 - Do NOT use `/proc/{pid}` for process liveness checks — Linux-only; fails on
   macOS
   - Use `os.FindProcess` + `proc.Signal(syscall.Signal(0))` instead
   - Treat `nil` and `EPERM` as alive; `ESRCH` as dead
 
-### 1.3. Daemon Restart Procedure
+## 3. Daemon Operations
+
+### 3.1. Restart Procedure
 
 Use this when `tmux-a2a-postman stop` fails or when two daemons are running.
 
-#### 1.3.1. Normal restart
+#### 3.1.1. Normal restart
 
 ```bash
 tmux-a2a-postman stop
@@ -43,7 +49,7 @@ tmux-a2a-postman version   # inspect the resolved binary version
 tmux-a2a-postman start
 ```
 
-#### 1.3.2. Two-daemon scenario (stop fails)
+#### 3.1.2. Two-daemon scenario (stop fails)
 
 When two daemons are running, `stop` may silently target the wrong one.
 
@@ -75,13 +81,13 @@ When two daemons are running, `stop` may silently target the wrong one.
    evaluation. For strict HEAD confirmation, clean the worktree, run
    `nix build`, and restart again.
 
-### 1.4. Release Hygiene
+## 4. Release Hygiene
 
 - The tag-push release workflow owns GitHub Release creation via GoReleaser
 - Do not run `gh skill publish --tag` inside the tag-push workflow; that command
   tries to create the tag/release itself and fails when the pushed tag already
   exists
-- Use `nix run .#skill-check` for CI validation of `skills/*/SKILL.md`
+- Use `nix run '.#skill-check'` for CI validation of `skills/*/SKILL.md`
 - Keep exactly one release owner per flow:
   - Manual skill publishing flow: `gh skill publish --tag ...`
   - Repository tag-push flow: pushed `v*` tag + GoReleaser

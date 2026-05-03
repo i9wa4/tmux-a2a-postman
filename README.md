@@ -7,6 +7,7 @@ tmux agent-to-agent message delivery daemon.
 ## 1. Prerequisites
 
 - tmux >= 3.0
+- Go >= 1.26 for `go install`
 
 ## 2. Installation
 
@@ -30,16 +31,16 @@ The `skills/` directory contains optional AI assistant skills:
   topology, and node templates.
 
 These skills are published through GitHub Releases; no separate skill registry
-is required. With GitHub CLI 2.90.0 or newer:
+is required. With a GitHub CLI version that includes `gh skill`:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
 ```
 
-Maintainers can validate the publishable skill metadata through Nix:
+To pin a specific release:
 
 ```sh
-nix run .#skill-check
+gh skill install i9wa4/tmux-a2a-postman postman-send-message@v0.6.3 --agent codex --scope user
 ```
 
 ## 3. Concept

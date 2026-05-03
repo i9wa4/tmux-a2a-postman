@@ -8,7 +8,7 @@
    ```bash
    nix flake check
    nix build
-   nix run .#skill-check
+   nix run '.#skill-check'
    nix develop .#cd --command goreleaser check
    ```
 
@@ -19,7 +19,7 @@
    git push origin main --tags
    ```
 
-4. GitHub Actions validates the skills with `nix run .#skill-check`
+4. GitHub Actions validates the skills with `nix run '.#skill-check'`
 5. GoReleaser creates the GitHub Release and uploads binary archives and
    checksums
 
@@ -58,7 +58,7 @@ because no tag ref is present.
 Check [Releases page](https://github.com/i9wa4/tmux-a2a-postman/releases) for
 completion. A successful release has:
 
-- skills validated by `nix run .#skill-check`
+- skills validated by `nix run '.#skill-check'`
 - GoReleaser archives for darwin/linux amd64/arm64
 - `checksums.txt`
 

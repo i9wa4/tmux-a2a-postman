@@ -129,9 +129,11 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "`postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`, topology, and node templates.")
 	assertContainsNormalized(t, readme, "These skills are published through GitHub Releases; no separate skill registry is required.")
 	assertContainsNormalized(t, readme, "gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user")
-	assertContainsNormalized(t, readme, "nix run .#skill-check")
 	assertContainsNormalized(t, readme, "[skills/postman-config-auditor/references/postman-md.md](skills/postman-config-auditor/references/postman-md.md)")
 	assertContainsNormalized(t, readme, "`postman.toml` is optional; without it, embedded defaults from `internal/config/postman.default.toml` are used.")
+	if strings.Contains(readme, ".#skill-check") {
+		t.Fatal("README exposes maintainer-only skill validation workflow")
+	}
 	for _, hidden := range []string{
 		"tmux-a2a-postman read",
 		"tmux-a2a-postman todo",
@@ -181,6 +183,17 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 			t.Fatalf("config auditor skill still exposes hidden term %q", hidden)
 		}
 	}
+}
+
+func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testing.T) {
+	contributing := readRepoFile(t, "CONTRIBUTING.md")
+	assertContainsNormalized(t, contributing, "nix run '.#skill-check'")
+	assertContainsNormalized(t, contributing, "Do not use `gh skill publish --tag` in the tag-push release workflow.")
+	assertContainsNormalized(t, contributing, "The repository release flow uses the pushed `v*` tag plus GoReleaser")
+
+	releasing := readRepoFile(t, "RELEASING.md")
+	assertContainsNormalized(t, releasing, "Do not run `gh skill publish --tag` from the tag-push workflow.")
+	assertContainsNormalized(t, releasing, "`gh skill publish --dry-run`; the published Git tag and GitHub Release are enough for `gh skill install` to resolve versions.")
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
