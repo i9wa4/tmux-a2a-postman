@@ -5,9 +5,10 @@
 tmux agent-to-agent message delivery daemon.
 
 It runs one daemon per Unix user, treats tmux pane titles as role/node names,
-and delivers `send` messages to filesystem-backed inboxes. Any AI coding agent
-that runs in tmux can take any role; agents read mail with `pop` and inspect
-shared health with `get-health` or `get-health-oneline`.
+and delivers `send` messages to filesystem-backed inboxes. You define role
+names such as `messenger`, `orchestrator`, or `critic`; any AI coding agent in
+tmux can occupy those roles. Agents read mail with `pop` and inspect shared
+health with `get-health` or `get-health-oneline`.
 
 ## 1. Concept
 
@@ -21,7 +22,7 @@ graph TD
     daemon["postman daemon\nroutes by edges"]
     mailbox["filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/"]
 
-    subgraph tmux["tmux session: any AI coding agent can take any role"]
+    subgraph tmux["tmux session: roles you define, occupied by any AI coding agent"]
         messenger["messenger\nhuman-facing ui_node"]
         orchestrator["orchestrator"]
         worker["worker"]
