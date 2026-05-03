@@ -17,25 +17,26 @@ title: tmux-a2a-postman architecture
 ---
 graph TD
     human["human operator\nstarts one daemon"]
-    config["postman.md / postman.toml\nroles, edges, templates"]
+    config["postman.md / postman.toml\nroles, edges, templates\nui_node = messenger"]
     daemon["postman daemon\nroutes by edges"]
     mailbox["filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/"]
-    health["status views\nTUI / get-health / get-health-oneline"]
 
     subgraph tmux["tmux session: any AI coding agent can take any role"]
-        messenger["messenger\nClaude Code"]
+        messenger["messenger\nClaude Code\nhuman-facing ui_node"]
         orchestrator["orchestrator\nCodex CLI"]
         worker["worker\nClaude Code"]
         critic["critic\nany AI coding agent"]
     end
 
     human --> daemon
+    human <--> |talks with| messenger
     config --> daemon
-    tmux -->|send / reply| daemon
-    daemon -->|deliver / notify| tmux
+    messenger <--> |brief / status| orchestrator
+    orchestrator <--> |delegate / report| worker
+    orchestrator <--> |review request| critic
     daemon <--> mailbox
-    mailbox -->|pop reads mail| tmux
-    daemon --> health
+    daemon -.->|delivers these conversations| tmux
+    mailbox -.->|stores mail for pop| tmux
 ```
 
 ## 2. Prerequisites
