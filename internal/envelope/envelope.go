@@ -3,7 +3,6 @@ package envelope
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -207,13 +206,10 @@ func buildEnvelope(
 // RenderReplyCommand normalizes the configured reply command and expands the
 // placeholders used by envelope and draft templates.
 func RenderReplyCommand(replyCmd, contextID, recipient string) string {
-	replyCmd = legacySendMessageTokenRe.ReplaceAllString(replyCmd, "${1}send${2}")
 	replyCmd = strings.ReplaceAll(replyCmd, "{context_id}", contextID)
 	replyCmd = strings.ReplaceAll(replyCmd, "{node}", recipient)
 	return replyCmd
 }
-
-var legacySendMessageTokenRe = regexp.MustCompile(`(^|[[:space:]])send-message([[:space:]]|$)`)
 
 // BuildRoleContent returns canonical role content for a node with sentinel obfuscation.
 // Resolution: config template with CommonTemplate prepend.

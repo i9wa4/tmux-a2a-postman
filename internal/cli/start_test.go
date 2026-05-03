@@ -149,7 +149,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	sessionName := "main"
 
 	configPath := filepath.Join(root, "postman.toml")
-	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+	configContent := "[postman]\nedges = [\"boss --- worker\"]\n\n" +
 		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
 		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
@@ -199,7 +199,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	ownerSessionName := "daemon-pane"
 
 	configPath := filepath.Join(root, "postman.toml")
-	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+	configContent := "[postman]\nedges = [\"boss --- worker\"]\n\n" +
 		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
 		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
@@ -250,7 +250,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonLock(t *testing.T) {
 	sessionName := "main"
 
 	configPath := filepath.Join(root, "postman.toml")
-	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+	configContent := "[postman]\nedges = [\"boss --- worker\"]\n\n" +
 		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
 		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
@@ -300,7 +300,7 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	sessionName := "main"
 
 	configPath := filepath.Join(root, "postman.toml")
-	configContent := "[postman]\nedges = [\"boss -- worker\"]\n\n" +
+	configContent := "[postman]\nedges = [\"boss --- worker\"]\n\n" +
 		"[boss]\nrole = \"boss\"\ntemplate = \"boss\"\n\n" +
 		"[worker]\nrole = \"worker\"\ntemplate = \"worker\"\n"
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
@@ -378,7 +378,7 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 		t.Chdir(root)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
 		t.Setenv("HOME", filepath.Join(envRoot, "home"))
-		content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
 		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
@@ -407,7 +407,7 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 		t.Chdir(root)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
 		t.Setenv("HOME", filepath.Join(envRoot, "home"))
-		content := "[postman]\nui_node = \"critic\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		content := "[postman]\nui_node = \"critic\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
 		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
@@ -433,7 +433,7 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 		t.Chdir(root)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
 		t.Setenv("HOME", filepath.Join(envRoot, "home"))
-		content := "[postman]\nui_node = \"\"\nedges = [\"messenger -- worker\"]\n\n[messenger]\n[worker]\n"
+		content := "[postman]\nui_node = \"\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
 		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}

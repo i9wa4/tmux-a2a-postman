@@ -137,7 +137,7 @@ notification_template = "Custom notification: {{.From}}"
 daemon_message_template = "Custom daemon"
 draft_template = "Custom draft"
 reply_command = "custom-reply"
-edges = ["orchestrator --> worker", "worker --> observer"]
+edges = ["orchestrator --- worker", "worker --- observer"]
 
 [orchestrator]
 template = "orchestrator template"
@@ -209,8 +209,8 @@ func TestLoadConfig_EdgesOnlyTOMLMaterializesNodes(t *testing.T) {
 	content := `
 [postman]
 edges = [
-  "messenger -- orchestrator",
-  "orchestrator -- worker -- critic",
+  "messenger --- orchestrator",
+  "orchestrator --- worker --- critic",
 ]
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -243,7 +243,7 @@ func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	content := `## Edges
+	content := `## ` + "`edges`" + `
 
 ` + "```mermaid" + `
 graph LR
@@ -266,13 +266,13 @@ graph LR
 	}
 
 	wantEdges := []string{
-		"messenger -- orchestrator",
-		"orchestrator -- worker",
-		"orchestrator -- worker-alt",
-		"orchestrator -- critic",
-		"orchestrator -- boss",
-		"guardian -- critic",
-		"orchestrator -- agent",
+		"messenger --- orchestrator",
+		"orchestrator --- worker",
+		"orchestrator --- worker-alt",
+		"orchestrator --- critic",
+		"orchestrator --- boss",
+		"guardian --- critic",
+		"orchestrator --- agent",
 	}
 	if strings.Join(cfg.Edges, "\n") != strings.Join(wantEdges, "\n") {
 		t.Fatalf("Edges = %v, want %v", cfg.Edges, wantEdges)
@@ -403,7 +403,7 @@ func TestLoadConfig_ExplicitConfig_MarksUINodeAsExplicit(t *testing.T) {
 			if tc.uiNode != "" {
 				content += tc.uiNode + "\n"
 			}
-			content += "edges = [\"worker -- orchestrator\"]\n\n[worker]\n[orchestrator]\n"
+			content += "edges = [\"worker --- orchestrator\"]\n\n[worker]\n[orchestrator]\n"
 			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 				t.Fatalf("WriteFile: %v", err)
 			}
@@ -428,7 +428,7 @@ func TestLoadConfig_Partial(t *testing.T) {
 scan_interval_seconds = 3.0
 base_dir = "/partial/base"
 
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 [orchestrator]
@@ -469,15 +469,15 @@ func TestParseEdges(t *testing.T) {
 	}{
 		{
 			name:  "simple bidirectional edge",
-			edges: []string{"orchestrator -- worker"},
+			edges: []string{"orchestrator --- worker"},
 			want: map[string][]string{
 				"orchestrator": {"worker"},
 				"worker":       {"orchestrator"},
 			},
 		},
 		{
-			name:  "chain syntax (A -- B -- C)",
-			edges: []string{"messenger -- orchestrator -- worker"},
+			name:  "chain syntax (A --- B --- C)",
+			edges: []string{"messenger --- orchestrator --- worker"},
 			want: map[string][]string{
 				"messenger":    {"orchestrator"},
 				"orchestrator": {"messenger", "worker"},
@@ -487,8 +487,8 @@ func TestParseEdges(t *testing.T) {
 		{
 			name: "multiple edges",
 			edges: []string{
-				"orchestrator -- worker",
-				"orchestrator -- observer",
+				"orchestrator --- worker",
+				"orchestrator --- observer",
 			},
 			want: map[string][]string{
 				"orchestrator": {"worker", "observer"},
@@ -498,7 +498,7 @@ func TestParseEdges(t *testing.T) {
 		},
 		{
 			name:  "empty edge (skipped)",
-			edges: []string{"", "  ", "orchestrator -- worker"},
+			edges: []string{"", "  ", "orchestrator --- worker"},
 			want: map[string][]string{
 				"orchestrator": {"worker"},
 				"worker":       {"orchestrator"},
@@ -510,8 +510,18 @@ func TestParseEdges(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "double dash rejected",
+			edges:   []string{"orchestrator -- worker"},
+			wantErr: true,
+		},
+		{
+			name:    "arrow edge rejected",
+			edges:   []string{"orchestrator --> worker"},
+			wantErr: true,
+		},
+		{
 			name:    "invalid format (empty node)",
-			edges:   []string{"orchestrator -- "},
+			edges:   []string{"orchestrator --- "},
 			wantErr: true,
 		},
 		{
@@ -563,7 +573,7 @@ func TestConfig_Fallback(t *testing.T) {
 [postman]
 scan_interval_seconds = 5.0
 
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 [orchestrator]
@@ -593,7 +603,7 @@ func TestLoadConfig_BaseDir(t *testing.T) {
 [postman]
 base_dir = "/custom/postman"
 
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 [orchestrator]
@@ -896,7 +906,7 @@ role = "worker"
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Verify backward compatibility (main config works)
+	// Verify main config works without nodes/ directory.
 	if cfg.Nodes["worker"].Template != "worker template from main" {
 		t.Errorf("worker template: got %q, want %q", cfg.Nodes["worker"].Template, "worker template from main")
 	}
@@ -1265,7 +1275,7 @@ func TestLoadConfig_ProjectLocal_Only(t *testing.T) {
 [postman]
 scan_interval_seconds = 7.0
 base_dir = "/project/data"
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 role = "worker"
@@ -1323,7 +1333,7 @@ func TestLoadConfig_ProjectLocal_Overrides_XDG(t *testing.T) {
 [postman]
 scan_interval_seconds = 2.0
 enter_delay_seconds = 1.0
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 role = "worker"
@@ -1674,7 +1684,7 @@ func setupExplicitProjectLocalOverlayFixture(t *testing.T, baseContent, localCon
 func zeroValueInventoryBaseConfig() string {
 	return `
 [postman]
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 enter_verify_delay_seconds = 1.5
 enter_retry_max = 4
 message_ttl_seconds = 600.0
@@ -1998,7 +2008,7 @@ func TestLoadConfig_ProjectLocal_Nodes_Override(t *testing.T) {
 	}
 	xdgConfig := `
 [postman]
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 role = "xdg-worker"
@@ -2073,7 +2083,7 @@ func TestLoadConfig_ProjectLocal_Nodes_Merge(t *testing.T) {
 	}
 	xdgConfig := `
 [postman]
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [orchestrator]
 role = "xdg-orchestrator"
@@ -2143,7 +2153,7 @@ func TestLoadConfig_ProjectLocal_Nodes_SkipsReserved(t *testing.T) {
 	}
 	xdgConfig := `
 [postman]
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 role = "xdg-worker"
@@ -2224,7 +2234,7 @@ func TestLoadConfig_ExplicitConfig_RespectProjectLocalNodes(t *testing.T) {
 	}
 	explicitConfig := `
 [postman]
-edges = ["worker -- orchestrator"]
+edges = ["worker --- orchestrator"]
 
 [worker]
 role = "explicit-worker"

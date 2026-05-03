@@ -178,7 +178,7 @@ role: worker`,
 	}
 }
 
-// TestParseMermaidEdges covers: graph header stripped, --- normalized to --,
+// TestParseMermaidEdges covers: graph header stripped, --- preserved,
 // blank lines skipped.
 func TestParseMermaidEdges(t *testing.T) {
 	tests := []struct {
@@ -191,11 +191,11 @@ func TestParseMermaidEdges(t *testing.T) {
 			input: `
 graph LR
     boss --- orchestrator
-    orchestrator -- worker
+    orchestrator --- worker
 `,
 			want: []string{
-				"boss -- orchestrator",
-				"orchestrator -- worker",
+				"boss --- orchestrator",
+				"orchestrator --- worker",
 			},
 		},
 		{
@@ -211,22 +211,22 @@ graph LR
     orchestrator --- agent
 `,
 			want: []string{
-				"messenger -- orchestrator",
-				"orchestrator -- worker",
-				"orchestrator -- worker-alt",
-				"orchestrator -- critic",
-				"orchestrator -- boss",
-				"guardian -- critic",
-				"orchestrator -- agent",
+				"messenger --- orchestrator",
+				"orchestrator --- worker",
+				"orchestrator --- worker-alt",
+				"orchestrator --- critic",
+				"orchestrator --- boss",
+				"guardian --- critic",
+				"orchestrator --- agent",
 			},
 		},
 		{
-			name: "directed edge passthrough",
+			name: "arrow edge ignored",
 			input: `
 graph TD
     a --> b
 `,
-			want: []string{"a --> b"},
+			want: nil,
 		},
 		{
 			name: "graph TD stripped case-insensitive",
@@ -234,7 +234,7 @@ graph TD
 GRAPH TD
     x --- y
 `,
-			want: []string{"x -- y"},
+			want: []string{"x --- y"},
 		},
 		{
 			name: "skips directives and strips node labels",
@@ -245,12 +245,12 @@ flowchart LR
     class messenger active
     click messenger call callback()
 `,
-			want: []string{"messenger -- orchestrator"},
+			want: []string{"messenger --- orchestrator"},
 		},
 		{
 			name:  "semicolon-separated graph",
 			input: `graph LR; a --- b; b --- c;`,
-			want:  []string{"a -- b", "b -- c"},
+			want:  []string{"a --- b", "b --- c"},
 		},
 		{
 			name:  "empty block",
@@ -274,7 +274,7 @@ flowchart LR
 	}
 }
 
-// TestExtractH2Sections covers: backtick node name extraction, special Edges
+// TestExtractH2Sections covers: backtick node name extraction, special `edges`
 // heading, headings without backticks skipped.
 func TestExtractH2Sections(t *testing.T) {
 	t.Run("BacktickName: worker-alt extracted", func(t *testing.T) {
@@ -298,16 +298,16 @@ func TestExtractH2Sections(t *testing.T) {
 		}
 	})
 
-	t.Run("Edges plain text", func(t *testing.T) {
-		content := "## Edges\n\n```mermaid\ngraph LR\n    a -- b\n```"
+	t.Run("Edges plain text skipped", func(t *testing.T) {
+		content := "## Edges\n\n```mermaid\ngraph LR\n    a --- b\n```"
 		_, sections := extractH2Sections(content)
-		if _, ok := sections["edges"]; !ok {
-			t.Error("key 'edges' missing")
+		if _, ok := sections["edges"]; ok {
+			t.Error("plain-text Edges heading should not become key 'edges'")
 		}
 	})
 
 	t.Run("edges backtick", func(t *testing.T) {
-		content := "## 1. `edges`\n\n```mermaid\ngraph LR\n    a -- b\n```"
+		content := "## 1. `edges`\n\n```mermaid\ngraph LR\n    a --- b\n```"
 		_, sections := extractH2Sections(content)
 		if _, ok := sections["edges"]; !ok {
 			t.Error("key 'edges' missing for backtick format")
@@ -329,32 +329,13 @@ func TestExtractH2Sections(t *testing.T) {
 	})
 }
 
-// TestStripHeadingNumber covers: numbered and unnumbered headings.
-func TestStripHeadingNumber(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"Edges", "Edges"},
-		{"1. Edges", "Edges"},
-		{"13. Common Template", "Common Template"},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		got := stripHeadingNumber(tt.input)
-		if got != tt.want {
-			t.Errorf("stripHeadingNumber(%q): got %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-// TestExtractH2Sections_Numbered covers: numbered headings like "## 1. Edges".
+// TestExtractH2Sections_Numbered covers numbered backtick headings like "## 1. `edges`".
 func TestExtractH2Sections_Numbered(t *testing.T) {
-	t.Run("Edges with number", func(t *testing.T) {
+	t.Run("plain Edges with number skipped", func(t *testing.T) {
 		content := "## 1. Edges\n\nedges body"
 		_, sections := extractH2Sections(content)
-		if _, ok := sections["edges"]; !ok {
-			t.Error("key 'edges' missing for numbered heading")
+		if _, ok := sections["edges"]; ok {
+			t.Error("plain numbered Edges heading should not become key 'edges'")
 		}
 	})
 
@@ -427,8 +408,8 @@ func TestExtractNodeFields(t *testing.T) {
 	})
 }
 
-// TestExtractNodeFields_FallbackFrontmatter covers backward compat: frontmatter
-// still works when no h3 reserved sections present.
+// TestExtractNodeFields_FallbackFrontmatter covers frontmatter parsing
+// independently from h3 reserved sections.
 func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
 	body := "---\nrole: executor\n---\n\nTemplate body."
 	role, tmpl := extractNodeFields(body)
@@ -436,7 +417,6 @@ func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
 	if role != "" {
 		t.Fatalf("expected empty from extractNodeFields, got role=%q", role)
 	}
-	// Caller (loadMarkdownConfig) falls back to frontmatter
 	fm, err := parseFrontmatter(body)
 	if err != nil {
 		t.Fatalf("parseFrontmatter error: %v", err)
@@ -463,7 +443,7 @@ ui_node: messenger
 reply_command: send --to <r> --body "<m>"
 ---
 
-## Edges
+## ` + "`edges`" + `
 
 ` + "```mermaid" + `
 graph LR
@@ -513,12 +493,12 @@ Worker template.
 		}
 		found := false
 		for _, e := range cfg.Edges {
-			if e == "boss -- orchestrator" {
+			if e == "boss --- orchestrator" {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("expected 'boss -- orchestrator' in %v", cfg.Edges)
+			t.Errorf("expected 'boss --- orchestrator' in %v", cfg.Edges)
 		}
 	})
 
@@ -549,13 +529,13 @@ Worker template.
 	})
 }
 
-// TestLoadMarkdownConfig_NumberedHeadings covers: numbered headings like "## 1. Edges".
+// TestLoadMarkdownConfig_NumberedHeadings covers numbered backtick headings.
 func TestLoadMarkdownConfig_NumberedHeadings(t *testing.T) {
 	content := `---
 ui_node: messenger
 ---
 
-## 1. Edges
+## 1. ` + "`edges`" + `
 
 ` + "```mermaid" + `
 graph LR

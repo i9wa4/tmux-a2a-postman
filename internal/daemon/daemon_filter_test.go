@@ -15,8 +15,8 @@ func TestFilterNodesByEdges_PreservesSessionPrefixedKeys(t *testing.T) {
 	}
 
 	filterNodesByEdges(nodes, []string{
-		"test-session:messenger -- review-session:worker",
-		"messenger -- orchestrator",
+		"test-session:messenger --- review-session:worker",
+		"messenger --- orchestrator",
 	})
 
 	if _, ok := nodes["test-session:messenger"]; !ok {

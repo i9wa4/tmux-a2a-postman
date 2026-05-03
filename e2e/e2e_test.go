@@ -13,7 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
-// TestE2E_MessageFileFormat tests message file format compatibility
+// TestE2E_MessageFileFormat tests the message file format.
 // between Go binary and Python scripts.
 func TestE2E_MessageFileFormat(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -102,7 +102,7 @@ graph LR
 In `postman.md`:
 
 ````markdown
-## Edges
+## `edges`
 
 ```mermaid
 graph LR
@@ -121,13 +121,13 @@ Or in `postman.toml`:
 ```toml
 [postman]
 edges = [
-  "messenger -- orchestrator",
-  "orchestrator -- worker",
-  "orchestrator -- worker-alt",
-  "orchestrator -- critic",
-  "orchestrator -- boss",
-  "guardian -- critic",
-  "orchestrator -- agent",
+  "messenger --- orchestrator",
+  "orchestrator --- worker",
+  "orchestrator --- worker-alt",
+  "orchestrator --- critic",
+  "orchestrator --- boss",
+  "guardian --- critic",
+  "orchestrator --- agent",
 ]
 ```
 

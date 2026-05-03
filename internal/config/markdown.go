@@ -108,8 +108,9 @@ func extractMermaidBlock(content string) string {
 
 // parseMermaidEdges extracts edge definitions from a Mermaid graph block.
 // Strips graph headers and non-edge directives.
-// Normalizes Mermaid node decorations and undirected "---" edges to "--".
-// Returns a []string in ParseEdges-compatible format.
+// Normalizes Mermaid node decorations and keeps "---" as the config edge
+// separator.
+// Returns a []string in the Config.Edges format.
 func parseMermaidEdges(mermaidBlock string) []string {
 	var edges []string
 	for _, statement := range mermaidStatements(mermaidBlock) {
@@ -161,10 +162,7 @@ func parseMermaidEdgeStatement(statement string) (string, bool) {
 		raw        string
 		normalized string
 	}{
-		{"<-->", "--"},
-		{"-->", "-->"},
-		{"---", "--"},
-		{"--", "--"},
+		{"---", "---"},
 	}
 	for _, op := range operators {
 		if !strings.Contains(statement, op.raw) {
@@ -227,13 +225,6 @@ func extractBacktickName(text string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(rest[:end]))
-}
-
-// stripHeadingNumber strips a leading "N. " prefix from a heading string.
-// "1. Edges" returns "Edges"; "Edges" returns "Edges".
-func stripHeadingNumber(heading string) string {
-	s := strings.TrimSpace(heading)
-	return strings.TrimSpace(strings.TrimLeft(s, "0123456789. "))
 }
 
 // extractNodeFields extracts role from reserved ### `key` sections within a
@@ -302,12 +293,11 @@ var reservedH2Names = map[string]string{
 	"message_footer":  "message_footer",
 }
 
-// extractH2Sections parses Markdown content into a map of section key → body.
+// extractH2Sections parses Markdown content into a map of section key -> body.
 //
 // Backtick-wrapped names are extracted from h2 headings. Reserved names
 // (edges, common_template) become special sections; all others become node
-// sections. Plain-text "## Edges" (case-insensitive, with optional numbering)
-// is also accepted for backward compatibility.
+// sections.
 // Section body is the text from the heading line (exclusive) until the next
 // h2 heading or end of content.
 func extractH2Sections(content string) ([]string, map[string]string) {
@@ -334,11 +324,6 @@ func extractH2Sections(content string) ([]string, map[string]string) {
 				found = append(found, section{key: name, start: i + 1})
 			}
 			continue
-		}
-		// Fallback: plain-text "Edges" (supports "## 1. Edges")
-		cleaned := strings.ToLower(stripHeadingNumber(heading))
-		if cleaned == "edges" {
-			found = append(found, section{key: "edges", start: i + 1})
 		}
 	}
 
@@ -375,8 +360,7 @@ func stripFrontmatter(content string) string {
 // reply_command → Config.ReplyCommand.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
-// Node h2 sections: "## `name`" → node template with ### `role` h3 field
-// (falls back to per-node frontmatter for backward compat).
+// Node h2 sections: "## `name`" → node template with ### `role` h3 field.
 func loadMarkdownConfig(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

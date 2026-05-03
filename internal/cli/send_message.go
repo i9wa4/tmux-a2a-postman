@@ -216,8 +216,6 @@ func RunSendMessage(args []string) error {
 		"template":       getNodeTemplate(cfg, *to),
 		"session_name":   sessionName,
 		"sender_pane_id": config.GetTmuxPaneID(),
-		"from":           sender,
-		"to":             *to,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))

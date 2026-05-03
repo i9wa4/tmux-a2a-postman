@@ -35,7 +35,7 @@ func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"worker -- critic"}
+	cfg.Edges = []string{"worker --- critic"}
 
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
@@ -133,7 +133,7 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"worker -- critic"}
+	cfg.Edges = []string{"worker --- critic"}
 
 	for _, dir := range []string{
 		filepath.Join(sessionDir, "inbox", "worker"),
@@ -252,7 +252,7 @@ func TestRelayDaemonEventsToTUI_SkipsCanonicalHealthForForeignOwnedSession(t *te
 	sessionName := "review"
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"worker -- critic"}
+	cfg.Edges = []string{"worker --- critic"}
 
 	for _, dir := range []string{
 		filepath.Join(tmpDir, contextID, sessionName, "inbox", "worker"),

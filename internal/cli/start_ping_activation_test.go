@@ -24,7 +24,7 @@ func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"dotfiles:orchestrator -- dotfiles:messenger"}
+	cfg.Edges = []string{"dotfiles:orchestrator --- dotfiles:messenger"}
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")
@@ -99,7 +99,7 @@ func TestActivateStartupSessions_DefaultDoesNotClaimForeignSessions(t *testing.T
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"messenger -- orchestrator"}
+	cfg.Edges = []string{"messenger --- orchestrator"}
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")
@@ -136,7 +136,7 @@ func TestActivateStartupSessions_OptInMakesForeignSessionDiscoverableAndOwned(t 
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"messenger -- orchestrator"}
+	cfg.Edges = []string{"messenger --- orchestrator"}
 	autoEnable := true
 	cfg.AutoEnableNewSessions = &autoEnable
 
@@ -332,7 +332,7 @@ func TestActivateSessionForPing_RejectsSameUserOwnedSession(t *testing.T) {
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 
 	_, err := activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetSession, cfg, nil, nil)
 	if err == nil {
@@ -358,7 +358,7 @@ func TestActivateSessionForPing_PreservesBareEdgeKeys(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 
 	scriptDir := t.TempDir()
 	logPath := filepath.Join(root, "tmux.log")

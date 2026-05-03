@@ -215,7 +215,7 @@ func TestRunPop_PrintsOnlyStoredMessageOnDefaultPop(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"orchestrator --- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
@@ -255,7 +255,7 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"orchestrator --- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
@@ -292,7 +292,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"orchestrator -- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"orchestrator --- worker\"]\n\n[orchestrator]\nrole = \"orchestrator\"\n\n[worker]\nrole = \"worker\"\n"),
 		0o600,
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)

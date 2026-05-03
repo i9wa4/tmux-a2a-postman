@@ -111,7 +111,7 @@ func TestSendMessage_MissingSender(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["orchestrator -- worker"]
+edges = ["orchestrator --- worker"]
 
 [messenger]
 role = "messenger"
@@ -153,7 +153,7 @@ func TestSendMessage_MissingReceiver(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- orchestrator"]
+edges = ["messenger --- orchestrator"]
 
 [messenger]
 role = "messenger"
@@ -195,7 +195,7 @@ func TestSendMessage_InvalidEdge(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- orchestrator -- worker"]
+edges = ["messenger --- orchestrator --- worker"]
 
 [messenger]
 role = "messenger"
@@ -237,7 +237,7 @@ func TestSendMessage_AllowsSessionPrefixedGraphKeys(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["test-session:messenger -- review-session:worker"]
+edges = ["test-session:messenger --- review-session:worker"]
 
 ["test-session:messenger"]
 role = "messenger"
@@ -280,8 +280,8 @@ func TestSendMessage_AllowsMixedSenderGraphKeys(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
 edges = [
-  "messenger -- orchestrator",
-  "test-session:messenger -- review-session:worker",
+  "messenger --- orchestrator",
+  "test-session:messenger --- review-session:worker",
 ]
 
 [messenger]
@@ -330,7 +330,7 @@ func TestSendMessage_PrefixedRecipientRequiresExplicitGraphKey(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["test-session:messenger -- worker"]
+edges = ["test-session:messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -369,7 +369,7 @@ func TestSendMessage_AllowsSameSessionFullGraphKeyForBareRecipient(t *testing.T)
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["test-session:messenger -- test-session:worker"]
+edges = ["test-session:messenger --- test-session:worker"]
 
 ["test-session:messenger"]
 role = "messenger"
@@ -411,7 +411,7 @@ func TestSendMessage_AllowsBareGraphKeyForSameSessionPrefixedRecipient(t *testin
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -475,14 +475,14 @@ func TestRunSendMessage_IdempotencyKeyFlagRejected(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_DraftTemplateNormalizesLegacyReplyCommand(t *testing.T) {
+func TestRunSendMessage_DraftTemplateExpandsReplyCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-reply_command = "send-message --to <recipient>"
+reply_command = "send --to <recipient>"
 draft_template = "{reply_command}"
 message_footer = ""
-edges = ["orchestrator -- worker"]
+edges = ["orchestrator --- worker"]
 
 [orchestrator]
 role = "orchestrator"
@@ -518,11 +518,8 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("ReadFile draft: %v", err)
 	}
-	if strings.Contains(string(draftContent), "send-message") {
-		t.Fatalf("draft content still contains legacy send-message: %q", string(draftContent))
-	}
 	if !strings.Contains(string(draftContent), "send --to worker") {
-		t.Fatalf("draft content missing normalized reply command: %q", string(draftContent))
+		t.Fatalf("draft content missing reply command: %q", string(draftContent))
 	}
 }
 
@@ -531,13 +528,13 @@ func TestRunSendMessage_DraftTemplatePreservesMultilineReplyCommand(t *testing.T
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
 reply_command = """
-tmux-a2a-postman send-message
+tmux-a2a-postman send
   --to <recipient>
   --body "<your message>"
 """
 draft_template = "{reply_command}"
 message_footer = ""
-edges = ["orchestrator -- worker"]
+edges = ["orchestrator --- worker"]
 
 [orchestrator]
 role = "orchestrator"
@@ -577,9 +574,6 @@ role = "worker"
 	if !strings.Contains(string(draftContent), want) {
 		t.Fatalf("draft content missing preserved multiline reply command:\n%s", string(draftContent))
 	}
-	if strings.Contains(string(draftContent), "send-message") {
-		t.Fatalf("draft content still contains legacy send-message: %q", string(draftContent))
-	}
 }
 
 func TestRunSendMessage_MessageFooterUsesRecipientReachability(t *testing.T) {
@@ -594,7 +588,7 @@ draft_template = "# Content\n\n"
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
 """
-edges = ["messenger -- orchestrator -- boss"]
+edges = ["messenger --- orchestrator --- boss"]
 
 [messenger]
 role = "messenger"
@@ -660,7 +654,7 @@ draft_template = "# Content\n\n"
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
 """
-edges = ["messenger -- review-session:orchestrator -- boss"]
+edges = ["messenger --- review-session:orchestrator --- boss"]
 
 [messenger]
 role = "messenger"
@@ -723,7 +717,7 @@ func TestRunSendMessage_DefaultMessageFooterUsesConfiguredReplyCommand(t *testin
 	configContent := `[postman]
 reply_command = "custom-reply --context {context_id} --to <recipient>"
 draft_template = "# Content\n\n"
-edges = ["messenger -- orchestrator"]
+edges = ["messenger --- orchestrator"]
 
 [messenger]
 role = "messenger"
@@ -775,7 +769,7 @@ func TestRunSendMessage_DefaultJSONReportsQueuedWhenOnlyLocalHandoffIsConfirmed(
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -841,7 +835,7 @@ func TestRunSendMessage_DefaultJSONReportsProcessedWhenDaemonConsumesDirectPost(
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -920,7 +914,7 @@ func TestRunSendMessage_ReturnsErrorWhenDaemonDeadLettersDirectPost(t *testing.T
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -988,7 +982,7 @@ func TestRunSendMessage_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -1103,7 +1097,7 @@ func TestRunSendMessage_UsesDaemonSubmitForOwnedSessionInLegacyMode(t *testing.T
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"
@@ -1237,7 +1231,7 @@ func TestRunSendMessage_DefaultJSONUsesDaemonSubmitWhenDaemonOwnsSession(t *test
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-edges = ["messenger -- worker"]
+edges = ["messenger --- worker"]
 
 [messenger]
 role = "messenger"

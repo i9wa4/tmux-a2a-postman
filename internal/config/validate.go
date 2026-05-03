@@ -41,21 +41,24 @@ func ValidateConfig(cfg *Config) []ValidationError {
 	// Rule 1: edges node reference check (severity: error)
 	// IMPORTANT: "postman" is a reserved name and should be skipped (not an error)
 	for i, edge := range cfg.Edges {
-		// Parse edge using same logic as ParseEdges
-		var separator string
-		switch {
-		case strings.Contains(edge, " --> "):
-			separator = " --> "
-		case strings.Contains(edge, " -- "):
-			separator = " -- "
-		default:
-			// Invalid separator - skip (ParseEdges will handle)
+		nodeNames := splitEdgeNodeNames(edge)
+		if strings.TrimSpace(edge) != "" && len(nodeNames) < 2 {
+			errors = append(errors, ValidationError{
+				Field:    fmt.Sprintf("edges[%d]", i),
+				Message:  fmt.Sprintf("invalid edge format %q (use \"node-a --- node-b\")", edge),
+				Severity: "error",
+			})
 			continue
 		}
-
-		parts := strings.Split(edge, separator)
-		for _, part := range parts {
-			nodeName := strings.TrimSpace(part)
+		for _, nodeName := range nodeNames {
+			if strings.HasPrefix(nodeName, "-") {
+				errors = append(errors, ValidationError{
+					Field:    fmt.Sprintf("edges[%d]", i),
+					Message:  fmt.Sprintf("invalid edge format %q (use \"node-a --- node-b\")", edge),
+					Severity: "error",
+				})
+				continue
+			}
 			// Skip "postman" (reserved system name)
 			if nodeName == "postman" {
 				continue
@@ -106,23 +109,16 @@ func ValidateConfig(cfg *Config) []ValidationError {
 }
 
 // normalizeEdge normalizes an edge string for duplicate detection.
-// Converts both "A -- B" and "B -- A" to the same representation.
+// Converts "A --- B" and "B --- A" to the same representation.
 func normalizeEdge(edge string) string {
 	edge = strings.TrimSpace(edge)
 
 	// Detect separator
-	var separator string
 	var nodes []string
-	switch {
-	case strings.Contains(edge, " --> "):
-		// Directed edge: preserve order
-		return edge
-	case strings.Contains(edge, " -- "):
-		separator = " -- "
-		parts := strings.Split(edge, separator)
-		for _, p := range parts {
-			nodes = append(nodes, strings.TrimSpace(p))
-		}
+	separator := edgeSeparator(edge)
+	switch separator {
+	case "---":
+		nodes = splitEdgeNodeNames(edge)
 	default:
 		// Invalid separator - return as-is
 		return edge
@@ -140,7 +136,7 @@ func normalizeEdge(edge string) string {
 				}
 			}
 		}
-		return strings.Join(sorted, separator)
+		return strings.Join(sorted, " --- ")
 	}
 
 	return edge

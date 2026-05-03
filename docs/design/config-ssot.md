@@ -11,7 +11,7 @@ defaults.
   `internal/config/postman.default.toml`.
 - `postman.toml` is optional. With no user TOML, embedded defaults are enough
   to run the daemon.
-- `postman.md` may contain only a Mermaid `Edges` diagram. Nodes referenced by
+- `postman.md` may contain only a Mermaid `edges` section. Nodes referenced by
   those edges are materialized with empty `NodeConfig` values.
 - Explicit XDG and project-local overrides merge on top of embedded defaults.
 - Non-configurable implementation timings must be named constants in code, not
@@ -29,7 +29,7 @@ default means changing `postman.default.toml`, docs, and tests together.
 ## Minimal Topology
 
 ````markdown
-## Edges
+## `edges`
 
 ```mermaid
 graph LR

@@ -115,35 +115,6 @@ func TestProjectMailboxProjection_ControlPlaneOnlyExcluded(t *testing.T) {
 	}
 }
 
-func TestProjectMailboxProjection_AcceptsLegacyMailboxProjectionEvents(t *testing.T) {
-	sessionDir := t.TempDir()
-	now := time.Date(2026, time.April, 14, 4, 30, 0, 0, time.UTC)
-
-	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
-	if err != nil {
-		t.Fatalf("OpenShadowWriter() error = %v", err)
-	}
-
-	appendMailboxEventForTest(t, writer, legacyCompatibilityMailboxDeliveredEventType, journal.Visibility("compatibility_mailbox"), journal.MailboxEventPayload{
-		MessageID: "20260414-043001-r1111-from-orchestrator-to-worker.md",
-		From:      "orchestrator",
-		To:        "worker",
-		Path:      filepath.Join("inbox", "worker", "20260414-043001-r1111-from-orchestrator-to-worker.md"),
-		Content:   "legacy body",
-	}, now.Add(time.Second))
-
-	projected, ok, err := ProjectMailboxProjection(sessionDir)
-	if err != nil {
-		t.Fatalf("ProjectMailboxProjection() error = %v", err)
-	}
-	if !ok {
-		t.Fatal("ProjectMailboxProjection() ok = false, want true")
-	}
-	if got := projected.Inbox[pathKey(filepath.Join("inbox", "worker", "20260414-043001-r1111-from-orchestrator-to-worker.md"))]; got.Content != "legacy body" {
-		t.Fatalf("legacy inbox projection content = %q, want legacy body", got.Content)
-	}
-}
-
 func TestSyncMailboxProjection_GenerationQuarantine(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 5, 0, 0, 0, time.UTC)

@@ -103,7 +103,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		[]byte("[postman]\nedges = [\"worker --- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
@@ -161,7 +161,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
-		Edges: []string{"worker -- critic"},
+		Edges: []string{"worker --- critic"},
 	})
 	if err != nil {
 		t.Fatalf("collectSessionHealthLegacy: %v", err)
@@ -249,7 +249,7 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"worker -- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
+		[]byte("[postman]\nedges = [\"worker --- critic\"]\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
@@ -302,7 +302,7 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
-		Edges: []string{"worker -- critic"},
+		Edges: []string{"worker --- critic"},
 	})
 	if err != nil {
 		t.Fatalf("collectSessionHealthLegacy: %v", err)
@@ -387,7 +387,7 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"messenger -- critic -- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"messenger --- critic --- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[critic]\ntemplate = \"critic\"\nrole = \"critic\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)
@@ -514,7 +514,7 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	if err := os.WriteFile(
 		configPath,
-		[]byte("[postman]\nedges = [\"messenger -- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
+		[]byte("[postman]\nedges = [\"messenger --- worker\"]\n\n[messenger]\ntemplate = \"messenger\"\nrole = \"messenger\"\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n"),
 		0o644,
 	); err != nil {
 		t.Fatalf("WriteFile(postman.toml): %v", err)

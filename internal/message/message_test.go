@@ -976,7 +976,7 @@ func TestDaemonMessage_NoHoldingState(t *testing.T) {
 	sessionDir := filepath.Join(tmpDir, "test-session")
 
 	cfg := &config.Config{
-		Edges:                []string{"daemon -- worker"},
+		Edges:                []string{"daemon --- worker"},
 		Nodes:                map[string]config.NodeConfig{"worker": {}},
 		NotificationTemplate: "test notification",
 		TmuxTimeout:          1.0,
@@ -1168,7 +1168,7 @@ edge_violation_warning_template = "Routing denied $(printf project-local-edge-wa
 	}
 }
 
-func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *testing.T) {
+func TestDeliverMessage_RoutingDeniedWarningIncludesReplyCommand(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "test")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
@@ -1188,7 +1188,7 @@ func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *test
 	cfg := &config.Config{
 		EnterDelay:                   0.1,
 		TmuxTimeout:                  1.0,
-		ReplyCommand:                 "send-message --to <recipient>",
+		ReplyCommand:                 "send --to <recipient>",
 		EdgeViolationWarningTemplate: "Reply: {reply_command}",
 	}
 
@@ -1209,11 +1209,8 @@ func TestDeliverMessage_RoutingDeniedWarningNormalizesLegacyReplyCommand(t *test
 	if err != nil {
 		t.Fatalf("ReadFile warning failed: %v", err)
 	}
-	if strings.Contains(string(warningBody), "send-message") {
-		t.Fatalf("warning still contains legacy send-message: %q", string(warningBody))
-	}
 	if !strings.Contains(string(warningBody), "send --to <recipient>") {
-		t.Fatalf("warning missing normalized reply command: %q", string(warningBody))
+		t.Fatalf("warning missing reply command: %q", string(warningBody))
 	}
 }
 

@@ -26,8 +26,8 @@ Core config:
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window
 
-Edge syntax (both separators create bidirectional routes):
+Edge syntax:
   edges = [
-    "node-a -- node-b",   # bidirectional: a<->b
-    "node-b --> node-c",  # also bidirectional: b<->c
+    "node-a --- node-b",   # bidirectional: a<->b
+    "node-b --- node-c",   # bidirectional: b<->c
   ]

@@ -47,39 +47,7 @@ func compactSessionStatusMark(visibleState string) string {
 }
 
 func orderedEdgeNodeNames(edges []string) []string {
-	seen := make(map[string]struct{})
-	var ordered []string
-
-	for _, edge := range edges {
-		edge = strings.TrimSpace(edge)
-		if edge == "" {
-			continue
-		}
-
-		var parts []string
-		switch {
-		case strings.Contains(edge, "-->"):
-			parts = strings.Split(edge, "-->")
-		case strings.Contains(edge, "--"):
-			parts = strings.Split(edge, "--")
-		default:
-			continue
-		}
-
-		for _, part := range parts {
-			nodeName := strings.TrimSpace(part)
-			if nodeName == "" {
-				continue
-			}
-			if _, ok := seen[nodeName]; ok {
-				continue
-			}
-			seen[nodeName] = struct{}{}
-			ordered = append(ordered, nodeName)
-		}
-	}
-
-	return ordered
+	return config.OrderedEdgeNodeNames(edges)
 }
 
 func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {

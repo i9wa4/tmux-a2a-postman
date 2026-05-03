@@ -147,7 +147,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 	cfg.NotificationTemplate = "new message from {from_node}"
 	cfg.TmuxTimeout = 0.01
 	adjacency, err := config.ParseEdges(cfg.Edges)
@@ -235,7 +235,7 @@ func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) 
 	t.Cleanup(journal.ClearProcessManager)
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 	cfg.NotificationTemplate = "new message from {from_node}"
 	cfg.TmuxTimeout = 0.01
 	cfg.MinDeliveryGapSeconds = 0.2
@@ -314,7 +314,7 @@ func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing
 	t.Cleanup(journal.ClearProcessManager)
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 	cfg.NotificationTemplate = "new message from {from_node}"
 	cfg.TmuxTimeout = 0.01
 	cfg.MinDeliveryGapSeconds = 0.2
@@ -391,7 +391,7 @@ func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
 	t.Cleanup(journal.ClearProcessManager)
 
 	cfg := config.DefaultConfig()
-	cfg.Edges = []string{"orchestrator -- messenger"}
+	cfg.Edges = []string{"orchestrator --- messenger"}
 	cfg.NotificationTemplate = "new message from {from_node}"
 	cfg.TmuxTimeout = 0.01
 	adjacency, err := config.ParseEdges(cfg.Edges)

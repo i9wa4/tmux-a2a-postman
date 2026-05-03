@@ -178,7 +178,7 @@ for templates and topology notes. Both live in
 
 `postman.toml` is optional. With no user TOML, embedded defaults from
 `internal/config/postman.default.toml` are used. `postman.md` may contain only
-a Mermaid `Edges` diagram; every node referenced by those edges is
+a Mermaid `edges` section; every node referenced by those edges is
 materialized automatically.
 
 Core public settings:
@@ -197,15 +197,15 @@ Edge syntax:
 ```toml
 [postman]
 edges = [
-  "orchestrator -- worker",
-  "orchestrator -- critic",
+  "orchestrator --- worker",
+  "orchestrator --- critic",
 ]
 ```
 
 Markdown topology:
 
 ````markdown
-## Edges
+## `edges`
 
 ```mermaid
 graph LR

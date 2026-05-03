@@ -8,8 +8,8 @@ import (
 func TestValidateConfig_ValidConfig(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"worker -- orchestrator",
-			"orchestrator -- observer",
+			"worker --- orchestrator",
+			"orchestrator --- observer",
 		},
 		Nodes: map[string]NodeConfig{
 			"worker":       {},
@@ -27,7 +27,7 @@ func TestValidateConfig_ValidConfig(t *testing.T) {
 func TestValidateConfig_InvalidEdgeNode(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"worker -- nonexistent",
+			"worker --- nonexistent",
 		},
 		Nodes: map[string]NodeConfig{
 			"worker": {},
@@ -54,7 +54,7 @@ func TestValidateConfig_InvalidEdgeNode(t *testing.T) {
 func TestValidateConfig_PostmanInEdges(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"worker -- postman",
+			"worker --- postman",
 		},
 		Nodes: map[string]NodeConfig{
 			"worker": {},
@@ -96,7 +96,7 @@ func TestValidateConfig_ReservedNodeName(t *testing.T) {
 func TestValidateConfig_ChainEdge(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"A -- B -- C",
+			"A --- B --- C",
 		},
 		Nodes: map[string]NodeConfig{
 			"A": {},
@@ -111,7 +111,7 @@ func TestValidateConfig_ChainEdge(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_DirectedEdge(t *testing.T) {
+func TestValidateConfig_ArrowEdgeRejected(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
 			"A --> B",
@@ -123,14 +123,37 @@ func TestValidateConfig_DirectedEdge(t *testing.T) {
 	}
 
 	errors := ValidateConfig(cfg)
-	if len(errors) != 0 {
-		t.Errorf("expected no validation errors for directed edge, got: %v", errors)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for arrow edge")
+	}
+	if errors[0].Severity != "error" || errors[0].Field != "edges[0]" {
+		t.Fatalf("expected edges[0] error, got: %v", errors)
+	}
+}
+
+func TestValidateConfig_DoubleDashEdgeRejected(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{
+			"A -- B",
+		},
+		Nodes: map[string]NodeConfig{
+			"A": {},
+			"B": {},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	if len(errors) == 0 {
+		t.Fatal("expected validation error for double-dash edge")
+	}
+	if errors[0].Severity != "error" || errors[0].Field != "edges[0]" {
+		t.Fatalf("expected edges[0] error, got: %v", errors)
 	}
 }
 
 func TestValidateConfig_EmptyNodes(t *testing.T) {
 	cfg := &Config{
-		Edges: []string{"A -- B"},
+		Edges: []string{"A --- B"},
 		Nodes: map[string]NodeConfig{},
 	}
 
@@ -179,8 +202,8 @@ func TestValidateConfig_EmptyEdges(t *testing.T) {
 func TestValidateConfig_DuplicateEdges(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"worker -- orchestrator",
-			"orchestrator -- worker", // Duplicate (same as above for undirected)
+			"worker --- orchestrator",
+			"orchestrator --- worker", // Duplicate (same as above for undirected)
 		},
 		Nodes: map[string]NodeConfig{
 			"worker":       {},
@@ -205,11 +228,11 @@ func TestValidateConfig_DuplicateEdges(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_DuplicateEdges_DirectedNotDuplicate(t *testing.T) {
+func TestValidateConfig_DuplicateEdges_ReverseUndirectedDuplicate(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{
-			"worker --> orchestrator",
-			"orchestrator --> worker", // NOT duplicate (different direction)
+			"worker --- orchestrator",
+			"orchestrator --- worker",
 		},
 		Nodes: map[string]NodeConfig{
 			"worker":       {},
@@ -218,10 +241,13 @@ func TestValidateConfig_DuplicateEdges_DirectedNotDuplicate(t *testing.T) {
 	}
 
 	errors := ValidateConfig(cfg)
-	// Should have no duplicate warnings
+	foundWarning := false
 	for _, err := range errors {
 		if err.Severity == "warning" && strings.Contains(err.Message, "duplicate") {
-			t.Errorf("unexpected duplicate warning for directed edges: %v", err)
+			foundWarning = true
 		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected duplicate warning for reversed edge, got: %v", errors)
 	}
 }

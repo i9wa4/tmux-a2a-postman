@@ -126,7 +126,7 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Reply: {reply_command}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\"",
+		ReplyCommand:         "tmux-a2a-postman send --to <recipient> --body \"<your message>\"",
 	}
 
 	notification := BuildNotification(
@@ -141,9 +141,6 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 		nil,
 	)
 
-	if strings.Contains(notification, "send-message") {
-		t.Fatalf("notification still contains legacy send-message: %q", notification)
-	}
 	if strings.Contains(notification, "<recipient>") {
 		t.Fatalf("notification still contains recipient placeholder: %q", notification)
 	}
@@ -156,7 +153,7 @@ func TestBuildNotification_UsesNotificationTemplateTrustBoundary(t *testing.T) {
 	const baseConfig = `[postman]
 allow_shell_templates = true
 notification_template = "trusted $(printf xdg-notification-template)"
-edges = ["orchestrator -> worker"]
+edges = ["orchestrator --- worker"]
 
 [worker]
 template = "worker template"

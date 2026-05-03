@@ -161,74 +161,26 @@ func TestBuildEnvelope_SentTimestamp(t *testing.T) {
 	}
 }
 
-func TestBuildEnvelope_NormalizesLegacyReplyCommandToSend(t *testing.T) {
-	cfg := &config.Config{
-		TmuxTimeout:    5.0,
-		ReplyCommand:   "tmux-a2a-postman send-message --to orchestrator",
-		Nodes:          map[string]config.NodeConfig{},
-		CommonTemplate: "",
-	}
-	adjacency := map[string][]string{}
-	nodes := map[string]discovery.NodeInfo{}
-	livenessMap := map[string]bool{}
-
-	result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-123", "/session/post/file.md", nil, adjacency, nodes, "", livenessMap)
-
-	if strings.Contains(result, "send-message") {
-		t.Fatalf("reply_command still contains legacy send-message: %q", result)
-	}
-	want := "tmux-a2a-postman send --to orchestrator"
-	if result != want {
-		t.Fatalf("reply_command = %q, want %q", result, want)
-	}
-}
-
 func TestBuildEnvelope_DoesNotInjectContextIDForBareReplySendCommands(t *testing.T) {
-	tests := []struct {
-		name         string
-		replyCommand string
-	}{
-		{
-			name:         "bare legacy send-message",
-			replyCommand: "send-message --to orchestrator",
-		},
-		{
-			name:         "bare canonical send",
-			replyCommand: "send --to orchestrator",
-		},
+	cfg := &config.Config{
+		TmuxTimeout:  5.0,
+		ReplyCommand: "send --to orchestrator",
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{
-				TmuxTimeout:  5.0,
-				ReplyCommand: tc.replyCommand,
-			}
+	result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-456", "/session/post/file.md", nil, map[string][]string{}, map[string]discovery.NodeInfo{}, "", map[string]bool{})
 
-			result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-456", "/session/post/file.md", nil, map[string][]string{}, map[string]discovery.NodeInfo{}, "", map[string]bool{})
-
-			if strings.Contains(result, "send-message") {
-				t.Fatalf("reply_command still contains legacy send-message: %q", result)
-			}
-			want := "send --to orchestrator"
-			if result != want {
-				t.Fatalf("reply_command = %q, want %q", result, want)
-			}
-		})
+	if result != "send --to orchestrator" {
+		t.Fatalf("reply_command = %q, want canonical bare send unchanged", result)
 	}
 }
 
 func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
-	replyCommand := "tmux-a2a-postman send-message\n  --to <recipient>\n  --body \"<your message>\""
+	replyCommand := "tmux-a2a-postman send\n  --to <recipient>\n  --body \"<your message>\""
 
 	got := RenderReplyCommand(replyCommand, "ctx-789", "worker")
 
-	want := "tmux-a2a-postman send\n  --to <recipient>\n  --body \"<your message>\""
-	if got != want {
-		t.Fatalf("RenderReplyCommand() = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "send-message") {
-		t.Fatalf("RenderReplyCommand() still contains legacy send-message: %q", got)
+	if got != replyCommand {
+		t.Fatalf("RenderReplyCommand() = %q, want %q", got, replyCommand)
 	}
 	if strings.Contains(got, "--to worker") {
 		t.Fatalf("RenderReplyCommand() unexpectedly expanded recipient placeholder: %q", got)
@@ -238,7 +190,7 @@ func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
 func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
 	cfg := &config.Config{
 		TmuxTimeout:  5.0,
-		ReplyCommand: "tmux-a2a-postman send-message --to <recipient> --body \"<your message>\"",
+		ReplyCommand: "tmux-a2a-postman send --to <recipient> --body \"<your message>\"",
 	}
 
 	result := BuildDaemonEnvelope(
@@ -255,9 +207,6 @@ func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
 		nil,
 	)
 
-	if strings.Contains(result, "send-message") {
-		t.Fatalf("daemon envelope still contains legacy send-message: %q", result)
-	}
 	if !strings.Contains(result, "--to <recipient>") {
 		t.Fatalf("daemon envelope lost recipient placeholder: %q", result)
 	}
@@ -266,31 +215,10 @@ func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
 	}
 }
 
-func TestRenderReplyCommand_DoesNotRewriteWrapperNames(t *testing.T) {
-	tests := []struct {
-		name    string
-		command string
-	}{
-		{
-			name:    "bare wrapper name",
-			command: "send-message-wrapper --to <recipient>",
-		},
-		{
-			name:    "absolute wrapper path",
-			command: "/usr/local/bin/send-message-wrapper --to <recipient>",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := RenderReplyCommand(tc.command, "ctx-wrapper", "worker")
-
-			if got != tc.command {
-				t.Fatalf("RenderReplyCommand() = %q, want wrapper command unchanged %q", got, tc.command)
-			}
-			if strings.Contains(got, "{context_id}") {
-				t.Fatalf("RenderReplyCommand() unexpectedly leaked placeholder into wrapper command: %q", got)
-			}
-		})
+func TestRenderReplyCommand_ExpandsConfiguredPlaceholders(t *testing.T) {
+	got := RenderReplyCommand("custom-reply --context {context_id} --node {node}", "ctx-wrapper", "worker")
+	want := "custom-reply --context ctx-wrapper --node worker"
+	if got != want {
+		t.Fatalf("RenderReplyCommand() = %q, want %q", got, want)
 	}
 }

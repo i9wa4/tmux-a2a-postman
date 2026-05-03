@@ -30,17 +30,12 @@ type mailboxProjectionMarker struct {
 }
 
 const (
-	MailboxProjectionComponent                      = "mailbox-projection"
-	MailboxProjectionPostedEventType                = "mailbox_projection_posted"
-	MailboxProjectionPostConsumedEventType          = "mailbox_projection_post_consumed"
-	MailboxProjectionDeliveredEventType             = "mailbox_projection_delivered"
-	MailboxProjectionReadEventType                  = "mailbox_projection_read"
-	MailboxProjectionDeadLetteredEventType          = "mailbox_projection_dead_lettered"
-	legacyCompatibilityMailboxPostedEventType       = "compatibility_mailbox_posted"
-	legacyCompatibilityMailboxConsumedEventType     = "compatibility_mailbox_post_consumed"
-	legacyCompatibilityMailboxDeliveredEventType    = "compatibility_mailbox_delivered"
-	legacyCompatibilityMailboxReadEventType         = "compatibility_mailbox_read"
-	legacyCompatibilityMailboxDeadLetteredEventType = "compatibility_mailbox_dead_lettered"
+	MailboxProjectionComponent             = "mailbox-projection"
+	MailboxProjectionPostedEventType       = "mailbox_projection_posted"
+	MailboxProjectionPostConsumedEventType = "mailbox_projection_post_consumed"
+	MailboxProjectionDeliveredEventType    = "mailbox_projection_delivered"
+	MailboxProjectionReadEventType         = "mailbox_projection_read"
+	MailboxProjectionDeadLetteredEventType = "mailbox_projection_dead_lettered"
 )
 
 var mailboxProjectionRoots = []string{"post", "inbox", "read", "dead-letter"}
@@ -90,22 +85,22 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 		}
 
 		switch event.Type {
-		case MailboxProjectionPostedEventType, legacyCompatibilityMailboxPostedEventType:
+		case MailboxProjectionPostedEventType:
 			if !setProjectedFile(projected.Post, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid post path %q", payload.Path)
 			}
-		case MailboxProjectionPostConsumedEventType, legacyCompatibilityMailboxConsumedEventType:
+		case MailboxProjectionPostConsumedEventType:
 			delete(projected.Post, pathKey(payload.Path))
-		case MailboxProjectionDeliveredEventType, legacyCompatibilityMailboxDeliveredEventType:
+		case MailboxProjectionDeliveredEventType:
 			if !setProjectedFile(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName), payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid inbox path for %q", payload.MessageID)
 			}
-		case MailboxProjectionReadEventType, legacyCompatibilityMailboxReadEventType:
+		case MailboxProjectionReadEventType:
 			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
-		case MailboxProjectionDeadLetteredEventType, legacyCompatibilityMailboxDeadLetteredEventType:
+		case MailboxProjectionDeadLetteredEventType:
 			delete(projected.Post, pathKey(payload.SourcePath))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)

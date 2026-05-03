@@ -199,6 +199,11 @@ func (cfg *Config) ensureNodesForEdges() {
 	}
 }
 
+// OrderedEdgeNodeNames returns unique node names in first-seen edge order.
+func OrderedEdgeNodeNames(edges []string) []string {
+	return edgeNodeNamesInOrder(edges)
+}
+
 func edgeNodeNamesInOrder(edges []string) []string {
 	var order []string
 	for _, edge := range edges {
@@ -214,16 +219,12 @@ func splitEdgeNodeNames(edge string) []string {
 	if edge == "" {
 		return nil
 	}
-	var parts []string
-	switch {
-	case strings.Contains(edge, "-->"):
-		parts = strings.Split(edge, "-->")
-	case strings.Contains(edge, "--"):
-		parts = strings.Split(edge, "--")
-	default:
+	separator := edgeSeparator(edge)
+	if separator == "" {
 		return nil
 	}
 
+	parts := strings.Split(edge, separator)
 	nodes := make([]string, 0, len(parts))
 	for _, part := range parts {
 		node := strings.TrimSpace(part)
@@ -232,6 +233,13 @@ func splitEdgeNodeNames(edge string) []string {
 		}
 	}
 	return nodes
+}
+
+func edgeSeparator(edge string) string {
+	if strings.Contains(edge, "---") {
+		return "---"
+	}
+	return ""
 }
 
 func (cfg *Config) OrderedNodeNames() []string {
@@ -1113,8 +1121,7 @@ func ResolveConfigPath() string {
 }
 
 // ParseEdges parses edge definitions into an adjacency map.
-// Edge format: "A -- B -- C" or "A --> B --> C" (both create bidirectional edges A↔B, B↔C).
-// Both "--" (Go format) and "-->" (Python format) are supported.
+// Edge format: "A --- B --- C", which creates bidirectional edges A↔B, B↔C.
 // Returns error for invalid formats.
 func ParseEdges(edges []string) (map[string][]string, error) {
 	result := make(map[string][]string)
@@ -1125,29 +1132,17 @@ func ParseEdges(edges []string) (map[string][]string, error) {
 			continue
 		}
 
-		// Determine separator: try "-->" first (Python format), then "--" (Go format)
-		var parts []string
-		switch {
-		case strings.Contains(edge, "-->"):
-			parts = strings.Split(edge, "-->")
-		case strings.Contains(edge, "--"):
-			parts = strings.Split(edge, "--")
-		default:
-			return nil, fmt.Errorf("invalid edge format (missing '--' or '-->'): %q", edge)
-		}
-
-		if len(parts) < 2 {
+		nodes := splitEdgeNodeNames(edge)
+		if len(nodes) < 2 {
+			if edgeSeparator(edge) == "" {
+				return nil, fmt.Errorf("invalid edge format (missing '---'): %q", edge)
+			}
 			return nil, fmt.Errorf("invalid edge format (need at least 2 nodes): %q", edge)
 		}
-
-		// Trim all parts
-		nodes := make([]string, 0, len(parts))
-		for _, p := range parts {
-			node := strings.TrimSpace(p)
-			if node == "" {
+		for _, node := range nodes {
+			if strings.HasPrefix(node, "-") {
 				return nil, fmt.Errorf("invalid edge format (empty node): %q", edge)
 			}
-			nodes = append(nodes, node)
 		}
 
 		// Create bidirectional edges between adjacent nodes
@@ -1216,7 +1211,6 @@ func ResolveBaseDir(configBaseDir string) string {
 }
 
 // CreateSessionDirs creates the session directory structure.
-// Legacy signature for backward compatibility with tests.
 // Creates: sessionDir/{inbox,post,draft,read,dead-letter}
 func CreateSessionDirs(sessionDir string) error {
 	dirs := []string{

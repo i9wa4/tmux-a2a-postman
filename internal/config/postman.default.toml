@@ -26,8 +26,6 @@
 #   {sender}         - Sender node name
 #   {recipient}      - Recipient node name
 #   {timestamp}      - ISO format timestamp
-#   {from}           - Alias for {sender} (backward compatibility)
-#   {to}             - Alias for {recipient} (backward compatibility)
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
 #   {reply_command}  - Command to create draft reply
@@ -83,11 +81,11 @@ activity_window_seconds = 300.0
 base_dir = ""                      # Override session dir (default: XDG_STATE_HOME/tmux-a2a-postman)
 
 # Routing edges (bidirectional)
-# Format: "node-a -- node-b" or "node-a --> node-b"
-# Example multi-hop: "node-a -- node-b -- node-c" creates edges A↔B, B↔C
+# Format: "node-a --- node-b"
+# Example multi-hop: "node-a --- node-b --- node-c" creates edges A↔B, B↔C
 # edges = [
-#   "node-a -- node-b",
-#   "node-b -- node-c",
+#   "node-a --- node-b",
+#   "node-b --- node-c",
 # ]
 edges = []
 

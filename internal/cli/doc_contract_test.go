@@ -134,7 +134,6 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		"tmux-a2a-postman status",
 		"`read_context_mode`",
 		"`journal_health_cutover_enabled`",
-		"`journal_compatibility_cutover_enabled`",
 		"`[heartbeat].enabled`",
 		"waiting/",
 		"--params",
@@ -185,7 +184,7 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	designDoc := readRepoFile(t, "docs/design/config-ssot.md")
 	assertContainsNormalized(t, designDoc, "`internal/config/postman.default.toml` is the SSOT for user-configurable defaults.")
 	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
-	assertContainsNormalized(t, designDoc, "`postman.md` may contain only a Mermaid `Edges` diagram.")
+	assertContainsNormalized(t, designDoc, "`postman.md` may contain only a Mermaid `edges` section.")
 	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
 
 	commandsDoc := readRepoFile(t, "docs/commands.md")
