@@ -26,7 +26,25 @@ Use `tmux-a2a-postman get-health-oneline` for a compact scan across sessions.
 Use `tmux-a2a-postman pop` only when you intend to read and archive the next
 inbox message.
 
-## 2. Visible State
+## 2. Command Semantics
+
+`send` validates the auto-detected sender pane title, configured edges, and the
+recipient before delivery. A failed send is stronger evidence than stale footer
+text.
+
+Use `--reply-required` when the recipient must answer. Use `--no-reply` to force
+an informational message. Without either flag, the reply policy is resolved from
+message metadata and ordinary message bodies are usually no-reply.
+
+`pop` reads and archives the next unread inbox message in one step. Use
+`pop --peek` only for a targeted diagnostic where archiving would be wrong.
+Never move runtime `post/`, `inbox/`, `read/`, or dead-letter files manually.
+
+Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
+are delivery hints. When they conflict, prefer current edges, explicit body
+instructions, message metadata, health output, and observed send results.
+
+## 3. Visible State
 
 | State         | Meaning                                       | Usual action                                        |
 | ------------- | --------------------------------------------- | --------------------------------------------------- |
@@ -39,7 +57,7 @@ inbox message.
 `pending` beats `waiting` because the node has something it can do now.
 `stale` beats both because live state is not trustworthy.
 
-## 3. Reply Obligations
+## 4. Reply Obligations
 
 A reply-required message opens action for the recipient and waiting state for
 the sender.
@@ -54,10 +72,12 @@ Reading with `pop` clears unread state, but it does not clear reply-required
 action. Only a later message with exact `--reply-to <message-id>` clears the
 obligation.
 
-Use `--no-reply` for terminal or informational mail that should not create a
-new wait.
+Use `--reply-required` for work requests, approval requests, status requests,
+or any message where the sender needs a later resolving answer. Use
+`--no-reply` for terminal or informational mail that should not create a new
+wait.
 
-## 4. Queue Signals
+## 5. Queue Signals
 
 | Field                      | Meaning                                  |
 | -------------------------- | ---------------------------------------- |
@@ -71,7 +91,7 @@ new wait.
 If dead letters exist, treat routing or configuration as suspect and use
 `postman-config-auditor` before manually retrying delivery.
 
-## 5. Safe Operator Flow
+## 6. Safe Operator Flow
 
 1. Run `tmux-a2a-postman get-health`.
 2. If your node is `pending`, run `tmux-a2a-postman pop`.
@@ -85,7 +105,7 @@ If dead letters exist, treat routing or configuration as suspect and use
    retrying.
 7. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
-## 6. Escalation Boundaries
+## 7. Escalation Boundaries
 
 Use `postman-config-auditor` when the problem looks like a missing edge, wrong
 node name, stale `postman.md`, or dead-letter route.

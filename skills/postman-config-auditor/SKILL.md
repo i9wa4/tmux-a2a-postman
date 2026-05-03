@@ -120,6 +120,22 @@ Important merge rules:
 Use this rubric when a config is too large, too vague, or duplicated across
 `postman.md` and skill files.
 
+For `tmux-a2a-postman pop` size, optimize the payload that is actually
+delivered:
+
+```text
+common_template + generated skill catalog + target node template + system footer
+```
+
+Total `postman.md` line count is less important than these injected parts.
+Measure section sizes before editing, then reduce in this order:
+
+1. `common_template`, because every node receives it.
+2. Generated skill catalog descriptions, because `skill_path` appends them to
+   `common_template`.
+3. The specific node template that receives noisy `pop` output.
+4. Other node templates, only when they are noisy for their own recipients.
+
 Keep content in `postman.md` when it is needed before an agent can safely
 choose a skill:
 
@@ -141,12 +157,28 @@ contract:
 - engine-specific usage details unless they affect message delivery
 - content that can be selected from the generated skill catalog
 
+Move tmux-a2a-postman product-spec explanations out of local `postman.md` when
+they can be selected by skill:
+
+| Product-spec content                         | Preferred skill                |
+| -------------------------------------------- | ------------------------------ |
+| `pop`, `send`, `get-health`, reply semantics | `postman-session-operator`     |
+| `pending`, `waiting`, `stale`, queues        | `postman-session-operator`     |
+| dead-letter diagnosis and safe retry flow    | `postman-session-operator`     |
+| `postman.md` syntax, edges, merge order      | `postman-config-auditor`       |
+| `skill_path` catalog behavior                | `postman-config-auditor`       |
+
 Flag these imbalance patterns:
 
 - hand-maintained skill lists that duplicate the generated `skill_path`
   catalog
 - `postman.md` sections that inline full skill bodies or long examples
 - role templates that repeat the same procedural checklist across nodes
+- stray h2 headings without backtick names after a parsed node section; the
+  parser does not treat them as new node sections, so they can leak into the
+  previous node template
+- detailed explanations in `common_template` where a one-line contract plus a
+  `SKILL.md` or docs reference would preserve behavior
 - skills that redefine postman routing, topology, or state-machine behavior
   instead of referring back to `postman.md`
 - ambiguous instructions where agents cannot tell whether a rule is a
