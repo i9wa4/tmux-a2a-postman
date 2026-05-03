@@ -24,11 +24,15 @@ graph TD
     daemon["postman daemon\nroutes mail\nsends auto PING"]
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
-    subgraph tmux["tmux session: roles you define, occupied by any AI coding agent"]
+    subgraph session_main["tmux session: main workspace"]
         messenger["messenger\nhuman-facing ui_node"]
         orchestrator["orchestrator"]
         worker["worker"]
-        critic["critic"]
+    end
+
+    subgraph session_review["tmux session: review workspace"]
+        reviewer["reviewer"]
+        worker_alt["worker-alt"]
     end
 
     operator --> |starts / configures| daemon
@@ -36,10 +40,13 @@ graph TD
     config --> daemon
     messenger <--> |brief / status| orchestrator
     orchestrator <--> |delegate / report| worker
-    orchestrator <--> |review request| critic
+    orchestrator <--> |delegate / report| worker_alt
+    orchestrator <--> |review request| reviewer
     daemon <--> mailbox
-    daemon -.->|delivers mail + auto PING| tmux
-    mailbox -.->|stores mail for pop| tmux
+    daemon -.->|delivers mail + auto PING| session_main
+    daemon -.->|delivers mail + auto PING| session_review
+    mailbox -.->|stores mail for pop| session_main
+    mailbox -.->|stores mail for pop| session_review
 
     classDef operatorType fill:#fff7ed,stroke:#c2410c,color:#111827
     classDef configType fill:#eef2ff,stroke:#4f46e5,color:#111827
@@ -51,7 +58,9 @@ graph TD
     class config configType
     class daemon daemonType
     class mailbox storageType
-    class messenger,orchestrator,worker,critic agentType
+    class messenger,orchestrator,worker,reviewer,worker_alt agentType
+    style session_main fill:#ffffff,stroke:#94a3b8,color:#0f172a
+    style session_review fill:#ffffff,stroke:#94a3b8,color:#0f172a
 ```
 
 ## 2. Prerequisites
@@ -93,7 +102,7 @@ gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent claude-code
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent claude-code --scope user
 ```
 
-For Codex:
+For Codex CLI:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
@@ -118,8 +127,8 @@ normal inbox mail: the recipient sees the pane notification, runs `pop`, and
 reads its role plus reply guidance.
 
 Agents then run commands from their own tmux panes. The pane title identifies
-the sending role/node, independent of whether the pane is Claude Code, Codex, or
-another AI coding agent:
+the sending role/node, independent of whether the pane is Claude Code, Codex
+CLI, or another AI coding agent:
 
 ```sh
 tmux-a2a-postman send --to worker --body "implement X"
@@ -157,9 +166,9 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
-    orchestrator --- critic
+    orchestrator --- reviewer
     orchestrator --- boss
-    guardian --- critic
+    guardian --- reviewer
     orchestrator --- agent
 ```
 
@@ -171,9 +180,9 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- worker-alt
-    orchestrator --- critic
+    orchestrator --- reviewer
     orchestrator --- boss
-    guardian --- critic
+    guardian --- reviewer
     orchestrator --- agent
 ```
 ````
