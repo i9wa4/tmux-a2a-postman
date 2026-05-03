@@ -112,6 +112,7 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {reply_command} - reply command for the current recipient
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
+Reply expected by default.
 No reply needed for: DONE, ACK, PING, or status-only messages."""
 
 # Daemon message template (shared envelope for daemon-originated PING)
