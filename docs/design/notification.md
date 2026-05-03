@@ -2,8 +2,9 @@
 
 `tmux-a2a-postman` now keeps notification behavior intentionally small. The
 daemon delivers mail to the recipient inbox, sends a pane hint to that recipient
-when delivery succeeds, and emits startup auto-PING messages. It does not run a
-separate policy layer for operator escalation.
+when delivery succeeds, and emits auto-PING messages when the daemon starts or
+when a node appears or restarts. It does not run a separate policy layer for
+operator escalation.
 
 ## 1. Surfaces
 

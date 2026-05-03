@@ -230,6 +230,7 @@ func (rt *daemonRuntime) bootstrap() {
 	if err := resumeMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
+	rt.recordPendingAutoPings(runtimeNodeKeys(rt.nodes), rt.nodes, "startup", time.Now())
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
 	rt.dispatchPendingPostMessages()
@@ -1014,4 +1015,13 @@ func activeRuntimePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	}
 	sort.Strings(activeNodes)
 	return activeNodes
+}
+
+func runtimeNodeKeys(nodes map[string]discovery.NodeInfo) []string {
+	nodeKeys := make([]string, 0, len(nodes))
+	for nodeKey := range nodes {
+		nodeKeys = append(nodeKeys, nodeKey)
+	}
+	sort.Strings(nodeKeys)
+	return nodeKeys
 }

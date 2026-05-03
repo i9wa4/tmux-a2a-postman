@@ -7,9 +7,9 @@ tmux agent-to-agent message delivery daemon.
 Any AI coding agent can occupy the roles you define, turning a tmux session into
 a durable workspace for human-directed handoffs, delegation, and review.
 
-It runs one daemon per Unix user, treats tmux pane titles as role/node names,
-and delivers `send` messages to filesystem-backed inboxes. Agents read mail
-with `pop` and inspect shared health with `get-health` or
+It runs one daemon per local user account, treats tmux pane titles as role/node
+names, and delivers `send` messages to filesystem-backed inboxes. Agents read
+mail with `pop` and inspect shared health with `get-health` or
 `get-health-oneline`.
 
 ## 1. Concept
@@ -19,10 +19,10 @@ with `pop` and inspect shared health with `get-health` or
 title: tmux-a2a-postman architecture
 ---
 graph TD
-    human["human operator\nstarts one daemon"]
+    operator((human\noperator))
     config["postman.md / postman.toml\nroles, edges, templates\nui_node = messenger"]
-    daemon["postman daemon\nroutes by edges"]
-    mailbox["filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/"]
+    daemon["postman daemon\nroutes mail\nsends auto PING"]
+    mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
     subgraph tmux["tmux session: roles you define, occupied by any AI coding agent"]
         messenger["messenger\nhuman-facing ui_node"]
@@ -31,19 +31,32 @@ graph TD
         critic["critic"]
     end
 
-    human --> daemon
-    human <--> |talks with| messenger
+    operator --> |starts / configures| daemon
+    operator <--> |talks with| messenger
     config --> daemon
     messenger <--> |brief / status| orchestrator
     orchestrator <--> |delegate / report| worker
     orchestrator <--> |review request| critic
     daemon <--> mailbox
-    daemon -.->|delivers these conversations| tmux
+    daemon -.->|delivers mail + auto PING| tmux
     mailbox -.->|stores mail for pop| tmux
+
+    classDef operatorType fill:#fff7ed,stroke:#c2410c,color:#111827
+    classDef configType fill:#eef2ff,stroke:#4f46e5,color:#111827
+    classDef daemonType fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef storageType fill:#ecfdf5,stroke:#047857,color:#0f172a
+    classDef agentType fill:#f8fafc,stroke:#475569,color:#0f172a
+
+    class operator operatorType
+    class config configType
+    class daemon daemonType
+    class mailbox storageType
+    class messenger,orchestrator,worker,critic agentType
 ```
 
 ## 2. Prerequisites
 
+- macOS or Linux
 - tmux >= 3.0
 
 ## 3. Installation
@@ -93,11 +106,16 @@ for supported agents and scopes.
 
 ## 4. Usage
 
-The human operator starts one daemon for their Unix user:
+The human operator starts one daemon for their local user account:
 
 ```sh
 tmux-a2a-postman start
 ```
+
+After `start`, each discovered node receives an auto PING. If a node pane is
+opened or restarted later, it receives the same PING when discovered. A PING is
+normal inbox mail: the recipient sees the pane notification, runs `pop`, and
+reads its role plus reply guidance.
 
 Agents then run commands from their own tmux panes. The pane title identifies
 the sending role/node, independent of whether the pane is Claude Code, Codex, or

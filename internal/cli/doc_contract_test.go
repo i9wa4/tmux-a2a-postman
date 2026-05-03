@@ -100,7 +100,7 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	assertContainsNormalized(t, daemonModelDoc, "Cross-context ownership follows the live enabled-session marker, not leftover session directories.")
 
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
-	assertContainsNormalized(t, notificationDoc, "The daemon delivers mail to the recipient inbox, sends a pane hint to that recipient when delivery succeeds, and emits startup auto-PING messages.")
+	assertContainsNormalized(t, notificationDoc, "The daemon delivers mail to the recipient inbox, sends a pane hint to that recipient when delivery succeeds, and emits auto-PING messages when the daemon starts or when a node appears or restarts.")
 	assertContainsNormalized(t, notificationDoc, "`ui_node` is not a general escalation channel.")
 	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
 }
