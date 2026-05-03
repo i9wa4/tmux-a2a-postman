@@ -27,15 +27,15 @@ After any implementation work:
 
 Use this when `tmux-a2a-postman stop` fails or when two daemons are running.
 
-#### Normal restart
+#### 1.3.1. Normal restart
 
 ```bash
 tmux-a2a-postman stop
+tmux-a2a-postman version   # inspect the resolved binary version
 tmux-a2a-postman start
-tmux-a2a-postman --version   # confirm new binary hash
 ```
 
-#### Two-daemon scenario (stop fails)
+#### 1.3.2. Two-daemon scenario (stop fails)
 
 When two daemons are running, `stop` may silently target the wrong one.
 
@@ -62,4 +62,7 @@ When two daemons are running, `stop` may silently target the wrong one.
    git rev-parse --short HEAD
    ```
 
-   Both must show the same hash. If they differ, `nix build` and restart again.
+   If the version JSON includes a concrete `commit`, it should match HEAD. If
+   the commit is `unknown`, the binary was likely built from a dirty/local flake
+   evaluation. For strict HEAD confirmation, clean the worktree, run
+   `nix build`, and restart again.
