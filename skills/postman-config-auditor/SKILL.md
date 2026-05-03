@@ -9,6 +9,8 @@ description: |
   - Checking whether Mermaid edges, node sections, or role templates match implementation behavior
   - Deciding whether instructions belong in postman.md, a generated skill
     catalog, or a SKILL.md body
+  - Checking whether a skill description is specific enough to trigger when
+    postman.md delegates instructions to that skill
   - Diagnosing dead-letter, missing route, quiet node, unread backlog, or late reply behavior
   - Adding or renaming nodes and needing a config consistency review
   Do not use as a generic CLI reference; use tmux-a2a-postman help for command syntax.
@@ -116,6 +118,9 @@ Important merge rules:
   `notification_template`, or dead-letter notification text.
 - Confirm templates do not inline full skill bodies when `skill_path` can
   generate a skill catalog and the full instructions can remain in `SKILL.md`.
+- Confirm any instruction moved from `postman.md` into a skill is named in that
+  skill's frontmatter `description` with concrete trigger conditions. The
+  generated catalog only exposes metadata, so hidden body text is not enough.
 - Distinguish postman node names from generic prose. For example, a repo may
   use a `critic` node while still describing generated subagents as reviewers.
 
@@ -185,6 +190,8 @@ Flag these imbalance patterns:
   `SKILL.md` or docs reference would preserve behavior
 - skills that redefine postman routing, topology, or state-machine behavior
   instead of referring back to `postman.md`
+- skills whose body contains important moved rules but whose `description`
+  does not mention the user/task situations that should trigger them
 - ambiguous instructions where agents cannot tell whether a rule is a
   transport contract, role contract, or task-specific procedure
 

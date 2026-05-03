@@ -5,8 +5,10 @@ description: |
   Operate and diagnose live tmux-a2a-postman sessions.
   Use when:
   - Interpreting get-health or get-health-oneline output
-  - Deciding whether to pop, reply, resend, wait, or restart
-  - Diagnosing pending, waiting, stale, unread, post queue, or dead-letter state
+  - Deciding whether to pop, reply, resend, wait, follow up, or restart
+  - Handling reply-required, no-reply, reply-to, or status request behavior
+  - Diagnosing pending, waiting, stale, unread, post queue, dead-letter,
+    auto-ping, pane discovery, daemon restart, or slow delivery state
   Do not use for topology or postman.md syntax audits; use postman-config-auditor.
   Do not use only to send the first message; use postman-send-message.
 ---
@@ -76,6 +78,11 @@ Use `--reply-required` for work requests, approval requests, status requests,
 or any message where the sender needs a later resolving answer. Use
 `--no-reply` for terminal or informational mail that should not create a new
 wait.
+
+When a local role template defines watchdog or timeout thresholds, treat them
+as follow-up boundaries, not proof of failure. Below the boundary, prefer
+`waiting`; at or beyond it, send one bounded follow-up before declaring the
+recipient blocked.
 
 ## 5. Queue Signals
 
