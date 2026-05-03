@@ -166,35 +166,34 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 	frontmatter := rest[:second]
 	lines := strings.Split(frontmatter, "\n")
-	paramsIndex := -1
+	paramsIndex, paramsEnd := paramsBlockRange(lines)
+	if paramsIndex < 0 {
+		return content
+	}
+
 	existing := make(map[string]bool)
 	changed := false
 	for idx, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if line == "params:" {
-			paramsIndex = idx
+		if idx <= paramsIndex || idx >= paramsEnd {
 			continue
 		}
-		if paramsIndex >= 0 && strings.HasPrefix(line, "  ") {
-			key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
-			if ok {
-				if fieldKey, ok := managedParamFieldKey(key); ok {
-					existing[fieldKey] = true
-					if value := strings.TrimSpace(fields[fieldKey]); value != "" {
-						updatedLine := "  " + key + ": " + value
-						if lines[idx] != updatedLine {
-							lines[idx] = updatedLine
-							changed = true
-						}
-					}
-					continue
-				}
-				existing[key] = true
-			}
+		line = strings.TrimRight(line, "\r")
+		key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
 		}
-	}
-	if paramsIndex < 0 {
-		return content
+		if fieldKey, ok := managedParamFieldKey(key); ok {
+			existing[fieldKey] = true
+			if value := strings.TrimSpace(fields[fieldKey]); value != "" {
+				updatedLine := "  " + key + ": " + value
+				if lines[idx] != updatedLine {
+					lines[idx] = updatedLine
+					changed = true
+				}
+			}
+			continue
+		}
+		existing[key] = true
 	}
 
 	insert := []string{}
@@ -217,6 +216,60 @@ func EnsureParams(content string, fields map[string]string) string {
 	updated = append(updated, insert...)
 	updated = append(updated, lines[paramsIndex+1:]...)
 	return content[:first+4] + strings.Join(updated, "\n") + rest[second:]
+}
+
+func ParamsReplyPolicyUsesPlaceholder(content string) bool {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return false
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return false
+	}
+	lines := strings.Split(rest[:second], "\n")
+	paramsIndex, paramsEnd := paramsBlockRange(lines)
+	if paramsIndex < 0 {
+		return false
+	}
+	for idx, line := range lines {
+		if idx <= paramsIndex || idx >= paramsEnd {
+			continue
+		}
+		key, value, ok := strings.Cut(strings.TrimSpace(strings.TrimRight(line, "\r")), ":")
+		if !ok {
+			continue
+		}
+		fieldKey, ok := managedParamFieldKey(key)
+		if ok && fieldKey == "replyPolicy" && strings.TrimSpace(value) == "{reply_policy}" {
+			return true
+		}
+	}
+	return false
+}
+
+func paramsBlockRange(lines []string) (int, int) {
+	paramsIndex := -1
+	for idx, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if line == "params:" {
+			paramsIndex = idx
+			break
+		}
+	}
+	if paramsIndex < 0 {
+		return -1, -1
+	}
+	end := len(lines)
+	for idx := paramsIndex + 1; idx < len(lines); idx++ {
+		line := strings.TrimRight(lines[idx], "\r")
+		if line != "" && line[0] != ' ' {
+			end = idx
+			break
+		}
+	}
+	return paramsIndex, end
 }
 
 func managedParamFieldKey(key string) (string, bool) {

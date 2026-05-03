@@ -1037,6 +1037,107 @@ role = "worker"
 	}
 }
 
+func TestRunSendMessage_StrictMessageTypeOverridesSpacedGeneratedReplyPolicyPlaceholder(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy:  {reply_policy}
+  timestamp: {timestamp}
+  messageType: status_request
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-message-type-spaced-placeholder-policy",
+			"--to", "worker",
+			"--body", "current status?",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+}
+
+func TestRunSendMessage_StrictMessageTypePreservesExplicitNoReplyWhenPlaceholderIsNotInParams(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: none
+  timestamp: {timestamp}
+  messageType: status_request
+---
+
+replyPolicy: {reply_policy}
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-explicit-no-reply-body-placeholder",
+			"--to", "worker",
+			"--body", "current status?",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
+	}
+}
+
 func TestRunSendMessage_NoReplyFlagStoresNoReplyPolicy(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

@@ -135,3 +135,55 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureParamsUpdatesOnlyParamsBlock(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\naudit:\n  replyPolicy: display-only\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"replyPolicy": "required",
+	})
+
+	if !strings.Contains(got, "params:\n  replyPolicy: required\n  from: orchestrator") {
+		t.Fatalf("EnsureParams() did not insert params replyPolicy:\n%s", got)
+	}
+	if !strings.Contains(got, "audit:\n  replyPolicy: display-only") {
+		t.Fatalf("EnsureParams() rewrote audit block:\n%s", got)
+	}
+}
+
+func TestParamsReplyPolicyUsesPlaceholder(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "params placeholder with extra space",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy:  {reply_policy}\n---\n\nbody\n",
+			want:    true,
+		},
+		{
+			name:    "params alias placeholder",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			want:    true,
+		},
+		{
+			name:    "body placeholder does not count",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n---\n\nreplyPolicy: {reply_policy}\n",
+			want:    false,
+		},
+		{
+			name:    "other frontmatter block placeholder does not count",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\naudit:\n  replyPolicy: {reply_policy}\n---\n\nbody\n",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParamsReplyPolicyUsesPlaceholder(tt.content); got != tt.want {
+				t.Fatalf("ParamsReplyPolicyUsesPlaceholder() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
