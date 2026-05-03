@@ -242,9 +242,8 @@ func TestDispatch_SubcommandHelpCallsHelpTopic(t *testing.T) {
 	}{
 		{command: "send", args: []string{"--help"}},
 		{command: "send", args: []string{"-h"}},
-		{command: "send", args: []string{"help"}},
 		{command: "version", args: []string{"--help"}},
-		{command: "version", args: []string{"help"}},
+		{command: "version", args: []string{"-h"}},
 	} {
 		t.Run(tc.command+"_"+strings.Join(tc.args, "_"), func(t *testing.T) {
 			var gotArgs []string
@@ -269,6 +268,56 @@ func TestDispatch_SubcommandHelpCallsHelpTopic(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDispatch_SubcommandHelpWordIsPlainArgument(t *testing.T) {
+	t.Run("send", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"send",
+			[]string{"help"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				SendMessage: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "help"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("send args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
+
+	t.Run("version", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"version",
+			[]string{"help"},
+			Config{},
+			Handlers{
+				Version: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		wantArgs := []string{"help"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("version args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
 }
 
 func TestDispatch_UnknownCommandReturnsUsageError(t *testing.T) {

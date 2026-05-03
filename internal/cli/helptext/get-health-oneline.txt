@@ -3,7 +3,7 @@ get-health-oneline — print compact all-session health
 Usage:
   tmux-a2a-postman get-health-oneline [--session <name>] [--config <path>]
   tmux-a2a-postman get-health-oneline --json
-  tmux-a2a-postman get-health-oneline help
+  tmux-a2a-postman get-health-oneline --help
 
 Flags:
   --json                  Output JSON with a status string

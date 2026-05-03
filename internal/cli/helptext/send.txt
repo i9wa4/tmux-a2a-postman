@@ -2,7 +2,7 @@ send — compose and deliver a message
 
 Usage:
   tmux-a2a-postman send --to <node> --body "text" [--params <json|kv>]
-  tmux-a2a-postman send help
+  tmux-a2a-postman send --help
 
 Flags:
   --to <node>             Recipient node name (required)

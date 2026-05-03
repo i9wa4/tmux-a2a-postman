@@ -3,7 +3,7 @@ version — print the build version
 Usage:
   tmux-a2a-postman version
   tmux-a2a-postman --version
-  tmux-a2a-postman version help
+  tmux-a2a-postman help version
 
 Output:
   JSON

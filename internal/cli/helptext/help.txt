@@ -4,7 +4,6 @@ Usage:
   tmux-a2a-postman help
   tmux-a2a-postman help <topic>
   tmux-a2a-postman <command> --help
-  tmux-a2a-postman <command> help
 
 Topics:
   commands

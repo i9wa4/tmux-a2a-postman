@@ -75,7 +75,7 @@ func isSubcommandHelpRequest(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "help", "--help", "-h":
+	case "--help", "-h":
 		return true
 	default:
 		return false

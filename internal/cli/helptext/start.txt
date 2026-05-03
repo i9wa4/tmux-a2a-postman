@@ -3,7 +3,7 @@ start — start the daemon
 Usage:
   tmux-a2a-postman start
   tmux-a2a-postman --no-tui start
-  tmux-a2a-postman start help
+  tmux-a2a-postman start --help
 
 Global flags used by start:
   --config <path>         Config file path

@@ -308,9 +308,8 @@ the local Git tag.
 ```text
 tmux-a2a-postman help
 tmux-a2a-postman help send
+tmux-a2a-postman help version
 tmux-a2a-postman send --help
-tmux-a2a-postman send help
-tmux-a2a-postman version help
 ```
 
 Help text is embedded from `internal/cli/helptext/*.txt`, so it ships inside
