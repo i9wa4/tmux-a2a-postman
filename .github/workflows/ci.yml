@@ -61,6 +61,11 @@ jobs:
       - name: Run nix build
         run: nix build --print-build-logs
 
+      - name: Validate agent skills
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix run .#skill-check
+
       - name: Run gitleaks history scan
         run: nix develop .#ci --command gitleaks detect --verbose --redact
 

@@ -1,5 +1,6 @@
 ---
 name: postman-config-auditor
+license: MIT
 description: |
   Audits tmux-a2a-postman configuration, topology, postman.md syntax, and node templates.
   Use when:

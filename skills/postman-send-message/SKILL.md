@@ -1,5 +1,6 @@
 ---
 name: postman-send-message
+license: MIT
 description: |
   Send the first message to another node using tmux-a2a-postman send.
   Use when:

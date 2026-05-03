@@ -1,13 +1,12 @@
 module github.com/i9wa4/tmux-a2a-postman
 
-go 1.25.0
+go 1.26.0
 
 require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/fsnotify/fsnotify v1.9.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

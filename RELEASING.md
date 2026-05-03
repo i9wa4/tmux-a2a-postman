@@ -3,14 +3,30 @@
 ## 1. Release Steps
 
 1. Commit all changes to main branch
-2. Create and push annotated tag (must match `v[0-9]*`):
+2. Run local pre-release checks:
 
    ```bash
-   git tag vX.Y.Z
+   nix flake check
+   nix build
+   nix run .#skill-check
+   nix develop .#cd --command goreleaser check
+   ```
+
+3. Create and push an annotated tag (must match `v[0-9]*`):
+
+   ```bash
+   git tag -a vX.Y.Z -m vX.Y.Z
    git push origin main --tags
    ```
 
-3. GitHub Actions automatically creates release with goreleaser
+4. GitHub Actions validates the skills with `nix run .#skill-check`
+5. On tag builds, GitHub Actions publishes skills with
+   `nix run .#skill-publish -- --tag "$GITHUB_REF_NAME"`
+6. GoReleaser appends binary archives and checksums to the same GitHub Release
+
+`gh skill publish` creates the release first. `.goreleaser.yaml` uses
+`release.mode: append` so GoReleaser uploads binary assets to that release
+instead of trying to replace it.
 
 ## 2. Version Behavior
 
@@ -19,18 +35,34 @@
 - GitHub Nix builds: show `vX.Y.Z` (semantic version) via `self.ref`
 - GitHub GoReleaser builds: show `vX.Y.Z` via `{{.Tag}}` ldflag
 
-## 3. Manual Release Trigger (Fallback)
+## 3. Tag Ruleset
 
-If automatic tag trigger fails, use "Run workflow" on the
+Release tags are expected to be immutable after publication. Configure a GitHub
+tag ruleset for `v*` with:
+
+- `Restrict updates`: enabled
+- `Restrict deletions`: enabled
+- `Restrict creations`: disabled unless tag creators are explicitly listed as
+  bypass actors
+
+## 4. Manual Release Trigger
+
+The release workflow can be run manually from the
 [Actions tab](https://github.com/i9wa4/tmux-a2a-postman/actions/workflows/release.yml).
+Manual runs validate skills and run GoReleaser, but they do not publish skills
+because no tag ref is present.
 
-## 4. Verify Release
+## 5. Verify Release
 
 Check [Releases page](https://github.com/i9wa4/tmux-a2a-postman/releases) for
-completion and attached assets.
+completion. A successful release has:
 
-## 5. Testing (Pre-release Verification)
+- skill metadata from `gh skill publish`
+- GoReleaser archives for darwin/linux amd64/arm64
+- `checksums.txt`
+
+After release, confirm install discovery works:
 
 ```bash
-git describe --tags   # confirm tag is correct
+gh skill preview i9wa4/tmux-a2a-postman postman-send-message@vX.Y.Z
 ```

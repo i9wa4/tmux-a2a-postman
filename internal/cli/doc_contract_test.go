@@ -127,7 +127,9 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "`pop` returns JSON that includes the stored message content as written and does not add a second hard-coded reply footer.")
 	assertContainsNormalized(t, readme, "`postman-send-message`: minimal entry point for sending the first postman message.")
 	assertContainsNormalized(t, readme, "`postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`, topology, and node templates.")
-	assertContainsNormalized(t, readme, "This repo does not currently define a skill deployment workflow")
+	assertContainsNormalized(t, readme, "These skills are published through GitHub Releases; no separate skill registry is required.")
+	assertContainsNormalized(t, readme, "gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user")
+	assertContainsNormalized(t, readme, "nix run .#skill-check")
 	assertContainsNormalized(t, readme, "[skills/postman-config-auditor/references/postman-md.md](skills/postman-config-auditor/references/postman-md.md)")
 	assertContainsNormalized(t, readme, "`postman.toml` is optional; without it, embedded defaults from `internal/config/postman.default.toml` are used.")
 	for _, hidden := range []string{

@@ -23,7 +23,8 @@ builds:
 
 archives:
   - id: tmux-a2a-postman
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
@@ -38,8 +39,9 @@ release:
     name: tmux-a2a-postman
   draft: false
   prerelease: auto
+  mode: append
   # NOTE: Tag is created manually by developer before release workflow triggers
-  # GoReleaser creates the release and uploads build assets
+  # gh skill publish creates the release first; GoReleaser appends build assets.
 
 changelog:
   sort: asc

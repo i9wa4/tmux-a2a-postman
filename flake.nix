@@ -1,6 +1,17 @@
 {
   description = "tmux-a2a-postman - File-based communication daemon for tmux panes";
 
+  nixConfig = {
+    extra-substituters = [
+      "https://nix-community.cachix.org"
+      "https://cache.numtide.com"
+    ];
+    extra-trusted-public-keys = [
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+      "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
@@ -40,6 +51,23 @@
         }:
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
+          commonDevPackages = with pkgs; [
+            gh
+            go_1_26
+          ];
+          goDevPackages = with pkgs; [
+            gopls
+            golangci-lint
+            go-tools
+          ];
+          ciPackages = with pkgs; [
+            gitleaks
+            golangci-lint
+            govulncheck
+          ];
+          cdPackages = with pkgs; [
+            goreleaser
+          ];
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -62,8 +90,46 @@
           commit = if (builtins.hasAttr "rev" self) then (builtins.substring 0 7 self.rev) else "unknown";
         in
         {
+          apps = {
+            update = {
+              type = "app";
+              program = "${pkgs.writeShellScriptBin "update" ''
+                set -euo pipefail
+                exec ${pkgs.nix}/bin/nix flake update "$@"
+              ''}/bin/update";
+              meta.description = "Update flake inputs.";
+            };
+
+            check = {
+              type = "app";
+              program = "${pkgs.writeShellScriptBin "check" ''
+                set -euo pipefail
+                exec ${pkgs.nix}/bin/nix flake check --print-build-logs "$@"
+              ''}/bin/check";
+              meta.description = "Run the flake checks.";
+            };
+
+            skill-check = {
+              type = "app";
+              program = "${pkgs.writeShellScriptBin "skill-check" ''
+                set -euo pipefail
+                exec ${pkgs.gh}/bin/gh skill publish --dry-run "$@"
+              ''}/bin/skill-check";
+              meta.description = "Validate agent skills without publishing.";
+            };
+
+            skill-publish = {
+              type = "app";
+              program = "${pkgs.writeShellScriptBin "skill-publish" ''
+                set -euo pipefail
+                exec ${pkgs.gh}/bin/gh skill publish "$@"
+              ''}/bin/skill-publish";
+              meta.description = "Publish agent skills with GitHub CLI.";
+            };
+          };
+
           # nix build
-          packages.default = pkgs.buildGoModule {
+          packages.default = pkgs.buildGo126Module {
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
@@ -79,29 +145,16 @@
           # nix develop
           devShells = {
             default = pkgs.mkShell {
-              buildInputs = with pkgs; [
-                go_1_25
-                gopls
-                golangci-lint
-                go-tools
-              ];
+              buildInputs = commonDevPackages ++ goDevPackages;
               shellHook = ''
                 ${config.pre-commit.installationScript}
               '';
             };
             ci = pkgs.mkShell {
-              buildInputs = with pkgs; [
-                go_1_25
-                gitleaks
-                golangci-lint
-                govulncheck
-              ];
+              buildInputs = commonDevPackages ++ ciPackages;
             };
             cd = pkgs.mkShell {
-              buildInputs = with pkgs; [
-                go_1_25
-                goreleaser
-              ];
+              buildInputs = commonDevPackages ++ cdPackages;
             };
           };
 
@@ -111,6 +164,11 @@
             programs = {
               # Nix
               nixfmt.enable = true;
+              # Shell
+              shfmt = {
+                enable = true;
+                indent_size = 2;
+              };
               # Go
               gofumpt.enable = true;
             };
@@ -188,6 +246,7 @@
                 entry = "${pkgs.bash}/bin/bash -c '${pkgs.statix}/bin/statix check flake.nix'";
                 pass_filenames = false;
               };
+              deadnix.enable = true;
 
               # === Markdown linter ===
               rumdl-check = {
@@ -212,7 +271,7 @@
               # Go
               govet = {
                 enable = true;
-                entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${pkgs.go_1_25}/bin/go vet ./...'";
+                entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${pkgs.go_1_26}/bin/go vet ./...'";
                 pass_filenames = false;
                 types = [ "go" ];
               };

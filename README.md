@@ -1,5 +1,7 @@
 # tmux-a2a-postman
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/i9wa4/tmux-a2a-postman)
+
 tmux agent-to-agent message delivery daemon.
 
 ## 1. Prerequisites
@@ -27,9 +29,18 @@ The `skills/` directory contains optional AI assistant skills:
 - `postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`,
   topology, and node templates.
 
-These skills are source files in this repository. This repo does not currently
-define a skill deployment workflow; add one only after choosing the target
-assistant or registry.
+These skills are published through GitHub Releases; no separate skill registry
+is required. With GitHub CLI 2.90.0 or newer:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
+```
+
+Maintainers can validate the publishable skill metadata through Nix:
+
+```sh
+nix run .#skill-check
+```
 
 ## 3. Concept
 
