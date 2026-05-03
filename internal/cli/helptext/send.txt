@@ -7,10 +7,12 @@ Usage:
 Flags:
   --to <node>             Recipient node name (required)
   --body <text>           Message body (required)
+  --no-reply              Mark this message as not requiring a reply
+  --reply-to <message>    Message id this message resolves
 
 Output:
   Always JSON.
-  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","submit_path":"daemon-submit"}
+  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"required","submit_path":"daemon-submit"}
 
 Status:
   processed               Daemon-side handling was observed

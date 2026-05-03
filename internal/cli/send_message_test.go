@@ -762,6 +762,113 @@ role = "orchestrator"
 	}
 }
 
+func TestRunSendMessage_StoresReplyPolicyMetadataAndReplyToFooter(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-reply-policy",
+			"--to", "worker",
+			"--body", "please do this",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "required" {
+		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-reply-policy", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	for _, want := range []string{
+		"messageId: " + payload.Sent,
+		"replyPolicy: required",
+		"Reply: tmux-a2a-postman send --to messenger --body \"<your message>\" --reply-to " + payload.Sent,
+		"Reply expected by default.",
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("content missing %q:\n%s", want, string(content))
+		}
+	}
+}
+
+func TestRunSendMessage_NoReplyFlagStoresNoReplyPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-no-reply-policy",
+			"--to", "worker",
+			"--body", "status-only update",
+			"--no-reply",
+			"--reply-to", "previous.md",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("payload.ReplyPolicy = %q, want none", payload.ReplyPolicy)
+	}
+	if payload.ReplyTo != "previous.md" {
+		t.Fatalf("payload.ReplyTo = %q, want previous.md", payload.ReplyTo)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-no-reply-policy", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	for _, want := range []string{
+		"replyPolicy: none",
+		"replyTo: previous.md",
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("content missing %q:\n%s", want, string(content))
+		}
+	}
+}
+
 func TestRunSendMessage_DefaultJSONReportsQueuedWhenOnlyLocalHandoffIsConfirmed(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

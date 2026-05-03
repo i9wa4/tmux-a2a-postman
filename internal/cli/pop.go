@@ -119,6 +119,8 @@ type popMessageOutput struct {
 	ID           string `json:"id"`
 	From         string `json:"from"`
 	To           string `json:"to"`
+	ReplyPolicy  string `json:"reply_policy,omitempty"`
+	ReplyTo      string `json:"reply_to,omitempty"`
 	Timestamp    string `json:"timestamp"`
 	Body         string `json:"body"`
 	Content      string `json:"content"`
@@ -165,6 +167,14 @@ func parseMessageContent(content, filename string) popMessageOutput {
 			result.From = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
 		} else if strings.HasPrefix(line, "  to: ") {
 			result.To = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
+		} else if strings.HasPrefix(line, "  replyPolicy: ") {
+			result.ReplyPolicy = strings.TrimSpace(strings.TrimPrefix(line, "  replyPolicy: "))
+		} else if strings.HasPrefix(line, "  reply_policy: ") {
+			result.ReplyPolicy = strings.TrimSpace(strings.TrimPrefix(line, "  reply_policy: "))
+		} else if strings.HasPrefix(line, "  replyTo: ") {
+			result.ReplyTo = strings.TrimSpace(strings.TrimPrefix(line, "  replyTo: "))
+		} else if strings.HasPrefix(line, "  reply_to: ") {
+			result.ReplyTo = strings.TrimSpace(strings.TrimPrefix(line, "  reply_to: "))
 		} else if strings.HasPrefix(line, "  timestamp: ") {
 			result.Timestamp = strings.TrimSpace(strings.TrimPrefix(line, "  timestamp: "))
 		}

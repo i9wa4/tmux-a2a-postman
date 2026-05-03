@@ -46,6 +46,7 @@ func TestCompactStatusMark(t *testing.T) {
 		{"active", "🟢"},
 		{"ready", "🟢"},
 		{"pending", "🔷"},
+		{"waiting", "🟡"},
 		{"idle", "🟢"},
 		{"stale", "🔴"},
 		{"", "🔴"},

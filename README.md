@@ -167,8 +167,10 @@ tmux-a2a-postman help directories
 ```
 
 `get-health`, `get-health-oneline`, and the default TUI are views over the same
-canonical contract. Agents should prefer `get-health` for structured session
-JSON and `get-health-oneline` for compact coordination.
+reply-aware contract. Normal `send` expects a reply by default; `--no-reply`,
+`DONE`, `ACK`, and `PING` mark terminal or informational messages. Agents
+should prefer `get-health` for structured session JSON and
+`get-health-oneline` for compact coordination.
 
 ## 5. Configuration
 

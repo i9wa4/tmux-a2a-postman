@@ -35,8 +35,9 @@ same canonical contract.
 
 | State     | Meaning                                             | Compact mark |
 | --------- | --------------------------------------------------- | ------------ |
-| `ready`   | Pane is live and has no unread inbox mail           | green mark   |
-| `pending` | Node has unread inbox mail                          | blue diamond |
+| `ready`   | Pane is live with no open action or wait            | green mark   |
+| `waiting` | Node is waiting for a reply-required response       | yellow mark  |
+| `pending` | Node has inbound reply-required action              | blue diamond |
 | `stale`   | Pane or session is missing, unavailable, or unknown | red mark     |
 
 A live pane that simply has not changed for a long time is internally `idle`
@@ -46,9 +47,9 @@ Session fallback may report `unavailable` when this daemon cannot provide
 canonical health for a tmux session. It is displayed as red, but it is not a
 per-node state.
 
-The health payload exposes `queues.post_count`, `queues.inbox_count`, and
-`queues.dead_letter_count` for mailbox backlog checks. Per-node state is
-reported as `nodes[*].visible_state`.
+The health payload exposes `queues.post_count`, `queues.inbox_count`,
+`queues.dead_letter_count`, and per-node reply-obligation counts for mailbox
+backlog checks. Per-node state is reported as `nodes[*].visible_state`.
 
 ## 4. Configuration
 

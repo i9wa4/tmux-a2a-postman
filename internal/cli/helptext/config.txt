@@ -10,7 +10,7 @@ when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
 nodes referenced by those edges are materialized automatically.
 
 Runtime state model:
-  Core visible states: ready, pending, stale
+  Core visible states: ready, waiting, pending, stale
   Session fallback: unavailable (this daemon does not own canonical health)
   get-health, get-health-oneline, and the default TUI read the same canonical health contract.
 

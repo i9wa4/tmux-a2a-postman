@@ -110,8 +110,9 @@ Run `tmux-a2a-postman pop` to read it. """
 # Message footer (appended to outgoing messages by `send` after the message content)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 #            {reply_command} - reply command for the current recipient
+#            {message_id} - current message id, usable with --reply-to
 message_footer = """You can talk to: {can_talk_to}
-Reply: {reply_command}
+Reply: {reply_command} --reply-to {message_id}
 Reply expected by default.
 No reply needed for: DONE, ACK, PING, or status-only messages."""
 
@@ -125,6 +126,8 @@ params:
   contextId: {context_id}
   from: {from_node}
   to: {node}
+  messageId: {filename}
+  replyPolicy: none
   timestamp: {iso_timestamp}
   messageType: {message_type}
   tmuxSession: {session_name}
@@ -153,6 +156,8 @@ params:
   contextId: {context_id}
   from: {sender}
   to: {recipient}
+  messageId: {message_id}
+  replyPolicy: {reply_policy}
   timestamp: {timestamp}
   tmuxSession: {session_name}
 ---

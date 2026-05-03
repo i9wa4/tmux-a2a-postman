@@ -9,6 +9,8 @@ send
   Flags:
     --to <node>          Recipient node name (required)
     --body <text>        Message body (required)
+    --no-reply           Mark this message as not requiring a reply
+    --reply-to <message> Message id this message resolves
 
 pop
   Read and archive the oldest unread inbox message.
@@ -22,7 +24,7 @@ get-health
 
 get-health-oneline
   Print compact all-session health for quick agent coordination.
-  Shape: [0]🔷🔵:🟢 [1]🔴
+  Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
 
 version

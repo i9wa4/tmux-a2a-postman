@@ -72,7 +72,7 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Shape: [0]🔷🔵:🟢 [1]🔴") {
+	if !strings.Contains(stdout.String(), "Shape: [0]🔷🟡:🟢 [1]🔴") {
 		t.Fatalf("stdout missing status shape: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Window groups are colon-separated emoji runs with no literal window labels.") {
@@ -98,7 +98,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"Runtime state model:",
-		"Core visible states: ready, pending, stale",
+		"Core visible states: ready, waiting, pending, stale",
 		"Quick reading guide:",
 		"visible_state in get-health JSON answers what the node looks like now",
 		"pane hints answer that delivery reached a recipient inbox",

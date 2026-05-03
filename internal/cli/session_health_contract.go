@@ -30,6 +30,8 @@ func compactStatusMark(state string) string {
 	switch status.NormalizeState(state) {
 	case "ready", "active", "idle":
 		return "🟢"
+	case "waiting":
+		return "🟡"
 	case "pending":
 		return "🔷"
 	default:
@@ -73,6 +75,14 @@ func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool)
 	return projected.InboxCounts, true
 }
 
+func projectedObligationCounts(sessionDir, sessionName string) (projection.MessageObligationState, bool) {
+	projected, ok, err := projection.ProjectMessageObligationState(sessionDir, sessionName)
+	if err != nil || !ok {
+		return projection.MessageObligationState{}, false
+	}
+	return projected, true
+}
+
 func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionHealth, error) {
 	result := status.SessionHealth{
 		ContextID:   contextID,
@@ -99,6 +109,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneStates := loadPaneActivityStatus(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	queues := collectSessionQueues(sessionDir)
+	obligations, useObligations := projectedObligationCounts(sessionDir, sessionName)
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
 		return result, err
@@ -133,7 +144,14 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 			InboxCount:     inboxCount,
 			CurrentCommand: pane.currentCommand,
 		}
-		node.VisibleState = status.VisibleState(node.PaneState, node.InboxCount)
+		actionRequiredCount := -1
+		if useObligations {
+			node.ActionRequiredCount = obligations.ActionRequiredCounts[simpleName]
+			node.WaitingOnReplyCount = obligations.WaitingOnReplyCounts[simpleName]
+			node.InfoUnreadCount = obligations.InfoUnreadCounts[simpleName]
+			actionRequiredCount = node.ActionRequiredCount
+		}
+		node.VisibleState = status.VisibleStateWithObligations(node.PaneState, node.InboxCount, actionRequiredCount, node.WaitingOnReplyCount)
 		result.Nodes = append(result.Nodes, node)
 	}
 

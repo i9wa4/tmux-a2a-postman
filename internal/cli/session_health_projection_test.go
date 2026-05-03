@@ -223,6 +223,43 @@ func TestGetHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	}
 }
 
+func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"worker": 1},
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 202, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	content := sessionHealthObligationContent("critic", "worker", "m1.md", "required", "", "please review")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+
+	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].ActionRequiredCount != 1 {
+		t.Fatalf("worker health = %#v, want pending action_required=1", nodeByName["worker"])
+	}
+	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnReplyCount != 1 {
+		t.Fatalf("critic health = %#v, want waiting waiting_on_reply=1", nodeByName["critic"])
+	}
+	if health.Compact != "🔷🟡" {
+		t.Fatalf("health.Compact = %q, want 🔷🟡", health.Compact)
+	}
+}
+
 func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
@@ -246,6 +283,32 @@ func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	}
 
 	assertSessionHealthParity(t, legacy, projected)
+}
+
+func sessionHealthObligationContent(from, to, messageID, replyPolicy, replyTo, body string) string {
+	replyToLine := ""
+	if replyTo != "" {
+		replyToLine = "  replyTo: " + replyTo + "\n"
+	}
+	return "---\nparams:\n" +
+		"  from: " + from + "\n" +
+		"  to: " + to + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  replyPolicy: " + replyPolicy + "\n" +
+		replyToLine +
+		"---\n\n" + body + "\n"
+}
+
+func appendSessionHealthObligationEvent(t *testing.T, writer *journal.Writer, eventType, messageID, from, to, content string, now time.Time) {
+	t.Helper()
+	if _, err := writer.AppendEvent(eventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: messageID,
+		From:      from,
+		To:        to,
+		Content:   content,
+	}, now); err != nil {
+		t.Fatalf("AppendEvent(%s): %v", eventType, err)
+	}
 }
 
 func TestGetHealthOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {

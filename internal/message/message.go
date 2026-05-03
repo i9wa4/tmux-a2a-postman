@@ -100,16 +100,27 @@ func mailboxThreadIDFromContent(content string) string {
 }
 
 func messageBodyFromContent(content string) string {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return strings.TrimSpace(content)
-	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return strings.TrimSpace(content)
-	}
-	return strings.TrimSpace(rest[second+4:])
+	return envelope.BodyFromContent(content)
+}
+
+func MessageBodyFromContent(content string) string {
+	return envelope.BodyFromContent(content)
+}
+
+func ResolveReplyPolicyFromContent(content string) string {
+	return envelope.ResolveReplyPolicyFromContent(content)
+}
+
+func ResolveReplyPolicyForSend(body string, noReply bool) string {
+	return envelope.ResolveReplyPolicyForSend(body, noReply)
+}
+
+func IsNoReplyBody(content string) bool {
+	return envelope.IsNoReplyBody(content)
+}
+
+func EnsureEnvelopeParams(content string, fields map[string]string) string {
+	return envelope.EnsureParams(content, fields)
 }
 
 func approvalDecisionFromContent(content string) (journal.ApprovalDecision, bool) {
@@ -261,11 +272,7 @@ type MessageInfo struct {
 	Filename    string // Original filename (set by ScanInboxMessages)
 }
 
-type EnvelopeMetadata struct {
-	From     string
-	To       string
-	ThreadID string
-}
+type EnvelopeMetadata = envelope.Metadata
 
 // SessionHash returns a 4-character hex hash of the tmux session name (#198).
 // Returns empty string if sessionName is empty.
@@ -707,6 +714,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		To:        info.To,
 		ThreadID:  mailboxThreadIDFromContent(messageContent),
 		Path:      shadowRelativePath(sourceSessionDir, postPath),
+		Content:   messageContent,
 	})
 	recordMailboxProjectionPayload(recipientSessionDir, recipientSessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
@@ -913,48 +921,7 @@ func parseEnvelopeFromTo(content string) (from, to string, err error) {
 // ParseEnvelopeMetadata extracts selected fields from the params block inside
 // a message frontmatter envelope.
 func ParseEnvelopeMetadata(content string) (EnvelopeMetadata, error) {
-	// Find opening "---\n"
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return EnvelopeMetadata{}, fmt.Errorf("no frontmatter block found")
-	}
-	rest := content[first+4:]
-	// Find closing "\n---"
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return EnvelopeMetadata{}, fmt.Errorf("frontmatter not closed")
-	}
-	frontmatter := rest[:second]
-
-	// Scan lines for params: block, then collect from/to
-	var metadata EnvelopeMetadata
-	inParams := false
-	for _, line := range strings.Split(frontmatter, "\n") {
-		line = strings.TrimRight(line, "\r") // handle \r\n line endings
-		if line == "params:" {
-			inParams = true
-			continue
-		}
-		if inParams {
-			// Stop at next top-level key (non-empty, no leading space)
-			if len(line) > 0 && line[0] != ' ' {
-				inParams = false
-				continue
-			}
-			if strings.HasPrefix(line, "  from: ") {
-				metadata.From = strings.TrimSpace(strings.TrimPrefix(line, "  from: "))
-			} else if strings.HasPrefix(line, "  to: ") {
-				metadata.To = strings.TrimSpace(strings.TrimPrefix(line, "  to: "))
-			} else if strings.HasPrefix(line, "  thread_id: ") {
-				metadata.ThreadID = strings.TrimSpace(strings.TrimPrefix(line, "  thread_id: "))
-			}
-		}
-	}
-
-	if metadata.From == "" || metadata.To == "" {
-		return EnvelopeMetadata{}, fmt.Errorf("missing from or to in params block")
-	}
-	return metadata, nil
+	return envelope.ParseMetadata(content)
 }
 
 // DrainStalePost moves stale messages from post/ to dead-letter/ with ttl-expired suffix.

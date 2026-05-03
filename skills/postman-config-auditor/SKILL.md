@@ -105,7 +105,8 @@ Important merge rules:
 
 - Use `tmux-a2a-postman get-health` for structured state and
   `tmux-a2a-postman get-health-oneline` for compact coordination.
-- Treat `pending` as unread inbox mail.
+- Treat `pending` as inbound reply-required action.
+- Treat `waiting` as outbound reply-required mail waiting for a response.
 - Treat `stale` as missing, unavailable, or unknown pane/session state before
   changing templates. A live pane that is merely quiet should not be diagnosed
   as stale.

@@ -1,0 +1,177 @@
+package projection
+
+import (
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+)
+
+type MessageObligationState struct {
+	UnreadCounts         map[string]int
+	ActionRequiredCounts map[string]int
+	WaitingOnReplyCounts map[string]int
+	InfoUnreadCounts     map[string]int
+}
+
+type projectedObligation struct {
+	MessageID string
+	From      string
+	To        string
+}
+
+func ProjectMessageObligationState(sessionDir, sessionName string) (MessageObligationState, bool, error) {
+	state, ok := loadCurrentSessionState(sessionDir)
+	if !ok {
+		return MessageObligationState{}, false, nil
+	}
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil || len(events) == 0 {
+		return MessageObligationState{}, false, err
+	}
+
+	projected := MessageObligationState{
+		UnreadCounts:         make(map[string]int),
+		ActionRequiredCounts: make(map[string]int),
+		WaitingOnReplyCounts: make(map[string]int),
+		InfoUnreadCounts:     make(map[string]int),
+	}
+	openInbound := make(map[string]projectedObligation)
+	openOutbound := make(map[string]projectedObligation)
+	infoUnread := make(map[string]projectedObligation)
+	sawLease := false
+	sawResolution := false
+
+	for _, event := range events {
+		if event.SessionKey != state.SessionKey || event.Generation != state.Generation {
+			continue
+		}
+
+		switch event.Type {
+		case "lease_acquired":
+			sawLease = true
+			continue
+		case "session_resolved":
+			sawResolution = true
+			continue
+		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType:
+		default:
+			continue
+		}
+
+		payload, ok := decodeMailboxEventPayload(event.Payload)
+		if !ok {
+			return MessageObligationState{}, false, nil
+		}
+		meta := obligationMetadataFromPayload(payload)
+		if meta.MessageID == "" {
+			return MessageObligationState{}, false, nil
+		}
+		if (event.Type == MailboxProjectionPostConsumedEventType || event.Type == MailboxProjectionDeliveredEventType) && payload.Content == "" {
+			return MessageObligationState{}, false, nil
+		}
+		meta.From = simpleNameForSession(meta.From, sessionName)
+		meta.To = simpleNameForSession(meta.To, sessionName)
+
+		switch event.Type {
+		case MailboxProjectionPostConsumedEventType:
+			resolveInboundObligation(projected, openInbound, meta.ReplyTo, meta.From, meta.To)
+			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
+				openOutbound[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
+				projected.WaitingOnReplyCounts[meta.From]++
+			}
+		case MailboxProjectionDeliveredEventType:
+			resolveOutboundObligation(projected, openOutbound, meta.ReplyTo, meta.To, meta.From)
+			projected.UnreadCounts[meta.To]++
+			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
+				openInbound[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
+				projected.ActionRequiredCounts[meta.To]++
+			} else {
+				infoUnread[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
+				projected.InfoUnreadCounts[meta.To]++
+			}
+		case MailboxProjectionReadEventType:
+			decrementCount(projected.UnreadCounts, meta.To)
+			if obligation, ok := infoUnread[obligationKey(meta.MessageID, meta.To)]; ok {
+				decrementCount(projected.InfoUnreadCounts, obligation.To)
+				delete(infoUnread, obligationKey(meta.MessageID, meta.To))
+			}
+		}
+	}
+
+	if !sawLease || !sawResolution {
+		return MessageObligationState{}, false, nil
+	}
+	return projected, true, nil
+}
+
+func obligationMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
+	meta, err := envelope.ParseMetadata(payload.Content)
+	if err != nil {
+		meta = envelope.Metadata{Body: envelope.BodyFromContent(payload.Content)}
+	}
+	if meta.MessageID == "" {
+		meta.MessageID = payload.MessageID
+	}
+	if meta.From == "" {
+		meta.From = payload.From
+	}
+	if meta.To == "" {
+		meta.To = payload.To
+	}
+	return meta
+}
+
+func resolveInboundObligation(state MessageObligationState, openInbound map[string]projectedObligation, replyTo, from, to string) {
+	if replyTo != "" {
+		if obligation, ok := openInbound[obligationKey(replyTo, from)]; ok {
+			decrementCount(state.ActionRequiredCounts, obligation.To)
+			delete(openInbound, obligationKey(replyTo, from))
+			return
+		}
+	}
+	for messageID, obligation := range openInbound {
+		if obligation.From == to && obligation.To == from {
+			decrementCount(state.ActionRequiredCounts, obligation.To)
+			delete(openInbound, messageID)
+			return
+		}
+	}
+}
+
+func resolveOutboundObligation(state MessageObligationState, openOutbound map[string]projectedObligation, replyTo, to, from string) {
+	if replyTo != "" {
+		if obligation, ok := openOutbound[obligationKey(replyTo, from)]; ok {
+			decrementCount(state.WaitingOnReplyCounts, obligation.From)
+			delete(openOutbound, obligationKey(replyTo, from))
+			return
+		}
+	}
+	for messageID, obligation := range openOutbound {
+		if obligation.From == to && obligation.To == from {
+			decrementCount(state.WaitingOnReplyCounts, obligation.From)
+			delete(openOutbound, messageID)
+			return
+		}
+	}
+}
+
+func simpleNameForSession(name, sessionName string) string {
+	fullName := nodeaddr.Full(name, sessionName)
+	recipientSession, recipientName, hasSession := nodeaddr.Split(fullName)
+	if hasSession && recipientSession == sessionName {
+		return recipientName
+	}
+	return name
+}
+
+func decrementCount(counts map[string]int, key string) {
+	if counts[key] <= 0 {
+		return
+	}
+	counts[key]--
+}
+
+func obligationKey(messageID, nodeName string) string {
+	return messageID + "\x00" + nodeName
+}

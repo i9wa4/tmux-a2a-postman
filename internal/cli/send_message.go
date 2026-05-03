@@ -38,14 +38,16 @@ const (
 )
 
 type sendOutput struct {
-	Sent       string                `json:"sent"`
-	Status     string                `json:"status"`
-	ContextID  string                `json:"context_id,omitempty"`
-	Session    string                `json:"session,omitempty"`
-	From       string                `json:"from,omitempty"`
-	To         string                `json:"to,omitempty"`
-	SubmitPath projection.SubmitPath `json:"submit_path,omitempty"`
-	Notify     string                `json:"notify,omitempty"`
+	Sent        string                `json:"sent"`
+	Status      string                `json:"status"`
+	ContextID   string                `json:"context_id,omitempty"`
+	Session     string                `json:"session,omitempty"`
+	From        string                `json:"from,omitempty"`
+	To          string                `json:"to,omitempty"`
+	ReplyPolicy string                `json:"reply_policy,omitempty"`
+	ReplyTo     string                `json:"reply_to,omitempty"`
+	SubmitPath  projection.SubmitPath `json:"submit_path,omitempty"`
+	Notify      string                `json:"notify,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -67,6 +69,8 @@ func RunSendMessage(args []string) error {
 	cliutil.SetUsageWithoutContextID(fs)
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
+	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
+	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -83,6 +87,9 @@ func RunSendMessage(args []string) error {
 	// delegating so send never sends a placeholder-body message.
 	if *body == "" {
 		return fmt.Errorf("--body is required")
+	}
+	if strings.ContainsAny(*replyTo, "/\\") {
+		return fmt.Errorf("--reply-to must be a message id, not a path")
 	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -198,6 +205,7 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("generating filename: %w", err)
 	}
+	replyPolicy := message.ResolveReplyPolicyForSend(*body, *noReply)
 	draftPath := filepath.Join(draftDir, filename)
 
 	content := cfg.DraftTemplate
@@ -213,6 +221,9 @@ func RunSendMessage(args []string) error {
 		"can_talk_to":    canTalkTo,
 		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":     filename,
+		"reply_policy":   replyPolicy,
+		"reply_to":       *replyTo,
 		"template":       getNodeTemplate(cfg, *to),
 		"session_name":   sessionName,
 		"sender_pane_id": config.GetTmuxPaneID(),
@@ -226,6 +237,11 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("--body contains invalid UTF-8: %w", err)
 	}
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
+	content = message.EnsureEnvelopeParams(content, map[string]string{
+		"messageId":   filename,
+		"replyPolicy": replyPolicy,
+		"replyTo":     *replyTo,
+	})
 
 	if cfg.MessageFooter != "" {
 		footerVars := make(map[string]string, len(vars))
@@ -245,6 +261,9 @@ func RunSendMessage(args []string) error {
 			"<recipient>",
 			sender,
 		)
+		footerVars["message_id"] = filename
+		footerVars["reply_policy"] = replyPolicy
+		footerVars["reply_to"] = *replyTo
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
@@ -267,13 +286,15 @@ func RunSendMessage(args []string) error {
 			return fmt.Errorf("send outcome: %w", err)
 		}
 		return writeSendOutput(sendOutput{
-			Sent:       deliveredFilename,
-			Status:     string(status),
-			ContextID:  resolvedContextID,
-			Session:    sessionName,
-			From:       sender,
-			To:         *to,
-			SubmitPath: projection.SubmitPathDaemon,
+			Sent:        deliveredFilename,
+			Status:      string(status),
+			ContextID:   resolvedContextID,
+			Session:     sessionName,
+			From:        sender,
+			To:          *to,
+			ReplyPolicy: replyPolicy,
+			ReplyTo:     *replyTo,
+			SubmitPath:  projection.SubmitPathDaemon,
 		})
 	}
 
@@ -318,14 +339,16 @@ func RunSendMessage(args []string) error {
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
 	return writeSendOutput(sendOutput{
-		Sent:       filename,
-		Status:     string(status),
-		ContextID:  resolvedContextID,
-		Session:    sessionName,
-		From:       sender,
-		To:         *to,
-		SubmitPath: projection.SubmitPathPost,
-		Notify:     notifyOutputValue(notifyStatus),
+		Sent:        filename,
+		Status:      string(status),
+		ContextID:   resolvedContextID,
+		Session:     sessionName,
+		From:        sender,
+		To:          *to,
+		ReplyPolicy: replyPolicy,
+		ReplyTo:     *replyTo,
+		SubmitPath:  projection.SubmitPathPost,
+		Notify:      notifyOutputValue(notifyStatus),
 	})
 }
 

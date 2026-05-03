@@ -5,4 +5,10 @@ Usage:
   tmux-a2a-postman get-health-oneline --help
 
 Output:
-  [0]🔷🔵:🟢 [1]🔴
+  [0]🔷🟡:🟢 [1]🔴
+
+Marks:
+  🔴 stale     pane or session unavailable
+  🔷 pending   action-required inbound message is open
+  🟡 waiting   outbound reply-required message is open
+  🟢 ready     pane is live with no open action or wait
