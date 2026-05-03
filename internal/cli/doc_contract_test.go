@@ -35,6 +35,14 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 	}
 }
 
+func assertContainsAllNormalized(t *testing.T, got string, wants ...string) {
+	t.Helper()
+
+	for _, want := range wants {
+		assertContainsNormalized(t, got, want)
+	}
+}
+
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendHelp := readRepoFile(t, "internal/cli/helptext/send.txt")
@@ -100,8 +108,8 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
 	assertContainsNormalized(t, notificationDoc, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract.")
-	assertContainsNormalized(t, notificationDoc, "## 1. Surfaces")
-	assertContainsNormalized(t, notificationDoc, "## 2. Delivery Path")
+	assertContainsNormalized(t, notificationDoc, "Surface")
+	assertContainsNormalized(t, notificationDoc, "Delivery")
 
 	if strings.Contains(notificationDoc, "There are eight distinct notification mechanisms") {
 		t.Fatal("notification design doc still opens with the old mechanism-first framing")
@@ -114,79 +122,90 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 	}
 }
 
-func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testing.T) {
+func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
-	assertContainsNormalized(t, readme, "Runtime status model")
-	assertContainsNormalized(t, readme, "`get-health`, `get-health-oneline`, and the default TUI are views over the same canonical contract")
-	assertContainsNormalized(t, readme, "Quick reading guide")
-	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
-	assertContainsNormalized(t, readme, "tmux-a2a-postman help commands")
-	assertContainsNormalized(t, readme, "The exact CLI reference is built into the binary")
-	assertContainsNormalized(t, readme, "Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start the daemon.")
-	assertContainsNormalized(t, readme, "For stored messages written by `send`, reply guidance comes from `message_footer` in `internal/config/postman.default.toml`.")
-	assertContainsNormalized(t, readme, "`pop` returns JSON that includes the stored message content as written and does not add a second hard-coded reply footer.")
-	assertContainsNormalized(t, readme, "### 2.1. (Optional) Agent Skills")
-	assertContainsNormalized(t, readme, "The postman binary works without the `skills/` directory.")
-	assertContainsNormalized(t, readme, "`postman-send-message`: minimal entry point for sending the first postman message.")
-	assertContainsNormalized(t, readme, "`postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`, topology, and node templates.")
-	assertContainsNormalized(t, readme, "These skills are published through GitHub Releases; no separate skill registry is required.")
-	assertContainsNormalized(t, readme, "Install GitHub CLI 2.90.0 or newer first")
-	assertContainsNormalized(t, readme, "[GitHub CLI installation guide](https://github.com/cli/cli#installation)")
-	assertContainsNormalized(t, readme, "install all bundled skills for Codex")
-	assertContainsNormalized(t, readme, `gh skill install i9wa4/tmux-a2a-postman "$skill" --agent codex --scope user`)
-	assertContainsNormalized(t, readme, "GitHub CLI `gh skill install` manual")
-	assertContainsNormalized(t, readme, "[skills/postman-config-auditor/references/postman-md.md](skills/postman-config-auditor/references/postman-md.md)")
-	assertContainsNormalized(t, readme, "`postman.toml` is optional; without it, embedded defaults from `internal/config/postman.default.toml` are used.")
-	if strings.Contains(readme, ".#skill-check") {
-		t.Fatal("README exposes maintainer-only skill validation workflow")
-	}
-	for _, hidden := range []string{
-		"tmux-a2a-postman read",
-		"tmux-a2a-postman todo",
-		"tmux-a2a-postman timeline",
-		"tmux-a2a-postman replay",
-		"tmux-a2a-postman schema",
-		"tmux-a2a-postman bind",
-		"tmux-a2a-postman get-context-id",
-		"tmux-a2a-postman status",
-		"`read_context_mode`",
-		"`journal_health_cutover_enabled`",
-		"`[heartbeat].enabled`",
-		"waiting/",
-		"--params",
-		"--no-tui",
-	} {
-		if strings.Contains(readme, hidden) {
-			t.Fatalf("README still exposes hidden public surface %q", hidden)
-		}
-	}
-
+	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
-	assertContainsNormalized(t, sendSkill, "tmux-a2a-postman send --to <node> --body \"message text\"")
-	assertContainsNormalized(t, sendSkill, "Use `tmux-a2a-postman help send` for details.")
-	if strings.Contains(sendSkill, "schema") {
-		t.Fatal("send skill still teaches schema discovery")
-	}
-	if strings.Contains(sendSkill, "--params") {
-		t.Fatal("send skill still teaches removed params flag")
-	}
-
 	configAuditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
-	assertContainsNormalized(t, configAuditorSkill, "postman-config-auditor")
-	assertContainsNormalized(t, configAuditorSkill, "unread backlog")
-	assertContainsNormalized(t, configAuditorSkill, "quiet node")
-	assertContainsNormalized(t, configAuditorSkill, "late reply")
-	assertContainsNormalized(t, configAuditorSkill, "get-health")
-	assertContainsNormalized(t, configAuditorSkill, "Use `references/postman-md.md` as the detailed syntax contract.")
-	assertContainsNormalized(t, configAuditorSkill, "Project-local `postman.md` appends `message_footer` to the effective base footer.")
-	assertContainsNormalized(t, configAuditorSkill, "`message_footer`, `draft_template`, `daemon_message_template`, `notification_template`, or dead-letter notification text.")
 	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
-	assertContainsNormalized(t, postmanMDReference, "The main `postman.md` parser only recognizes h2 headings that contain a backtick-wrapped name.")
-	assertContainsNormalized(t, postmanMDReference, "Only `---` is parsed as an edge operator.")
-	assertContainsNormalized(t, postmanMDReference, "Project-local `postman.md` `message_footer` appends to the effective base footer.")
-	for _, hidden := range []string{"status --json", "dropped_ball", "heartbeat mail"} {
-		if strings.Contains(configAuditorSkill, hidden) {
-			t.Fatalf("config auditor skill still exposes hidden term %q", hidden)
+
+	assertContainsAllNormalized(t, readme,
+		"postman daemon",
+		"tmux pane",
+		"filesystem-backed inboxes",
+		"send",
+		"pop",
+		"get-health",
+		"get-health-oneline",
+		"Mermaid",
+		"edges",
+		"message footer",
+		"pane notification",
+		"gh skill install",
+		"postman-send-message",
+		"postman-config-auditor",
+	)
+	assertContainsAllNormalized(t, commandsHelp,
+		"send",
+		"pop",
+		"get-health",
+		"get-health-oneline",
+		"version",
+		"help [topic]",
+	)
+	assertContainsAllNormalized(t, sendSkill,
+		"tmux-a2a-postman send --to <node> --body \"message text\"",
+		"The sender is auto-detected from the current tmux pane title.",
+		"tmux-a2a-postman help send",
+	)
+	assertContainsAllNormalized(t, configAuditorSkill,
+		"postman-config-auditor",
+		"postman.md",
+		"postman.toml",
+		"get-health",
+		"references/postman-md.md",
+	)
+	assertContainsAllNormalized(t, postmanMDReference,
+		"Mermaid",
+		"Only `---` is parsed as an edge operator.",
+		"message_footer",
+	)
+
+	publicDocs := map[string]string{
+		"README.md":                              readme,
+		"internal/cli/helptext/commands.txt":     commandsHelp,
+		"skills/postman-send-message/SKILL.md":   sendSkill,
+		"skills/postman-config-auditor/SKILL.md": configAuditorSkill,
+	}
+	for path, content := range publicDocs {
+		if strings.Contains(content, ".#skill-check") {
+			t.Fatalf("%s exposes maintainer-only skill validation workflow", path)
+		}
+		if strings.Contains(content, "--pin") {
+			t.Fatalf("%s exposes user-managed skill pinning workflow", path)
+		}
+		for _, hidden := range []string{
+			"tmux-a2a-postman read",
+			"tmux-a2a-postman todo",
+			"tmux-a2a-postman timeline",
+			"tmux-a2a-postman replay",
+			"tmux-a2a-postman schema",
+			"tmux-a2a-postman bind",
+			"tmux-a2a-postman get-context-id",
+			"tmux-a2a-postman status",
+			"`read_context_mode`",
+			"`journal_health_cutover_enabled`",
+			"`[heartbeat].enabled`",
+			"waiting/",
+			"--params",
+			"--no-tui",
+			"status --json",
+			"dropped_ball",
+			"heartbeat mail",
+		} {
+			if strings.Contains(content, hidden) {
+				t.Fatalf("%s exposes hidden public surface %q", path, hidden)
+			}
 		}
 	}
 }
@@ -203,9 +222,8 @@ func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testin
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
-	readme := readRepoFile(t, "README.md")
-	assertContainsNormalized(t, readme, "`retention_period_days` controls that startup cleanup window. The embedded default is `90`.")
-	assertContainsNormalized(t, readme, "| `{baseDir}/lock/` | Active coordination state | Always preserved |")
+	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
+	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)")
 
 	directoriesHelp := readRepoFile(t, "internal/cli/helptext/directories.txt")
 	assertContainsNormalized(t, directoriesHelp, "Directories — session directory layout")

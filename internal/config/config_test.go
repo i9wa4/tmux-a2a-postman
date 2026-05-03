@@ -324,8 +324,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
-	if cfg.RetentionPeriodDays != 90 {
-		t.Errorf("default RetentionPeriodDays: got %d, want 90", cfg.RetentionPeriodDays)
+	if cfg.RetentionPeriodDays != 50 {
+		t.Errorf("default RetentionPeriodDays: got %d, want 50", cfg.RetentionPeriodDays)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)

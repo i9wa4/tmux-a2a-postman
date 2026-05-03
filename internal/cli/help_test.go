@@ -108,7 +108,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"message_footer                   Footer appended to stored send mail",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
-		"retention_period_days            Inactive runtime cleanup window",
+		"retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)",
 		"get-health, get-health-oneline, and the default TUI read the same canonical health contract.",
 	} {
 		if !strings.Contains(got, want) {
