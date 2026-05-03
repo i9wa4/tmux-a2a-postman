@@ -20,13 +20,14 @@
    ```
 
 4. GitHub Actions validates the skills with `nix run .#skill-check`
-5. On tag builds, GitHub Actions publishes skills with
-   `nix run .#skill-publish -- --tag "$GITHUB_REF_NAME"`
-6. GoReleaser appends binary archives and checksums to the same GitHub Release
+5. GoReleaser creates the GitHub Release and uploads binary archives and
+   checksums
 
-`gh skill publish` creates the release first. `.goreleaser.yaml` uses
-`release.mode: append` so GoReleaser uploads binary assets to that release
-instead of trying to replace it.
+Do not run `gh skill publish --tag` from the tag-push workflow. That command
+owns tag and release creation, so it fails when the pushed release tag already
+exists. The tag-push release path validates `skills/*/SKILL.md` with
+`gh skill publish --dry-run`; the published Git tag and GitHub Release are
+enough for `gh skill install` to resolve versions.
 
 ## 2. Version Behavior
 
@@ -57,7 +58,7 @@ because no tag ref is present.
 Check [Releases page](https://github.com/i9wa4/tmux-a2a-postman/releases) for
 completion. A successful release has:
 
-- skill metadata from `gh skill publish`
+- skills validated by `nix run .#skill-check`
 - GoReleaser archives for darwin/linux amd64/arm64
 - `checksums.txt`
 

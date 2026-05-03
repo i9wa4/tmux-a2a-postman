@@ -16,6 +16,14 @@ After any implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not contain deprecated
   references (e.g., removed commands, renamed flags, deleted packages)
 
+When changing Go dependencies, `go.mod`, `go.sum`, Go versions, or
+`vendorHash`:
+
+- Run `go mod tidy`
+- Run `nix build --option substitute false --print-build-logs`
+- If Nix reports a `vendorHash` mismatch, copy the reported `got:` hash into
+  `flake.nix` and rerun the build
+
 ### 1.2. Cross-Platform Notes
 
 - Do NOT use `/proc/{pid}` for process liveness checks — Linux-only; fails on
@@ -66,3 +74,17 @@ When two daemons are running, `stop` may silently target the wrong one.
    the commit is `unknown`, the binary was likely built from a dirty/local flake
    evaluation. For strict HEAD confirmation, clean the worktree, run
    `nix build`, and restart again.
+
+### 1.4. Release Hygiene
+
+- The tag-push release workflow owns GitHub Release creation via GoReleaser
+- Do not run `gh skill publish --tag` inside the tag-push workflow; that command
+  tries to create the tag/release itself and fails when the pushed tag already
+  exists
+- Use `nix run .#skill-check` for CI validation of `skills/*/SKILL.md`
+- Keep exactly one release owner per flow:
+  - Manual skill publishing flow: `gh skill publish --tag ...`
+  - Repository tag-push flow: pushed `v*` tag + GoReleaser
+- If a tag workflow fails because the workflow file at that tag is broken, push
+  the fix to `main` and create a new tag; rerunning the old tag usually reruns
+  the old workflow definition

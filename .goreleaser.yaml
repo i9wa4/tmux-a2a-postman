@@ -39,9 +39,8 @@ release:
     name: tmux-a2a-postman
   draft: false
   prerelease: auto
-  mode: append
   # NOTE: Tag is created manually by developer before release workflow triggers
-  # gh skill publish creates the release first; GoReleaser appends build assets.
+  # GoReleaser creates the release and uploads build assets.
 
 changelog:
   sort: asc

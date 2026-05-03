@@ -29,6 +29,8 @@ jobs:
         uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f # v31.10.5
         with:
           github_access_token: ${{ github.token }}
+          extra_nix_config: |
+            accept-flake-config = true
 
       # zizmor: ignore[cache-poisoning]
       - name: Cache Nix store
@@ -40,12 +42,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: nix run .#skill-check
-
-      - name: Publish agent skills
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: nix run .#skill-publish -- --tag "${GITHUB_REF_NAME}"
 
       - name: Run GoReleaser
         env:
