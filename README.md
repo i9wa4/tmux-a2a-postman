@@ -11,24 +11,29 @@ and delivers `send` messages to filesystem-backed inboxes. Agents read mail with
 ## 1. Concept
 
 ```mermaid
-graph TD
-    subgraph tmux["tmux session: my-project"]
-        messenger["messenger\nClaude Code"]
-        orchestrator["orchestrator\nCodex CLI"]
-        worker["worker\nClaude Code"]
-        workerAlt["worker-alt\nCodex CLI"]
-    end
-    daemon["postman daemon\nroutes messages by edges"]
-    inbox["filesystem inboxes\ninbox/{node}/"]
-    messenger -->|send| daemon
-    orchestrator -->|send| daemon
-    worker -->|send reply| daemon
-    workerAlt -->|send reply| daemon
-    daemon -->|deliver mail and pane notification| inbox
-    inbox -.->|pop after footer or notification| messenger
-    inbox -.->|pop after footer or notification| orchestrator
-    inbox -.->|pop after footer or notification| worker
-    inbox -.->|pop after footer or notification| workerAlt
+sequenceDiagram
+    participant Human as human operator
+    participant Config as postman.md / postman.toml
+    participant Daemon as postman daemon
+    participant Orchestrator as orchestrator tmux pane (Codex CLI)
+    participant Inbox as filesystem inboxes
+    participant Worker as worker tmux pane (Claude Code)
+    participant Health as TUI / get-health
+
+    Human->>Daemon: tmux-a2a-postman start
+    Daemon->>Config: load edges and templates
+    Daemon-->>Orchestrator: discover pane title = orchestrator
+    Daemon-->>Worker: discover pane title = worker
+    Orchestrator->>Daemon: send --to worker --body "implement X"
+    Daemon->>Config: validate orchestrator --- worker
+    Daemon->>Inbox: write inbox/worker/message.md
+    Daemon-->>Worker: pane notification
+    Inbox-->>Worker: message footer says run pop
+    Worker->>Inbox: tmux-a2a-postman pop
+    Inbox-->>Worker: JSON message and archived read/
+    Worker->>Daemon: send --to orchestrator --body "DONE ..."
+    Daemon->>Inbox: deliver reply to orchestrator
+    Daemon-->>Health: publish ready / pending / stale
 ```
 
 ## 2. Prerequisites
