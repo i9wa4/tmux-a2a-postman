@@ -219,6 +219,9 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "get-health-oneline         Print compact all-session health") {
 		t.Fatalf("usage missing get-health-oneline command: %q", got)
 	}
+	if !strings.Contains(got, "version                    Print the build version JSON") {
+		t.Fatalf("usage missing version command: %q", got)
+	}
 	for _, hidden := range []string{" status ", " read ", " todo ", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("usage exposes hidden surface %q: %q", hidden, got)

@@ -2,7 +2,7 @@
 
 This page documents the supported public `tmux-a2a-postman` command surface.
 The public surface is intentionally small: `start`, `stop`, `send`, `pop`,
-`get-health`, `get-health-oneline`, and `--version`.
+`get-health`, `get-health-oneline`, `version`, `help`, and `--version`.
 
 Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of
 starting the daemon.
@@ -17,10 +17,12 @@ starting the daemon.
 | `pop`                | Read and archive the next inbox message      |
 | `get-health`         | Print canonical session health JSON          |
 | `get-health-oneline` | Print compact all-session health             |
-| `--version`          | Print the build version string               |
+| `version`            | Print the build version JSON                 |
+| `help [topic]`       | Print built-in help                          |
+| `--version`          | Print the build version JSON                 |
 
-Compatibility and diagnostic helpers are internal. They are not part of CLI
-dispatch or the public operator contract.
+Legacy and diagnostic helpers are internal. They are not part of CLI dispatch
+or the public operator contract.
 
 ## 2. Global Flags
 
@@ -28,7 +30,7 @@ The following flags are defined at the root level:
 
 | Flag           | Type   | Default | Description                                  |
 | -------------- | ------ | ------- | -------------------------------------------- |
-| `--version`    | bool   | false   | Print version and exit                       |
+| `--version`    | bool   | false   | Print version JSON and exit                  |
 | `--help`       | bool   | false   | Print help and exit                          |
 | `--no-tui`     | bool   | false   | Run headless                                 |
 | `--config`     | string | ""      | Path to config file                          |
@@ -36,7 +38,7 @@ The following flags are defined at the root level:
 | `--base-dir`   | string | ""      | Override state directory (`POSTMAN_HOME`)    |
 | `--state-home` | string | ""      | Override `XDG_STATE_HOME`                    |
 
-Public flag tables omit internal compatibility flags.
+Public flag tables omit internal migration and diagnostic flags.
 
 ## 3. Daemon Management
 
@@ -62,35 +64,44 @@ tmux-a2a-postman stop [--session NAME] [--config PATH] [--timeout N]
 | `--timeout` | int    | 10      | Seconds to wait for daemon exit    |
 
 `stop` is idempotent: it exits successfully when no matching daemon is running.
+It prints JSON:
+
+```text
+{"status":"not_running","session":"review"}
+{"status":"stopped","session":"review","context_id":"20240101-...","pid":12345}
+```
 
 ## 4. Messaging
 
 ### 4.1. send
 
 ```text
-tmux-a2a-postman send --to NODE --body TEXT [--json] [--params ...]
+tmux-a2a-postman send --to NODE --body TEXT [--params ...]
 ```
 
 `send` is the primary command for agent-to-agent messaging. It composes a
 message, submits it to the daemon when possible, and reports the strongest
 outcome observed during a short confirmation window.
 
+Output is always JSON.
+
+```text
+{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed","context_id":"...","session":"...","from":"worker","to":"critic","submit_path":"daemon-submit"}
+{"sent":"20240101-120000-xxxx-from-worker.md","status":"queued","context_id":"...","session":"...","from":"worker","to":"critic","submit_path":"post"}
+```
+
+`submit_path=daemon-submit` means the CLI submitted the request to the running
+daemon for a daemon-owned session. `submit_path=post` means the CLI handed the
+message off by writing the session's `post/` queue directly.
+
 | Flag                | Type   | Default | --params? | Description                                 |
 | ------------------- | ------ | ------- | --------- | ------------------------------------------- |
 | `--to`              | string | ""      | Yes       | Recipient node name                         |
 | `--body`            | string | ""      | Yes       | Message body                                |
 | `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication         |
-| `--json`            | bool   | false   | Yes       | Output JSON                                 |
 | `--params`          | string | ""      | N/A       | Shorthand or JSON parameters                |
 | `--session`         | string | ""      | No        | tmux session name                           |
 | `--config`          | string | ""      | No        | Path to config file                         |
-
-JSON output:
-
-```text
-{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}
-{"sent":"20240101-120000-xxxx-from-worker.md","status":"queued"}
-```
 
 `processed` means the CLI observed daemon-side handling. `queued` means local
 handoff succeeded, but daemon-side processing was not observed before the
@@ -99,7 +110,7 @@ confirmation window closed.
 ### 4.2. pop
 
 ```text
-tmux-a2a-postman pop [--peek] [--json] [--params ...] [--file FILENAME]
+tmux-a2a-postman pop [--peek] [--params ...] [--file FILENAME]
 ```
 
 `pop` reads the next unread inbox message for the current pane title. It
@@ -108,19 +119,19 @@ archives the message after reading unless `--peek` or `--file` is used.
 | Flag       | Type   | Default | --params? | Description                                  |
 | ---------- | ------ | ------- | --------- | -------------------------------------------- |
 | `--peek`   | bool   | false   | Yes       | Read without archiving                       |
-| `--json`   | bool   | false   | Yes       | Output JSON                                  |
 | `--params` | string | ""      | N/A       | Shorthand or JSON parameters                 |
-| `--file`   | string | ""      | No        | Print one inbox message by filename          |
+| `--file`   | string | ""      | No        | Return one inbox message by filename         |
 | `--config` | string | ""      | No        | Path to config file                          |
 
-JSON output uses a two-shape contract:
+Output is always JSON. `content` preserves the stored message file exactly;
+`body` is the parsed message body for convenience.
 
 ```text
-{}
-{"id":"filename.md","from":"...","to":"...","body":"...","timestamp":"..."}
+{"status":"empty"}
+{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}
 ```
 
-Test for the `id` field before treating the response as a message.
+Test for `status == "message"` before treating the response as a message.
 
 ## 5. Health and Status
 
@@ -280,8 +291,27 @@ Always-excluded flags:
 ## 9. Version
 
 ```text
+tmux-a2a-postman version
 tmux-a2a-postman --version
 ```
 
-The command prints the version embedded at build time. Nix builds may show a
-version derived from the package metadata rather than from the local Git tag.
+Both forms print the same JSON with the version embedded at build time. Nix
+builds may show a version derived from the package metadata rather than from
+the local Git tag.
+
+```text
+{"name":"tmux-a2a-postman","version":"dev","commit":"unknown"}
+```
+
+## 10. Help
+
+```text
+tmux-a2a-postman help
+tmux-a2a-postman help send
+tmux-a2a-postman send --help
+tmux-a2a-postman send help
+tmux-a2a-postman version help
+```
+
+Help text is embedded from `internal/cli/helptext/*.txt`, so it ships inside
+the binary while staying editable as plain text in the repository.

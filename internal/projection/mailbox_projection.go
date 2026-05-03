@@ -1,14 +1,12 @@
 package projection
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -19,66 +17,49 @@ type ProjectedFile struct {
 	Content string
 }
 
-type CompatibilityMailbox struct {
+type MailboxProjection struct {
 	Post       map[string]ProjectedFile
 	Inbox      map[string]ProjectedFile
 	Read       map[string]ProjectedFile
 	DeadLetter map[string]ProjectedFile
 }
 
-type compatibilityMarker struct {
+type mailboxProjectionMarker struct {
 	SessionKey string `json:"session_key"`
 	Generation int    `json:"generation"`
 }
 
-const compatibilitySubmitSchemaVersion = 1
-
-type CompatibilitySubmitCommand string
-
 const (
-	CompatibilitySubmitSend CompatibilitySubmitCommand = "send"
-	CompatibilitySubmitPop  CompatibilitySubmitCommand = "pop"
+	MailboxProjectionComponent                      = "mailbox-projection"
+	MailboxProjectionPostedEventType                = "mailbox_projection_posted"
+	MailboxProjectionPostConsumedEventType          = "mailbox_projection_post_consumed"
+	MailboxProjectionDeliveredEventType             = "mailbox_projection_delivered"
+	MailboxProjectionReadEventType                  = "mailbox_projection_read"
+	MailboxProjectionDeadLetteredEventType          = "mailbox_projection_dead_lettered"
+	legacyCompatibilityMailboxPostedEventType       = "compatibility_mailbox_posted"
+	legacyCompatibilityMailboxConsumedEventType     = "compatibility_mailbox_post_consumed"
+	legacyCompatibilityMailboxDeliveredEventType    = "compatibility_mailbox_delivered"
+	legacyCompatibilityMailboxReadEventType         = "compatibility_mailbox_read"
+	legacyCompatibilityMailboxDeadLetteredEventType = "compatibility_mailbox_dead_lettered"
 )
 
-type CompatibilitySubmitRequest struct {
-	SchemaVersion int                        `json:"schema_version"`
-	RequestID     string                     `json:"request_id"`
-	Command       CompatibilitySubmitCommand `json:"command"`
-	CreatedAt     string                     `json:"created_at"`
-	Filename      string                     `json:"filename,omitempty"`
-	Node          string                     `json:"node,omitempty"`
-	Content       string                     `json:"content,omitempty"`
-}
+var mailboxProjectionRoots = []string{"post", "inbox", "read", "dead-letter"}
 
-type CompatibilitySubmitResponse struct {
-	SchemaVersion int                        `json:"schema_version"`
-	RequestID     string                     `json:"request_id"`
-	Command       CompatibilitySubmitCommand `json:"command"`
-	HandledAt     string                     `json:"handled_at"`
-	Empty         bool                       `json:"empty,omitempty"`
-	Filename      string                     `json:"filename,omitempty"`
-	Content       string                     `json:"content,omitempty"`
-	UnreadBefore  int                        `json:"unread_before,omitempty"`
-	Error         string                     `json:"error,omitempty"`
-}
-
-var compatibilityRoots = []string{"post", "inbox", "read", "dead-letter"}
-
-func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool, error) {
+func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
-		return CompatibilityMailbox{}, false, nil
+		return MailboxProjection{}, false, nil
 	}
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil {
-		return CompatibilityMailbox{}, false, err
+		return MailboxProjection{}, false, err
 	}
 	if len(events) == 0 {
-		return CompatibilityMailbox{}, false, nil
+		return MailboxProjection{}, false, nil
 	}
 
-	projected := CompatibilityMailbox{
+	projected := MailboxProjection{
 		Post:       make(map[string]ProjectedFile),
 		Inbox:      make(map[string]ProjectedFile),
 		Read:       make(map[string]ProjectedFile),
@@ -105,50 +86,50 @@ func ProjectCompatibilityMailbox(sessionDir string) (CompatibilityMailbox, bool,
 
 		payload, ok := decodeMailboxEventPayload(event.Payload)
 		if !ok {
-			return CompatibilityMailbox{}, false, fmt.Errorf("decode mailbox payload for %s", event.Type)
+			return MailboxProjection{}, false, fmt.Errorf("decode mailbox payload for %s", event.Type)
 		}
 
 		switch event.Type {
-		case "compatibility_mailbox_posted":
+		case MailboxProjectionPostedEventType, legacyCompatibilityMailboxPostedEventType:
 			if !setProjectedFile(projected.Post, payload.Path, payload.Content) {
-				return CompatibilityMailbox{}, false, fmt.Errorf("invalid post path %q", payload.Path)
+				return MailboxProjection{}, false, fmt.Errorf("invalid post path %q", payload.Path)
 			}
-		case "compatibility_mailbox_post_consumed":
+		case MailboxProjectionPostConsumedEventType, legacyCompatibilityMailboxConsumedEventType:
 			delete(projected.Post, pathKey(payload.Path))
-		case "compatibility_mailbox_delivered":
+		case MailboxProjectionDeliveredEventType, legacyCompatibilityMailboxDeliveredEventType:
 			if !setProjectedFile(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName), payload.Content) {
-				return CompatibilityMailbox{}, false, fmt.Errorf("invalid inbox path for %q", payload.MessageID)
+				return MailboxProjection{}, false, fmt.Errorf("invalid inbox path for %q", payload.MessageID)
 			}
-		case "compatibility_mailbox_read":
+		case MailboxProjectionReadEventType, legacyCompatibilityMailboxReadEventType:
 			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
-				return CompatibilityMailbox{}, false, fmt.Errorf("invalid read path %q", payload.Path)
+				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
-		case "compatibility_mailbox_dead_lettered":
+		case MailboxProjectionDeadLetteredEventType, legacyCompatibilityMailboxDeadLetteredEventType:
 			delete(projected.Post, pathKey(payload.SourcePath))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
-				return CompatibilityMailbox{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)
+				return MailboxProjection{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)
 			}
 		}
 	}
 
 	if !sawLease || !sawResolution {
-		return CompatibilityMailbox{}, false, nil
+		return MailboxProjection{}, false, nil
 	}
 
 	return projected, true, nil
 }
 
-func SyncCompatibilityMailbox(sessionDir string) error {
+func SyncMailboxProjection(sessionDir string) error {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
 		return nil
 	}
-	if err := quarantineCompatibilityTrees(sessionDir, state); err != nil {
+	if err := quarantineMailboxProjectionTrees(sessionDir, state); err != nil {
 		return err
 	}
 
-	projected, ok, err := ProjectCompatibilityMailbox(sessionDir)
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
 	if err != nil {
 		return err
 	}
@@ -170,7 +151,7 @@ func SyncCompatibilityMailbox(sessionDir string) error {
 		desired[key] = file.Content
 	}
 
-	for _, root := range compatibilityRoots {
+	for _, root := range mailboxProjectionRoots {
 		if err := ensureMailboxDir(filepath.Join(sessionDir, root)); err != nil {
 			return fmt.Errorf("ensuring %s dir: %w", root, err)
 		}
@@ -178,7 +159,7 @@ func SyncCompatibilityMailbox(sessionDir string) error {
 	if err := syncDesiredMailboxFiles(sessionDir, desired); err != nil {
 		return err
 	}
-	return writeCompatibilityMarker(sessionDir, compatibilityMarker{
+	return writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
 		SessionKey: state.SessionKey,
 		Generation: state.Generation,
 	})
@@ -238,7 +219,7 @@ func isAllowedProjectionPath(relativePath string) bool {
 		return false
 	}
 	root := strings.SplitN(clean, string(filepath.Separator), 2)[0]
-	for _, allowed := range compatibilityRoots {
+	for _, allowed := range mailboxProjectionRoots {
 		if root == allowed {
 			return true
 		}
@@ -267,7 +248,7 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string) error
 		}
 	}
 
-	for _, root := range compatibilityRoots {
+	for _, root := range mailboxProjectionRoots {
 		rootPath := filepath.Join(sessionDir, root)
 		if err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -327,38 +308,38 @@ func removeEmptyDirs(root string) error {
 	return nil
 }
 
-func compatibilityMarkerPath(sessionDir string) string {
-	return filepath.Join(sessionDir, "snapshot", "compatibility-mailbox-marker.json")
+func mailboxProjectionMarkerPath(sessionDir string) string {
+	return filepath.Join(sessionDir, "snapshot", "mailbox-projection-marker.json")
 }
 
-func readCompatibilityMarker(sessionDir string) (compatibilityMarker, bool) {
-	data, err := os.ReadFile(compatibilityMarkerPath(sessionDir))
+func readMailboxProjectionMarker(sessionDir string) (mailboxProjectionMarker, bool) {
+	data, err := os.ReadFile(mailboxProjectionMarkerPath(sessionDir))
 	if err != nil {
-		return compatibilityMarker{}, false
+		return mailboxProjectionMarker{}, false
 	}
-	var marker compatibilityMarker
+	var marker mailboxProjectionMarker
 	if err := json.Unmarshal(data, &marker); err != nil {
-		return compatibilityMarker{}, false
+		return mailboxProjectionMarker{}, false
 	}
 	if marker.SessionKey == "" || marker.Generation < 1 {
-		return compatibilityMarker{}, false
+		return mailboxProjectionMarker{}, false
 	}
 	return marker, true
 }
 
-func writeCompatibilityMarker(sessionDir string, marker compatibilityMarker) error {
-	if err := ensureMailboxDir(filepath.Dir(compatibilityMarkerPath(sessionDir))); err != nil {
+func writeMailboxProjectionMarker(sessionDir string, marker mailboxProjectionMarker) error {
+	if err := ensureMailboxDir(filepath.Dir(mailboxProjectionMarkerPath(sessionDir))); err != nil {
 		return err
 	}
 	data, err := json.Marshal(marker)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(compatibilityMarkerPath(sessionDir), data, 0o600)
+	return os.WriteFile(mailboxProjectionMarkerPath(sessionDir), data, 0o600)
 }
 
-func quarantineCompatibilityTrees(sessionDir string, state journal.SessionState) error {
-	marker, ok := readCompatibilityMarker(sessionDir)
+func quarantineMailboxProjectionTrees(sessionDir string, state journal.SessionState) error {
+	marker, ok := readMailboxProjectionMarker(sessionDir)
 	if !ok {
 		return nil
 	}
@@ -374,7 +355,7 @@ func quarantineCompatibilityTrees(sessionDir string, state journal.SessionState)
 		return err
 	}
 
-	for _, root := range compatibilityRoots {
+	for _, root := range mailboxProjectionRoots {
 		src := filepath.Join(sessionDir, root)
 		entries, err := os.ReadDir(src)
 		if os.IsNotExist(err) {
@@ -405,116 +386,4 @@ func ensureMailboxDir(path string) error {
 		return err
 	}
 	return os.Chmod(path, 0o700)
-}
-
-func CompatibilitySubmitRequestsDir(sessionDir string) string {
-	return filepath.Join(sessionDir, "snapshot", "compatibility-submit", "requests")
-}
-
-func CompatibilitySubmitResponsesDir(sessionDir string) string {
-	return filepath.Join(sessionDir, "snapshot", "compatibility-submit", "responses")
-}
-
-func CompatibilitySubmitRequestPath(sessionDir, requestID string) string {
-	return filepath.Join(CompatibilitySubmitRequestsDir(sessionDir), requestID+".json")
-}
-
-func CompatibilitySubmitResponsePath(sessionDir, requestID string) string {
-	return filepath.Join(CompatibilitySubmitResponsesDir(sessionDir), requestID+".json")
-}
-
-func EnsureCompatibilitySubmitDirs(sessionDir string) error {
-	if err := ensureMailboxDir(CompatibilitySubmitRequestsDir(sessionDir)); err != nil {
-		return err
-	}
-	return ensureMailboxDir(CompatibilitySubmitResponsesDir(sessionDir))
-}
-
-func NewCompatibilitySubmitRequestID(now time.Time) (string, error) {
-	var suffix [2]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s-r%04x", now.UTC().Format("20060102-150405"), suffix), nil
-}
-
-func WriteCompatibilitySubmitRequest(sessionDir string, request CompatibilitySubmitRequest) (string, error) {
-	if err := EnsureCompatibilitySubmitDirs(sessionDir); err != nil {
-		return "", err
-	}
-	request.SchemaVersion = compatibilitySubmitSchemaVersion
-	requestPath := CompatibilitySubmitRequestPath(sessionDir, request.RequestID)
-	if err := writeCompatibilitySubmitJSON(requestPath, request); err != nil {
-		return "", err
-	}
-	return requestPath, nil
-}
-
-func WriteCompatibilitySubmitResponse(sessionDir string, response CompatibilitySubmitResponse) (string, error) {
-	if err := EnsureCompatibilitySubmitDirs(sessionDir); err != nil {
-		return "", err
-	}
-	response.SchemaVersion = compatibilitySubmitSchemaVersion
-	responsePath := CompatibilitySubmitResponsePath(sessionDir, response.RequestID)
-	if err := writeCompatibilitySubmitJSON(responsePath, response); err != nil {
-		return "", err
-	}
-	return responsePath, nil
-}
-
-func ReadCompatibilitySubmitRequest(path string) (CompatibilitySubmitRequest, error) {
-	var request CompatibilitySubmitRequest
-	if err := readCompatibilitySubmitJSON(path, &request); err != nil {
-		return CompatibilitySubmitRequest{}, err
-	}
-	return request, nil
-}
-
-func ReadCompatibilitySubmitResponse(path string) (CompatibilitySubmitResponse, error) {
-	var response CompatibilitySubmitResponse
-	if err := readCompatibilitySubmitJSON(path, &response); err != nil {
-		return CompatibilitySubmitResponse{}, err
-	}
-	return response, nil
-}
-
-func WaitCompatibilitySubmitResponse(sessionDir, requestID string, timeout time.Duration) (CompatibilitySubmitResponse, string, error) {
-	if timeout <= 0 {
-		timeout = time.Second
-	}
-	responsePath := CompatibilitySubmitResponsePath(sessionDir, requestID)
-	deadline := time.Now().Add(timeout)
-	for {
-		response, err := ReadCompatibilitySubmitResponse(responsePath)
-		if err == nil {
-			return response, responsePath, nil
-		}
-		if !os.IsNotExist(err) {
-			return CompatibilitySubmitResponse{}, "", err
-		}
-		if time.Now().After(deadline) {
-			return CompatibilitySubmitResponse{}, "", fmt.Errorf("timed out waiting for compatibility submit response %q", requestID)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func writeCompatibilitySubmitJSON(path string, value interface{}) error {
-	tmpPath := path + ".tmp"
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func readCompatibilitySubmitJSON(path string, target interface{}) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, target)
 }

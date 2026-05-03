@@ -34,6 +34,9 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "get-health-oneline         Print compact all-session health") {
 		t.Fatalf("stdout missing get-health-oneline overview line: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
+		t.Fatalf("stdout missing version overview line: %q", stdout.String())
+	}
 	for _, hidden := range []string{"status", "read", "todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(stdout.String(), "  "+hidden) || strings.Contains(stdout.String(), "\n"+hidden+"\n") {
 			t.Fatalf("stdout exposes hidden command %q in the default overview: %q", hidden, stdout.String())
@@ -62,6 +65,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "get-health-oneline") {
 		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "version") {
+		t.Fatalf("stdout missing version command: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())

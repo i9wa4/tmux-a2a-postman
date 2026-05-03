@@ -404,13 +404,13 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 				t.Fatalf("OpenShadowWriter(resume) error = %v", err)
 			}
 		case "deliver":
-			if _, err := writer.AppendEvent("compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, map[string]string{
+			if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, map[string]string{
 				"to": step.to,
 			}, stepTime); err != nil {
 				t.Fatalf("AppendEvent(deliver %s): %v", step.to, err)
 			}
 		case "read":
-			if _, err := writer.AppendEvent("compatibility_mailbox_read", journal.VisibilityOperatorVisible, map[string]string{
+			if _, err := writer.AppendEvent(projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, map[string]string{
 				"to": step.to,
 			}, stepTime); err != nil {
 				t.Fatalf("AppendEvent(read %s): %v", step.to, err)

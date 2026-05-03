@@ -155,10 +155,10 @@ role = "worker"
 	return configPath
 }
 
-func awaitCompatibilitySubmitRequest(t *testing.T, sessionDir string, timeout time.Duration) (string, projection.CompatibilitySubmitRequest) {
+func awaitDaemonSubmitRequest(t *testing.T, sessionDir string, timeout time.Duration) (string, projection.DaemonSubmitRequest) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
-	requestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
+	requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
 	for {
 		entries, err := os.ReadDir(requestsDir)
 		if err == nil {
@@ -167,15 +167,15 @@ func awaitCompatibilitySubmitRequest(t *testing.T, sessionDir string, timeout ti
 					continue
 				}
 				requestPath := filepath.Join(requestsDir, entry.Name())
-				request, readErr := projection.ReadCompatibilitySubmitRequest(requestPath)
+				request, readErr := projection.ReadDaemonSubmitRequest(requestPath)
 				if readErr != nil {
-					t.Fatalf("ReadCompatibilitySubmitRequest(%s): %v", requestPath, readErr)
+					t.Fatalf("ReadDaemonSubmitRequest(%s): %v", requestPath, readErr)
 				}
 				return requestPath, request
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for compatibility submit request in %s", requestsDir)
+			t.Fatalf("timed out waiting for daemon submit request in %s", requestsDir)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

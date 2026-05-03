@@ -19,15 +19,14 @@ import (
 func RunPop(args []string) error {
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
-	// Options struct fields (--params scope): peek, json
+	// Options struct fields (--params scope): peek
 	// SYNC: params contract for pop; alwaysExcludedParams map
 	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
-	jsonOut := fs.Bool("json", false, `output json: {} (empty inbox) or {"id":"...","from":"...","to":"...","body":"...","timestamp":"..."} (message present); test id field to distinguish`)
 	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
 	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	configPath := fs.String("config", "", "path to config file (optional)")
-	file := fs.String("file", "", "print a specific inbox message by filename from the current session inbox (non-destructive)")
+	file := fs.String("file", "", "return a specific inbox message by filename from the current session inbox (non-destructive)")
 	commandName := fs.Name()
 	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
@@ -79,8 +78,7 @@ func RunPop(args []string) error {
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", *file, err)
 		}
-		fmt.Print(string(data))
-		return nil
+		return writePopMessageOutput(string(data), *file, nil, nil, true)
 	}
 
 	inboxArgs := fs.Args()
@@ -106,38 +104,26 @@ func RunPop(args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	if !*peek && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
-			Command: projection.CompatibilitySubmitPop,
+		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+			Command: projection.DaemonSubmitPop,
 			Node:    nodeName,
-		}, compatibilitySubmitTimeout(cfg.TmuxTimeout))
+		}, daemonSubmitTimeout(cfg.TmuxTimeout))
 		if err != nil {
-			return fmt.Errorf("compatibility submit pop: %w", err)
+			return fmt.Errorf("daemon submit pop: %w", err)
 		}
 		if response.Empty {
-			if *jsonOut {
-				return json.NewEncoder(os.Stdout).Encode(struct{}{})
-			}
-			fmt.Fprintln(os.Stderr, "No unread messages.")
-			return nil
+			return writeEmptyPopOutput()
 		}
-		if *jsonOut {
-			parsed := parseMessageContent(response.Content, response.Filename)
-			return json.NewEncoder(os.Stdout).Encode(parsed)
+		remaining := response.UnreadBefore - 1
+		if remaining < 0 {
+			remaining = 0
 		}
-		output := response.Content
-		fmt.Fprintf(os.Stderr, "[1/%d unread]\n", response.UnreadBefore)
-		fmt.Print(output)
-		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", response.UnreadBefore-1)
-		return nil
+		return writePopMessageOutput(response.Content, response.Filename, intPtr(response.UnreadBefore), intPtr(remaining), false)
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
-		if *jsonOut {
-			return json.NewEncoder(os.Stdout).Encode(struct{}{})
-		}
-		fmt.Fprintln(os.Stderr, "No unread messages.")
-		return nil
+		return writeEmptyPopOutput()
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -150,11 +136,7 @@ func RunPop(args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
-				if *jsonOut {
-					return json.NewEncoder(os.Stdout).Encode(struct{}{})
-				}
-				fmt.Fprintln(os.Stderr, "No unread messages.")
-				return nil
+				return writeEmptyPopOutput()
 			}
 			sort.Slice(msgs, func(i, j int) bool {
 				return msgs[i].Filename < msgs[j].Filename
@@ -163,11 +145,7 @@ func RunPop(args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
-					if *jsonOut {
-						return json.NewEncoder(os.Stdout).Encode(struct{}{})
-					}
-					fmt.Fprintln(os.Stderr, "No unread messages.")
-					return nil
+					return writeEmptyPopOutput()
 				}
 				return fmt.Errorf("reading message: %w", err)
 			}
@@ -176,31 +154,16 @@ func RunPop(args []string) error {
 		}
 	}
 
-	if *jsonOut {
-		parsed := parseMessageContent(string(data), msgs[0].Filename)
-		if !*peek {
-			if _, err := archivePoppedMessage(abs, msgs[0].Filename); err != nil {
-				return err
-			}
-		}
-		return json.NewEncoder(os.Stdout).Encode(parsed)
-	}
-
-	fmt.Fprintf(os.Stderr, "[1/%d unread]\n", len(msgs))
-	output := string(data)
-	fmt.Print(output)
-
+	remaining := len(msgs)
 	if *peek {
-		fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs))
-		return nil
+		return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining), true)
 	}
 
-	_, err = archivePoppedMessage(abs, msgs[0].Filename)
-	if err != nil {
+	if _, err := archivePoppedMessage(abs, msgs[0].Filename); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Remaining: %d unread\n", len(msgs)-1)
-	return nil
+	remaining--
+	return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining), false)
 }
 
 func findInboxFileByName(baseDir, sessionName, contextID, filename string) (string, error) {
@@ -233,19 +196,44 @@ func archivePoppedMessage(absPath, filename string) (string, error) {
 	return message.ArchiveInboxMessage(absPath, filename)
 }
 
-// messageJSON holds JSON-serializable fields for a message (used by pop --json).
-type messageJSON struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Timestamp string `json:"timestamp"`
-	Body      string `json:"body"`
+type popEmptyOutput struct {
+	Status string `json:"status"`
+}
+
+type popMessageOutput struct {
+	Status       string `json:"status"`
+	ID           string `json:"id"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	Timestamp    string `json:"timestamp"`
+	Body         string `json:"body"`
+	Content      string `json:"content"`
+	UnreadBefore *int   `json:"unread_before,omitempty"`
+	Remaining    *int   `json:"remaining,omitempty"`
+	Peek         bool   `json:"peek,omitempty"`
+}
+
+func writeEmptyPopOutput() error {
+	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})
+}
+
+func writePopMessageOutput(content, filename string, unreadBefore, remaining *int, peek bool) error {
+	output := parseMessageContent(content, filename)
+	output.Content = content
+	output.UnreadBefore = unreadBefore
+	output.Remaining = remaining
+	output.Peek = peek
+	return json.NewEncoder(os.Stdout).Encode(output)
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 // parseMessageContent extracts JSON-friendly fields from raw message file content.
 // Parses YAML frontmatter for from/to/timestamp; body is content after frontmatter.
-func parseMessageContent(content, filename string) messageJSON {
-	result := messageJSON{ID: filename}
+func parseMessageContent(content, filename string) popMessageOutput {
+	result := popMessageOutput{Status: "message", ID: filename}
 	lines := strings.Split(content, "\n")
 	inFrontMatter := false
 	fmEnd := -1

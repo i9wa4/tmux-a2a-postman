@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,13 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
+
+type stopOutput struct {
+	Status    string `json:"status"`
+	Session   string `json:"session,omitempty"`
+	ContextID string `json:"context_id,omitempty"`
+	PID       int    `json:"pid,omitempty"`
+}
 
 // RunStop gracefully stops the running postman daemon for this tmux session.
 func RunStop(stdout io.Writer, args []string) error {
@@ -45,15 +53,20 @@ func RunStop(stdout io.Writer, args []string) error {
 	contextID, err := config.ResolveContextIDFromSession(baseDir, sessionName)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
-			_, err = fmt.Fprintln(stdout, "postman: no daemon running")
-			return err
+			return json.NewEncoder(stdout).Encode(stopOutput{
+				Status:  "not_running",
+				Session: sessionName,
+			})
 		}
 		return err
 	}
 
 	if !config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, sessionName) {
-		_, err = fmt.Fprintln(stdout, "postman: no daemon running for this user/session")
-		return err
+		return json.NewEncoder(stdout).Encode(stopOutput{
+			Status:    "not_owned",
+			Session:   sessionName,
+			ContextID: contextID,
+		})
 	}
 
 	pidPath := filepath.Join(baseDir, contextID, sessionName, "postman.pid")
@@ -77,8 +90,12 @@ func RunStop(stdout io.Writer, args []string) error {
 	deadline := time.Now().Add(time.Duration(*timeoutSecs) * time.Second)
 	for time.Now().Before(deadline) {
 		if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
-			_, err = fmt.Fprintf(stdout, "postman: daemon (pid %d) stopped\n", pid)
-			return err
+			return json.NewEncoder(stdout).Encode(stopOutput{
+				Status:    "stopped",
+				Session:   sessionName,
+				ContextID: contextID,
+				PID:       pid,
+			})
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

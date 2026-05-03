@@ -1,0 +1,12 @@
+version — print the build version
+
+Usage:
+  tmux-a2a-postman version
+  tmux-a2a-postman --version
+  tmux-a2a-postman version help
+
+Output:
+  JSON
+
+Shape:
+  {"name":"tmux-a2a-postman","version":"dev","commit":"unknown"}

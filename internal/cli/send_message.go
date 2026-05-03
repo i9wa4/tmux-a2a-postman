@@ -39,14 +39,14 @@ const (
 )
 
 type sendOutput struct {
-	Sent      string `json:"sent"`
-	Status    string `json:"status"`
-	ContextID string `json:"context_id,omitempty"`
-	Session   string `json:"session,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Transport string `json:"transport,omitempty"`
-	Notify    string `json:"notify,omitempty"`
+	Sent       string                `json:"sent"`
+	Status     string                `json:"status"`
+	ContextID  string                `json:"context_id,omitempty"`
+	Session    string                `json:"session,omitempty"`
+	From       string                `json:"from,omitempty"`
+	To         string                `json:"to,omitempty"`
+	SubmitPath projection.SubmitPath `json:"submit_path,omitempty"`
+	Notify     string                `json:"notify,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -66,12 +66,11 @@ func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTime
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
-	// Options struct fields (--params scope): to, body, idempotency-key, json
+	// Options struct fields (--params scope): to, body, idempotency-key
 	// SYNC: params contract for send; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
 	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
-	jsonOut := fs.Bool("json", false, `output json: {"sent":"filename.md","status":"processed|queued"}`)
 	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
 	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
@@ -312,13 +311,13 @@ func RunSendMessage(args []string) error {
 	}
 
 	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := roundTripCompatibilitySubmit(sessionDir, projection.CompatibilitySubmitRequest{
-			Command:  projection.CompatibilitySubmitSend,
+		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+			Command:  projection.DaemonSubmitSend,
 			Filename: filename,
 			Content:  content,
-		}, compatibilitySubmitTimeout(cfg.TmuxTimeout))
+		}, daemonSubmitTimeout(cfg.TmuxTimeout))
 		if err != nil {
-			return fmt.Errorf("compatibility submit send: %w", err)
+			return fmt.Errorf("daemon submit send: %w", err)
 		}
 		deliveredFilename := filename
 		if response.Filename != "" {
@@ -329,14 +328,14 @@ func RunSendMessage(args []string) error {
 			return fmt.Errorf("send outcome: %w", err)
 		}
 		return writeSendOutput(sendOutput{
-			Sent:      deliveredFilename,
-			Status:    string(status),
-			ContextID: resolvedContextID,
-			Session:   sessionName,
-			From:      sender,
-			To:        *to,
-			Transport: "compatibility-submit",
-		}, *jsonOut)
+			Sent:       deliveredFilename,
+			Status:     string(status),
+			ContextID:  resolvedContextID,
+			Session:    sessionName,
+			From:       sender,
+			To:         *to,
+			SubmitPath: projection.SubmitPathDaemon,
+		})
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -380,15 +379,15 @@ func RunSendMessage(args []string) error {
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
 	return writeSendOutput(sendOutput{
-		Sent:      filename,
-		Status:    string(status),
-		ContextID: resolvedContextID,
-		Session:   sessionName,
-		From:      sender,
-		To:        *to,
-		Transport: "post",
-		Notify:    notifyOutputValue(notifyStatus),
-	}, *jsonOut)
+		Sent:       filename,
+		Status:     string(status),
+		ContextID:  resolvedContextID,
+		Session:    sessionName,
+		From:       sender,
+		To:         *to,
+		SubmitPath: projection.SubmitPathPost,
+		Notify:     notifyOutputValue(notifyStatus),
+	})
 }
 
 // getNodeTemplate retrieves the template for a given node from config,
@@ -415,12 +414,12 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 	return tmpl
 }
 
-func writeSendResult(filename string, status sendStatus, jsonOut bool, notifyStatus cliNotifyStatus) error {
+func writeSendResult(filename string, status sendStatus, notifyStatus cliNotifyStatus) error {
 	return writeSendOutput(sendOutput{
 		Sent:   filename,
 		Status: string(status),
 		Notify: notifyOutputValue(notifyStatus),
-	}, jsonOut)
+	})
 }
 
 func notifyOutputValue(notifyStatus cliNotifyStatus) string {
@@ -436,62 +435,8 @@ func notifyOutputValue(notifyStatus cliNotifyStatus) string {
 	}
 }
 
-func writeSendOutput(output sendOutput, jsonOut bool) error {
-	if jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(output)
-	}
-	if output.Status == string(sendStatusProcessed) {
-		switch cliNotifyStatus(output.Notify) {
-		case cliNotifyOK:
-			fmt.Printf("Sent: %s [notified: OK%s]\n", output.Sent, sendOutputDetails(output))
-		case cliNotifyFailed:
-			fmt.Printf("Sent: %s [notified: FAILED -- recovery pending%s]\n", output.Sent, sendOutputDetails(output))
-		case cliNotifySkipped:
-			fmt.Printf("Sent: %s [notified: SKIPPED -- pane not found%s]\n", output.Sent, sendOutputDetails(output))
-		default:
-			if details := sendOutputDetails(output); details != "" {
-				fmt.Printf("Sent: %s [%s]\n", output.Sent, strings.TrimPrefix(details, " "))
-			} else {
-				fmt.Printf("Sent: %s\n", output.Sent)
-			}
-		}
-		return nil
-	}
-	if details := sendOutputDetails(output); details != "" {
-		fmt.Printf("Queued: %s [%s]\n", output.Sent, strings.TrimPrefix(details, " "))
-	} else {
-		fmt.Printf("Queued: %s\n", output.Sent)
-	}
-	return nil
-}
-
-func sendOutputDetails(output sendOutput) string {
-	if output.ContextID == "" && output.Session == "" && output.From == "" && output.To == "" && output.Transport == "" {
-		return ""
-	}
-	parts := make([]string, 0, 6)
-	if output.Status != "" {
-		parts = append(parts, "status="+output.Status)
-	}
-	if output.Session != "" {
-		parts = append(parts, "session="+output.Session)
-	}
-	if output.ContextID != "" {
-		parts = append(parts, "context="+output.ContextID)
-	}
-	if output.From != "" {
-		parts = append(parts, "from="+output.From)
-	}
-	if output.To != "" {
-		parts = append(parts, "to="+output.To)
-	}
-	if output.Transport != "" {
-		parts = append(parts, "transport="+output.Transport)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return " " + strings.Join(parts, " ")
+func writeSendOutput(output sendOutput) error {
+	return json.NewEncoder(os.Stdout).Encode(output)
 }
 
 func observeSendOutcome(baseDir, contextID, sessionDir, filename string) (sendStatus, error) {

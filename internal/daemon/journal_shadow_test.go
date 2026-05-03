@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRecordShadowMailboxPathEvent_AppendsOperatorVisibleRead(t *testing.T) {
@@ -19,7 +20,7 @@ func TestRecordShadowMailboxPathEvent_AppendsOperatorVisibleRead(t *testing.T) {
 	t.Cleanup(journal.ClearProcessManager)
 
 	eventPath := filepath.Join(sessionDir, "read", "20260414-173000-r1234-from-orchestrator-to-worker.md")
-	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, now)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, now)
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil {
@@ -28,8 +29,8 @@ func TestRecordShadowMailboxPathEvent_AppendsOperatorVisibleRead(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("journal.Replay() returned %d events, want 3", len(events))
 	}
-	if events[2].Type != "compatibility_mailbox_read" {
-		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_read", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionReadEventType {
+		t.Fatalf("events[2].Type = %q, want %s", events[2].Type, projection.MailboxProjectionReadEventType)
 	}
 	if events[2].Visibility != journal.VisibilityOperatorVisible {
 		t.Fatalf("events[2].Visibility = %q, want %q", events[2].Visibility, journal.VisibilityOperatorVisible)
@@ -47,7 +48,7 @@ func TestRecordShadowMailboxPathEvent_AppendsOperatorVisibleRead(t *testing.T) {
 	}
 }
 
-func TestRecordShadowMailboxPathEvent_AppendsCompatibilityPostedWithContent(t *testing.T) {
+func TestRecordShadowMailboxPathEvent_AppendsMailboxProjectionPostedWithContent(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 17, 30, 30, 0, time.UTC)
 
@@ -64,7 +65,7 @@ func TestRecordShadowMailboxPathEvent_AppendsCompatibilityPostedWithContent(t *t
 		t.Fatalf("WriteFile(post): %v", err)
 	}
 
-	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, now)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil {
@@ -73,8 +74,8 @@ func TestRecordShadowMailboxPathEvent_AppendsCompatibilityPostedWithContent(t *t
 	if len(events) != 3 {
 		t.Fatalf("journal.Replay() returned %d events, want 3", len(events))
 	}
-	if events[2].Type != "compatibility_mailbox_posted" {
-		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_posted", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostedEventType {
+		t.Fatalf("events[2].Type = %q, want %s", events[2].Type, projection.MailboxProjectionPostedEventType)
 	}
 
 	var payload map[string]string
@@ -89,7 +90,7 @@ func TestRecordShadowMailboxPathEvent_AppendsCompatibilityPostedWithContent(t *t
 	}
 }
 
-func TestRecordShadowMailboxPathEvent_SkipsGhostCompatibilityPosted(t *testing.T) {
+func TestRecordShadowMailboxPathEvent_SkipsGhostMailboxProjectionPosted(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 17, 30, 45, 0, time.UTC)
 
@@ -98,7 +99,7 @@ func TestRecordShadowMailboxPathEvent_SkipsGhostCompatibilityPosted(t *testing.T
 	t.Cleanup(journal.ClearProcessManager)
 
 	missingPath := filepath.Join(sessionDir, "post", "20260414-173045-r1234-from-orchestrator-to-worker.md")
-	recordShadowMailboxPathEvent(missingPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, now)
+	recordShadowMailboxPathEvent(missingPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -116,7 +117,7 @@ func TestRecordShadowMailboxPathEvent_SkipsGhostCompatibilityPosted(t *testing.T
 		t.Fatalf("WriteFile(empty post): %v", err)
 	}
 
-	recordShadowMailboxPathEvent(emptyPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, now.Add(time.Second))
+	recordShadowMailboxPathEvent(emptyPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now.Add(time.Second))
 
 	events, err = journal.Replay(sessionDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -144,7 +145,7 @@ func TestRecordShadowMailboxPathEvent_PreservesThreadIDFromEnvelope(t *testing.T
 		t.Fatalf("WriteFile(read): %v", err)
 	}
 
-	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, now)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, now)
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil {

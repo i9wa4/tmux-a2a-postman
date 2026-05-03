@@ -1,0 +1,25 @@
+send — compose and deliver a message
+
+Usage:
+  tmux-a2a-postman send --to <node> --body "text" [--params <json|kv>]
+  tmux-a2a-postman send help
+
+Flags:
+  --to <node>             Recipient node name (required)
+  --body <text>           Message body (required)
+  --idempotency-key <key> Idempotency token written to message frontmatter
+  --params <json|kv>      Set public flags from one argument
+  --session <name>        tmux session name (optional, auto-detected)
+  --config <path>         Config file path (optional)
+
+Output:
+  Always JSON.
+  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","submit_path":"daemon-submit"}
+
+Status:
+  processed               Daemon-side handling was observed
+  queued                  Local handoff succeeded, but daemon handling was not observed
+
+submit_path:
+  daemon-submit           Request/response path owned by the running daemon
+  post                    Direct write to the session post/ queue

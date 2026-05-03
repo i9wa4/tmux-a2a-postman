@@ -76,15 +76,15 @@ func writeDeadLetterFile(dstPath string, content []byte) error {
 	return store.WriteDeadLetterFile(dstPath, content)
 }
 
-func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
-		log.Printf("postman: WARNING: journal compatibility append failed for %s: %v\n", eventType, err)
+		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
 }
 
-func syncCompatibilityMailbox(sessionDir string) {
-	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
-		log.Printf("postman: WARNING: compatibility mailbox sync failed for %s: %v\n", sessionDir, err)
+func syncMailboxProjection(sessionDir string) {
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
 	}
 }
 
@@ -207,7 +207,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
 	}
-	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:  messageID,
 		From:       from,
 		To:         to,
@@ -216,7 +216,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		SourcePath: shadowRelativePath(sessionDir, srcPath),
 		Content:    content,
 	})
-	syncCompatibilityMailbox(sessionDir)
+	syncMailboxProjection(sessionDir)
 	return nil
 }
 
@@ -701,14 +701,14 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		return err
 	}
-	recordCompatibilityMailboxPayload(sourceSessionDir, sourceSessionName, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	recordMailboxProjectionPayload(sourceSessionDir, sourceSessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
 		To:        info.To,
 		ThreadID:  mailboxThreadIDFromContent(messageContent),
 		Path:      shadowRelativePath(sourceSessionDir, postPath),
 	})
-	recordCompatibilityMailboxPayload(recipientSessionDir, recipientSessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	recordMailboxProjectionPayload(recipientSessionDir, recipientSessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
 		To:        info.To,
@@ -728,9 +728,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		messageContent,
 		now,
 	)
-	syncCompatibilityMailbox(sourceSessionDir)
+	syncMailboxProjection(sourceSessionDir)
 	if recipientSessionDir != sourceSessionDir {
-		syncCompatibilityMailbox(recipientSessionDir)
+		syncMailboxProjection(recipientSessionDir)
 	}
 
 	// Send tmux notification to the recipient pane

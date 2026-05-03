@@ -377,12 +377,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 				watchedDirs[nodeReadDir] = true
 			}
 		}
-		submitRequestsDir := projection.CompatibilitySubmitRequestsDir(nodeInfo.SessionDir)
-		if err := projection.EnsureCompatibilitySubmitDirs(nodeInfo.SessionDir); err != nil {
-			log.Printf("⚠️  postman: warning: could not create compatibility submit dirs for %s: %v\n", nodeName, err)
+		submitRequestsDir := projection.DaemonSubmitRequestsDir(nodeInfo.SessionDir)
+		if err := projection.EnsureDaemonSubmitDirs(nodeInfo.SessionDir); err != nil {
+			log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 		} else if !watchedDirs[submitRequestsDir] {
 			if err := watcher.Add(submitRequestsDir); err != nil {
-				log.Printf("⚠️  postman: warning: could not watch %s compatibility submit directory: %v\n", nodeName, err)
+				log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 			} else {
 				watchedDirs[submitRequestsDir] = true
 			}
@@ -409,12 +409,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 			watchedDirs[readDir] = true
 		}
 	}
-	submitRequestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
-	if err := projection.EnsureCompatibilitySubmitDirs(sessionDir); err != nil {
-		log.Printf("⚠️  postman: warning: could not create compatibility submit dirs for %s: %v\n", sessionName, err)
+	submitRequestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
+	if err := projection.EnsureDaemonSubmitDirs(sessionDir); err != nil {
+		log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 	} else if !watchedDirs[submitRequestsDir] {
 		if err := watcher.Add(submitRequestsDir); err != nil {
-			log.Printf("⚠️  postman: warning: could not watch compatibility submit directory: %v\n", err)
+			log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 		} else {
 			watchedDirs[submitRequestsDir] = true
 		}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,9 +16,17 @@ import (
 func TestRunPop_ContextIDFlagAccepted(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunPop([]string{"--context-id", "test-ctx-123"})
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", "test-ctx-123"})
+	})
 	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Errorf("--context-id not defined in RunPop: %v", err)
+	}
+	if stdout != "" {
+		var payload popEmptyOutput
+		if decodeErr := json.Unmarshal([]byte(stdout), &payload); decodeErr != nil {
+			t.Fatalf("json.Unmarshal(%q): %v", stdout, decodeErr)
+		}
 	}
 }
 
@@ -68,8 +77,12 @@ func TestRunPop_RequeuedMessagePreservesOriginalPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "Requeued original payload") {
-		t.Fatalf("stdout %q does not contain original payload", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Content != content {
+		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
+	}
+	if payload.Body != "Requeued original payload" {
+		t.Fatalf("payload.Body = %q, want original payload", payload.Body)
 	}
 	readPath := filepath.Join(readDir, messageFile)
 	archived, err := os.ReadFile(readPath)
@@ -122,8 +135,12 @@ func TestRunPop_RestoredArchivedMessagePreservesCanonicalReadTracking(t *testing
 	if err != nil {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "Archived original payload") {
-		t.Fatalf("stdout %q does not contain archived payload", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Content != content {
+		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
+	}
+	if payload.Body != "Archived original payload" {
+		t.Fatalf("payload.Body = %q, want archived payload", payload.Body)
 	}
 	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
 		t.Fatalf("restored inbox copy still present or wrong error: %v", err)
@@ -180,8 +197,12 @@ func TestRunPop_FileReadsCurrentContextNonDestructively(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPop --file: %v\nstderr=%s", err, stderr)
 	}
-	if stdout != content {
-		t.Fatalf("stdout changed payload:\n got %q\nwant %q", stdout, content)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Content != content {
+		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
+	}
+	if !payload.Peek {
+		t.Fatalf("payload.Peek = false, want true for --file")
 	}
 
 	remaining, err := os.ReadFile(currentPath)
@@ -272,14 +293,15 @@ func TestRunPop_DoesNotAppendHardCodedReplyHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "Cross-session payload") {
-		t.Fatalf("stdout %q does not contain popped payload", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Body != "Cross-session payload" {
+		t.Fatalf("payload.Body = %q, want popped payload", payload.Body)
 	}
-	if strings.Contains(stdout, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
-		t.Fatalf("stdout still contains hard-coded next steps reply hint:\n%s", stdout)
+	if strings.Contains(payload.Content, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
+		t.Fatalf("payload.Content still contains hard-coded next steps reply hint:\n%s", payload.Content)
 	}
-	if !strings.Contains(stderr, "Remaining: 0 unread") {
-		t.Fatalf("stderr missing unread count update:\n%s", stderr)
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, contextID, "test-session", "read", messageFile)); err != nil {
 		t.Fatalf("archived file missing: %v", err)
@@ -304,7 +326,8 @@ func TestRunPop_PrintsOnlyStoredMessageOnDefaultPop(t *testing.T) {
 		t.Fatalf("WriteFile config: %v", err)
 	}
 	messageFile := "20260415-010101-from-orchestrator-to-worker.md"
-	if err := os.WriteFile(filepath.Join(inboxDir, messageFile), []byte(messageFixture("orchestrator", "worker", "Primary payload")), 0o600); err != nil {
+	content := messageFixture("orchestrator", "worker", "Primary payload")
+	if err := os.WriteFile(filepath.Join(inboxDir, messageFile), []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile inbox: %v", err)
 	}
 	stdout, stderr, err := captureCommandOutput(t, func() error {
@@ -313,15 +336,19 @@ func TestRunPop_PrintsOnlyStoredMessageOnDefaultPop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "Primary payload") {
-		t.Fatalf("stdout missing original payload:\n%s", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Content != content {
+		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
+	}
+	if payload.Body != "Primary payload" {
+		t.Fatalf("payload.Body = %q, want Primary payload", payload.Body)
 	}
 	if strings.Contains(stdout, "Local Runtime Context") {
 		t.Fatalf("stdout unexpectedly rendered extra runtime block:\n%s", stdout)
 	}
 }
 
-func TestRunPop_JSONPrintsOnlyMessagePayload(t *testing.T) {
+func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
@@ -343,20 +370,21 @@ func TestRunPop_JSONPrintsOnlyMessagePayload(t *testing.T) {
 	}
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunPop([]string{"--config", configPath, "--context-id", contextID, "--json"})
+		return RunPop([]string{"--config", configPath, "--context-id", contextID})
 	})
 	if err != nil {
-		t.Fatalf("RunPop --json: %v\nstderr=%s", err, stderr)
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	if strings.Contains(stdout, "Local Runtime Context") {
 		t.Fatalf("stdout leaked runtime block into json mode:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, `"body":"JSON payload"`) {
-		t.Fatalf("stdout missing json payload body:\n%s", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Body != "JSON payload" {
+		t.Fatalf("payload.Body = %q, want JSON payload", payload.Body)
 	}
 }
 
-func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
@@ -386,19 +414,19 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 		t.Fatalf("WriteFile inbox: %v", err)
 	}
 
-	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	go func() {
-		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
-		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
 			RequestID:    request.RequestID,
 			Command:      request.Command,
 			HandledAt:    time.Now().UTC().Format(time.RFC3339),
 			Filename:     filename,
-			Content:      messageFixture("orchestrator", "worker", "compatibility pop payload"),
+			Content:      messageFixture("orchestrator", "worker", "daemon submit pop payload"),
 			UnreadBefore: 1,
 		}); err != nil {
-			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
 		}
 		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
 			t.Errorf("Remove requestPath: %v", err)
@@ -412,22 +440,35 @@ func TestRunPop_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	request := <-requestSeen
-	if request.Command != projection.CompatibilitySubmitPop {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitPop)
+	if request.Command != projection.DaemonSubmitPop {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitPop)
 	}
 	if request.Node != "worker" {
 		t.Fatalf("request.Node = %q, want %q", request.Node, "worker")
 	}
-	if !strings.Contains(stdout, "compatibility pop payload") {
-		t.Fatalf("stdout %q does not contain compatibility payload", stdout)
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.Body != "daemon submit pop payload" {
+		t.Fatalf("payload.Body = %q, want daemon submit payload", payload.Body)
 	}
 	if strings.Contains(stdout, "## Local Runtime Context") {
 		t.Fatalf("stdout unexpectedly rendered runtime context block:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "[1/1 unread]") || !strings.Contains(stderr, "Remaining: 0 unread") {
-		t.Fatalf("stderr missing unread counters:\n%s", stderr)
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	if _, err := os.Stat(originalInboxPath); err != nil {
-		t.Fatalf("compatibility submit path should not mutate inbox directly in CLI test: %v", err)
+		t.Fatalf("daemon submit path should not mutate inbox directly in CLI test: %v", err)
 	}
+}
+
+func decodePopMessageOutputForTest(t *testing.T, stdout string) popMessageOutput {
+	t.Helper()
+	var payload popMessageOutput
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if payload.Status != "message" {
+		t.Fatalf("payload.Status = %q, want message", payload.Status)
+	}
+	return payload
 }

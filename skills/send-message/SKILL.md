@@ -50,7 +50,7 @@ tmux-a2a-postman send --params 'to=worker,body=hello' --body override
 
 ### 2.4. --params scope for send
 
-The public scope includes: `to`, `body`, `idempotency-key`, `json`.
+The public scope includes: `to`, `body`, `idempotency-key`.
 Always-excluded flags (`context-id`, `session`, `config`, `from`, `file`)
 cannot be set via `--params` and return an error if attempted.
 
@@ -58,18 +58,23 @@ NOTE: `--params` JSON keys use hyphen form matching flag names (e.g.,
 `"idempotency-key"`). JSON output keys use underscore form (e.g.,
 `"context_id"`). These are asymmetric.
 
-## 3. JSON Output
+## 3. Output
 
 ```text
-tmux-a2a-postman send --to worker --body "hello" --json
-# {"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}
+tmux-a2a-postman send --to worker --body "hello"
+# {"sent":"20240101-120000-xxxx-from-worker.md","status":"processed","context_id":"...","session":"...","from":"orchestrator","to":"worker","submit_path":"daemon-submit"}
 ```
 
-The `sent` field stays as the filename token for compatibility. Check
-`status`:
+Output is always JSON.
+
+The `sent` field stays as the stable filename token. Check `status`:
 
 - `processed` = the CLI observed the daemon handle the send. For daemon-owned
-  sessions this is a compatibility-submit response; for direct fallback this is
+  sessions this is a daemon-submit response; for direct fallback this is
   the daemon consuming the queued `post/` file
 - `queued` = only the direct fallback handoff to `post/` was confirmed before
   the observation window closed
+
+`submit_path=daemon-submit` means the send went through the running daemon's
+request/response path. `submit_path=post` means the CLI wrote
+the session's `post/` queue directly.

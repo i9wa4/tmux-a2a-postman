@@ -214,10 +214,10 @@ func runtimeSessionDirs(primarySessionDir string, nodes map[string]discovery.Nod
 	return sessionDirs
 }
 
-func resumeCompatibilityMailboxProjections(primarySessionDir string, nodes map[string]discovery.NodeInfo) error {
+func resumeMailboxProjections(primarySessionDir string, nodes map[string]discovery.NodeInfo) error {
 	for _, sessionDir := range runtimeSessionDirs(primarySessionDir, nodes) {
-		if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
-			return fmt.Errorf("sync compatibility mailbox %s: %w", sessionDir, err)
+		if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+			return fmt.Errorf("sync mailbox projection %s: %w", sessionDir, err)
 		}
 	}
 	return nil
@@ -227,7 +227,7 @@ func (rt *daemonRuntime) bootstrap() {
 	rt.storeSharedNodes()
 
 	installShadowJournalManager(rt.sessionDir, rt.contextID, rt.selfSession, time.Now())
-	if err := resumeCompatibilityMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
+	if err := resumeMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
@@ -253,17 +253,17 @@ func (rt *daemonRuntime) handleContextDone() {
 func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 	eventPath := event.Name
 
-	if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == "compatibility-submit" {
+	if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon) {
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
-			submitResult, err := processCompatibilitySubmitRequest(eventPath)
+			submitResult, err := processDaemonSubmitRequest(eventPath)
 			if err != nil {
 				rt.events <- tui.DaemonEvent{
 					Type:    "error",
-					Message: fmt.Sprintf("compatibility submit %s: %v", filepath.Base(eventPath), err),
+					Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(eventPath), err),
 				}
 			} else if submitResult.hasPostDispatch() {
-				log.Printf("postman: compatibility submit: reconciling send result session=%s file=%s without waiting for post watcher\n",
-					filepath.Base(submitResult.SessionDir), submitResult.Filename)
+				log.Printf("postman: component=%s event=send_reconcile submit_path=%s session=%s file=%s\n",
+					projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(submitResult.SessionDir), submitResult.Filename)
 				rt.wakePostReconciler(submitResult.PostPath)
 			}
 		}
@@ -349,9 +349,9 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, time.Now())
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, time.Now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-	syncCompatibilityMailboxProjection(sourceSessionDir)
+	syncMailboxProjection(sourceSessionDir)
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
@@ -453,11 +453,11 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		syncCompatibilityMailboxProjection(sourceSessionDir)
+		syncMailboxProjection(sourceSessionDir)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
 			if nodeInfo, ok := nodes[recipientFullName]; ok {
-				syncCompatibilityMailboxProjection(nodeInfo.SessionDir)
+				syncMailboxProjection(nodeInfo.SessionDir)
 			}
 		}
 
@@ -537,10 +537,10 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, time.Now())
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, time.Now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
-	syncCompatibilityMailboxProjection(sourceSessionDir)
+	syncMailboxProjection(sourceSessionDir)
 
 	if info.To == "postman" || info.To == "daemon" {
 		return
@@ -760,9 +760,9 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		}
 	}
 
-	submitRequestsDir := projection.CompatibilitySubmitRequestsDir(nodeInfo.SessionDir)
-	if err := projection.EnsureCompatibilitySubmitDirs(nodeInfo.SessionDir); err != nil {
-		log.Printf("postman: WARNING: failed to create compatibility submit dirs for %s: %v\n", nodeName, err)
+	submitRequestsDir := projection.DaemonSubmitRequestsDir(nodeInfo.SessionDir)
+	if err := projection.EnsureDaemonSubmitDirs(nodeInfo.SessionDir); err != nil {
+		log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 		return
 	}
 	if !rt.watchedDirs[submitRequestsDir] {

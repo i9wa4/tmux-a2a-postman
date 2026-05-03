@@ -10,25 +10,25 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
-func TestProcessCompatibilitySubmitRequest_SendWritesPostFile(t *testing.T) {
+func TestProcessDaemonSubmitRequest_SendWritesPostFile(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
 
-	requestPath, err := projection.WriteCompatibilitySubmitRequest(sessionDir, projection.CompatibilitySubmitRequest{
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-send",
-		Command:   projection.CompatibilitySubmitSend,
+		Command:   projection.DaemonSubmitSend,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  "20260414-033100-from-orchestrator-to-worker.md",
 		Content:   "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:31:00Z\n---\n\nsubmit payload\n",
 	})
 	if err != nil {
-		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
-	if _, err := processCompatibilitySubmitRequest(requestPath); err != nil {
-		t.Fatalf("processCompatibilitySubmitRequest: %v", err)
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
 	}
 
 	postPath := filepath.Join(sessionDir, "post", "20260414-033100-from-orchestrator-to-worker.md")
@@ -40,16 +40,16 @@ func TestProcessCompatibilitySubmitRequest_SendWritesPostFile(t *testing.T) {
 		t.Fatalf("post payload changed:\n got %q", string(got))
 	}
 
-	response, err := projection.ReadCompatibilitySubmitResponse(projection.CompatibilitySubmitResponsePath(sessionDir, "req-send"))
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-send"))
 	if err != nil {
-		t.Fatalf("ReadCompatibilitySubmitResponse: %v", err)
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
 	}
 	if response.Filename != "20260414-033100-from-orchestrator-to-worker.md" {
 		t.Fatalf("response.Filename = %q", response.Filename)
 	}
 }
 
-func TestProcessCompatibilitySubmitRequest_PopArchivesUnreadMessage(t *testing.T) {
+func TestProcessDaemonSubmitRequest_PopArchivesUnreadMessage(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
@@ -68,18 +68,18 @@ func TestProcessCompatibilitySubmitRequest_PopArchivesUnreadMessage(t *testing.T
 		t.Fatalf("WriteFile newest: %v", err)
 	}
 
-	requestPath, err := projection.WriteCompatibilitySubmitRequest(sessionDir, projection.CompatibilitySubmitRequest{
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-pop",
-		Command:   projection.CompatibilitySubmitPop,
+		Command:   projection.DaemonSubmitPop,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Node:      "worker",
 	})
 	if err != nil {
-		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
-	if _, err := processCompatibilitySubmitRequest(requestPath); err != nil {
-		t.Fatalf("processCompatibilitySubmitRequest: %v", err)
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(sessionDir, "read", oldest)); err != nil {
@@ -92,9 +92,9 @@ func TestProcessCompatibilitySubmitRequest_PopArchivesUnreadMessage(t *testing.T
 		t.Fatalf("newest inbox file missing: %v", err)
 	}
 
-	response, err := projection.ReadCompatibilitySubmitResponse(projection.CompatibilitySubmitResponsePath(sessionDir, "req-pop"))
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop"))
 	if err != nil {
-		t.Fatalf("ReadCompatibilitySubmitResponse: %v", err)
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
 	}
 	if response.Filename != oldest {
 		t.Fatalf("response.Filename = %q, want %q", response.Filename, oldest)

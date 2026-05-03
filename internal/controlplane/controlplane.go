@@ -166,7 +166,7 @@ func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessag
 	if err := os.WriteFile(dst, []byte(delivery.Content), 0o600); err != nil {
 		return SystemMessageResult{}, fmt.Errorf("writing to inbox: %w", err)
 	}
-	recordCompatibilityMailboxPayload(target.SessionDir, target.SessionName, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	recordMailboxProjectionPayload(target.SessionDir, target.SessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: delivery.Filename,
 		From:      delivery.Sender,
 		To:        target.ActorID,
@@ -174,7 +174,7 @@ func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessag
 		Path:      shadowRelativePath(target.SessionDir, dst),
 		Content:   delivery.Content,
 	})
-	syncCompatibilityMailbox(target.SessionDir)
+	syncMailboxProjection(target.SessionDir)
 
 	return SystemMessageResult{Delivered: true}, nil
 }
@@ -221,15 +221,15 @@ func writeDeadLetterFile(dstPath string, content []byte) error {
 	return os.WriteFile(dstPath, content, 0o600)
 }
 
-func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
-		log.Printf("postman: WARNING: journal compatibility append failed for %s: %v\n", eventType, err)
+		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
 }
 
-func syncCompatibilityMailbox(sessionDir string) {
-	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
-		log.Printf("postman: WARNING: compatibility mailbox sync failed for %s: %v\n", sessionDir, err)
+func syncMailboxProjection(sessionDir string) {
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
 	}
 }
 

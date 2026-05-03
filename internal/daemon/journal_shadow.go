@@ -8,6 +8,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func installShadowJournalManager(sessionDir, contextID, selfSession string, now time.Time) {
@@ -28,7 +29,7 @@ func recordShadowMailboxPathEvent(eventPath, eventType string, visibility journa
 		return
 	}
 	content, readErr := os.ReadFile(eventPath)
-	if eventType == "compatibility_mailbox_posted" {
+	if eventType == projection.MailboxProjectionPostedEventType {
 		if os.IsNotExist(readErr) {
 			return
 		}
@@ -37,9 +38,9 @@ func recordShadowMailboxPathEvent(eventPath, eventType string, visibility journa
 		}
 	}
 	if readErr != nil && !os.IsNotExist(readErr) {
-		log.Printf("postman: WARNING: failed to read shadow mailbox payload %s: %v\n", filepath.Base(eventPath), readErr)
+		log.Printf("postman: WARNING: component=%s event=shadow_read_failed mailbox_event=%s file=%s err=%v\n", projection.MailboxProjectionComponent, eventType, filepath.Base(eventPath), readErr)
 	}
-	payload := compatibilityMailboxPayloadForFile(filepath.Base(eventPath), shadowRelativePath(sessionDir, eventPath), string(content))
+	payload := mailboxProjectionPayloadForFile(filepath.Base(eventPath), shadowRelativePath(sessionDir, eventPath), string(content))
 	if payload.From == "" {
 		payload.From = info.From
 	}
@@ -54,7 +55,7 @@ func recordShadowMailboxPathEvent(eventPath, eventType string, visibility journa
 		payload,
 		now,
 	); err != nil {
-		log.Printf("postman: WARNING: journal shadow append failed for %s: %v\n", filepath.Base(eventPath), err)
+		log.Printf("postman: WARNING: component=%s event=shadow_append_failed mailbox_event=%s file=%s err=%v\n", projection.MailboxProjectionComponent, eventType, filepath.Base(eventPath), err)
 	}
 }
 

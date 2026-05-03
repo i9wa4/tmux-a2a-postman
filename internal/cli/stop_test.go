@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"testing"
 )
@@ -30,8 +31,14 @@ func TestRunStop_NoActiveDaemonPrintsMessage(t *testing.T) {
 		t.Fatalf("RunStop: %v", err)
 	}
 
-	want := "postman: no daemon running\n"
-	if stdout.String() != want {
-		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	var payload stopOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "not_running" {
+		t.Fatalf("payload.Status = %q, want not_running", payload.Status)
+	}
+	if payload.Session != "review-session" {
+		t.Fatalf("payload.Session = %q, want review-session", payload.Session)
 	}
 }

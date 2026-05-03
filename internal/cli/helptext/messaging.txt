@@ -1,0 +1,21 @@
+Messaging — send and receive messages
+
+Quick workflow (agents):
+  Send:  tmux-a2a-postman send --to <node> --body "text"
+  Read:  tmux-a2a-postman pop
+
+Reply workflow:
+  tmux-a2a-postman send --to <sender> --body "DONE: ..."
+
+Replies stay on the live session daemon automatically.
+
+Envelope format (YAML frontmatter):
+  ---
+  params:
+    from: <sender node name>
+    to: <recipient node name>
+    timestamp: <ISO 8601 timestamp>
+  ---
+
+Sender is auto-detected from the tmux pane title (no --from flag).
+`send` and `pop` print JSON by default.

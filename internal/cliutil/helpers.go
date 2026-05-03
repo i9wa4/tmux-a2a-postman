@@ -233,8 +233,8 @@ func PrintDoubleDashDefaultsExcept(w io.Writer, fs *flag.FlagSet, hidden map[str
 	})
 }
 
-// SetUsageWithoutContextID hides the internal compatibility context override
-// from command-specific help output while keeping the flag functional.
+// SetUsageWithoutContextID hides the internal context override from
+// command-specific help output while keeping the flag functional.
 func SetUsageWithoutContextID(fs *flag.FlagSet) {
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())

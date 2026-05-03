@@ -16,6 +16,7 @@ type Handlers struct {
 	GetSessionStatusOneline func(args []string) error
 	SendMessage             func(args []string) error
 	Stop                    func(args []string) error
+	Version                 func(args []string) error
 	Help                    func(args []string)
 }
 
@@ -26,6 +27,17 @@ type Result struct {
 }
 
 func Dispatch(command string, args []string, cfg Config, handlers Handlers) Result {
+	if isSubcommandHelpRequest(args) && hasCommandHelpTopic(command) {
+		if handlers.Help == nil {
+			return Result{
+				Label: "postman " + command,
+				Err:   fmt.Errorf("help handler is not configured"),
+			}
+		}
+		handlers.Help([]string{command})
+		return Result{}
+	}
+
 	switch command {
 	case "start":
 		return Result{
@@ -56,6 +68,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman stop",
 			Err:   handlers.Stop(prependConfig(cfg.ConfigPath, args)),
+		}
+	case "version":
+		return Result{
+			Label: "postman version",
+			Err:   handlers.Version(args),
 		}
 	case "help":
 		handlers.Help(args)

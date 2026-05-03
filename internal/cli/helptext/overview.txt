@@ -1,0 +1,56 @@
+tmux-a2a-postman — A2A message routing daemon for tmux panes
+
+AI agents send and receive messages. Each message is routed to the recipient
+by the daemon. Use send to send and pop to read.
+Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.
+
+Quick Start:
+  1. Start daemon:    tmux-a2a-postman start
+  2. Send a message:  tmux-a2a-postman send --to <node> --body "text"
+  3. Read next msg:   tmux-a2a-postman pop
+
+Key Concepts:
+  Node       An AI agent identified by its tmux pane title.
+  Edge       A bidirectional routing rule between two nodes (configured in edges).
+  Envelope   YAML frontmatter at the top of each message file:
+               ---
+               params:
+                 from: <sender>
+                 to: <recipient>
+                 timestamp: <ISO 8601>
+               ---
+
+Default operator surface:
+  send                       Send a message in one step (--to and --body required)
+  pop                        Read and archive the oldest unread inbox message
+  get-health                 Print canonical session health JSON
+  get-health-oneline         Print compact all-session health
+  version                    Print the build version JSON
+
+Lifecycle and recovery:
+  start                      Start the daemon (single-column TUI)
+  stop                       Stop the running daemon for this tmux session
+  Legacy and diagnostic helpers are internal, not CLI commands.
+
+Messaging Protocol:
+  send --to <node> --body "text"          Send a message in one step
+  pop                                      Read and archive oldest message
+  get-health                              Inspect agent-readable session health
+  get-health-oneline                      Inspect compact all-session health
+  version                                 Print the build version JSON
+
+Topics:
+  commands             tmux-a2a-postman help commands
+  config               tmux-a2a-postman help config
+  directories          tmux-a2a-postman help directories
+  messaging            tmux-a2a-postman help messaging
+  start                tmux-a2a-postman help start
+  stop                 tmux-a2a-postman help stop
+  send                 tmux-a2a-postman help send
+  pop                  tmux-a2a-postman help pop
+  get-health           tmux-a2a-postman help get-health
+  get-health-oneline   tmux-a2a-postman help get-health-oneline
+  version              tmux-a2a-postman help version
+  help                 tmux-a2a-postman help help
+
+Run `tmux-a2a-postman help <topic>` for detailed information.

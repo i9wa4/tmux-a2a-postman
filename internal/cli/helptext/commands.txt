@@ -1,0 +1,72 @@
+Commands — detailed command reference
+Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.
+
+Default operator surface
+
+send
+  Compose and deliver a message atomically in a single command.
+  Output: JSON
+  Flags:
+    --to <node>          Recipient node name (required)
+    --body <text>        Message body (required)
+    --idempotency-key    Optional idempotency token
+    --params <json|kv>   Command parameters
+    --session <name>     tmux session name (optional, auto-detected)
+    --config <path>      Config file path (optional)
+
+pop
+  Read and archive the oldest unread inbox message.
+  Output: JSON
+  Empty inbox: {"status":"empty"}
+  Node is auto-detected from tmux pane title.
+  Flags:
+    --peek               Show without archiving (non-destructive)
+    --file <name>        Return a specific inbox message from the current session inbox
+    --params <json|kv>   Command parameters
+    --config <path>      Config file path (optional)
+
+get-health
+  Print canonical session health JSON for agents and scripts.
+  Flags:
+    --session <name>     tmux session name (optional, auto-detected)
+    --config <path>      Config file path (optional)
+
+get-health-oneline
+  Print compact all-session health for quick agent coordination.
+  Shape: [0]🔷🔵:🟢 [1]🔴
+  Window groups are colon-separated emoji runs with no literal window labels.
+  Flags:
+    --json               Output JSON with a status string
+    --session <name>     tmux session name (optional, auto-detected)
+    --config <path>      Config file path (optional)
+    --params <json|kv>   Command parameters
+
+version
+  Print the build version JSON.
+  Usage:
+    tmux-a2a-postman version
+    tmux-a2a-postman --version
+  Output: JSON
+
+Lifecycle and recovery
+
+start
+  Start the tmux-a2a-postman daemon.
+  Global flags used by start:
+    --config <path>      Config file path (auto-detected from XDG_CONFIG_HOME)
+    --log-file <path>    Log file path (default: the live session context log)
+    --no-tui             Run without the single-column TUI surface
+
+stop
+  Stop the running daemon for the current tmux session.
+  Output: JSON
+  Sends SIGTERM and waits up to --timeout seconds (default 10) for exit.
+  Exits 0 if no daemon is running (idempotent).
+  Flags:
+    --session <name>     tmux session name (optional, auto-detected)
+    --config <path>      Config file path (optional)
+    --timeout <secs>     Seconds to wait for daemon exit (default 10)
+
+help [topic]
+  Show help overview or detailed topic page.
+  Topics: messaging, directories, config, commands, start, stop, send, pop, get-health, get-health-oneline, version, help

@@ -8,7 +8,6 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
-	"github.com/i9wa4/tmux-a2a-postman/internal/version"
 )
 
 func splitCommand(args []string) (string, []string, bool) {
@@ -51,7 +50,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Printf("tmux-a2a-postman %s\n", version.Version)
+		_ = cli.RunVersion(os.Stdout, nil)
 		return
 	}
 
@@ -83,6 +82,9 @@ func main() {
 			SendMessage:             cli.RunSendMessage,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
+			},
+			Version: func(args []string) error {
+				return cli.RunVersion(os.Stdout, args)
 			},
 			Help: cli.RunHelp,
 		},
@@ -116,7 +118,8 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Lifecycle and recovery:")
 	fmt.Fprintln(w, "  start                      Start tmux-a2a-postman daemon")
 	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
-	fmt.Fprintln(w, "  Compatibility and diagnostic helpers are internal, not CLI commands.")
+	fmt.Fprintln(w, "  version                    Print the build version JSON")
+	fmt.Fprintln(w, "  Legacy and diagnostic helpers are internal, not CLI commands.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Global Flags:")
 	fmt.Fprintln(w, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
@@ -125,8 +128,9 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")
 	fmt.Fprintln(w, "  tmux-a2a-postman send --to worker --body \"DONE\"          # Send message")
-	fmt.Fprintln(w, "  tmux-a2a-postman pop --json                          # Read next message as JSON")
+	fmt.Fprintln(w, "  tmux-a2a-postman pop                                 # Read next message as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman get-health                          # Inspect runtime health as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman get-health-oneline                  # Inspect compact health")
+	fmt.Fprintln(w, "  tmux-a2a-postman version                             # Print version as JSON")
 	fmt.Fprintln(w, "  tmux-a2a-postman help messaging                      # Messaging guide")
 }

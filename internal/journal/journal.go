@@ -24,9 +24,10 @@ const (
 type Visibility string
 
 const (
-	VisibilityControlPlaneOnly     Visibility = "control_plane_only"
-	VisibilityOperatorVisible      Visibility = "operator_visible"
-	VisibilityCompatibilityMailbox Visibility = "compatibility_mailbox"
+	VisibilityControlPlaneOnly           Visibility = "control_plane_only"
+	VisibilityOperatorVisible            Visibility = "operator_visible"
+	VisibilityMailboxProjection          Visibility = "mailbox_projection"
+	legacyCompatibilityMailboxVisibility Visibility = "compatibility_mailbox"
 )
 
 type ResolutionMode string
@@ -567,7 +568,7 @@ func requiresThreadID(eventType string) bool {
 
 func isKnownVisibility(visibility Visibility) bool {
 	switch visibility {
-	case VisibilityControlPlaneOnly, VisibilityOperatorVisible, VisibilityCompatibilityMailbox:
+	case VisibilityControlPlaneOnly, VisibilityOperatorVisible, VisibilityMailboxProjection, legacyCompatibilityMailboxVisibility:
 		return true
 	default:
 		return false

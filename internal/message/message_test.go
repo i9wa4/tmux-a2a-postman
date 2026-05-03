@@ -1252,11 +1252,11 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 	if len(events) != 4 {
 		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
 	}
-	if events[2].Type != "compatibility_mailbox_post_consumed" {
-		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_post_consumed", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostConsumedEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_consumed", events[2].Type)
 	}
-	if events[3].Type != "compatibility_mailbox_delivered" {
-		t.Fatalf("events[3].Type = %q, want compatibility_mailbox_delivered", events[3].Type)
+	if events[3].Type != projection.MailboxProjectionDeliveredEventType {
+		t.Fatalf("events[3].Type = %q, want mailbox_projection_delivered", events[3].Type)
 	}
 	var payload map[string]string
 	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
@@ -1309,8 +1309,8 @@ func TestDeliverSystemMessageDirect_AppendsShadowJournalDeliveredEvent(t *testin
 	if len(events) != 3 {
 		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
 	}
-	if events[2].Type != "compatibility_mailbox_delivered" {
-		t.Fatalf("events[2].Type = %q, want compatibility_mailbox_delivered", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionDeliveredEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_delivered", events[2].Type)
 	}
 	var payload map[string]string
 	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {

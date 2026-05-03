@@ -2,8 +2,8 @@ package journal
 
 import "time"
 
-// MailboxEventPayload carries the operator-visible mailbox file snapshot needed
-// to rebuild compatibility directories from replay.
+// MailboxEventPayload carries the mailbox file snapshot needed to rebuild
+// mailbox projection files from replay.
 type MailboxEventPayload struct {
 	Directory  string `json:"directory,omitempty"`
 	MessageID  string `json:"message_id,omitempty"`

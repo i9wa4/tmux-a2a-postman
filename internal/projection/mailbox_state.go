@@ -39,13 +39,13 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 			sawLease = true
 		case "session_resolved":
 			sawResolution = true
-		case "compatibility_mailbox_delivered":
+		case MailboxProjectionDeliveredEventType, legacyCompatibilityMailboxDeliveredEventType:
 			recipient, ok := projectedRecipientName(event.Payload, sessionName)
 			if !ok {
 				return MailboxState{}, false, nil
 			}
 			projected.InboxCounts[recipient]++
-		case "compatibility_mailbox_read":
+		case MailboxProjectionReadEventType, legacyCompatibilityMailboxReadEventType:
 			recipient, ok := projectedRecipientName(event.Payload, sessionName)
 			if !ok {
 				return MailboxState{}, false, nil

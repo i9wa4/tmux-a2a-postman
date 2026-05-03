@@ -124,7 +124,7 @@ func TestAppendEvent_FailsWhenLeaseChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	if _, err := writer.AppendEvent("compatibility_mailbox_posted", VisibilityCompatibilityMailbox, map[string]string{"path": "post/test.md"}, now.Add(time.Second)); err != nil {
+	if _, err := writer.AppendEvent("mailbox_projection_posted", VisibilityMailboxProjection, map[string]string{"path": "post/test.md"}, now.Add(time.Second)); err != nil {
 		t.Fatalf("AppendEvent(initial) error = %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestAppendEvent_FailsWhenLeaseChanges(t *testing.T) {
 		t.Fatalf("writeJSONAtomically(current lease): %v", err)
 	}
 
-	if _, err := writer.AppendEvent("compatibility_mailbox_posted", VisibilityCompatibilityMailbox, map[string]string{"path": "post/test-2.md"}, now.Add(3*time.Second)); err == nil {
+	if _, err := writer.AppendEvent("mailbox_projection_posted", VisibilityMailboxProjection, map[string]string{"path": "post/test-2.md"}, now.Add(3*time.Second)); err == nil {
 		t.Fatal("AppendEvent() error = nil, want lease mismatch")
 	}
 }
@@ -191,7 +191,7 @@ func TestAppendEvent_FencesLeaseAuthorityThroughCommit(t *testing.T) {
 		appendEventBeforeWriteHook = nil
 	}()
 
-	event, err := writer.AppendEvent("compatibility_mailbox_posted", VisibilityCompatibilityMailbox, map[string]string{"path": "post/test-fenced.md"}, now.Add(time.Second))
+	event, err := writer.AppendEvent("mailbox_projection_posted", VisibilityMailboxProjection, map[string]string{"path": "post/test-fenced.md"}, now.Add(time.Second))
 	if err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
 	}
@@ -263,7 +263,7 @@ func TestReplay_FailsClosedOnSequenceAndLeaseDefects(t *testing.T) {
 	t.Run("lease mismatch", func(t *testing.T) {
 		sessionDir := t.TempDir()
 		writeCommittedRecord(t, sessionDir, 1, leaseAcquiredEventType, "lease-a", 1)
-		writeCommittedRecord(t, sessionDir, 2, "compatibility_mailbox_posted", "lease-b", 2)
+		writeCommittedRecord(t, sessionDir, 2, "mailbox_projection_posted", "lease-b", 2)
 
 		if _, err := Replay(sessionDir); err == nil || !strings.Contains(err.Error(), "lease mismatch") {
 			t.Fatalf("Replay() error = %v, want lease mismatch", err)

@@ -59,7 +59,7 @@ func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t
 	}
 }
 
-func TestResumeCompatibilityMailboxProjections_RestoresKnownSessionTrees(t *testing.T) {
+func TestResumeMailboxProjections_RestoresKnownSessionTrees(t *testing.T) {
 	baseDir := t.TempDir()
 	primarySessionDir := filepath.Join(baseDir, "ctx-main", "review")
 	now := time.Date(2026, time.April, 14, 4, 30, 0, 0, time.UTC)
@@ -71,7 +71,7 @@ func TestResumeCompatibilityMailboxProjections_RestoresKnownSessionTrees(t *test
 
 	primaryFilename := "20260414-043001-r1111-from-orchestrator-to-worker.md"
 	primaryContent := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nPrimary inbox payload\n"
-	appendRuntimeMailboxEventForTest(t, primaryWriter, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendRuntimeMailboxEventForTest(t, primaryWriter, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: primaryFilename,
 		From:      "orchestrator",
 		To:        "worker",
@@ -94,8 +94,8 @@ func TestResumeCompatibilityMailboxProjections_RestoresKnownSessionTrees(t *test
 		},
 	}
 
-	if err := resumeCompatibilityMailboxProjections(primarySessionDir, nodes); err != nil {
-		t.Fatalf("resumeCompatibilityMailboxProjections() error = %v", err)
+	if err := resumeMailboxProjections(primarySessionDir, nodes); err != nil {
+		t.Fatalf("resumeMailboxProjections() error = %v", err)
 	}
 
 	gotPrimary, err := os.ReadFile(primaryProjectedPath)
@@ -127,7 +127,7 @@ func TestPostEventGuard_DedupesByPathUntilFinished(t *testing.T) {
 	}
 }
 
-func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatcherEvent(t *testing.T) {
+func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEvent(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeTestTmux(t, tmpDir)
 
@@ -182,15 +182,15 @@ func TestHandleWatcherEvent_CompatibilitySubmitSendDispatchesPostWithoutPostWatc
 
 	filename := "20260502-004600-r1111-from-orchestrator-to-messenger.md"
 	content := "---\nparams:\n  contextId: ctx-submit\n  from: orchestrator\n  to: messenger\n  timestamp: 2026-05-02T00:46:00+09:00\n---\n\nhello\n"
-	requestPath, err := projection.WriteCompatibilitySubmitRequest(sessionDir, projection.CompatibilitySubmitRequest{
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-send",
-		Command:   projection.CompatibilitySubmitSend,
+		Command:   projection.DaemonSubmitSend,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  filename,
 		Content:   content,
 	})
 	if err != nil {
-		t.Fatalf("WriteCompatibilitySubmitRequest: %v", err)
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
 	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
@@ -426,7 +426,7 @@ func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
 	if err := os.WriteFile(postPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(post): %v", err)
 	}
-	recordCompatibilityMailboxPayload(sessionDir, sessionName, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      "orchestrator",
 		To:        "messenger",

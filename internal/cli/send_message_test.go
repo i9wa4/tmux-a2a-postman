@@ -24,7 +24,7 @@ func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_HelpMentionsObservableJSONStatuses(t *testing.T) {
+func TestRunSendMessage_FlagHelpOmitsHiddenAndRemovedFlags(t *testing.T) {
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunSendMessage([]string{"-h"})
 	})
@@ -43,8 +43,8 @@ func TestRunSendMessage_HelpMentionsObservableJSONStatuses(t *testing.T) {
 	if strings.Contains(stderr, "--context-id") {
 		t.Fatalf("stderr still exposes hidden context override: %q", stderr)
 	}
-	if !strings.Contains(stderr, `output json: {"sent":"filename.md","status":"processed|queued"}`) {
-		t.Fatalf("stderr missing observable send JSON contract: %q", stderr)
+	if strings.Contains(stderr, "--json") {
+		t.Fatalf("stderr still exposes removed --json flag: %q", stderr)
 	}
 }
 
@@ -763,7 +763,7 @@ role = "orchestrator"
 	}
 }
 
-func TestRunSendMessage_JSONOutputReportsQueuedWhenOnlyLocalHandoffIsConfirmed(t *testing.T) {
+func TestRunSendMessage_DefaultJSONReportsQueuedWhenOnlyLocalHandoffIsConfirmed(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -789,7 +789,6 @@ role = "worker"
 			"--context-id", "ctx-send-queued-json",
 			"--to", "worker",
 			"--body", "hello queued json",
-			"--json",
 		})
 	})
 	if err != nil {
@@ -800,8 +799,9 @@ role = "worker"
 	}
 
 	var payload struct {
-		Sent   string `json:"sent"`
-		Status string `json:"status"`
+		Sent       string                `json:"sent"`
+		Status     string                `json:"status"`
+		SubmitPath projection.SubmitPath `json:"submit_path"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
@@ -811,6 +811,9 @@ role = "worker"
 	}
 	if payload.Status != string(sendStatusQueued) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusQueued)
+	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
 
 	postDir := filepath.Join(tmpDir, "ctx-send-queued-json", "test-session", "post")
@@ -826,7 +829,7 @@ role = "worker"
 	}
 }
 
-func TestRunSendMessage_JSONOutputReportsProcessedWhenDaemonConsumesDirectPost(t *testing.T) {
+func TestRunSendMessage_DefaultJSONReportsProcessedWhenDaemonConsumesDirectPost(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -877,7 +880,6 @@ role = "worker"
 			"--context-id", "ctx-send-direct-processed",
 			"--to", "worker",
 			"--body", "hello processed json",
-			"--json",
 		})
 	})
 	if err != nil {
@@ -888,14 +890,18 @@ role = "worker"
 	}
 
 	var payload struct {
-		Sent   string `json:"sent"`
-		Status string `json:"status"`
+		Sent       string                `json:"sent"`
+		Status     string                `json:"status"`
+		SubmitPath projection.SubmitPath `json:"submit_path"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
 	}
 	if payload.Status != string(sendStatusProcessed) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker", payload.Sent)); err != nil {
 		t.Fatalf("Stat delivered inbox file: %v", err)
@@ -970,7 +976,7 @@ role = "worker"
 	}
 }
 
-func TestRunSendMessage_UsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+func TestRunSendMessage_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1001,9 +1007,9 @@ role = "worker"
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	go func() {
-		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
 		postDir := filepath.Join(sessionDir, "post")
 		if err := os.MkdirAll(postDir, 0o700); err != nil {
@@ -1026,13 +1032,13 @@ role = "worker"
 		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
 		}
-		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
 			RequestID: request.RequestID,
 			Command:   request.Command,
 			HandledAt: time.Now().UTC().Format(time.RFC3339),
 			Filename:  request.Filename,
 		}); err != nil {
-			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
 		}
 	}()
 
@@ -1048,8 +1054,8 @@ role = "worker"
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
 	request := <-requestSeen
-	if request.Command != projection.CompatibilitySubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	if request.Command != projection.DaemonSubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
 	}
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
@@ -1057,28 +1063,35 @@ role = "worker"
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
-	if !strings.Contains(stdout, "Sent: "+request.Filename) {
-		t.Fatalf("stdout = %q, want Sent line for %q", stdout, request.Filename)
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Sent != request.Filename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
 	}
-	for _, want := range []string{
-		"status=processed",
-		"session=test-session",
-		"context=ctx-send-submit",
-		"from=messenger",
-		"to=worker",
-		"transport=compatibility-submit",
-	} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("stdout = %q, missing %q", stdout, want)
-		}
+	if payload.Status != string(sendStatusProcessed) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if payload.ContextID != "ctx-send-submit" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-submit", payload.ContextID)
+	}
+	if payload.Session != "test-session" {
+		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
+	}
+	if payload.From != "messenger" {
+		t.Fatalf("payload.From = %q, want messenger", payload.From)
+	}
+	if payload.To != "worker" {
+		t.Fatalf("payload.To = %q, want worker", payload.To)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
+		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
 	}
 }
 
-func TestRunSendMessage_UsesCompatibilitySubmitForOwnedSessionInLegacyMode(t *testing.T) {
+func TestRunSendMessage_UsesDaemonSubmitForOwnedSessionInLegacyMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1109,11 +1122,11 @@ role = "worker"
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	serveDone := make(chan error, 1)
 	go func() {
 		deadline := time.Now().Add(2 * time.Second)
-		requestsDir := projection.CompatibilitySubmitRequestsDir(sessionDir)
+		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
 		for {
 			entries, err := os.ReadDir(requestsDir)
 			if err == nil {
@@ -1122,9 +1135,9 @@ role = "worker"
 						continue
 					}
 					requestPath := filepath.Join(requestsDir, entry.Name())
-					request, readErr := projection.ReadCompatibilitySubmitRequest(requestPath)
+					request, readErr := projection.ReadDaemonSubmitRequest(requestPath)
 					if readErr != nil {
-						serveDone <- fmt.Errorf("ReadCompatibilitySubmitRequest(%s): %w", requestPath, readErr)
+						serveDone <- fmt.Errorf("ReadDaemonSubmitRequest(%s): %w", requestPath, readErr)
 						return
 					}
 					requestSeen <- request
@@ -1151,13 +1164,13 @@ role = "worker"
 						serveDone <- fmt.Errorf("Rename post to inbox: %w", err)
 						return
 					}
-					if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+					if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
 						RequestID: request.RequestID,
 						Command:   request.Command,
 						HandledAt: time.Now().UTC().Format(time.RFC3339),
 						Filename:  request.Filename,
 					}); err != nil {
-						serveDone <- fmt.Errorf("WriteCompatibilitySubmitResponse: %w", err)
+						serveDone <- fmt.Errorf("WriteDaemonSubmitResponse: %w", err)
 						return
 					}
 					serveDone <- nil
@@ -1165,7 +1178,7 @@ role = "worker"
 				}
 			}
 			if time.Now().After(deadline) {
-				serveDone <- fmt.Errorf("timed out waiting for compatibility submit request in %s", requestsDir)
+				serveDone <- fmt.Errorf("timed out waiting for daemon submit request in %s", requestsDir)
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -1187,29 +1200,32 @@ role = "worker"
 		t.Fatal(serveErr)
 	}
 	request := <-requestSeen
-	if request.Command != projection.CompatibilitySubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	if request.Command != projection.DaemonSubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
 	}
 	if !strings.Contains(request.Content, "hello through submit in legacy mode") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
-	for _, want := range []string{
-		"status=processed",
-		"session=test-session",
-		"context=ctx-send-submit-legacy",
-		"transport=compatibility-submit",
-	} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("stdout = %q, missing %q", stdout, want)
-		}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Status != string(sendStatusProcessed) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	}
+	if payload.Session != "test-session" {
+		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
+	}
+	if payload.ContextID != "ctx-send-submit-legacy" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-submit-legacy", payload.ContextID)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
+		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
 	}
 }
 
-func TestRunSendMessage_JSONOutputUsesCompatibilitySubmitWhenDaemonOwnsSession(t *testing.T) {
+func TestRunSendMessage_DefaultJSONUsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1240,9 +1256,9 @@ role = "worker"
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.CompatibilitySubmitRequest, 1)
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	go func() {
-		requestPath, request := awaitCompatibilitySubmitRequest(t, sessionDir, time.Second)
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
 		postDir := filepath.Join(sessionDir, "post")
 		if err := os.MkdirAll(postDir, 0o700); err != nil {
@@ -1265,13 +1281,13 @@ role = "worker"
 		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
 		}
-		if _, err := projection.WriteCompatibilitySubmitResponse(sessionDir, projection.CompatibilitySubmitResponse{
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
 			RequestID: request.RequestID,
 			Command:   request.Command,
 			HandledAt: time.Now().UTC().Format(time.RFC3339),
 			Filename:  request.Filename,
 		}); err != nil {
-			t.Errorf("WriteCompatibilitySubmitResponse: %v", err)
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
 		}
 	}()
 
@@ -1281,15 +1297,14 @@ role = "worker"
 			"--context-id", "ctx-send-submit-json",
 			"--to", "worker",
 			"--body", "hello through submit json",
-			"--json",
 		})
 	})
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
 	request := <-requestSeen
-	if request.Command != projection.CompatibilitySubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.CompatibilitySubmitSend)
+	if request.Command != projection.DaemonSubmitSend {
+		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
 	}
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
@@ -1301,13 +1316,13 @@ role = "worker"
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	var payload struct {
-		Sent      string `json:"sent"`
-		Status    string `json:"status"`
-		ContextID string `json:"context_id"`
-		Session   string `json:"session"`
-		From      string `json:"from"`
-		To        string `json:"to"`
-		Transport string `json:"transport"`
+		Sent       string                `json:"sent"`
+		Status     string                `json:"status"`
+		ContextID  string                `json:"context_id"`
+		Session    string                `json:"session"`
+		From       string                `json:"from"`
+		To         string                `json:"to"`
+		SubmitPath projection.SubmitPath `json:"submit_path"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
@@ -1330,15 +1345,15 @@ role = "worker"
 	if payload.To != "worker" {
 		t.Fatalf("payload.To = %q, want worker", payload.To)
 	}
-	if payload.Transport != "compatibility-submit" {
-		t.Fatalf("payload.Transport = %q, want compatibility-submit", payload.Transport)
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
 	}
 	if strings.Contains(stdout, "Sent: ") {
 		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
 	}
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed compatibility submit: found %d post entries", len(postEntries))
+		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
 	}
 }
 
@@ -1384,54 +1399,70 @@ func TestPerformCLINotification_FailedOnError(t *testing.T) {
 
 func TestWriteSendResult_ProcessedWithNotifyOK(t *testing.T) {
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifyOK)
+		return writeSendResult("test.md", sendStatusProcessed, cliNotifyOK)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "Sent: test.md") {
-		t.Errorf("missing 'Sent: test.md' in %q", stdout)
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Sent != "test.md" {
+		t.Errorf("payload.Sent = %q, want test.md", payload.Sent)
 	}
-	if !strings.Contains(stdout, "[notified: OK]") {
-		t.Errorf("missing '[notified: OK]' in %q", stdout)
+	if payload.Notify != "OK" {
+		t.Errorf("payload.Notify = %q, want OK", payload.Notify)
 	}
 }
 
 func TestWriteSendResult_ProcessedWithNotifyFailed(t *testing.T) {
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifyFailed)
+		return writeSendResult("test.md", sendStatusProcessed, cliNotifyFailed)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "[notified: FAILED -- recovery pending]") {
-		t.Errorf("missing FAILED suffix in %q", stdout)
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Notify != "FAILED" {
+		t.Errorf("payload.Notify = %q, want FAILED", payload.Notify)
 	}
 }
 
 func TestWriteSendResult_ProcessedWithNotifySkipped(t *testing.T) {
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return writeSendResult("test.md", sendStatusProcessed, false, cliNotifySkipped)
+		return writeSendResult("test.md", sendStatusProcessed, cliNotifySkipped)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "[notified: SKIPPED -- pane not found]") {
-		t.Errorf("missing SKIPPED suffix in %q", stdout)
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Notify != "SKIPPED" {
+		t.Errorf("payload.Notify = %q, want SKIPPED", payload.Notify)
 	}
 }
 
 func TestWriteSendResult_QueuedHasNoNotifySuffix(t *testing.T) {
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return writeSendResult("test.md", sendStatusQueued, false, cliNotifyNone)
+		return writeSendResult("test.md", sendStatusQueued, cliNotifyNone)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(stdout), "Queued:") {
-		t.Errorf("expected 'Queued:' prefix, got %q", stdout)
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Status != string(sendStatusQueued) {
+		t.Errorf("payload.Status = %q, want %q", payload.Status, sendStatusQueued)
 	}
-	if strings.Contains(stdout, "notified") {
-		t.Errorf("unexpected 'notified' in queued output: %q", stdout)
+	if payload.Notify != "" {
+		t.Errorf("payload.Notify = %q, want empty", payload.Notify)
 	}
+}
+
+func decodeSendOutputForTest(t *testing.T, stdout string) sendOutput {
+	t.Helper()
+	var payload sendOutput
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if strings.Contains(stdout, "Sent: ") || strings.Contains(stdout, "Queued: ") {
+		t.Fatalf("stdout unexpectedly used human output: %q", stdout)
+	}
+	return payload
 }

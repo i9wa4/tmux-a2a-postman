@@ -9,7 +9,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
-func TestProjectCompatibilityMailbox_FourDirectoryLifecycle(t *testing.T) {
+func TestProjectMailboxProjection_FourDirectoryLifecycle(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 3, 0, 0, 0, time.UTC)
 
@@ -18,41 +18,41 @@ func TestProjectCompatibilityMailbox_FourDirectoryLifecycle(t *testing.T) {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-030001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
 		Path:      filepath.Join("post", "20260414-030001-r1111-from-orchestrator-to-worker.md"),
 		Content:   "queued body",
 	}, now.Add(1*time.Second))
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-030002-r2222-from-orchestrator-to-critic.md",
 		From:      "orchestrator",
 		To:        "critic",
 		Path:      filepath.Join("post", "20260414-030002-r2222-from-orchestrator-to-critic.md"),
 		Content:   "dead-letter body",
 	}, now.Add(2*time.Second))
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_post_consumed", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-030001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
 		Path:      filepath.Join("post", "20260414-030001-r1111-from-orchestrator-to-worker.md"),
 	}, now.Add(3*time.Second))
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_delivered", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-030001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
 		Path:      filepath.Join("inbox", "worker", "20260414-030001-r1111-from-orchestrator-to-worker.md"),
 		Content:   "queued body",
 	}, now.Add(4*time.Second))
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_read", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID: "20260414-030001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
 		Path:      filepath.Join("read", "20260414-030001-r1111-from-orchestrator-to-worker.md"),
 		Content:   "queued body",
 	}, now.Add(5*time.Second))
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_dead_lettered", journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:  "20260414-030002-r2222-from-orchestrator-to-critic-dl-routing-denied.md",
 		From:       "orchestrator",
 		To:         "critic",
@@ -61,12 +61,12 @@ func TestProjectCompatibilityMailbox_FourDirectoryLifecycle(t *testing.T) {
 		Content:    "dead-letter body",
 	}, now.Add(6*time.Second))
 
-	projected, ok, err := ProjectCompatibilityMailbox(sessionDir)
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
 	if err != nil {
-		t.Fatalf("ProjectCompatibilityMailbox() error = %v", err)
+		t.Fatalf("ProjectMailboxProjection() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectCompatibilityMailbox() ok = false, want true")
+		t.Fatal("ProjectMailboxProjection() ok = false, want true")
 	}
 
 	if got := projected.Post[pathKey(filepath.Join("post", "20260414-030001-r1111-from-orchestrator-to-worker.md"))]; got.Content != "" {
@@ -86,7 +86,7 @@ func TestProjectCompatibilityMailbox_FourDirectoryLifecycle(t *testing.T) {
 	}
 }
 
-func TestProjectCompatibilityMailbox_ControlPlaneOnlyExcluded(t *testing.T) {
+func TestProjectMailboxProjection_ControlPlaneOnlyExcluded(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 4, 0, 0, 0, time.UTC)
 
@@ -95,7 +95,7 @@ func TestProjectCompatibilityMailbox_ControlPlaneOnlyExcluded(t *testing.T) {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityControlPlaneOnly, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityControlPlaneOnly, journal.MailboxEventPayload{
 		MessageID: "20260414-040001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
@@ -103,19 +103,48 @@ func TestProjectCompatibilityMailbox_ControlPlaneOnlyExcluded(t *testing.T) {
 		Content:   "hidden body",
 	}, now.Add(time.Second))
 
-	projected, ok, err := ProjectCompatibilityMailbox(sessionDir)
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
 	if err != nil {
-		t.Fatalf("ProjectCompatibilityMailbox() error = %v", err)
+		t.Fatalf("ProjectMailboxProjection() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectCompatibilityMailbox() ok = false, want true")
+		t.Fatal("ProjectMailboxProjection() ok = false, want true")
 	}
 	if len(projected.Post) != 0 || len(projected.Inbox) != 0 || len(projected.Read) != 0 || len(projected.DeadLetter) != 0 {
-		t.Fatalf("control-plane event leaked into compatibility projection: %#v", projected)
+		t.Fatalf("control-plane event leaked into mailbox projection: %#v", projected)
 	}
 }
 
-func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
+func TestProjectMailboxProjection_AcceptsLegacyMailboxProjectionEvents(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 4, 30, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	appendMailboxEventForTest(t, writer, legacyCompatibilityMailboxDeliveredEventType, journal.Visibility("compatibility_mailbox"), journal.MailboxEventPayload{
+		MessageID: "20260414-043001-r1111-from-orchestrator-to-worker.md",
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", "20260414-043001-r1111-from-orchestrator-to-worker.md"),
+		Content:   "legacy body",
+	}, now.Add(time.Second))
+
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectMailboxProjection() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMailboxProjection() ok = false, want true")
+	}
+	if got := projected.Inbox[pathKey(filepath.Join("inbox", "worker", "20260414-043001-r1111-from-orchestrator-to-worker.md"))]; got.Content != "legacy body" {
+		t.Fatalf("legacy inbox projection content = %q, want legacy body", got.Content)
+	}
+}
+
+func TestSyncMailboxProjection_GenerationQuarantine(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 5, 0, 0, 0, time.UTC)
 
@@ -123,7 +152,7 @@ func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-050001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
@@ -131,8 +160,8 @@ func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 		Content:   "queued body",
 	}, now.Add(time.Second))
 
-	if err := SyncCompatibilityMailbox(sessionDir); err != nil {
-		t.Fatalf("SyncCompatibilityMailbox() error = %v", err)
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection() error = %v", err)
 	}
 
 	if _, _, err := journal.ResolveSession(sessionDir, "review", journal.ResolutionExplicitRebind, now.Add(2*time.Second)); err != nil {
@@ -142,8 +171,8 @@ func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 		t.Fatalf("OpenShadowWriter(rebind) error = %v", err)
 	}
 
-	if err := SyncCompatibilityMailbox(sessionDir); err != nil {
-		t.Fatalf("SyncCompatibilityMailbox(rebind) error = %v", err)
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(rebind) error = %v", err)
 	}
 
 	matches, err := filepath.Glob(filepath.Join(sessionDir, "snapshot", "quarantine", "*", "post", "20260414-050001-r1111-from-orchestrator-to-worker.md"))
@@ -155,7 +184,7 @@ func TestSyncCompatibilityMailbox_GenerationQuarantine(t *testing.T) {
 	}
 }
 
-func TestSyncCompatibilityMailbox_PreservesUnprojectedPostFiles(t *testing.T) {
+func TestSyncMailboxProjection_PreservesUnprojectedPostFiles(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 5, 30, 0, 0, time.UTC)
 
@@ -163,7 +192,7 @@ func TestSyncCompatibilityMailbox_PreservesUnprojectedPostFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	appendMailboxEventForTest(t, writer, "compatibility_mailbox_posted", journal.VisibilityCompatibilityMailbox, journal.MailboxEventPayload{
+	appendMailboxEventForTest(t, writer, MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: "20260414-053001-r1111-from-orchestrator-to-worker.md",
 		From:      "orchestrator",
 		To:        "worker",
@@ -179,8 +208,8 @@ func TestSyncCompatibilityMailbox_PreservesUnprojectedPostFiles(t *testing.T) {
 		t.Fatalf("WriteFile(unprojected post): %v", err)
 	}
 
-	if err := SyncCompatibilityMailbox(sessionDir); err != nil {
-		t.Fatalf("SyncCompatibilityMailbox() error = %v", err)
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection() error = %v", err)
 	}
 	got, err := os.ReadFile(unprojectedPath)
 	if err != nil {

@@ -1,10 +1,31 @@
 package cli
 
 import (
+	"embed"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 )
+
+//go:embed helptext/*.txt
+var helpTextFS embed.FS
+
+var helpTopicFiles = map[string]string{
+	"":                   "helptext/overview.txt",
+	"commands":           "helptext/commands.txt",
+	"config":             "helptext/config.txt",
+	"directories":        "helptext/directories.txt",
+	"get-health":         "helptext/get-health.txt",
+	"get-health-oneline": "helptext/get-health-oneline.txt",
+	"help":               "helptext/help.txt",
+	"messaging":          "helptext/messaging.txt",
+	"pop":                "helptext/pop.txt",
+	"send":               "helptext/send.txt",
+	"start":              "helptext/start.txt",
+	"stop":               "helptext/stop.txt",
+	"version":            "helptext/version.txt",
+}
 
 func RunHelp(args []string) {
 	if err := runHelp(os.Stdout, os.Stderr, args); err != nil {
@@ -13,208 +34,55 @@ func RunHelp(args []string) {
 }
 
 func runHelp(stdout, stderr io.Writer, args []string) error {
-	topics := []string{"messaging", "directories", "config", "commands"}
-	printTopicList := func(w io.Writer) {
-		fmt.Fprintln(w, "Topics:")
-		for _, t := range topics {
-			fmt.Fprintf(w, "  %-14s  tmux-a2a-postman help %s\n", t, t)
-		}
+	topic := ""
+	if len(args) > 0 {
+		topic = args[0]
 	}
 
-	if len(args) == 0 {
-		fmt.Fprintln(stdout, "tmux-a2a-postman — A2A message routing daemon for tmux panes")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "AI agents send and receive messages. Each message is routed to the recipient")
-		fmt.Fprintln(stdout, "by the daemon. Use send to send and pop to read.")
-		fmt.Fprintln(stdout, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Quick Start:")
-		fmt.Fprintln(stdout, "  1. Start daemon:    tmux-a2a-postman start")
-		fmt.Fprintln(stdout, "  2. Send a message:  tmux-a2a-postman send --to <node> --body \"text\"")
-		fmt.Fprintln(stdout, "  3. Read next msg:   tmux-a2a-postman pop")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Key Concepts:")
-		fmt.Fprintln(stdout, "  Node       An AI agent identified by its tmux pane title.")
-		fmt.Fprintln(stdout, "  Edge       A bidirectional routing rule between two nodes (configured in edges).")
-		fmt.Fprintln(stdout, "  Envelope   YAML frontmatter at the top of each message file:")
-		fmt.Fprintln(stdout, "               ---")
-		fmt.Fprintln(stdout, "               params:")
-		fmt.Fprintln(stdout, "                 from: <sender>")
-		fmt.Fprintln(stdout, "                 to: <recipient>")
-		fmt.Fprintln(stdout, "                 timestamp: <ISO 8601>")
-		fmt.Fprintln(stdout, "               ---")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Default operator surface:")
-		fmt.Fprintln(stdout, "  send                       Send a message in one step (--to and --body required)")
-		fmt.Fprintln(stdout, "  pop                        Read and archive the oldest unread inbox message")
-		fmt.Fprintln(stdout, "  get-health                 Print canonical session health JSON")
-		fmt.Fprintln(stdout, "  get-health-oneline         Print compact all-session health")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Lifecycle and recovery:")
-		fmt.Fprintln(stdout, "  start                      Start the daemon (single-column TUI)")
-		fmt.Fprintln(stdout, "  stop                       Stop the running daemon for this tmux session")
-		fmt.Fprintln(stdout, "  Compatibility and diagnostic helpers are internal, not CLI commands.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Messaging Protocol:")
-		fmt.Fprintln(stdout, "  send --to <node> --body \"text\"          Send a message in one step")
-		fmt.Fprintln(stdout, "  pop                                      Read and archive oldest message")
-		fmt.Fprintln(stdout, "  get-health                              Inspect agent-readable session health")
-		fmt.Fprintln(stdout, "  get-health-oneline                      Inspect compact all-session health")
-		fmt.Fprintln(stdout, "")
-		printTopicList(stdout)
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Run `tmux-a2a-postman help <topic>` for detailed information.")
-		return nil
-	}
-
-	topic := args[0]
-	switch topic {
-	case "messaging":
-		fmt.Fprintln(stdout, "Messaging — send and receive messages")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Quick workflow (agents):")
-		fmt.Fprintln(stdout, "  Send:  tmux-a2a-postman send --to <node> --body \"text\"")
-		fmt.Fprintln(stdout, "  Read:  tmux-a2a-postman pop")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Reply workflow:")
-		fmt.Fprintln(stdout, "  tmux-a2a-postman send --to <sender> --body \"DONE: ...\"")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Replies stay on the live session daemon automatically.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Envelope format (YAML frontmatter):")
-		fmt.Fprintln(stdout, "  ---")
-		fmt.Fprintln(stdout, "  params:")
-		fmt.Fprintln(stdout, "    from: <sender node name>")
-		fmt.Fprintln(stdout, "    to: <recipient node name>")
-		fmt.Fprintln(stdout, "    timestamp: <ISO 8601 timestamp>")
-		fmt.Fprintln(stdout, "  ---")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Sender is auto-detected from the tmux pane title (no --from flag).")
-		return nil
-	case "directories":
-		fmt.Fprintln(stdout, "Directories — session directory layout")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Base directory resolution (in priority order):")
-		fmt.Fprintln(stdout, "  1. $POSTMAN_HOME environment variable")
-		fmt.Fprintln(stdout, "  2. base_dir field in config file")
-		fmt.Fprintln(stdout, "  3. $XDG_STATE_HOME/tmux-a2a-postman (default)")
-		fmt.Fprintln(stdout, "     (falls back to ~/.local/state/tmux-a2a-postman)")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Layout:")
-		fmt.Fprintln(stdout, "  {baseDir}/")
-		fmt.Fprintln(stdout, "  └── {contextId}/")
-		fmt.Fprintln(stdout, "      └── {sessionName}/")
-		fmt.Fprintln(stdout, "          ├── draft/          # internal: draft staging area (use send instead)")
-		fmt.Fprintln(stdout, "          ├── post/           # internal: outbox queue managed by postman daemon")
-		fmt.Fprintln(stdout, "          ├── inbox/")
-		fmt.Fprintln(stdout, "          │   └── {node}/     # daemon delivers messages here")
-		fmt.Fprintln(stdout, "          ├── read/           # agent moves messages here after reading")
-		fmt.Fprintln(stdout, "          └── dead-letter/    # unroutable messages land here")
-		return nil
-	case "config":
-		fmt.Fprintln(stdout, "Config — core runtime model")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Primary files:")
-		fmt.Fprintln(stdout, "  $XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml")
-		fmt.Fprintln(stdout, "  $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md")
-		fmt.Fprintln(stdout, "  (fall back to ~/.config/tmux-a2a-postman/...)")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Runtime state model:")
-		fmt.Fprintln(stdout, "  Core visible states: ready, pending, stale")
-		fmt.Fprintln(stdout, "  Session fallback: unavailable (this daemon does not own canonical health)")
-		fmt.Fprintln(stdout, "  get-health, get-health-oneline, and the default TUI read the same canonical health contract.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Quick reading guide:")
-		fmt.Fprintln(stdout, "  visible_state in get-health JSON answers what the node looks like now")
-		fmt.Fprintln(stdout, "  pane hints answer that delivery reached a recipient inbox")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Core config:")
-		fmt.Fprintln(stdout, "  edges                            Bidirectional routes between nodes")
-		fmt.Fprintln(stdout, "  ui_node                          Optional target filter for startup auto-PING")
-		fmt.Fprintln(stdout, "  message_footer                   Footer appended to stored send mail")
-		fmt.Fprintln(stdout, "  notification_template            Pane hint rendered when mail arrives")
-		fmt.Fprintln(stdout, "  min_delivery_gap_seconds         Same-route delivery gap for duplicate control")
-		fmt.Fprintln(stdout, "  retention_period_days            Inactive runtime cleanup window")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Edge syntax (both separators create bidirectional routes):")
-		fmt.Fprintln(stdout, "  edges = [")
-		fmt.Fprintln(stdout, "    \"node-a -- node-b\",   # bidirectional: a<->b")
-		fmt.Fprintln(stdout, "    \"node-b --> node-c\",  # also bidirectional: b<->c")
-		fmt.Fprintln(stdout, "  ]")
-		return nil
-	case "commands":
-		fmt.Fprintln(stdout, "Commands — detailed command reference")
-		fmt.Fprintln(stdout, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Default operator surface")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "send")
-		fmt.Fprintln(stdout, "  Compose and deliver a message atomically in a single command.")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --to <node>          Recipient node name (required)")
-		fmt.Fprintln(stdout, "    --body <text>        Message body (required; replaces <!-- write here --> placeholder)")
-		fmt.Fprintln(stdout, "    --session <name>     tmux session name (optional, auto-detected)")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (optional)")
-		fmt.Fprintln(stdout, "  Example:")
-		fmt.Fprintln(stdout, "    tmux-a2a-postman send --to orchestrator --body \"DONE: task complete\"")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "pop")
-		fmt.Fprintln(stdout, "  Read and archive the oldest unread inbox message.")
-		fmt.Fprintln(stdout, "  Prints full message content to stdout; archives silently.")
-		fmt.Fprintln(stdout, "  Node is auto-detected from tmux pane title.")
-		fmt.Fprintln(stdout, "  Empty inbox: exits 0, prints 'No unread messages.' to stderr.")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --peek               Show without archiving (non-destructive)")
-		fmt.Fprintln(stdout, "    --file <name>        Print a specific inbox message from the current session inbox")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (optional)")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "get-health")
-		fmt.Fprintln(stdout, "  Print canonical session health JSON for agents and scripts.")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --session <name>     tmux session name (optional, auto-detected)")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (optional)")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "get-health-oneline")
-		fmt.Fprintln(stdout, "  Print compact all-session health for quick agent coordination.")
-		fmt.Fprintln(stdout, "  Shape: [0]🔷🔵:🟢 [1]🔴")
-		fmt.Fprintln(stdout, "  Window groups are colon-separated emoji runs with no literal window labels.")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --json               Output JSON with a status string")
-		fmt.Fprintln(stdout, "    --session <name>     tmux session name (optional, auto-detected)")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (optional)")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Lifecycle and recovery")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "start")
-		fmt.Fprintln(stdout, "  Start the tmux-a2a-postman daemon.")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (auto-detected from XDG_CONFIG_HOME)")
-		fmt.Fprintln(stdout, "    --log-file <path>    Log file path (default: the live session context log)")
-		fmt.Fprintln(stdout, "    --no-tui             Run without the single-column TUI surface")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "stop")
-		fmt.Fprintln(stdout, "  Stop the running daemon for the current tmux session.")
-		fmt.Fprintln(stdout, "  Sends SIGTERM and waits up to --timeout seconds (default 10) for exit.")
-		fmt.Fprintln(stdout, "  Exits 0 if no daemon is running (idempotent).")
-		fmt.Fprintln(stdout, "  Flags:")
-		fmt.Fprintln(stdout, "    --session <name>     tmux session name (optional, auto-detected)")
-		fmt.Fprintln(stdout, "    --config <path>      Config file path (optional)")
-		fmt.Fprintln(stdout, "    --timeout <secs>     Seconds to wait for daemon exit (default 10)")
-		fmt.Fprintln(stdout, "  NOTE: --timeout default (10s) is chosen to exceed the default tmux_timeout")
-		fmt.Fprintln(stdout, "        (5s) plus goroutine drain margin. Increase if your config sets")
-		fmt.Fprintln(stdout, "        tmux_timeout > 8s.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "help [topic]")
-		fmt.Fprintln(stdout, "  Show help overview or detailed topic page.")
-		fmt.Fprintln(stdout, "  Topics: messaging, directories, config, commands")
-		return nil
-	default:
+	path, ok := helpTopicFiles[topic]
+	if !ok {
 		fmt.Fprintf(stderr, "unknown help topic: %q\n", topic)
 		fmt.Fprintln(stderr, "")
 		fmt.Fprintln(stderr, "Available topics:")
-		for _, t := range topics {
+		for _, t := range sortedHelpTopics() {
 			fmt.Fprintf(stderr, "  %s\n", t)
 		}
 		return fmt.Errorf("unknown help topic: %q", topic)
 	}
+
+	data, err := helpTextFS.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading help topic %q: %w", topic, err)
+	}
+	_, err = stdout.Write(data)
+	return err
+}
+
+func sortedHelpTopics() []string {
+	topics := make([]string, 0, len(helpTopicFiles)-1)
+	for topic := range helpTopicFiles {
+		if topic == "" {
+			continue
+		}
+		topics = append(topics, topic)
+	}
+	sort.Strings(topics)
+	return topics
+}
+
+func isSubcommandHelpRequest(args []string) bool {
+	if len(args) != 1 {
+		return false
+	}
+	switch args[0] {
+	case "help", "--help", "-h":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasCommandHelpTopic(command string) bool {
+	_, ok := helpTopicFiles[command]
+	return ok && command != ""
 }

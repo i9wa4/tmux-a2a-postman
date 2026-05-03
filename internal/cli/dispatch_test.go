@@ -78,7 +78,7 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 
 	result := Dispatch(
 		"pop",
-		[]string{"--json"},
+		[]string{"--peek"},
 		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 		Handlers{
 			Pop: func(args []string) error {
@@ -94,7 +94,7 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 	if result.Label != "postman pop" {
 		t.Fatalf("label = %q, want %q", result.Label, "postman pop")
 	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--peek"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("pop args = %#v, want %#v", gotArgs, wantArgs)
 	}
@@ -106,7 +106,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 
 		result := Dispatch(
 			"get-health",
-			[]string{"--json"},
+			[]string{"--session", "review"},
 			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 			Handlers{
 				GetSessionHealth: func(args []string) error {
@@ -122,7 +122,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 		if result.Label != "postman get-health" {
 			t.Fatalf("label = %q, want %q", result.Label, "postman get-health")
 		}
-		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--session", "review"}
 		if !reflect.DeepEqual(gotArgs, wantArgs) {
 			t.Fatalf("get-health args = %#v, want %#v", gotArgs, wantArgs)
 		}
@@ -183,6 +183,35 @@ func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 	}
 }
 
+func TestDispatch_VersionCallsVersionHandler(t *testing.T) {
+	called := false
+
+	result := Dispatch(
+		"version",
+		nil,
+		Config{},
+		Handlers{
+			Version: func(args []string) error {
+				called = true
+				if len(args) != 0 {
+					t.Fatalf("version args = %#v, want empty", args)
+				}
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman version" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman version")
+	}
+	if !called {
+		t.Fatal("version handler was not called")
+	}
+}
+
 func TestDispatch_HelpCallsHelpHandler(t *testing.T) {
 	var gotArgs []string
 
@@ -203,6 +232,42 @@ func TestDispatch_HelpCallsHelpHandler(t *testing.T) {
 	wantArgs := []string{"messaging"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("help args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestDispatch_SubcommandHelpCallsHelpTopic(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		args    []string
+	}{
+		{command: "send", args: []string{"--help"}},
+		{command: "send", args: []string{"-h"}},
+		{command: "send", args: []string{"help"}},
+		{command: "version", args: []string{"--help"}},
+		{command: "version", args: []string{"help"}},
+	} {
+		t.Run(tc.command+"_"+strings.Join(tc.args, "_"), func(t *testing.T) {
+			var gotArgs []string
+
+			result := Dispatch(
+				tc.command,
+				tc.args,
+				Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+				Handlers{
+					Help: func(args []string) {
+						gotArgs = append([]string(nil), args...)
+					},
+				},
+			)
+
+			if result.Err != nil {
+				t.Fatalf("Dispatch returned error: %v", result.Err)
+			}
+			wantArgs := []string{tc.command}
+			if !reflect.DeepEqual(gotArgs, wantArgs) {
+				t.Fatalf("help args = %#v, want %#v", gotArgs, wantArgs)
+			}
+		})
 	}
 }
 

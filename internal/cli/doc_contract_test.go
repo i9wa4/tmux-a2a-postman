@@ -37,14 +37,17 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `get-health`, `get-health-oneline`, and `--version`.")
+	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `get-health`, `get-health-oneline`, `version`, `help`, and `--version`.")
 	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
 	assertContainsNormalized(t, commandsDoc, "| `get-health` | Print canonical session health JSON |")
 	assertContainsNormalized(t, commandsDoc, "| `get-health-oneline` | Print compact all-session health |")
+	assertContainsNormalized(t, commandsDoc, "| `version` | Print the build version JSON |")
+	assertContainsNormalized(t, commandsDoc, "| `help [topic]` | Print built-in help |")
 	assertContainsNormalized(t, commandsDoc, `"compact": "🔷"`)
-	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed"}`)
-	assertContainsNormalized(t, commandsDoc, `{"id":"filename.md","from":"...","to":"...","body":"...","timestamp":"..."}`)
+	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed","context_id":"...","session":"...","from":"worker","to":"critic","submit_path":"daemon-submit"}`)
+	assertContainsNormalized(t, commandsDoc, `{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
 	assertContainsNormalized(t, commandsDoc, "It archives the message after reading unless `--peek` or `--file` is used.")
+	assertContainsNormalized(t, commandsDoc, "tmux-a2a-postman send --help")
 	for _, hidden := range []string{
 		"`read`",
 		"`todo`",
@@ -65,7 +68,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	}
 
 	popSource := readRepoFile(t, "internal/cli/pop.go")
-	assertContainsNormalized(t, popSource, "print a specific inbox message by filename from the current session inbox (non-destructive)")
+	assertContainsNormalized(t, popSource, "return a specific inbox message by filename from the current session inbox (non-destructive)")
 }
 
 func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T) {
@@ -108,7 +111,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "The README teaches the beginner/operator loop.")
 	assertContainsNormalized(t, readme, "Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start the daemon.")
 	assertContainsNormalized(t, readme, "For stored messages written by `send`, reply guidance comes from `message_footer` in `internal/config/postman.default.toml`.")
-	assertContainsNormalized(t, readme, "`pop` prints the stored message as written and does not add a second hard-coded reply footer.")
+	assertContainsNormalized(t, readme, "`pop` returns JSON that includes the stored message content as written and does not add a second hard-coded reply footer.")
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
 	for _, hidden := range []string{
@@ -133,7 +136,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 
 	sendSkill := readRepoFile(t, "skills/send-message/SKILL.md")
 	assertContainsNormalized(t, sendSkill, "tmux-a2a-postman send --to <node> --body \"message text\"")
-	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`, `idempotency-key`, `json`.")
+	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`, `idempotency-key`.")
 	if strings.Contains(sendSkill, "schema") {
 		t.Fatal("send skill still teaches schema discovery")
 	}

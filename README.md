@@ -226,8 +226,9 @@ Core public knobs for this model live in `postman.toml`:
 For stored messages written by `send`, reply guidance comes from
 `message_footer` in `internal/config/postman.default.toml`. TOML config and XDG
 `postman.md` can replace that footer; project-local `postman.md` appends its
-`message_footer` to the effective base footer. `pop` prints the stored message
-as written and does not add a second hard-coded reply footer.
+`message_footer` to the effective base footer. `pop` returns JSON that includes
+the stored message content as written and does not add a second hard-coded reply
+footer.
 
 ### 4.6. Priority Order (highest to lowest)
 
@@ -259,9 +260,9 @@ tmux-a2a-postman stop
 The default operator loop is `send`, `pop`, and `get-health-oneline`. Agent
 coordination can use `get-health` when it needs structured runtime state.
 Lifecycle and recovery commands such as `start` and `stop` are also public.
-Compatibility and diagnostic helpers are internal, not CLI commands. Use
-explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start
-the daemon.
+Legacy and diagnostic helpers are internal, not CLI commands. Use explicit
+subcommands; bare `tmux-a2a-postman` prints usage and does not start the
+daemon.
 
 ## 6. Directory Structure
 
@@ -318,7 +319,7 @@ See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
 The README teaches the beginner/operator loop. Use
 [docs/commands.md](docs/commands.md) as the exact CLI reference for flag
-tables, `--json` output shapes, `--params` usage, and canonical command names.
+tables, JSON output shapes, `--params` usage, and canonical command names.
 
 Default operator surface:
 
@@ -327,6 +328,7 @@ tmux-a2a-postman send --to worker --body "hello"
 tmux-a2a-postman pop
 tmux-a2a-postman get-health
 tmux-a2a-postman get-health-oneline
+tmux-a2a-postman version
 ```
 
 Lifecycle and recovery:
@@ -334,7 +336,8 @@ Lifecycle and recovery:
 ```text
 tmux-a2a-postman start
 tmux-a2a-postman stop
-tmux-a2a-postman help [TOPIC]       # built-in help (topics: messaging, directories, config, commands)
+tmux-a2a-postman help [TOPIC]       # built-in help
+tmux-a2a-postman send --help        # subcommand help
 ```
 
 ## 9. Skills

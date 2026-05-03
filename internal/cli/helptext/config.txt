@@ -1,0 +1,29 @@
+Config — core runtime model
+
+Primary files:
+  $XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml
+  $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md
+  (fall back to ~/.config/tmux-a2a-postman/...)
+
+Runtime state model:
+  Core visible states: ready, pending, stale
+  Session fallback: unavailable (this daemon does not own canonical health)
+  get-health, get-health-oneline, and the default TUI read the same canonical health contract.
+
+Quick reading guide:
+  visible_state in get-health JSON answers what the node looks like now
+  pane hints answer that delivery reached a recipient inbox
+
+Core config:
+  edges                            Bidirectional routes between nodes
+  ui_node                          Optional target filter for startup auto-PING
+  message_footer                   Footer appended to stored send mail
+  notification_template            Pane hint rendered when mail arrives
+  min_delivery_gap_seconds         Same-route delivery gap for duplicate control
+  retention_period_days            Inactive runtime cleanup window
+
+Edge syntax (both separators create bidirectional routes):
+  edges = [
+    "node-a -- node-b",   # bidirectional: a<->b
+    "node-b --> node-c",  # also bidirectional: b<->c
+  ]

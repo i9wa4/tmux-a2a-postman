@@ -1,0 +1,21 @@
+help — show command and topic help
+
+Usage:
+  tmux-a2a-postman help
+  tmux-a2a-postman help <topic>
+  tmux-a2a-postman <command> --help
+  tmux-a2a-postman <command> help
+
+Topics:
+  commands
+  config
+  directories
+  messaging
+  start
+  stop
+  send
+  pop
+  get-health
+  get-health-oneline
+  version
+  help

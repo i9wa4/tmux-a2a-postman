@@ -67,19 +67,19 @@ func frontmatterValue(content, key string) string {
 	return ""
 }
 
-func recordCompatibilityMailboxPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
-		log.Printf("postman: WARNING: compatibility mailbox append failed for %s: %v\n", eventType, err)
+		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
 }
 
-func syncCompatibilityMailboxProjection(sessionDir string) {
-	if err := projection.SyncCompatibilityMailbox(sessionDir); err != nil {
-		log.Printf("postman: WARNING: compatibility mailbox sync failed for %s: %v\n", sessionDir, err)
+func syncMailboxProjection(sessionDir string) {
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
 	}
 }
 
-func compatibilityMailboxPayloadForFile(filename, relativePath, content string) journal.MailboxEventPayload {
+func mailboxProjectionPayloadForFile(filename, relativePath, content string) journal.MailboxEventPayload {
 	payload := journal.MailboxEventPayload{
 		MessageID: filename,
 		Path:      relativePath,
@@ -106,13 +106,13 @@ func compatibilityMailboxPayloadForFile(filename, relativePath, content string) 
 	return payload
 }
 
-func compatibilitySubmitSessionDir(requestPath string) (string, bool) {
+func daemonSubmitSessionDir(requestPath string) (string, bool) {
 	requestDir := filepath.Dir(requestPath)
 	if filepath.Base(requestDir) != "requests" {
 		return "", false
 	}
 	submitDir := filepath.Dir(requestDir)
-	if filepath.Base(submitDir) != "compatibility-submit" {
+	if filepath.Base(submitDir) != string(projection.SubmitPathDaemon) {
 		return "", false
 	}
 	snapshotDir := filepath.Dir(submitDir)
@@ -126,32 +126,32 @@ func compatibilitySubmitSessionDir(requestPath string) (string, bool) {
 	return sessionDir, true
 }
 
-func handleCompatibilitySubmitSend(sessionDir string, request projection.CompatibilitySubmitRequest) (projection.CompatibilitySubmitResponse, error) {
+func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
 	if request.RequestID == "" {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing request_id")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing request_id")
 	}
 	if request.Filename == "" {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing filename")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing filename")
 	}
 	if strings.ContainsAny(request.Filename, "/\\") {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send filename must not contain path separators")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
 	}
 	if request.Content == "" {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit send missing content")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
 	}
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
 	}
 	postPath := filepath.Join(postDir, request.Filename)
-	log.Printf("postman: compatibility submit: writing send request session=%s request=%s file=%s bytes=%d\n",
-		filepath.Base(sessionDir), request.RequestID, request.Filename, len(request.Content))
+	log.Printf("postman: component=%s event=send_write_start submit_path=%s session=%s request=%s file=%s bytes=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), request.RequestID, request.Filename, len(request.Content))
 	if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("writing post message: %w", err)
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("writing post message: %w", err)
 	}
-	log.Printf("postman: compatibility submit: wrote post file session=%s request=%s file=%s\n",
-		filepath.Base(sessionDir), request.RequestID, request.Filename)
-	return projection.CompatibilitySubmitResponse{
+	log.Printf("postman: component=%s event=send_write_done submit_path=%s session=%s request=%s file=%s\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), request.RequestID, request.Filename)
+	return projection.DaemonSubmitResponse{
 		RequestID: request.RequestID,
 		Command:   request.Command,
 		HandledAt: time.Now().UTC().Format(time.RFC3339),
@@ -159,17 +159,17 @@ func handleCompatibilitySubmitSend(sessionDir string, request projection.Compati
 	}, nil
 }
 
-func handleCompatibilitySubmitPop(sessionDir string, request projection.CompatibilitySubmitRequest) (projection.CompatibilitySubmitResponse, error) {
+func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
 	if request.RequestID == "" {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit pop missing request_id")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing request_id")
 	}
 	if request.Node == "" {
-		return projection.CompatibilitySubmitResponse{}, fmt.Errorf("compatibility submit pop missing node")
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing node")
 	}
 	inboxDir := filepath.Join(sessionDir, "inbox", request.Node)
 	msgs := message.ScanInboxMessages(inboxDir)
 	if len(msgs) == 0 {
-		return projection.CompatibilitySubmitResponse{
+		return projection.DaemonSubmitResponse{
 			RequestID:    request.RequestID,
 			Command:      request.Command,
 			HandledAt:    time.Now().UTC().Format(time.RFC3339),
@@ -185,11 +185,11 @@ func handleCompatibilitySubmitPop(sessionDir string, request projection.Compatib
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			return projection.CompatibilitySubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
 		}
 		msgs = message.ScanInboxMessages(inboxDir)
 		if len(msgs) == 0 {
-			return projection.CompatibilitySubmitResponse{
+			return projection.DaemonSubmitResponse{
 				RequestID:    request.RequestID,
 				Command:      request.Command,
 				HandledAt:    time.Now().UTC().Format(time.RFC3339),
@@ -203,13 +203,13 @@ func handleCompatibilitySubmitPop(sessionDir string, request projection.Compatib
 		abs = filepath.Join(inboxDir, msgs[0].Filename)
 		data, err = os.ReadFile(abs)
 		if err != nil {
-			return projection.CompatibilitySubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
 		}
 	}
 	if _, err := message.ArchiveInboxMessage(abs, msgs[0].Filename); err != nil {
-		return projection.CompatibilitySubmitResponse{}, err
+		return projection.DaemonSubmitResponse{}, err
 	}
-	return projection.CompatibilitySubmitResponse{
+	return projection.DaemonSubmitResponse{
 		RequestID:    request.RequestID,
 		Command:      request.Command,
 		HandledAt:    time.Now().UTC().Format(time.RFC3339),
@@ -219,46 +219,46 @@ func handleCompatibilitySubmitPop(sessionDir string, request projection.Compatib
 	}, nil
 }
 
-type compatibilitySubmitProcessResult struct {
-	Command    projection.CompatibilitySubmitCommand
+type daemonSubmitProcessResult struct {
+	Command    projection.DaemonSubmitCommand
 	SessionDir string
 	Filename   string
 	PostPath   string
 }
 
-func (r compatibilitySubmitProcessResult) hasPostDispatch() bool {
-	return r.Command == projection.CompatibilitySubmitSend && r.PostPath != ""
+func (r daemonSubmitProcessResult) hasPostDispatch() bool {
+	return r.Command == projection.DaemonSubmitSend && r.PostPath != ""
 }
 
-func processCompatibilitySubmitRequest(requestPath string) (compatibilitySubmitProcessResult, error) {
-	sessionDir, ok := compatibilitySubmitSessionDir(requestPath)
+func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, error) {
+	sessionDir, ok := daemonSubmitSessionDir(requestPath)
 	if !ok {
-		return compatibilitySubmitProcessResult{}, nil
+		return daemonSubmitProcessResult{}, nil
 	}
-	request, err := projection.ReadCompatibilitySubmitRequest(requestPath)
+	request, err := projection.ReadDaemonSubmitRequest(requestPath)
 	if err != nil {
-		return compatibilitySubmitProcessResult{}, err
+		return daemonSubmitProcessResult{}, err
 	}
-	result := compatibilitySubmitProcessResult{
+	result := daemonSubmitProcessResult{
 		Command:    request.Command,
 		SessionDir: sessionDir,
 	}
-	log.Printf("postman: compatibility submit: processing command=%s session=%s request=%s file=%s\n",
-		request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename)
+	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename)
 
-	var response projection.CompatibilitySubmitResponse
+	var response projection.DaemonSubmitResponse
 	switch request.Command {
-	case projection.CompatibilitySubmitSend:
-		response, err = handleCompatibilitySubmitSend(sessionDir, request)
+	case projection.DaemonSubmitSend:
+		response, err = handleDaemonSubmitSend(sessionDir, request)
 		if err == nil && response.Filename != "" {
 			result.Filename = response.Filename
 			result.PostPath = filepath.Join(sessionDir, "post", response.Filename)
 		}
-	case projection.CompatibilitySubmitPop:
-		response, err = handleCompatibilitySubmitPop(sessionDir, request)
+	case projection.DaemonSubmitPop:
+		response, err = handleDaemonSubmitPop(sessionDir, request)
 	default:
-		err = fmt.Errorf("unsupported compatibility submit command %q", request.Command)
-		response = projection.CompatibilitySubmitResponse{
+		err = fmt.Errorf("unsupported daemon submit command %q", request.Command)
+		response = projection.DaemonSubmitResponse{
 			RequestID: request.RequestID,
 			Command:   request.Command,
 			HandledAt: time.Now().UTC().Format(time.RFC3339),
@@ -267,13 +267,13 @@ func processCompatibilitySubmitRequest(requestPath string) (compatibilitySubmitP
 	if err != nil {
 		response.Error = err.Error()
 	}
-	if _, writeErr := projection.WriteCompatibilitySubmitResponse(sessionDir, response); writeErr != nil {
+	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
 		return result, writeErr
 	}
-	log.Printf("postman: compatibility submit: responded command=%s session=%s request=%s file=%s error=%t\n",
-		request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
+	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
 	if removeErr := os.Remove(requestPath); removeErr != nil && !os.IsNotExist(removeErr) {
-		log.Printf("postman: WARNING: failed to remove compatibility submit request %s: %v\n", requestPath, removeErr)
+		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, requestPath, removeErr)
 	}
 	return result, nil
 }
