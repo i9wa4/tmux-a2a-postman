@@ -98,10 +98,13 @@ nix run github:i9wa4/tmux-a2a-postman
 ### 3.1. (Optional) Agent Skills
 
 The postman binary works without the `skills/` directory. These AI assistant
-skills help agents discover the first command and audit configuration:
+skills help agents discover the first command, read live session state, and
+audit configuration:
 
 - `postman-send-message`: minimal entry point for sending the first postman
   message.
+- `postman-session-operator`: interprets live health state and helps decide
+  when to pop, reply, wait, retry, or restart.
 - `postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`,
   topology, and node templates.
 
@@ -114,6 +117,7 @@ For Claude Code:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent claude-code --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-session-operator --agent claude-code --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent claude-code --scope user
 ```
 
@@ -121,6 +125,7 @@ For Codex CLI:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-session-operator --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
 ```
 
