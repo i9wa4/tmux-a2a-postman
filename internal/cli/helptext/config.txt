@@ -6,8 +6,8 @@ Primary files:
   (fall back to ~/.config/tmux-a2a-postman/...)
 
 postman.toml is optional. Embedded defaults from postman.default.toml are used
-when no user TOML exists. postman.md can contain only Mermaid edges; nodes
-referenced by those edges are materialized automatically.
+when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
+nodes referenced by those edges are materialized automatically.
 
 Runtime state model:
   Core visible states: ready, pending, stale

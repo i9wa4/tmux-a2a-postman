@@ -18,6 +18,19 @@ Or with Nix:
 nix run github:i9wa4/tmux-a2a-postman
 ```
 
+### 2.1. Agent Skills
+
+The `skills/` directory contains optional AI assistant skills:
+
+- `postman-send-message`: minimal entry point for sending the first postman
+  message.
+- `postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`,
+  topology, and node templates.
+
+These skills are source files in this repository. This repo does not currently
+define a skill deployment workflow; add one only after choosing the target
+assistant or registry.
+
 ## 3. Concept
 
 tmux-a2a-postman is a **daemon** that discovers AI agents running in tmux
@@ -154,28 +167,9 @@ Execute tasks from orchestrator. Report DONE or BLOCKED.
 
 Or as separate files in `nodes/worker.md`.
 
-Markdown frontmatter uses a small explicit subset. It is not real YAML.
-
-Supported syntax:
-
-- A leading `---` frontmatter block
-- One single-line `key: value` pair per non-empty line
-- Leading or trailing whitespace around a top-level `key: value` entry is
-  trimmed
-- Values may contain extra `:` characters because parsing splits on the first
-  `:`
-- Quotes are treated as literal characters
-
-Unsupported syntax:
-
-- List items such as `- worker`
-- Nested mappings or indented continuation lines
-- Multi-line values
-- Comment lines inside frontmatter
-- Unclosed frontmatter blocks
-
-Unsupported frontmatter fails at load time with a precise error instead of being
-silently ignored.
+Detailed `postman.md` syntax, frontmatter rules, h2/h3 section parsing, and
+merge behavior live in
+[skills/postman-config-auditor/references/postman-md.md](skills/postman-config-auditor/references/postman-md.md).
 
 ### 4.3. File Layout
 
@@ -242,17 +236,23 @@ For stored messages written by `send`, reply guidance comes from
 the stored message content as written and does not add a second hard-coded reply
 footer.
 
-### 4.6. Priority Order (highest to lowest)
+### 4.6. Overlay Order
 
-1. Project-local `postman.md`
-2. Project-local `nodes/*.md`
-3. Project-local `nodes/*.toml`
-4. Project-local `postman.toml`
+Effective config loads from low to high priority:
+
+1. Embedded defaults (`internal/config/postman.default.toml`)
+2. XDG `postman.toml`
+3. XDG `nodes/*.toml`
+4. XDG `nodes/*.md`
 5. XDG `postman.md`
-6. XDG `nodes/*.md`
-7. XDG `nodes/*.toml`
-8. XDG `postman.toml`
-9. Embedded defaults (`internal/config/postman.default.toml`)
+6. Project-local `postman.toml`
+7. Project-local `nodes/*.toml`
+8. Project-local `nodes/*.md`
+9. Project-local `postman.md`
+
+Main config files merge node fields instead of replacing whole nodes. Split
+TOML node files replace that node at their layer, and project-local
+`postman.md` appends `message_footer` to the effective base footer.
 
 All user-configurable default values are defined in `postman.default.toml`
 (SSOT). See [docs/design/config-ssot.md](docs/design/config-ssot.md).
@@ -326,37 +326,12 @@ is not treated as the current user's owner.
 
 See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
-## 8. CLI Reference
+## 8. CLI Help
 
-The README teaches the beginner/operator loop. Use
-[docs/commands.md](docs/commands.md) as the exact CLI reference for flag
-tables, JSON output shapes, and canonical command names.
-
-Default operator surface:
+The exact CLI reference is built into the binary:
 
 ```text
-tmux-a2a-postman send --to worker --body "hello"
-tmux-a2a-postman pop
-tmux-a2a-postman get-health
-tmux-a2a-postman get-health-oneline
-tmux-a2a-postman version
+tmux-a2a-postman help
+tmux-a2a-postman help commands
+tmux-a2a-postman help send
 ```
-
-Lifecycle and recovery:
-
-```text
-tmux-a2a-postman start
-tmux-a2a-postman stop
-tmux-a2a-postman help [TOPIC]       # built-in help
-tmux-a2a-postman send --help        # subcommand help
-```
-
-## 9. Skills
-
-The `skills/` directory contains reusable agent skill files for AI coding
-assistants (Claude Code, Codex CLI, etc.). Each skill lives at
-`skills/{skill-name}/SKILL.md`.
-
-- send: Sends messages to another node using tmux-a2a-postman send.
-- a2a-role-auditor: Audits node role templates to diagnose and fix
-  node-to-node interaction breakdowns.

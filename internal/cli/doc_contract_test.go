@@ -36,18 +36,23 @@ func assertContainsNormalized(t *testing.T, got, want string) {
 }
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
-	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "The public surface is intentionally small: `start`, `stop`, `send`, `pop`, `get-health`, `get-health-oneline`, `version`, `help`, and `--version`.")
-	assertContainsNormalized(t, commandsDoc, "Use an explicit subcommand. Bare `tmux-a2a-postman` prints usage instead of starting the daemon.")
-	assertContainsNormalized(t, commandsDoc, "| `get-health` | Print canonical session health JSON |")
-	assertContainsNormalized(t, commandsDoc, "| `get-health-oneline` | Print compact all-session health |")
-	assertContainsNormalized(t, commandsDoc, "| `version` | Print the build version JSON |")
-	assertContainsNormalized(t, commandsDoc, "| `help [topic]` | Print built-in help |")
-	assertContainsNormalized(t, commandsDoc, `"compact": "🔷"`)
-	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed","context_id":"...","session":"...","from":"worker","to":"critic","submit_path":"daemon-submit"}`)
-	assertContainsNormalized(t, commandsDoc, `{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
-	assertContainsNormalized(t, commandsDoc, "`pop` reads the next unread inbox message for the current pane title and archives the message after reading.")
-	assertContainsNormalized(t, commandsDoc, "tmux-a2a-postman send --help")
+	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
+	sendHelp := readRepoFile(t, "internal/cli/helptext/send.txt")
+	popHelp := readRepoFile(t, "internal/cli/helptext/pop.txt")
+	healthHelp := readRepoFile(t, "internal/cli/helptext/get-health.txt")
+	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-health-oneline.txt")
+	assertContainsNormalized(t, commandsHelp, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
+	assertContainsNormalized(t, commandsHelp, "get-health Print canonical session health JSON for agents and scripts.")
+	assertContainsNormalized(t, commandsHelp, "get-health-oneline Print compact all-session health for quick agent coordination.")
+	assertContainsNormalized(t, commandsHelp, "version Print the build version JSON.")
+	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
+	assertContainsNormalized(t, onelineHelp, "[0]🔷🔵:🟢 [1]🔴")
+	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","submit_path":"daemon-submit"}`)
+	assertContainsNormalized(t, popHelp, `{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
+	assertContainsNormalized(t, popHelp, "pop — read the next inbox message")
+	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send --help")
+	assertContainsNormalized(t, healthHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
+	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + healthHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
 		"`read`",
 		"`todo`",
@@ -68,8 +73,8 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 		"`--no-tui`",
 		"`--log-file`",
 	} {
-		if strings.Contains(commandsDoc, hidden) {
-			t.Fatalf("docs/commands.md exposes hidden public surface %s", hidden)
+		if strings.Contains(helpSurface, hidden) {
+			t.Fatalf("helptext exposes hidden public surface %s", hidden)
 		}
 	}
 
@@ -115,13 +120,15 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "`get-health`, `get-health-oneline`, and the default TUI are views over the same canonical contract")
 	assertContainsNormalized(t, readme, "Quick reading guide")
 	assertContainsNormalized(t, readme, "Canonical visible state for a node right now")
-	assertContainsNormalized(t, readme, "[docs/commands.md](docs/commands.md)")
-	assertContainsNormalized(t, readme, "The README teaches the beginner/operator loop.")
+	assertContainsNormalized(t, readme, "tmux-a2a-postman help commands")
+	assertContainsNormalized(t, readme, "The exact CLI reference is built into the binary")
 	assertContainsNormalized(t, readme, "Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not start the daemon.")
 	assertContainsNormalized(t, readme, "For stored messages written by `send`, reply guidance comes from `message_footer` in `internal/config/postman.default.toml`.")
 	assertContainsNormalized(t, readme, "`pop` returns JSON that includes the stored message content as written and does not add a second hard-coded reply footer.")
-	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
-	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
+	assertContainsNormalized(t, readme, "`postman-send-message`: minimal entry point for sending the first postman message.")
+	assertContainsNormalized(t, readme, "`postman-config-auditor`: audits `postman.md`, `postman.toml`, `nodes/*`, topology, and node templates.")
+	assertContainsNormalized(t, readme, "This repo does not currently define a skill deployment workflow")
+	assertContainsNormalized(t, readme, "[skills/postman-config-auditor/references/postman-md.md](skills/postman-config-auditor/references/postman-md.md)")
 	assertContainsNormalized(t, readme, "`postman.toml` is optional; without it, embedded defaults from `internal/config/postman.default.toml` are used.")
 	for _, hidden := range []string{
 		"tmux-a2a-postman read",
@@ -144,9 +151,9 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		}
 	}
 
-	sendSkill := readRepoFile(t, "skills/send-message/SKILL.md")
+	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
 	assertContainsNormalized(t, sendSkill, "tmux-a2a-postman send --to <node> --body \"message text\"")
-	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`.")
+	assertContainsNormalized(t, sendSkill, "Use `tmux-a2a-postman help send` for details.")
 	if strings.Contains(sendSkill, "schema") {
 		t.Fatal("send skill still teaches schema discovery")
 	}
@@ -154,17 +161,22 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		t.Fatal("send skill still teaches removed params flag")
 	}
 
-	roleAuditorSkill := readRepoFile(t, "skills/a2a-role-auditor/SKILL.md")
-	assertContainsNormalized(t, roleAuditorSkill, "unread backlog")
-	assertContainsNormalized(t, roleAuditorSkill, "quiet node")
-	assertContainsNormalized(t, roleAuditorSkill, "late reply")
-	assertContainsNormalized(t, roleAuditorSkill, "get-health")
-	assertContainsNormalized(t, roleAuditorSkill, "`message_footer` | appended to stored `send` mail | `{can_talk_to}`, `{reply_command}`")
-	assertContainsNormalized(t, roleAuditorSkill, "`daemon_message_template` | daemon-originated mail | `{role_content}`, `{talks_to_line}`, `{reply_command}`")
-	assertContainsNormalized(t, roleAuditorSkill, "Dead-letter recovery guidance (written by dead-letter notification code)")
+	configAuditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
+	assertContainsNormalized(t, configAuditorSkill, "postman-config-auditor")
+	assertContainsNormalized(t, configAuditorSkill, "unread backlog")
+	assertContainsNormalized(t, configAuditorSkill, "quiet node")
+	assertContainsNormalized(t, configAuditorSkill, "late reply")
+	assertContainsNormalized(t, configAuditorSkill, "get-health")
+	assertContainsNormalized(t, configAuditorSkill, "Use `references/postman-md.md` as the detailed syntax contract.")
+	assertContainsNormalized(t, configAuditorSkill, "Project-local `postman.md` appends `message_footer` to the effective base footer.")
+	assertContainsNormalized(t, configAuditorSkill, "`message_footer`, `draft_template`, `daemon_message_template`, `notification_template`, or dead-letter notification text.")
+	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
+	assertContainsNormalized(t, postmanMDReference, "The main `postman.md` parser only recognizes h2 headings that contain a backtick-wrapped name.")
+	assertContainsNormalized(t, postmanMDReference, "Only `---` is parsed as an edge operator.")
+	assertContainsNormalized(t, postmanMDReference, "Project-local `postman.md` `message_footer` appends to the effective base footer.")
 	for _, hidden := range []string{"status --json", "dropped_ball", "heartbeat mail"} {
-		if strings.Contains(roleAuditorSkill, hidden) {
-			t.Fatalf("role auditor skill still exposes hidden term %q", hidden)
+		if strings.Contains(configAuditorSkill, hidden) {
+			t.Fatalf("config auditor skill still exposes hidden term %q", hidden)
 		}
 	}
 }
@@ -174,20 +186,20 @@ func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	assertContainsNormalized(t, readme, "`retention_period_days` controls that startup cleanup window. The embedded default is `90`.")
 	assertContainsNormalized(t, readme, "| `{baseDir}/lock/` | Active coordination state | Always preserved |")
 
-	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "## 7. Runtime Directory Lifecycle")
-	assertContainsNormalized(t, commandsDoc, "`retention_period_days` controls cleanup of inactive runtime state.")
-	assertContainsNormalized(t, commandsDoc, "Unknown entries are preserved by default instead of being pruned by name.")
+	directoriesHelp := readRepoFile(t, "internal/cli/helptext/directories.txt")
+	assertContainsNormalized(t, directoriesHelp, "Directories — session directory layout")
+	assertContainsNormalized(t, directoriesHelp, "$XDG_STATE_HOME/tmux-a2a-postman")
+	assertContainsNormalized(t, directoriesHelp, "dead-letter/ # unroutable messages land here")
 }
 
 func TestConfigSSOTDocContract(t *testing.T) {
 	designDoc := readRepoFile(t, "docs/design/config-ssot.md")
 	assertContainsNormalized(t, designDoc, "`internal/config/postman.default.toml` is the SSOT for user-configurable defaults.")
 	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
-	assertContainsNormalized(t, designDoc, "`postman.md` may contain only a Mermaid `edges` section.")
+	assertContainsNormalized(t, designDoc, "A minimal `postman.md` may contain only a Mermaid `edges` section.")
 	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
 
-	commandsDoc := readRepoFile(t, "docs/commands.md")
-	assertContainsNormalized(t, commandsDoc, "`postman.toml` is optional.")
-	assertContainsNormalized(t, commandsDoc, "Embedded `postman.default.toml` is the SSOT for user-configurable defaults.")
+	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
+	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
+	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
 }
