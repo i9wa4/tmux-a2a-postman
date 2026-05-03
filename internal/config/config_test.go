@@ -199,6 +199,96 @@ role = "observer"
 	}
 }
 
+func TestLoadConfig_EdgesOnlyTOMLMaterializesNodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+edges = [
+  "messenger -- orchestrator",
+  "orchestrator -- worker -- critic",
+]
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	wantOrder := []string{"messenger", "orchestrator", "worker", "critic"}
+	if got := cfg.OrderedNodeNames(); strings.Join(got, ",") != strings.Join(wantOrder, ",") {
+		t.Fatalf("OrderedNodeNames = %v, want %v", got, wantOrder)
+	}
+	for _, name := range wantOrder {
+		if _, ok := cfg.Nodes[name]; !ok {
+			t.Fatalf("missing materialized node %q in %#v", name, cfg.Nodes)
+		}
+	}
+}
+
+func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configDir := filepath.Join(tmpDir, "tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	content := `## Edges
+
+` + "```mermaid" + `
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- worker-alt
+    orchestrator --- critic
+    orchestrator --- boss
+    guardian --- critic
+    orchestrator --- agent
+` + "```" + `
+`
+	if err := os.WriteFile(filepath.Join(configDir, "postman.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	wantEdges := []string{
+		"messenger -- orchestrator",
+		"orchestrator -- worker",
+		"orchestrator -- worker-alt",
+		"orchestrator -- critic",
+		"orchestrator -- boss",
+		"guardian -- critic",
+		"orchestrator -- agent",
+	}
+	if strings.Join(cfg.Edges, "\n") != strings.Join(wantEdges, "\n") {
+		t.Fatalf("Edges = %v, want %v", cfg.Edges, wantEdges)
+	}
+
+	wantOrder := []string{"messenger", "orchestrator", "worker", "worker-alt", "critic", "boss", "guardian", "agent"}
+	if got := cfg.OrderedNodeNames(); strings.Join(got, ",") != strings.Join(wantOrder, ",") {
+		t.Fatalf("OrderedNodeNames = %v, want %v", got, wantOrder)
+	}
+	for _, name := range wantOrder {
+		if _, ok := cfg.Nodes[name]; !ok {
+			t.Fatalf("missing materialized node %q in %#v", name, cfg.Nodes)
+		}
+	}
+}
+
 func TestLoadConfig_Default(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/path/config.toml")
 	if err == nil {

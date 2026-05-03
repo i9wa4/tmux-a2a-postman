@@ -126,10 +126,10 @@ func TestGetHealthOnelineProjectionParity(t *testing.T) {
 
 func TestNoActivePostmanUnavailableContract(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("POSTMAN_HOME", tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "review", "worker")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunGetSessionHealth([]string{"--session", "review"})
+		return RunGetSessionHealth(nil)
 	})
 	if err != nil {
 		t.Fatalf("RunGetSessionHealth() error = %v", err)

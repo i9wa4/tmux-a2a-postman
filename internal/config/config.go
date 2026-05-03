@@ -181,6 +181,59 @@ func (cfg *Config) recordNodeNames(names ...string) {
 	cfg.NodeOrder = appendUniqueNodeNames(cfg.NodeOrder, names...)
 }
 
+func (cfg *Config) ensureNodesForEdges() {
+	if cfg == nil {
+		return
+	}
+	if cfg.Nodes == nil {
+		cfg.Nodes = make(map[string]NodeConfig)
+	}
+	for _, name := range edgeNodeNamesInOrder(cfg.Edges) {
+		if name == "postman" {
+			continue
+		}
+		if _, ok := cfg.Nodes[name]; !ok {
+			cfg.Nodes[name] = NodeConfig{}
+		}
+		cfg.recordNodeNames(name)
+	}
+}
+
+func edgeNodeNamesInOrder(edges []string) []string {
+	var order []string
+	for _, edge := range edges {
+		for _, node := range splitEdgeNodeNames(edge) {
+			order = appendUniqueNodeNames(order, node)
+		}
+	}
+	return order
+}
+
+func splitEdgeNodeNames(edge string) []string {
+	edge = strings.TrimSpace(edge)
+	if edge == "" {
+		return nil
+	}
+	var parts []string
+	switch {
+	case strings.Contains(edge, "-->"):
+		parts = strings.Split(edge, "-->")
+	case strings.Contains(edge, "--"):
+		parts = strings.Split(edge, "--")
+	default:
+		return nil
+	}
+
+	nodes := make([]string, 0, len(parts))
+	for _, part := range parts {
+		node := strings.TrimSpace(part)
+		if node != "" {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
 func (cfg *Config) OrderedNodeNames() []string {
 	if cfg == nil {
 		return nil
@@ -499,6 +552,12 @@ func localNodeDefaultsExplicitZero(node NodeConfig, field string) bool {
 	switch field {
 	case "enter_count":
 		return node.EnterCount == 0
+	case "enter_delay_seconds":
+		return node.EnterDelay == 0
+	case "delivery_idle_timeout_seconds":
+		return node.DeliveryIdleTimeoutSeconds == 0
+	case "delivery_idle_retry_max":
+		return node.DeliveryIdleRetryMax == 0
 	default:
 		return false
 	}
@@ -548,6 +607,12 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 		switch field {
 		case "enter_count":
 			base.NodeDefaults.EnterCount = 0
+		case "enter_delay_seconds":
+			base.NodeDefaults.EnterDelay = 0
+		case "delivery_idle_timeout_seconds":
+			base.NodeDefaults.DeliveryIdleTimeoutSeconds = 0
+		case "delivery_idle_retry_max":
+			base.NodeDefaults.DeliveryIdleRetryMax = 0
 		}
 	}
 	base.mergeProjectLocalExplicitZeroNodes(override.projectLocalExplicitZero.nodes)
@@ -719,6 +784,15 @@ func mergeConfig(base, override *Config) {
 	// NodeDefaults: field-level merge
 	if override.NodeDefaults.EnterCount != 0 {
 		base.NodeDefaults.EnterCount = override.NodeDefaults.EnterCount
+	}
+	if override.NodeDefaults.EnterDelay != 0 {
+		base.NodeDefaults.EnterDelay = override.NodeDefaults.EnterDelay
+	}
+	if override.NodeDefaults.DeliveryIdleTimeoutSeconds != 0 {
+		base.NodeDefaults.DeliveryIdleTimeoutSeconds = override.NodeDefaults.DeliveryIdleTimeoutSeconds
+	}
+	if override.NodeDefaults.DeliveryIdleRetryMax != 0 {
+		base.NodeDefaults.DeliveryIdleRetryMax = override.NodeDefaults.DeliveryIdleRetryMax
 	}
 }
 
@@ -989,6 +1063,8 @@ func LoadConfig(path string) (*Config, error) {
 			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
 		}
 	}
+
+	cfg.ensureNodesForEdges()
 
 	// Embedded defaults intentionally allow an empty topology. Preserve that
 	// behavior only when there is no XDG or explicit TOML base and overlays only

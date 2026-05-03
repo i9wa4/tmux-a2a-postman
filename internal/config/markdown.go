@@ -107,27 +107,101 @@ func extractMermaidBlock(content string) string {
 }
 
 // parseMermaidEdges extracts edge definitions from a Mermaid graph block.
-// Strips the optional "graph LR/TD/RL/BT/TB" header line.
-// Normalizes "A --- B" (Mermaid undirected) to "A -- B" (ParseEdges format).
+// Strips graph headers and non-edge directives.
+// Normalizes Mermaid node decorations and undirected "---" edges to "--".
 // Returns a []string in ParseEdges-compatible format.
 func parseMermaidEdges(mermaidBlock string) []string {
 	var edges []string
-	for _, line := range strings.Split(mermaidBlock, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, statement := range mermaidStatements(mermaidBlock) {
+		statement = strings.TrimSpace(statement)
+		if statement == "" || shouldSkipMermaidStatement(statement) {
 			continue
 		}
-		// Skip Mermaid graph direction declarations
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "graph ") || lower == "graph" {
-			continue
+		if edge, ok := parseMermaidEdgeStatement(statement); ok {
+			edges = append(edges, edge)
 		}
-		// Normalize Mermaid --- (3-dash bidirectional) to -- (2-dash)
-		// Must check for --- before --, since -- is a substring of ---
-		line = strings.ReplaceAll(line, "---", "--")
-		edges = append(edges, line)
 	}
 	return edges
+}
+
+func mermaidStatements(block string) []string {
+	var statements []string
+	for _, line := range strings.Split(block, "\n") {
+		line = stripMermaidComment(line)
+		for _, part := range strings.Split(line, ";") {
+			statements = append(statements, part)
+		}
+	}
+	return statements
+}
+
+func stripMermaidComment(line string) string {
+	if idx := strings.Index(line, "%%"); idx >= 0 {
+		return line[:idx]
+	}
+	return line
+}
+
+func shouldSkipMermaidStatement(statement string) bool {
+	fields := strings.Fields(strings.ToLower(statement))
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "graph", "flowchart", "subgraph", "end", "direction", "classdef",
+		"class", "style", "click", "linkstyle", "acctitle", "accdescr":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseMermaidEdgeStatement(statement string) (string, bool) {
+	operators := []struct {
+		raw        string
+		normalized string
+	}{
+		{"<-->", "--"},
+		{"-->", "-->"},
+		{"---", "--"},
+		{"--", "--"},
+	}
+	for _, op := range operators {
+		if !strings.Contains(statement, op.raw) {
+			continue
+		}
+		parts := strings.Split(statement, op.raw)
+		if len(parts) < 2 {
+			return "", false
+		}
+		nodes := make([]string, 0, len(parts))
+		for _, part := range parts {
+			node := normalizeMermaidNodeID(part)
+			if node == "" {
+				return "", false
+			}
+			nodes = append(nodes, node)
+		}
+		return strings.Join(nodes, " "+op.normalized+" "), true
+	}
+	return "", false
+}
+
+func normalizeMermaidNodeID(raw string) string {
+	node := strings.TrimSpace(raw)
+	node = strings.TrimSuffix(node, ";")
+	if idx := strings.Index(node, ":::"); idx >= 0 {
+		node = node[:idx]
+	}
+	if idx := strings.Index(node, "@{"); idx >= 0 {
+		node = node[:idx]
+	}
+	if idx := strings.IndexAny(node, "[({"); idx >= 0 {
+		node = node[:idx]
+	}
+	node = strings.TrimSpace(node)
+	node = strings.Trim(node, "`\"'")
+	return strings.TrimSpace(node)
 }
 
 // extractNodeName extracts the backtick-wrapped name from an h2 heading.

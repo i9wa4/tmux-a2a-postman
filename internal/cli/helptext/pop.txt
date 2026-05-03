@@ -1,15 +1,8 @@
 pop — read the next inbox message
 
 Usage:
-  tmux-a2a-postman pop [--peek] [--params <json|kv>]
-  tmux-a2a-postman pop --file <filename>
+  tmux-a2a-postman pop
   tmux-a2a-postman pop --help
-
-Flags:
-  --peek                  Read without archiving
-  --params <json|kv>      Set public flags from one argument
-  --file <filename>       Return a specific inbox message without archiving
-  --config <path>         Config file path (optional)
 
 Output:
   Always JSON.

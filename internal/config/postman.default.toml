@@ -80,7 +80,7 @@ pane_capture_max_panes = 0          # 0 = unlimited, >0 = limit pane count
 activity_window_seconds = 300.0
 
 # Paths
-# base_dir = ""                    # Override session dir (default: XDG_STATE_HOME/tmux-a2a-postman)
+base_dir = ""                      # Override session dir (default: XDG_STATE_HOME/tmux-a2a-postman)
 
 # Routing edges (bidirectional)
 # Format: "node-a -- node-b" or "node-a --> node-b"
@@ -100,7 +100,10 @@ auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessi
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
 
 # Common template (prepended to all node templates)
-# common_template = ""
+common_template = ""
+
+# Shell templates are disabled unless explicitly enabled in trusted XDG config.
+allow_shell_templates = false
 
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}!
@@ -205,3 +208,6 @@ you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your me
 
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
+enter_delay_seconds = 0    # 0 = use global enter_delay_seconds
+delivery_idle_timeout_seconds = 0  # 0 = disabled
+delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message

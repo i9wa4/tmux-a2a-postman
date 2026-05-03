@@ -22,12 +22,8 @@ func main() {
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
 	showVersion := fs.Bool("version", false, "show version")
 	showHelp := fs.Bool("help", false, "show help")
-	noTUI := fs.Bool("no-tui", false, "run without TUI")
 	contextID := fs.String("context-id", "", "context ID (auto-generated if not specified)")
 	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
-	logFilePath := fs.String("log-file", "", "log file path (defaults to the live session context log)")
-	globalBaseDir := fs.String("base-dir", "", "override state directory (sets POSTMAN_HOME)")
-	globalStateHome := fs.String("state-home", "", "override XDG_STATE_HOME")
 
 	fs.Usage = func() {
 		printUsage(os.Stderr, fs)
@@ -38,15 +34,6 @@ func main() {
 			return
 		}
 		os.Exit(1)
-	}
-
-	// Sub-feature (d): inject flag values into env before subcommand dispatch
-	// so all config.ResolveBaseDir / config.ResolveXDGStateHome call sites pick them up.
-	if *globalBaseDir != "" {
-		os.Setenv("POSTMAN_HOME", *globalBaseDir)
-	}
-	if *globalStateHome != "" {
-		os.Setenv("XDG_STATE_HOME", *globalStateHome)
 	}
 
 	if *showVersion {
@@ -71,8 +58,8 @@ func main() {
 		cli.Config{
 			ContextID:   *contextID,
 			ConfigPath:  *configPath,
-			LogFilePath: *logFilePath,
-			NoTUI:       *noTUI,
+			LogFilePath: "",
+			NoTUI:       false,
 		},
 		cli.Handlers{
 			Start:                   cli.RunStartWithFlags,
@@ -120,10 +107,6 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(w, "  stop                       Stop the running daemon for this tmux session")
 	fmt.Fprintln(w, "  version                    Print the build version JSON")
 	fmt.Fprintln(w, "  Legacy and diagnostic helpers are internal, not CLI commands.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Global Flags:")
-	fmt.Fprintln(w, "  --base-dir <path>          Override state directory (sets POSTMAN_HOME)")
-	fmt.Fprintln(w, "  --state-home <path>        Override XDG_STATE_HOME")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Examples:")
 	fmt.Fprintln(w, "  tmux-a2a-postman start                               # Start daemon")

@@ -78,7 +78,7 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 
 	result := Dispatch(
 		"pop",
-		[]string{"--peek"},
+		nil,
 		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 		Handlers{
 			Pop: func(args []string) error {
@@ -94,7 +94,7 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 	if result.Label != "postman pop" {
 		t.Fatalf("label = %q, want %q", result.Label, "postman pop")
 	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--peek"}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("pop args = %#v, want %#v", gotArgs, wantArgs)
 	}
@@ -106,7 +106,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 
 		result := Dispatch(
 			"get-health",
-			[]string{"--session", "review"},
+			nil,
 			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 			Handlers{
 				GetSessionHealth: func(args []string) error {
@@ -122,7 +122,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 		if result.Label != "postman get-health" {
 			t.Fatalf("label = %q, want %q", result.Label, "postman get-health")
 		}
-		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--session", "review"}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
 		if !reflect.DeepEqual(gotArgs, wantArgs) {
 			t.Fatalf("get-health args = %#v, want %#v", gotArgs, wantArgs)
 		}
@@ -133,7 +133,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 
 		result := Dispatch(
 			"get-health-oneline",
-			[]string{"--json"},
+			nil,
 			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 			Handlers{
 				GetSessionStatusOneline: func(args []string) error {
@@ -149,7 +149,7 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 		if result.Label != "postman get-health-oneline" {
 			t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
 		}
-		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--json"}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
 		if !reflect.DeepEqual(gotArgs, wantArgs) {
 			t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
 		}
@@ -161,7 +161,7 @@ func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 
 	result := Dispatch(
 		"stop",
-		[]string{"--timeout", "2"},
+		nil,
 		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 		Handlers{
 			Stop: func(args []string) error {
@@ -177,7 +177,7 @@ func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 	if result.Label != "postman stop" {
 		t.Fatalf("label = %q, want %q", result.Label, "postman stop")
 	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--timeout", "2"}
+	wantArgs := []string{"--config", "/tmp/postman.toml"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("stop args = %#v, want %#v", gotArgs, wantArgs)
 	}
@@ -348,7 +348,7 @@ func TestDispatch_RetiredCommandsReturnUsageError(t *testing.T) {
 func assertUnknownCommand(t *testing.T, command string) {
 	t.Helper()
 
-	result := Dispatch(command, []string{"--json"}, Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"}, Handlers{})
+	result := Dispatch(command, []string{"--bogus"}, Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"}, Handlers{})
 	if result.Err == nil {
 		t.Fatal("Dispatch returned nil error for unknown command")
 	}

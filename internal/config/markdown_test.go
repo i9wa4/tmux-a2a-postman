@@ -199,6 +199,28 @@ graph LR
 			},
 		},
 		{
+			name: "user topology graph",
+			input: `
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- worker-alt
+    orchestrator --- critic
+    orchestrator --- boss
+    guardian --- critic
+    orchestrator --- agent
+`,
+			want: []string{
+				"messenger -- orchestrator",
+				"orchestrator -- worker",
+				"orchestrator -- worker-alt",
+				"orchestrator -- critic",
+				"orchestrator -- boss",
+				"guardian -- critic",
+				"orchestrator -- agent",
+			},
+		},
+		{
 			name: "directed edge passthrough",
 			input: `
 graph TD
@@ -213,6 +235,22 @@ GRAPH TD
     x --- y
 `,
 			want: []string{"x -- y"},
+		},
+		{
+			name: "skips directives and strips node labels",
+			input: `
+flowchart LR
+    messenger["Messenger"] --- orchestrator("Orchestrator")
+    classDef active fill:#afa
+    class messenger active
+    click messenger call callback()
+`,
+			want: []string{"messenger -- orchestrator"},
+		},
+		{
+			name:  "semicolon-separated graph",
+			input: `graph LR; a --- b; b --- c;`,
+			want:  []string{"a -- b", "b -- c"},
 		},
 		{
 			name:  "empty block",

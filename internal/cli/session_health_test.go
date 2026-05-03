@@ -12,60 +12,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func TestRunGetSessionHealth(t *testing.T) {
-	tests := []struct {
-		name       string
-		args       []string
-		wantErrSub string
-	}{
-		{
-			name:       "valid session name no error on flag parse",
-			args:       []string{"--session", "my-session"},
-			wantErrSub: "",
-		},
-		{
-			name:       "path traversal rejected",
-			args:       []string{"--session", "../bad"},
-			wantErrSub: "invalid value",
-		},
-		{
-			name:       "underscore session name accepted",
-			args:       []string{"--session", "bad_name"},
-			wantErrSub: "",
-		},
-		{
-			name:       "dot session name rejected",
-			args:       []string{"--session", "."},
-			wantErrSub: "invalid value",
-		},
-		{
-			name:       "double dot",
-			args:       []string{"--session", ".."},
-			wantErrSub: "invalid value",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			t.Setenv("POSTMAN_HOME", tmpDir)
-			err := RunGetSessionHealth(tc.args)
-			if tc.wantErrSub == "" {
-				if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
-					strings.Contains(err.Error(), "invalid value")) {
-					t.Errorf("unexpected validation error: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
-			}
-			if !strings.Contains(err.Error(), tc.wantErrSub) {
-				t.Errorf("error = %q; want to contain %q", err.Error(), tc.wantErrSub)
-			}
-		})
-	}
-}
-
 func TestRunGetSessionHealth_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
@@ -93,7 +39,7 @@ func TestRunGetSessionHealth_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 
 func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("POSTMAN_HOME", tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "review", "worker")
 
 	oldStdout := os.Stdout
 	reader, writer, err := os.Pipe()
@@ -105,7 +51,7 @@ func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 		os.Stdout = oldStdout
 	}()
 
-	runErr := RunGetSessionHealth([]string{"--session", "review"})
+	runErr := RunGetSessionHealth(nil)
 	if err := writer.Close(); err != nil {
 		t.Fatalf("writer.Close: %v", err)
 	}
@@ -194,14 +140,15 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
-		"case \"$1 $2 $3\" in\n" +
-		"  \"list-panes -a -F\")\n" +
+		"case \"$*\" in\n" +
+		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
+		"  \"list-panes -a -F\"*)\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
 		"    ;;\n" +
-		"  \"list-windows -t " + sessionName + "\")\n" +
+		"  \"list-windows -t " + sessionName + "\"*)\n" +
 		"    printf '%s\\n' '0'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + ":0\")\n" +
+		"  \"list-panes -t " + sessionName + ":0\"*)\n" +
 		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude' '0\t1\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
@@ -238,7 +185,6 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	runErr := RunGetSessionHealth([]string{
 		"--config", configPath,
 		"--context-id", contextID,
-		"--session", sessionName,
 	})
 	if err := writer.Close(); err != nil {
 		t.Fatalf("writer.Close: %v", err)
@@ -332,17 +278,18 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
-		"case \"$1 $2 $3\" in\n" +
-		"  \"list-panes -a -F\")\n" +
+		"case \"$*\" in\n" +
+		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
+		"  \"list-panes -a -F\"*)\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
 		"    ;;\n" +
-		"  \"list-windows -t " + sessionName + "\")\n" +
+		"  \"list-windows -t " + sessionName + "\"*)\n" +
 		"    printf '%s\\n' '0' '1'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + ":0\")\n" +
+		"  \"list-panes -t " + sessionName + ":0\"*)\n" +
 		"    printf '%s\\n' '0\t0\t%12\tcritic\tclaude'\n" +
 		"    ;;\n" +
-		"  \"list-panes -t " + sessionName + ":1\")\n" +
+		"  \"list-panes -t " + sessionName + ":1\"*)\n" +
 		"    printf '%s\\n' '1\t0\t%11\tworker\tclaude'\n" +
 		"    ;;\n" +
 		"  *)\n" +
@@ -379,7 +326,6 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	runErr := RunGetSessionHealth([]string{
 		"--config", configPath,
 		"--context-id", contextID,
-		"--session", sessionName,
 	})
 	if err := writer.Close(); err != nil {
 		t.Fatalf("writer.Close: %v", err)

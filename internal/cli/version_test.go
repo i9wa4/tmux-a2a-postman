@@ -32,7 +32,7 @@ func TestRunVersion_WritesJSON(t *testing.T) {
 func TestRunVersion_RejectsArguments(t *testing.T) {
 	var stdout bytes.Buffer
 
-	err := RunVersion(&stdout, []string{"--json"})
+	err := RunVersion(&stdout, []string{"unexpected"})
 	if err == nil {
 		t.Fatal("RunVersion returned nil error for unexpected argument")
 	}

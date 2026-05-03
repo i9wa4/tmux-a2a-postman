@@ -2,16 +2,8 @@ start — start the daemon
 
 Usage:
   tmux-a2a-postman start
-  tmux-a2a-postman --no-tui start
   tmux-a2a-postman start --help
 
-Global flags used by start:
-  --config <path>         Config file path
-  --log-file <path>       Log file path
-  --no-tui                Run without the single-column TUI surface
-  --base-dir <path>       Override state directory
-  --state-home <path>     Override XDG_STATE_HOME
-
 Output:
-  The default surface is the TUI. With --no-tui, the daemon runs headless and
-  writes operational logs to postman.log.
+  Starts the daemon with the default TUI surface and writes operational logs
+  to postman.log.

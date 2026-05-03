@@ -42,18 +42,17 @@ func RunGetSessionHealth(args []string) error {
 	fs := flag.NewFlagSet("get-health", flag.ExitOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
-	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detect if in tmux)")
 	configPath := fs.String("config", "", "Config file path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	result, ok, err := collectResolvedSessionHealth(*contextID, *sessionFlag, *configPath)
+	result, ok, err := collectResolvedSessionHealth(*contextID, "", *configPath)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("session name required: run inside tmux or pass --session")
+		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
 
 	enc := json.NewEncoder(os.Stdout)

@@ -1,16 +1,12 @@
 send — compose and deliver a message
 
 Usage:
-  tmux-a2a-postman send --to <node> --body "text" [--params <json|kv>]
+  tmux-a2a-postman send --to <node> --body "text"
   tmux-a2a-postman send --help
 
 Flags:
   --to <node>             Recipient node name (required)
   --body <text>           Message body (required)
-  --idempotency-key <key> Idempotency token written to message frontmatter
-  --params <json|kv>      Set public flags from one argument
-  --session <name>        tmux session name (optional, auto-detected)
-  --config <path>         Config file path (optional)
 
 Output:
   Always JSON.

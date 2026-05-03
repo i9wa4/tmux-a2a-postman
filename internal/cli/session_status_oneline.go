@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -27,69 +26,27 @@ func isShellCommand(cmd string) bool {
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
-	// Options struct fields (--params scope): json
-	// SYNC: params contract for get-health-oneline; alwaysExcludedParams map
-	jsonOut := fs.Bool("json", false, `output json: {"status":"..."}`)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from session)")
-	sessionFlag := fs.String("session", "", "tmux session name (optional, auto-detected)")
 	configPath := fs.String("config", "", "Config file path")
-	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
-	commandName := fs.Name()
-	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// Step 2: record explicitly-set flags (for --params precedence)
-	explicitlySet := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
-		explicitlySet[f.Name] = true
-	})
-	// Steps 3+4: parse and apply --params to non-explicit flags
-	if explicitlySet["params"] {
-		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
-		if err != nil {
-			return err
-		}
-		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
-			return err
-		}
-	}
 
-	healths, _, ok, err := collectAllSessionHealth(*contextID, *sessionFlag, *configPath)
+	healths, _, ok, err := collectAllSessionHealth(*contextID, "", *configPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
-			if *jsonOut {
-				return json.NewEncoder(stdout).Encode(struct {
-					Status string `json:"status"`
-				}{Status: ""})
-			}
 			return nil
 		}
 		return err
 	}
 	if !ok {
-		if *jsonOut {
-			return json.NewEncoder(stdout).Encode(struct {
-				Status string `json:"status"`
-			}{Status: ""})
-		}
 		return nil
 	}
 
 	statusStr := formatAllSessionHealthOneline(healths)
 	if statusStr != "" {
-		if *jsonOut {
-			return json.NewEncoder(stdout).Encode(struct {
-				Status string `json:"status"`
-			}{Status: statusStr})
-		}
 		_, err := fmt.Fprintln(stdout, statusStr)
 		return err
-	}
-	if *jsonOut {
-		return json.NewEncoder(stdout).Encode(struct {
-			Status string `json:"status"`
-		}{Status: ""})
 	}
 	return nil
 }

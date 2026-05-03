@@ -9,17 +9,17 @@ starting the daemon.
 
 ## 1. Command Overview
 
-| Command              | Purpose                                      |
-| -------------------- | -------------------------------------------- |
-| `start`              | Start the postman daemon                     |
-| `stop`               | Stop the running daemon                      |
-| `send`               | Compose and send a message in one step       |
-| `pop`                | Read and archive the next inbox message      |
-| `get-health`         | Print canonical session health JSON          |
-| `get-health-oneline` | Print compact all-session health             |
-| `version`            | Print the build version JSON                 |
-| `help [topic]`       | Print built-in help                          |
-| `--version`          | Print the build version JSON                 |
+| Command              | Purpose                                 |
+| -------------------- | --------------------------------------- |
+| `start`              | Start the postman daemon                |
+| `stop`               | Stop the running daemon                 |
+| `send`               | Compose and send a message in one step  |
+| `pop`                | Read and archive the next inbox message |
+| `get-health`         | Print canonical session health JSON     |
+| `get-health-oneline` | Print compact all-session health        |
+| `version`            | Print the build version JSON            |
+| `help [topic]`       | Print built-in help                     |
+| `--version`          | Print the build version JSON            |
 
 Legacy and diagnostic helpers are internal. They are not part of CLI dispatch
 or the public operator contract.
@@ -28,24 +28,20 @@ or the public operator contract.
 
 The following flags are defined at the root level:
 
-| Flag           | Type   | Default | Description                                  |
-| -------------- | ------ | ------- | -------------------------------------------- |
-| `--version`    | bool   | false   | Print version JSON and exit                  |
-| `--help`       | bool   | false   | Print help and exit                          |
-| `--no-tui`     | bool   | false   | Run headless                                 |
-| `--config`     | string | ""      | Path to config file                          |
-| `--log-file`   | string | ""      | Path to daemon log file                      |
-| `--base-dir`   | string | ""      | Override state directory (`POSTMAN_HOME`)    |
-| `--state-home` | string | ""      | Override `XDG_STATE_HOME`                    |
+| Flag        | Type   | Default | Description                 |
+| ----------- | ------ | ------- | --------------------------- |
+| `--version` | bool   | false   | Print version JSON and exit |
+| `--help`    | bool   | false   | Print help and exit         |
+| `--config`  | string | ""      | Path to config file         |
 
-Public flag tables omit internal migration and diagnostic flags.
+Public flag tables omit internal dispatch and diagnostic flags.
 
 ## 3. Daemon Management
 
 ### 3.1. start
 
 ```text
-tmux-a2a-postman start [global flags]
+tmux-a2a-postman start
 ```
 
 Starts the daemon for the current Unix user. The public deployment model is one
@@ -54,17 +50,11 @@ daemon process per Unix user; the daemon owns the tmux sessions it observes.
 ### 3.2. stop
 
 ```text
-tmux-a2a-postman stop [--session NAME] [--config PATH] [--timeout N]
+tmux-a2a-postman stop
 ```
 
-| Flag        | Type   | Default | Description                        |
-| ----------- | ------ | ------- | ---------------------------------- |
-| `--session` | string | ""      | tmux session name                  |
-| `--config`  | string | ""      | Path to config file                |
-| `--timeout` | int    | 10      | Seconds to wait for daemon exit    |
-
-`stop` is idempotent: it exits successfully when no matching daemon is running.
-It prints JSON:
+`stop` targets the current tmux session, is idempotent, and exits successfully
+when no matching daemon is running. It prints JSON:
 
 ```text
 {"status":"not_running","session":"review"}
@@ -76,12 +66,13 @@ It prints JSON:
 ### 4.1. send
 
 ```text
-tmux-a2a-postman send --to NODE --body TEXT [--params ...]
+tmux-a2a-postman send --to NODE --body TEXT
 ```
 
-`send` is the primary command for agent-to-agent messaging. It composes a
-message, submits it to the daemon when possible, and reports the strongest
-outcome observed during a short confirmation window.
+`send` is the primary command for agent-to-agent messaging. Sender and tmux
+session are auto-detected from the current pane. It composes a message,
+submits it to the daemon when possible, and reports the strongest outcome
+observed during a short confirmation window.
 
 Output is always JSON.
 
@@ -94,14 +85,10 @@ Output is always JSON.
 daemon for a daemon-owned session. `submit_path=post` means the CLI handed the
 message off by writing the session's `post/` queue directly.
 
-| Flag                | Type   | Default | --params? | Description                                 |
-| ------------------- | ------ | ------- | --------- | ------------------------------------------- |
-| `--to`              | string | ""      | Yes       | Recipient node name                         |
-| `--body`            | string | ""      | Yes       | Message body                                |
-| `--idempotency-key` | string | ""      | Yes       | Idempotency token for deduplication         |
-| `--params`          | string | ""      | N/A       | Shorthand or JSON parameters                |
-| `--session`         | string | ""      | No        | tmux session name                           |
-| `--config`          | string | ""      | No        | Path to config file                         |
+| Flag     | Type   | Default | Description         |
+| -------- | ------ | ------- | ------------------- |
+| `--to`   | string | ""      | Recipient node name |
+| `--body` | string | ""      | Message body        |
 
 `processed` means the CLI observed daemon-side handling. `queued` means local
 handoff succeeded, but daemon-side processing was not observed before the
@@ -110,18 +97,11 @@ confirmation window closed.
 ### 4.2. pop
 
 ```text
-tmux-a2a-postman pop [--peek] [--params ...] [--file FILENAME]
+tmux-a2a-postman pop
 ```
 
-`pop` reads the next unread inbox message for the current pane title. It
-archives the message after reading unless `--peek` or `--file` is used.
-
-| Flag       | Type   | Default | --params? | Description                                  |
-| ---------- | ------ | ------- | --------- | -------------------------------------------- |
-| `--peek`   | bool   | false   | Yes       | Read without archiving                       |
-| `--params` | string | ""      | N/A       | Shorthand or JSON parameters                 |
-| `--file`   | string | ""      | No        | Return one inbox message by filename         |
-| `--config` | string | ""      | No        | Path to config file                          |
+`pop` reads the next unread inbox message for the current pane title and
+archives the message after reading.
 
 Output is always JSON. `content` preserves the stored message file exactly;
 `body` is the parsed message body for convenience.
@@ -138,12 +118,11 @@ Test for `status == "message"` before treating the response as a message.
 ### 5.1. get-health
 
 ```text
-tmux-a2a-postman get-health [--session NAME] [--config PATH]
+tmux-a2a-postman get-health
 ```
 
-`get-health` prints the canonical status payload for the current or specified
-tmux session. This is the agent-readable shape for understanding peer state in
-that session.
+`get-health` prints the canonical status payload for the current tmux session.
+This is the agent-readable shape for understanding peer state in that session.
 
 ```json
 {
@@ -176,18 +155,13 @@ that session.
 Use `nodes[*].visible_state` for per-node state, `queues` for mailbox backlogs,
 and `compact` for compact display tokens.
 
-| Flag        | Type   | Default | --params? | Description                  |
-| ----------- | ------ | ------- | --------- | ---------------------------- |
-| `--session` | string | ""      | No        | tmux session name            |
-| `--config`  | string | ""      | No        | Path to config file          |
-
 ### 5.2. get-health-oneline
 
 ```text
-tmux-a2a-postman get-health-oneline [--json] [--session NAME] [--config PATH]
+tmux-a2a-postman get-health-oneline
 ```
 
-Human output is the compact all-session runtime line:
+`get-health-oneline` prints the compact all-session runtime line:
 
 ```text
 [0]🔷:🟢 [1]🔴
@@ -195,24 +169,17 @@ Human output is the compact all-session runtime line:
 
 Window groups are colon-separated emoji runs with no literal window labels.
 
-With `--json`, `get-health-oneline` returns:
-
-```json
-{"status":"[0]🔷:🟢 [1]🔴"}
-```
-
-| Flag        | Type   | Default | --params? | Description                    |
-| ----------- | ------ | ------- | --------- | ------------------------------ |
-| `--json`    | bool   | false   | Yes       | Output JSON with status string |
-| `--params`  | string | ""      | N/A       | Shorthand or JSON parameters   |
-| `--session` | string | ""      | No        | tmux session name              |
-| `--config`  | string | ""      | No        | Path to config file            |
-
 ## 6. Configuration
 
 Configuration uses two file formats: TOML for structural settings and Markdown
-for templates. Both live in `$XDG_CONFIG_HOME/tmux-a2a-postman/`, with optional
-project-local overrides in `.tmux-a2a-postman/`.
+for templates and topology notes. Both live in
+`$XDG_CONFIG_HOME/tmux-a2a-postman/`, with optional project-local overrides in
+`.tmux-a2a-postman/`.
+
+`postman.toml` is optional. With no user TOML, embedded defaults from
+`internal/config/postman.default.toml` are used. `postman.md` may contain only
+a Mermaid `Edges` diagram; every node referenced by those edges is
+materialized automatically.
 
 Core public settings:
 
@@ -234,6 +201,22 @@ edges = [
   "orchestrator -- critic",
 ]
 ```
+
+Markdown topology:
+
+````markdown
+## Edges
+
+```mermaid
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- critic
+```
+````
+
+Embedded `postman.default.toml` is the SSOT for user-configurable defaults.
+See [docs/design/config-ssot.md](design/config-ssot.md) for the policy.
 
 ## 7. Runtime Directory Lifecycle
 
@@ -262,33 +245,7 @@ Runtime layout:
 `retention_period_days` controls cleanup of inactive runtime state. Unknown
 entries are preserved by default instead of being pruned by name.
 
-## 8. --params
-
-`--params` lets callers set public command flags via one argument.
-
-Shorthand:
-
-```text
-tmux-a2a-postman send --params 'to=worker,body=hello'
-```
-
-JSON:
-
-```text
-tmux-a2a-postman send --params '{"to":"worker","body":"hello"}'
-```
-
-Explicit CLI flags override `--params` values.
-
-Always-excluded flags:
-
-| Flag      | Reason                          |
-| --------- | ------------------------------- |
-| `config`  | Avoid config path injection      |
-| `session` | Avoid session hijack ambiguity   |
-| `file`    | Avoid arbitrary file path input  |
-
-## 9. Version
+## 8. Version
 
 ```text
 tmux-a2a-postman version
@@ -303,7 +260,7 @@ the local Git tag.
 {"name":"tmux-a2a-postman","version":"dev","commit":"unknown"}
 ```
 
-## 10. Help
+## 9. Help
 
 ```text
 tmux-a2a-postman help

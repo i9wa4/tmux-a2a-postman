@@ -11,7 +11,7 @@ func TestRunStop_NoActiveDaemonPrintsMessage(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	t.Setenv("POSTMAN_HOME", tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "review-session", "worker")
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -27,7 +27,7 @@ func TestRunStop_NoActiveDaemonPrintsMessage(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := RunStop(&stdout, []string{"--session", "review-session"}); err != nil {
+	if err := RunStop(&stdout, nil); err != nil {
 		t.Fatalf("RunStop: %v", err)
 	}
 

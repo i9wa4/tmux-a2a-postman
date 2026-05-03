@@ -43,8 +43,10 @@ func TestRunSendMessage_FlagHelpOmitsHiddenAndRemovedFlags(t *testing.T) {
 	if strings.Contains(stderr, "--context-id") {
 		t.Fatalf("stderr still exposes hidden context override: %q", stderr)
 	}
-	if strings.Contains(stderr, "--json") {
-		t.Fatalf("stderr still exposes removed --json flag: %q", stderr)
+	for _, removed := range []string{"--config", "--json", "--params", "--idempotency-key", "--session"} {
+		if strings.Contains(stderr, removed) {
+			t.Fatalf("stderr still exposes hidden/removed flag %s: %q", removed, stderr)
+		}
 	}
 }
 
@@ -461,12 +463,15 @@ func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_IdempotencyKeyFlagAccepted(t *testing.T) {
+func TestRunSendMessage_IdempotencyKeyFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
 	err := RunSendMessage([]string{"--to", "worker", "--body", "hello", "--idempotency-key", "key-abc-123"})
-	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
-		t.Errorf("--idempotency-key not defined in RunSendMessage: %v", err)
+	if err == nil {
+		t.Fatal("expected unknown-flag error for --idempotency-key, got nil")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined: -idempotency-key") {
+		t.Fatalf("expected unknown --idempotency-key flag error, got: %v", err)
 	}
 }
 

@@ -12,8 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
+
+const stopTimeoutSeconds = 10
 
 type stopOutput struct {
 	Status    string `json:"status"`
@@ -25,9 +28,8 @@ type stopOutput struct {
 // RunStop gracefully stops the running postman daemon for this tmux session.
 func RunStop(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
-	sessionFlag := fs.String("session", "", "tmux session name (auto-detect if in tmux)")
+	cliutil.SetUsageWithoutContextID(fs)
 	configPath := fs.String("config", "", "path to config file")
-	timeoutSecs := fs.Int("timeout", 10, "seconds to wait for daemon to exit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -38,12 +40,9 @@ func RunStop(stdout io.Writer, args []string) error {
 	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	sessionName := *sessionFlag
+	sessionName := config.GetTmuxSessionName()
 	if sessionName == "" {
-		sessionName = config.GetTmuxSessionName()
-	}
-	if sessionName == "" {
-		return fmt.Errorf("--session is required (or run inside tmux)")
+		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
 	sessionName, err = config.ValidateSessionName(sessionName)
 	if err != nil {
@@ -87,7 +86,7 @@ func RunStop(stdout io.Writer, args []string) error {
 		return fmt.Errorf("sending SIGTERM to pid %d: %w", pid, err)
 	}
 
-	deadline := time.Now().Add(time.Duration(*timeoutSecs) * time.Second)
+	deadline := time.Now().Add(stopTimeoutSeconds * time.Second)
 	for time.Now().Before(deadline) {
 		if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
 			return json.NewEncoder(stdout).Encode(stopOutput{
@@ -101,6 +100,6 @@ func RunStop(stdout io.Writer, args []string) error {
 	}
 	return fmt.Errorf(
 		"daemon (pid %d) did not stop within %ds; try: kill -9 %d",
-		pid, *timeoutSecs, pid,
+		pid, stopTimeoutSeconds, pid,
 	)
 }

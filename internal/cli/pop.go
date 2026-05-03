@@ -19,66 +19,10 @@ import (
 func RunPop(args []string) error {
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
-	// Options struct fields (--params scope): peek
-	// SYNC: params contract for pop; alwaysExcludedParams map
-	peek := fs.Bool("peek", false, "show without archiving (non-destructive)")
-	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
-	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	configPath := fs.String("config", "", "path to config file (optional)")
-	file := fs.String("file", "", "return a specific inbox message by filename from the current session inbox (non-destructive)")
-	commandName := fs.Name()
-	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	// Step 2: record explicitly-set flags (for --params precedence)
-	explicitlySet := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
-		explicitlySet[f.Name] = true
-	})
-	// Steps 3+4: parse and apply --params to non-explicit flags
-	if explicitlySet["params"] {
-		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
-		if err != nil {
-			return err
-		}
-		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
-			return err
-		}
-	}
-
-	if *file != "" {
-		if strings.ContainsAny(*file, "/\\") {
-			return fmt.Errorf("pop --file: filename must not contain path separators")
-		}
-		if *contextID != "" {
-			if _, err := config.ResolveContextID(*contextID); err != nil {
-				return err
-			}
-		}
-		cfg, err := config.LoadConfig(*configPath)
-		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		baseDir := config.ResolveBaseDir(cfg.BaseDir)
-		sessionName := config.GetTmuxSessionName()
-		if sessionName == "" {
-			return fmt.Errorf("tmux session name required (run inside tmux)")
-		}
-		sessionName, err = config.ValidateSessionName(sessionName)
-		if err != nil {
-			return err
-		}
-		absFile, err := findInboxFileByName(baseDir, sessionName, *contextID, *file)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(absFile)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", *file, err)
-		}
-		return writePopMessageOutput(string(data), *file, nil, nil, true)
 	}
 
 	inboxArgs := fs.Args()
@@ -103,7 +47,7 @@ func RunPop(args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if !*peek && config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
+	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command: projection.DaemonSubmitPop,
 			Node:    nodeName,
@@ -118,7 +62,7 @@ func RunPop(args []string) error {
 		if remaining < 0 {
 			remaining = 0
 		}
-		return writePopMessageOutput(response.Content, response.Filename, intPtr(response.UnreadBefore), intPtr(remaining), false)
+		return writePopMessageOutput(response.Content, response.Filename, intPtr(response.UnreadBefore), intPtr(remaining))
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
@@ -155,41 +99,11 @@ func RunPop(args []string) error {
 	}
 
 	remaining := len(msgs)
-	if *peek {
-		return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining), true)
-	}
-
 	if _, err := archivePoppedMessage(abs, msgs[0].Filename); err != nil {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining), false)
-}
-
-func findInboxFileByName(baseDir, sessionName, contextID, filename string) (string, error) {
-	resolvedContextID := contextID
-	if resolvedContextID == "" {
-		var err error
-		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	pattern := filepath.Join(baseDir, resolvedContextID, sessionName, "inbox", "*", filename)
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return "", fmt.Errorf("globbing for %s: %w", filename, err)
-	}
-	sort.Strings(matches)
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("error: %s not found in any inbox/ directory", filename)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("error: %s found in multiple inbox/ directories: %v", filename, matches)
-	}
+	return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining))
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -210,19 +124,17 @@ type popMessageOutput struct {
 	Content      string `json:"content"`
 	UnreadBefore *int   `json:"unread_before,omitempty"`
 	Remaining    *int   `json:"remaining,omitempty"`
-	Peek         bool   `json:"peek,omitempty"`
 }
 
 func writeEmptyPopOutput() error {
 	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})
 }
 
-func writePopMessageOutput(content, filename string, unreadBefore, remaining *int, peek bool) error {
+func writePopMessageOutput(content, filename string, unreadBefore, remaining *int) error {
 	output := parseMessageContent(content, filename)
 	output.Content = content
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
-	output.Peek = peek
 	return json.NewEncoder(os.Stdout).Encode(output)
 }
 

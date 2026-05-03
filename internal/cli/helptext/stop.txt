@@ -1,13 +1,8 @@
 stop — stop the running daemon
 
 Usage:
-  tmux-a2a-postman stop [--session <name>] [--timeout <secs>]
+  tmux-a2a-postman stop
   tmux-a2a-postman stop --help
-
-Flags:
-  --session <name>        tmux session name (optional, auto-detected)
-  --config <path>         Config file path (optional)
-  --timeout <secs>        Seconds to wait for daemon exit (default 10)
 
 Output:
   Always JSON.

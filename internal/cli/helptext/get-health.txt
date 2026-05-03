@@ -1,12 +1,8 @@
 get-health — print canonical session health JSON
 
 Usage:
-  tmux-a2a-postman get-health [--session <name>] [--config <path>]
+  tmux-a2a-postman get-health
   tmux-a2a-postman get-health --help
-
-Flags:
-  --session <name>        tmux session name (optional, auto-detected)
-  --config <path>         Config file path (optional)
 
 Output:
   JSON session health contract.

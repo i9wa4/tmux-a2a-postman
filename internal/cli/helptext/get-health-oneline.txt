@@ -1,16 +1,8 @@
 get-health-oneline — print compact all-session health
 
 Usage:
-  tmux-a2a-postman get-health-oneline [--session <name>] [--config <path>]
-  tmux-a2a-postman get-health-oneline --json
+  tmux-a2a-postman get-health-oneline
   tmux-a2a-postman get-health-oneline --help
 
-Flags:
-  --json                  Output JSON with a status string
-  --session <name>        tmux session name (optional, auto-detected)
-  --config <path>         Config file path (optional)
-  --params <json|kv>      Set public flags from one argument
-
 Output:
-  Default: [0]🔷🔵:🟢 [1]🔴
-  JSON:    {"status":"[0]🔷🔵:🟢 [1]🔴"}
+  [0]🔷🔵:🟢 [1]🔴

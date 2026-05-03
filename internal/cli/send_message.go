@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,39 +65,15 @@ func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTime
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
-	// Options struct fields (--params scope): to, body, idempotency-key
-	// SYNC: params contract for send; alwaysExcludedParams map
 	to := fs.String("to", "", "recipient node name (required)")
 	body := fs.String("body", "", "message body (required)")
-	idempotencyKey := fs.String("idempotency-key", "", "idempotency token written to draft YAML frontmatter")
-	paramsFlag := fs.String("params", "", "command parameters as JSON or shorthand (k=v,k=v)")
-	// NOTE: always-excluded from --params scope (SYNC: alwaysExcludedParams map)
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
-	session := fs.String("session", "", "tmux session name (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
-	commandName := fs.Name()
-	// Step 1: parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// Step 2: record explicitly-set flags (for --params precedence)
-	explicitlySet := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
-		explicitlySet[f.Name] = true
-	})
-	// Steps 3+4: parse and apply --params to non-explicit flags
-	if explicitlySet["params"] {
-		resolvedParams, err := cliutil.ParseParams(*paramsFlag)
-		if err != nil {
-			return err
-		}
-		if err := cliutil.ApplyParams(fs, resolvedParams, explicitlySet, commandName); err != nil {
-			return err
-		}
-	}
-	// Step 5: validate required fields AFTER --params merge
 	if *to == "" {
-		return fmt.Errorf("--to is required (provide via flag or --params)")
+		return fmt.Errorf("--to is required")
 	}
 	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
 		return err
@@ -107,13 +82,7 @@ func RunSendMessage(args []string) error {
 	// without --body (see runCreateDraft:966-968). Enforce here before
 	// delegating so send never sends a placeholder-body message.
 	if *body == "" {
-		return fmt.Errorf("--body is required (provide via flag or --params)")
-	}
-	// Step 5b: post-merge re-validation for constrained fields
-	if *idempotencyKey != "" {
-		if !cliutil.ValidIdempotencyKeyRe.MatchString(*idempotencyKey) {
-			return fmt.Errorf("--idempotency-key %q: invalid token (must match %s)", *idempotencyKey, cliutil.IdempotencyKeyPattern)
-		}
+		return fmt.Errorf("--body is required")
 	}
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -129,32 +98,13 @@ func RunSendMessage(args []string) error {
 		return err
 	}
 
-	sessionName := *session
+	sessionName := config.GetTmuxSessionName()
 	if sessionName == "" {
-		sessionName = config.GetTmuxSessionName()
-	}
-	if sessionName == "" {
-		return fmt.Errorf("--session is required (or run inside tmux)")
+		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
 	sessionName, err = config.ValidateSessionName(sessionName)
 	if err != nil {
 		return fmt.Errorf("invalid session name: %w", err)
-	}
-	if config.GetTmuxSessionName() != "" {
-		tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-		output, err := tmuxCmd.Output()
-		if err == nil {
-			found := false
-			for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-				if line == sessionName {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("tmux session %q does not exist", sessionName)
-			}
-		}
 	}
 
 	var resolvedContextID string
@@ -299,15 +249,6 @@ func RunSendMessage(args []string) error {
 		)
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
-	}
-
-	if *idempotencyKey != "" {
-		const delim = "\n---\n"
-		idx := strings.Index(content, delim)
-		if idx == -1 {
-			return fmt.Errorf("draft content has no YAML frontmatter closing delimiter (---)")
-		}
-		content = content[:idx] + "\nidempotency_key: " + *idempotencyKey + content[idx:]
 	}
 
 	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {

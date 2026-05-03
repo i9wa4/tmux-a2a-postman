@@ -46,7 +46,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, `"compact": "🔷"`)
 	assertContainsNormalized(t, commandsDoc, `{"sent":"20240101-120000-xxxx-from-worker.md","status":"processed","context_id":"...","session":"...","from":"worker","to":"critic","submit_path":"daemon-submit"}`)
 	assertContainsNormalized(t, commandsDoc, `{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
-	assertContainsNormalized(t, commandsDoc, "It archives the message after reading unless `--peek` or `--file` is used.")
+	assertContainsNormalized(t, commandsDoc, "`pop` reads the next unread inbox message for the current pane title and archives the message after reading.")
 	assertContainsNormalized(t, commandsDoc, "tmux-a2a-postman send --help")
 	for _, hidden := range []string{
 		"`read`",
@@ -61,6 +61,12 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 		"`--from`",
 		"`read_context_mode`",
 		"`status`",
+		"`--params`",
+		"`--session`",
+		"`--peek`",
+		"`--file`",
+		"`--no-tui`",
+		"`--log-file`",
 	} {
 		if strings.Contains(commandsDoc, hidden) {
 			t.Fatalf("docs/commands.md exposes hidden public surface %s", hidden)
@@ -68,7 +74,9 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	}
 
 	popSource := readRepoFile(t, "internal/cli/pop.go")
-	assertContainsNormalized(t, popSource, "return a specific inbox message by filename from the current session inbox (non-destructive)")
+	if strings.Contains(popSource, "findInboxFileByName") {
+		t.Fatal("pop source still contains removed file-specific inbox lookup")
+	}
 }
 
 func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T) {
@@ -114,6 +122,7 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 	assertContainsNormalized(t, readme, "`pop` returns JSON that includes the stored message content as written and does not add a second hard-coded reply footer.")
 	assertContainsNormalized(t, readme, "send: Sends messages to another node using tmux-a2a-postman send.")
 	assertContainsNormalized(t, readme, "a2a-role-auditor: Audits node role templates to diagnose and fix node-to-node interaction breakdowns.")
+	assertContainsNormalized(t, readme, "`postman.toml` is optional; without it, embedded defaults from `internal/config/postman.default.toml` are used.")
 	for _, hidden := range []string{
 		"tmux-a2a-postman read",
 		"tmux-a2a-postman todo",
@@ -128,6 +137,8 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 		"`journal_compatibility_cutover_enabled`",
 		"`[heartbeat].enabled`",
 		"waiting/",
+		"--params",
+		"--no-tui",
 	} {
 		if strings.Contains(readme, hidden) {
 			t.Fatalf("README still exposes hidden public surface %q", hidden)
@@ -136,9 +147,12 @@ func TestReducedSurfaceDocContract_ReadmeAndSkillsCoverCanonicalSurface(t *testi
 
 	sendSkill := readRepoFile(t, "skills/send-message/SKILL.md")
 	assertContainsNormalized(t, sendSkill, "tmux-a2a-postman send --to <node> --body \"message text\"")
-	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`, `idempotency-key`.")
+	assertContainsNormalized(t, sendSkill, "The public scope includes: `to`, `body`.")
 	if strings.Contains(sendSkill, "schema") {
 		t.Fatal("send skill still teaches schema discovery")
+	}
+	if strings.Contains(sendSkill, "--params") {
+		t.Fatal("send skill still teaches removed params flag")
 	}
 
 	roleAuditorSkill := readRepoFile(t, "skills/a2a-role-auditor/SKILL.md")
@@ -165,4 +179,16 @@ func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	assertContainsNormalized(t, commandsDoc, "## 7. Runtime Directory Lifecycle")
 	assertContainsNormalized(t, commandsDoc, "`retention_period_days` controls cleanup of inactive runtime state.")
 	assertContainsNormalized(t, commandsDoc, "Unknown entries are preserved by default instead of being pruned by name.")
+}
+
+func TestConfigSSOTDocContract(t *testing.T) {
+	designDoc := readRepoFile(t, "docs/design/config-ssot.md")
+	assertContainsNormalized(t, designDoc, "`internal/config/postman.default.toml` is the SSOT for user-configurable defaults.")
+	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
+	assertContainsNormalized(t, designDoc, "`postman.md` may contain only a Mermaid `Edges` diagram.")
+	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
+
+	commandsDoc := readRepoFile(t, "docs/commands.md")
+	assertContainsNormalized(t, commandsDoc, "`postman.toml` is optional.")
+	assertContainsNormalized(t, commandsDoc, "Embedded `postman.default.toml` is the SSOT for user-configurable defaults.")
 }

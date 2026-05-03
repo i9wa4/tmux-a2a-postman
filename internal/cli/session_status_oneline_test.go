@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,31 +9,17 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func TestRunGetSessionStatusOneline_JSONOutput_NoLiveContext(t *testing.T) {
+func TestRunGetSessionStatusOneline_NoLiveContext(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
 
 	var stdout bytes.Buffer
-	if err := RunGetSessionStatusOneline(&stdout, []string{"--json"}); err != nil {
+	if err := RunGetSessionStatusOneline(&stdout, nil); err != nil {
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	if stdout.String() != "{\"status\":\"\"}\n" {
-		t.Fatalf("stdout = %q, want empty-status JSON", stdout.String())
-	}
-}
-
-func TestSessionStatusOneline_JSONOutput_NoActivePostman(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("POSTMAN_HOME", tmpDir)
-
-	var stdout bytes.Buffer
-	if err := RunGetSessionStatusOneline(&stdout, []string{"--json", "--session", "review"}); err != nil {
-		t.Fatalf("RunGetSessionStatusOneline: %v", err)
-	}
-
-	if stdout.String() != "{\"status\":\"\"}\n" {
-		t.Fatalf("stdout = %q, want empty-status JSON", stdout.String())
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 }
 
@@ -111,7 +96,7 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) {
+func TestRunGetSessionStatusOneline_UsesSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
 	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
@@ -218,23 +203,16 @@ func TestRunGetSessionStatusOneline_JSONOutput_UsesSessionIDOrder(t *testing.T) 
 	if err := RunGetSessionStatusOneline(&stdout, []string{
 		"--config", configPath,
 		"--context-id", contextID,
-		"--json",
 	}); err != nil {
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	var payload struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
-	}
-	if payload.Status != "[0]🔷🟢:🟢 [1]🟢🔷" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🔷🟢:🟢 [1]🟢🔷")
+	if stdout.String() != "[0]🔷🟢:🟢 [1]🟢🔷\n" {
+		t.Fatalf("stdout = %q, want compact status line", stdout.String())
 	}
 }
 
-func TestRunGetSessionStatusOneline_JSONOutput_PreservesSessionIDIndicesAcrossSessionsWithoutCanonicalPanes(t *testing.T) {
+func TestRunGetSessionStatusOneline_PreservesSessionIDIndicesAcrossSessionsWithoutCanonicalPanes(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
@@ -314,18 +292,11 @@ func TestRunGetSessionStatusOneline_JSONOutput_PreservesSessionIDIndicesAcrossSe
 	if err := RunGetSessionStatusOneline(&stdout, []string{
 		"--config", configPath,
 		"--context-id", contextID,
-		"--json",
 	}); err != nil {
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	var payload struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
-	}
-	if payload.Status != "[0]🟢🟢 [1]🟢" {
-		t.Fatalf("status = %q, want %q", payload.Status, "[0]🟢🟢 [1]🟢")
+	if stdout.String() != "[0]🟢🟢 [1]🟢\n" {
+		t.Fatalf("stdout = %q, want compact status line", stdout.String())
 	}
 }

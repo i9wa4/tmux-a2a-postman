@@ -70,7 +70,7 @@ ui_node = "messenger"
 ### 3.3. Node Discovery
 
 Agents are discovered by their **tmux pane title**. Set titles to match node
-names defined in the configuration:
+names referenced by the topology edges:
 
 ```sh
 tmux select-pane -T orchestrator
@@ -80,7 +80,9 @@ tmux select-pane -T worker
 ## 4. Configuration
 
 Configuration uses two file formats: TOML for structural settings and Markdown
-for templates. Both live in `$XDG_CONFIG_HOME/tmux-a2a-postman/`.
+for templates and topology notes. Both live in
+`$XDG_CONFIG_HOME/tmux-a2a-postman/`. `postman.toml` is optional; without it,
+embedded defaults from `internal/config/postman.default.toml` are used.
 
 ### 4.1. Edges and Node Topology
 
@@ -92,13 +94,15 @@ graph LR
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- critic
+    orchestrator --- boss
     guardian --- critic
+    orchestrator --- agent
 ```
 
 In `postman.md`:
 
 ````markdown
-## `edges`
+## Edges
 
 ```mermaid
 graph LR
@@ -106,7 +110,9 @@ graph LR
     orchestrator --- worker
     orchestrator --- worker-alt
     orchestrator --- critic
+    orchestrator --- boss
     guardian --- critic
+    orchestrator --- agent
 ```
 ````
 
@@ -119,9 +125,14 @@ edges = [
   "orchestrator -- worker",
   "orchestrator -- worker-alt",
   "orchestrator -- critic",
+  "orchestrator -- boss",
   "guardian -- critic",
+  "orchestrator -- agent",
 ]
 ```
+
+Every node referenced by `edges` is materialized automatically. Define node
+templates only when you need role-specific instructions.
 
 Messages sent to nodes without a valid edge are moved to `dead-letter/`.
 
@@ -170,7 +181,7 @@ silently ignored.
 
 ```text
 $XDG_CONFIG_HOME/tmux-a2a-postman/
-  postman.toml          # structural config (timing, thresholds)
+  postman.toml          # optional structural overrides (timing, thresholds)
   postman.md            # templates, edges (Mermaid), node definitions
   nodes/
     worker.md           # per-node template (optional, overrides postman.md)
@@ -204,7 +215,7 @@ fallback that means the current daemon is not authoritative for canonical
 status; it is not a per-node state.
 
 `get-health` includes queue counts, node-level visible states, and window
-grouping for the current or specified tmux session.
+grouping for the current tmux session.
 
 Quick reading guide:
 
@@ -215,7 +226,8 @@ Quick reading guide:
   reached that node's inbox; this is a pane notification, not a new state.
   Read `docs/design/notification.md`.
 
-Core public knobs for this model live in `postman.toml`:
+Core public knobs for this model live in embedded defaults and optional
+`postman.toml` overrides:
 
 - `ui_node`
 - `retention_period_days`
@@ -242,16 +254,14 @@ footer.
 8. XDG `postman.toml`
 9. Embedded defaults (`internal/config/postman.default.toml`)
 
-All default values are defined in `postman.default.toml` (SSOT).
+All user-configurable default values are defined in `postman.default.toml`
+(SSOT). See [docs/design/config-ssot.md](docs/design/config-ssot.md).
 
 ## 5. Running the Daemon
 
 ```sh
 # Start daemon (interactive single-column TUI)
 tmux-a2a-postman start
-
-# Headless mode (no TUI surface; for CI or automated environments)
-tmux-a2a-postman start --no-tui
 
 # Stop daemon
 tmux-a2a-postman stop
@@ -300,8 +310,9 @@ Runtime lifecycle classes
 
 `retention_period_days` controls that startup cleanup window. The embedded
 default is `90`. Set it to `0` to disable the broader inactive-context sweep.
-Cleanup keeps base-dir and XDG resolution unchanged, skips any context with a
-live daemon, and preserves unknown entries by default instead of guessing.
+Cleanup keeps base directory and XDG resolution unchanged, skips any context
+with a live daemon, and preserves unknown entries by default instead of
+guessing.
 
 ## 7. Deployment Model
 
@@ -319,7 +330,7 @@ See `docs/design/daemon-session-model.md` for the full daemon/session model.
 
 The README teaches the beginner/operator loop. Use
 [docs/commands.md](docs/commands.md) as the exact CLI reference for flag
-tables, JSON output shapes, `--params` usage, and canonical command names.
+tables, JSON output shapes, and canonical command names.
 
 Default operator surface:
 
