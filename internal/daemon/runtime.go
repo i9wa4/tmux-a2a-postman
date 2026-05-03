@@ -15,6 +15,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
@@ -57,6 +58,10 @@ type daemonRuntime struct {
 
 	postEventsMu     sync.Mutex
 	activePostEvents map[string]bool
+
+	sendAutoPing     autoPingSender
+	autoPingEventsMu sync.Mutex
+	activeAutoPings  map[string]bool
 }
 
 type runtimeStatusSnapshot struct {
@@ -72,6 +77,8 @@ type postDeliveryReservation struct {
 	reservedAt     time.Time
 	hasReservation bool
 }
+
+type autoPingSender func(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error)
 
 func newDaemonRuntime(
 	baseDir string,
@@ -112,6 +119,7 @@ func newDaemonRuntime(
 		claimedPanes:     make(map[string]bool),
 		prevSessionNodes: make(map[string][]string),
 		activePostEvents: make(map[string]bool),
+		activeAutoPings:  make(map[string]bool),
 	}
 }
 
@@ -989,17 +997,60 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 		if rt.cfg != nil {
 			tmpl = rt.cfg.DaemonMessageTemplate
 		}
-		result, err := ping.SendPingToNodeWithResult(nodeInfo, rt.contextID, nodeKey, tmpl, rt.cfg, activeNodes, livenessMap, rt.adjacency, freshNodes)
-		if err != nil {
-			log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", nodeKey, err)
-			continue
-		}
-		if !result.Delivered {
+		if !rt.beginAutoPing(nodeKey) {
 			continue
 		}
 
-		rt.recordDeliveredAutoPing(nodeKey, nodeInfo, pending, now)
+		dispatchNodeKey := nodeKey
+		dispatchNodeInfo := nodeInfo
+		dispatchPending := pending
+		dispatchTemplate := tmpl
+		dispatchActiveNodes := append([]string(nil), activeNodes...)
+		dispatchLivenessMap := cloneBoolMap(livenessMap)
+		dispatchAdjacency := cloneStringSliceMap(rt.adjacency)
+		dispatchNodes := cloneNodeInfoMap(freshNodes)
+		sendAutoPing := rt.autoPingSender()
+		go func() {
+			defer rt.finishAutoPing(dispatchNodeKey)
+
+			result, err := sendAutoPing(dispatchNodeInfo, rt.contextID, dispatchNodeKey, dispatchTemplate, rt.cfg, dispatchActiveNodes, dispatchLivenessMap, dispatchAdjacency, dispatchNodes)
+			if err != nil {
+				log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", dispatchNodeKey, err)
+				return
+			}
+			if !result.Delivered {
+				return
+			}
+
+			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, time.Now())
+		}()
 	}
+}
+
+func (rt *daemonRuntime) autoPingSender() autoPingSender {
+	if rt.sendAutoPing != nil {
+		return rt.sendAutoPing
+	}
+	return ping.SendPingToNodeWithResult
+}
+
+func (rt *daemonRuntime) beginAutoPing(nodeKey string) bool {
+	rt.autoPingEventsMu.Lock()
+	defer rt.autoPingEventsMu.Unlock()
+	if rt.activeAutoPings == nil {
+		rt.activeAutoPings = make(map[string]bool)
+	}
+	if rt.activeAutoPings[nodeKey] {
+		return false
+	}
+	rt.activeAutoPings[nodeKey] = true
+	return true
+}
+
+func (rt *daemonRuntime) finishAutoPing(nodeKey string) {
+	rt.autoPingEventsMu.Lock()
+	delete(rt.activeAutoPings, nodeKey)
+	rt.autoPingEventsMu.Unlock()
 }
 
 func activeRuntimePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
@@ -1015,6 +1066,39 @@ func activeRuntimePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	}
 	sort.Strings(activeNodes)
 	return activeNodes
+}
+
+func cloneBoolMap(in map[string]bool) map[string]bool {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringSliceMap(in map[string][]string) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for k, v := range in {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+func cloneNodeInfoMap(in map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]discovery.NodeInfo, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func runtimeNodeKeys(nodes map[string]discovery.NodeInfo) []string {

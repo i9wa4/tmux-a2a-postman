@@ -9,17 +9,59 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+func waitForInboxEntries(t *testing.T, sessionDir, nodeName string, want int) {
+	t.Helper()
+	inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		entries, err := os.ReadDir(inboxDir)
+		if err == nil && len(entries) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("ReadDir inbox: %v", err)
+			}
+			t.Fatalf("inbox entries = %d, want %d", len(entries), want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, ok, err := projection.ProjectAutoPingState(sessionDir)
+		if err != nil {
+			t.Fatalf("ProjectAutoPingState() error = %v", err)
+		}
+		if ok {
+			if node, exists := state.Nodes[nodeKey]; exists && node.Pending == want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			state, _, _ := projection.ProjectAutoPingState(sessionDir)
+			t.Fatalf("auto-PING pending[%s] did not become %v; state=%#v", nodeKey, want, state.Nodes[nodeKey])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{
@@ -660,24 +702,80 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 
 	rt.dispatchPendingAutoPings(rt.nodes, false, now)
 
-	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
-	if err != nil {
-		t.Fatalf("ReadDir inbox: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("inbox entries = %d, want 1", len(entries))
+	waitForInboxEntries(t, sessionDir, "worker", 1)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+}
+
+func TestDispatchPendingAutoPings_DoesNotBlockDaemonLoopWhilePaneDeliveryRuns(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
 	}
 
-	state, ok, err := projection.ProjectAutoPingState(sessionDir)
-	if err != nil {
-		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	now := time.Date(2026, time.April, 26, 22, 1, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
 	}
-	if !ok {
-		t.Fatal("ProjectAutoPingState() ok = false, want true")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+			TmuxTimeout:           1.0,
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			<-release
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
 	}
-	if state.Nodes["review:worker"].Pending {
-		t.Fatal("pending auto-PING debt was not cleared after confirmed delivery")
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	start := time.Now()
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("dispatchPendingAutoPings blocked for %s", elapsed)
 	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("auto-PING sender did not start")
+	}
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("auto-PING sender calls while first delivery active = %d, want 1", got)
+	}
+
+	close(release)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
 func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.T) {
@@ -715,24 +813,8 @@ func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.
 
 	rt.bootstrap()
 
-	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
-	if err != nil {
-		t.Fatalf("ReadDir inbox: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("inbox entries after bootstrap = %d, want 1", len(entries))
-	}
-
-	state, ok, err := projection.ProjectAutoPingState(sessionDir)
-	if err != nil {
-		t.Fatalf("ProjectAutoPingState() error = %v", err)
-	}
-	if !ok {
-		t.Fatal("ProjectAutoPingState() ok = false, want true")
-	}
-	if state.Nodes["review:worker"].Pending {
-		t.Fatal("startup auto-PING debt was not cleared after confirmed delivery")
-	}
+	waitForInboxEntries(t, sessionDir, "worker", 1)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
 func TestBootstrap_ReconcilesDuePendingAutoPingDebtAfterHydration(t *testing.T) {
@@ -782,24 +864,8 @@ func TestBootstrap_ReconcilesDuePendingAutoPingDebtAfterHydration(t *testing.T) 
 
 	rt.bootstrap()
 
-	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
-	if err != nil {
-		t.Fatalf("ReadDir inbox: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("inbox entries after bootstrap = %d, want 1", len(entries))
-	}
-
-	state, ok, err := projection.ProjectAutoPingState(sessionDir)
-	if err != nil {
-		t.Fatalf("ProjectAutoPingState() error = %v", err)
-	}
-	if !ok {
-		t.Fatal("ProjectAutoPingState() ok = false, want true")
-	}
-	if state.Nodes["review:worker"].Pending {
-		t.Fatal("pending auto-PING debt was not cleared during bootstrap reconciliation")
-	}
+	waitForInboxEntries(t, sessionDir, "worker", 1)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
 func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *testing.T) {
