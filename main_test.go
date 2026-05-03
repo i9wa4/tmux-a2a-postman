@@ -2,10 +2,11 @@ package main
 
 import (
 	"bytes"
-	"flag"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
@@ -104,19 +105,18 @@ func TestSplitCommand_RequiresExplicitSubcommand(t *testing.T) {
 
 func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	var stderr bytes.Buffer
-	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
-	fs.Bool("version", false, "show version")
-	fs.Bool("help", false, "show help")
-	fs.String("context-id", "", "context ID (auto-generated if not specified)")
-	fs.String("config", "", "path to config file")
+	var helpOverview bytes.Buffer
 
-	printUsage(&stderr, fs)
+	printUsage(&stderr)
+	if err := cli.WriteHelp(&helpOverview, io.Discard, nil); err != nil {
+		t.Fatalf("WriteHelp: %v", err)
+	}
 
 	got := stderr.String()
-	if !strings.Contains(got, "Usage: tmux-a2a-postman [options] <command>") {
-		t.Fatalf("usage missing explicit-command form: %q", got)
+	if got != helpOverview.String() {
+		t.Fatalf("usage should be the help overview SSOT\nusage:\n%s\nhelp:\n%s", got, helpOverview.String())
 	}
-	if !strings.Contains(got, "Use an explicit subcommand; bare `tmux-a2a-postman` prints usage.") {
+	if !strings.Contains(got, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
 	}
 	if !strings.Contains(got, "get-health                 Print canonical session health JSON") {

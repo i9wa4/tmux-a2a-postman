@@ -28,9 +28,13 @@ var helpTopicFiles = map[string]string{
 }
 
 func RunHelp(args []string) {
-	if err := runHelp(os.Stdout, os.Stderr, args); err != nil {
+	if err := WriteHelp(os.Stdout, os.Stderr, args); err != nil {
 		os.Exit(1)
 	}
+}
+
+func WriteHelp(stdout, stderr io.Writer, args []string) error {
+	return runHelp(stdout, stderr, args)
 }
 
 func runHelp(stdout, stderr io.Writer, args []string) error {

@@ -4,8 +4,8 @@
 
 tmux agent-to-agent message delivery daemon.
 
-Any AI coding agent can occupy the roles you define, turning a tmux session into
-a durable workspace for human-directed handoffs, delegation, and review.
+Any AI coding agent can occupy the roles you define, turning tmux sessions into
+durable workspaces for human-directed handoffs, delegation, and review.
 
 It runs one daemon per local user account, treats tmux pane titles as role/node
 names, and delivers `send` messages to filesystem-backed inboxes. Agents read
@@ -24,29 +24,37 @@ graph TD
     daemon["postman daemon\nroutes mail\nsends auto PING"]
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
-    subgraph session_main["tmux session: main workspace"]
-        messenger["messenger\nhuman-facing ui_node"]
-        orchestrator["orchestrator"]
-        worker["worker"]
+    subgraph project_a["tmux session: project A"]
+        a_messenger["messenger\nhuman-facing ui_node"]
+        a_orchestrator["orchestrator"]
+        a_worker["worker"]
+        a_reviewer["reviewer"]
+
+        a_messenger <--> |brief / status| a_orchestrator
+        a_orchestrator <--> |delegate / report| a_worker
+        a_orchestrator <--> |review request| a_reviewer
     end
 
-    subgraph session_review["tmux session: review workspace"]
-        reviewer["reviewer"]
-        worker_alt["worker-alt"]
+    subgraph project_b["tmux session: project B"]
+        b_messenger["messenger\nhuman-facing ui_node"]
+        b_orchestrator["orchestrator"]
+        b_worker["worker"]
+        b_reviewer["reviewer"]
+
+        b_messenger <--> |brief / status| b_orchestrator
+        b_orchestrator <--> |delegate / report| b_worker
+        b_orchestrator <--> |review request| b_reviewer
     end
 
-    operator --> |starts / configures| daemon
-    operator <--> |talks with| messenger
+    operator --> |starts| daemon
+    operator <--> |talks with| a_messenger
+    operator <--> |talks with| b_messenger
     config --> daemon
-    messenger <--> |brief / status| orchestrator
-    orchestrator <--> |delegate / report| worker
-    orchestrator <--> |delegate / report| worker_alt
-    orchestrator <--> |review request| reviewer
     daemon <--> mailbox
-    daemon -.->|delivers mail + auto PING| session_main
-    daemon -.->|delivers mail + auto PING| session_review
-    mailbox -.->|stores mail for pop| session_main
-    mailbox -.->|stores mail for pop| session_review
+    daemon -.->|delivers mail + auto PING| project_a
+    daemon -.->|delivers mail + auto PING| project_b
+    mailbox -.->|stores mail for pop| project_a
+    mailbox -.->|stores mail for pop| project_b
 
     classDef operatorType fill:#fff7ed,stroke:#c2410c,color:#111827
     classDef configType fill:#eef2ff,stroke:#4f46e5,color:#111827
@@ -58,10 +66,14 @@ graph TD
     class config configType
     class daemon daemonType
     class mailbox storageType
-    class messenger,orchestrator,worker,reviewer,worker_alt agentType
-    style session_main fill:#ffffff,stroke:#94a3b8,color:#0f172a
-    style session_review fill:#ffffff,stroke:#94a3b8,color:#0f172a
+    class a_messenger,a_orchestrator,a_worker,a_reviewer,b_messenger,b_orchestrator,b_worker,b_reviewer agentType
+    style project_a fill:#ffffff,stroke:#94a3b8,color:#0f172a
+    style project_b fill:#ffffff,stroke:#94a3b8,color:#0f172a
 ```
+
+Each tmux session is a separate project workspace. Roles can share the same
+names across sessions; normal agent collaboration stays inside a project
+session.
 
 ## 2. Prerequisites
 
@@ -121,10 +133,11 @@ The human operator starts one daemon for their local user account:
 tmux-a2a-postman start
 ```
 
-After `start`, each discovered node receives an auto PING. If a node pane is
-opened or restarted later, it receives the same PING when discovered. A PING is
-normal inbox mail: the recipient sees the pane notification, runs `pop`, and
-reads its role plus reply guidance.
+After `start`, each discovered node receives an auto PING. A node pane opened
+later receives the same PING when discovered; if the same role reappears with a
+new pane ID, it is treated as a replacement pane and receives another PING. A
+PING is normal inbox mail: the recipient sees the pane notification, runs
+`pop`, and reads its role plus reply guidance.
 
 Agents then run commands from their own tmux panes. The pane title identifies
 the sending role/node, independent of whether the pane is Claude Code, Codex
