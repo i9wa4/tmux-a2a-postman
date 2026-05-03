@@ -373,7 +373,7 @@ func TestFilterPaneCaptureNodes_PreservesBareKeys(t *testing.T) {
 	}
 }
 
-func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNode(t *testing.T) {
+func TestCheckPaneCapture_CompactionTriggerRecordsInitialMarkerWithoutPing(t *testing.T) {
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
@@ -408,6 +408,73 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNode(t *testing.T) {
 		},
 	}
 
+	targets := tracker.checkPaneCapture(cfg, nodes)
+	if len(targets) != 0 {
+		t.Fatalf("checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(targets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if state.LastCompactionTrigger == "" {
+		t.Fatal("checkPaneCapture() did not record the initial compaction trigger")
+	}
+	if !state.LastCompactionPingAt.IsZero() {
+		t.Fatal("checkPaneCapture() recorded a ping timestamp for an initial marker")
+	}
+	if state.LastCompactionHash != state.LastHash {
+		t.Fatal("checkPaneCapture() did not record the initial compaction pane hash")
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeAfterInitialCapture(t *testing.T) {
+	scriptDir := t.TempDir()
+	capturePath := filepath.Join(scriptDir, "capture.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_CAPTURE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_CAPTURE", capturePath)
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture ready): %v", err)
+	}
+	initialTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(initialTargets) != 0 {
+		t.Fatalf("initial checkPaneCapture() returned %d targets, want 0", len(initialTargets))
+	}
+
+	if err := os.WriteFile(capturePath, []byte("✻ Conversation compacted (ctrl+o for history)"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture marker): %v", err)
+	}
 	targets := tracker.checkPaneCapture(cfg, nodes)
 	if len(targets) != 1 {
 		t.Fatalf("checkPaneCapture() returned %d targets, want 1", len(targets))
@@ -463,8 +530,8 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhileMarkerRemainsVisibl
 	}
 
 	firstTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(firstTargets) != 1 {
-		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	if len(firstTargets) != 0 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(firstTargets))
 	}
 
 	tracker.mu.Lock()
@@ -521,8 +588,8 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameCaptureAfterMarkerCl
 		t.Fatalf("WriteFile(capture marker): %v", err)
 	}
 	firstTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(firstTargets) != 1 {
-		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	if len(firstTargets) != 0 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(firstTargets))
 	}
 
 	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {

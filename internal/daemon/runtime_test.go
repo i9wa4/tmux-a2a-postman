@@ -480,9 +480,7 @@ func TestBootstrap_ReconcilesExistingPostBacklog(t *testing.T) {
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
 	waitForFileContent(t, inboxPath, content, 10*time.Second)
-	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
-		t.Fatalf("post file still present after bootstrap backlog reconciliation or wrong error: %v", err)
-	}
+	waitForFileGone(t, postPath, 10*time.Second)
 	waitForPostEventIdle(t, rt, postPath, 10*time.Second)
 }
 
@@ -515,6 +513,22 @@ func waitForFileContent(t *testing.T, path, want string, timeout time.Duration) 
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for file %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForFileGone(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		} else if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("file still present after %s: %s", timeout, path)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -573,6 +587,47 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 	}
 }
 
+func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	rt := &daemonRuntime{
+		knownNodes: map[string]bool{
+			"review:worker": true,
+			"review:critic": true,
+		},
+		watcher:     watcher,
+		watchedDirs: make(map[string]bool),
+		daemonState: NewDaemonState(0, "ctx-returned"),
+		events:      make(chan tui.DaemonEvent, 1),
+	}
+
+	rt.pruneKnownNodes(map[string]discovery.NodeInfo{
+		"review:critic": {SessionName: "review", SessionDir: t.TempDir()},
+	})
+
+	if rt.knownNodes["review:worker"] {
+		t.Fatal("pruneKnownNodes() kept disappeared review:worker")
+	}
+	if !rt.knownNodes["review:critic"] {
+		t.Fatal("pruneKnownNodes() removed still-live review:critic")
+	}
+
+	freshNodes := map[string]discovery.NodeInfo{
+		"review:worker": {SessionName: "review", SessionDir: t.TempDir()},
+		"review:critic": {SessionName: "review", SessionDir: t.TempDir()},
+	}
+	newNodes := rt.detectNewNodes(freshNodes)
+	sort.Strings(newNodes)
+
+	if got, want := newNodes, []string{"review:worker"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("detectNewNodes() after pruneKnownNodes() = %#v, want %#v", got, want)
+	}
+}
+
 func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing.T) {
 	sourceBytes, err := os.ReadFile("runtime.go")
 	if err != nil {
@@ -585,6 +640,9 @@ func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing
 	}
 	if !strings.Contains(source, "newNodes := rt.detectNewNodes(freshNodes)") {
 		t.Fatal("runtime.handleScanTick no longer collects newly discovered node keys from detectNewNodes")
+	}
+	if !strings.Contains(source, "rt.pruneKnownNodes(freshNodes)") {
+		t.Fatal("runtime.handleScanTick no longer forgets disappeared nodes before detecting newly returned nodes")
 	}
 	if !strings.Contains(source, "rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions") {
 		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into dispatchPendingAutoPings")

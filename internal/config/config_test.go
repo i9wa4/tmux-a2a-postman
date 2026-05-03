@@ -327,6 +327,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.RetentionPeriodDays != 50 {
 		t.Errorf("default RetentionPeriodDays: got %d, want 50", cfg.RetentionPeriodDays)
 	}
+	if cfg.AutoPingDelaySeconds != 10.0 {
+		t.Errorf("default AutoPingDelaySeconds: got %v, want 10.0", cfg.AutoPingDelaySeconds)
+	}
 	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
 		t.Errorf("default AutoEnableNewSessions: got %v, want true", cfg.AutoEnableNewSessions)
 	}
@@ -1694,6 +1697,7 @@ message_ttl_seconds = 600.0
 retention_period_days = 90
 min_delivery_gap_seconds = 2.0
 startup_drain_window_seconds = 11.0
+auto_ping_delay_seconds = 12.0
 pane_capture_max_panes = 5
 enter_delay_seconds = 8.0
 
@@ -1724,6 +1728,7 @@ message_ttl_seconds = 0
 retention_period_days = 0
 min_delivery_gap_seconds = 0
 startup_drain_window_seconds = 0
+auto_ping_delay_seconds = 0
 pane_capture_max_panes = 0
 `
 }
@@ -1768,6 +1773,9 @@ func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
 	}
 	if cfg.StartupDrainWindowSeconds != 0 {
 		t.Fatalf("StartupDrainWindowSeconds: got %v, want 0", cfg.StartupDrainWindowSeconds)
+	}
+	if cfg.AutoPingDelaySeconds != 0 {
+		t.Fatalf("AutoPingDelaySeconds: got %v, want 0", cfg.AutoPingDelaySeconds)
 	}
 	if cfg.PaneCaptureMaxPanes != 0 {
 		t.Fatalf("PaneCaptureMaxPanes: got %d, want 0", cfg.PaneCaptureMaxPanes)

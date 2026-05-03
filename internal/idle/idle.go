@@ -312,12 +312,10 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				ChangeCount:   0,
 				LastCaptureAt: now,
 			}
-			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+			if _, hasNode := paneToNode[paneID]; hasNode {
 				if trigger := compactionTrigger(paneRuntimes[paneID], content); trigger != "" {
 					state.LastCompactionTrigger = trigger
-					state.LastCompactionPingAt = now
 					state.LastCompactionHash = currentHash
-					compactionTargets[nodeKey] = struct{}{}
 				}
 			}
 			t.paneCaptureState[paneID] = state

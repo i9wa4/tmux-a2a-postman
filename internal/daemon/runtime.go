@@ -365,6 +365,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
 		rt.claimNewPanes(freshNodes)
+		rt.pruneKnownNodes(freshNodes)
 		newNodes := rt.detectNewNodes(freshNodes)
 		rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 		rt.logPaneIDChanges(freshNodes)
@@ -643,6 +644,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
+	rt.pruneKnownNodes(freshNodes)
 	newNodes := rt.detectNewNodes(freshNodes)
 	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
 	rt.nodes = freshNodes
@@ -799,6 +801,14 @@ func (rt *daemonRuntime) detectNewNodes(freshNodes map[string]discovery.NodeInfo
 		newNodes = append(newNodes, nodeName)
 	}
 	return newNodes
+}
+
+func (rt *daemonRuntime) pruneKnownNodes(freshNodes map[string]discovery.NodeInfo) {
+	for nodeName := range rt.knownNodes {
+		if _, live := freshNodes[nodeName]; !live {
+			delete(rt.knownNodes, nodeName)
+		}
+	}
 }
 
 func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeInfo) {
@@ -992,7 +1002,6 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 		if !enabled {
 			continue
 		}
-
 		tmpl := ""
 		if rt.cfg != nil {
 			tmpl = rt.cfg.DaemonMessageTemplate

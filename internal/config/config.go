@@ -44,7 +44,7 @@ type Config struct {
 	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
 	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
-	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING; 0 = immediate
+	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
