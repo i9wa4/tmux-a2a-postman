@@ -146,8 +146,10 @@ later receives the same PING when discovered; if the same role reappears with a
 new pane ID, it is treated as a replacement pane and receives another PING. A
 PING is normal inbox mail: the recipient sees the pane notification, runs
 `pop`, and reads its role plus reply guidance. Discovery runs on
-`scan_interval_seconds`; auto PING waits for `auto_ping_delay_seconds`, so
-startup commands can finish before the notification is pasted.
+`scan_interval_seconds`; tmux session-list refresh runs on
+`session_scan_interval_seconds`; auto PING waits for
+`auto_ping_delay_seconds` (20 seconds by default), so startup commands can
+finish before the notification is pasted.
 
 Agents then run commands from their own tmux panes. The pane title identifies
 the sending role/node, independent of whether the pane is Claude Code, Codex

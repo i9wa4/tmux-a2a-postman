@@ -29,6 +29,24 @@ import (
 
 const inboxCheckInterval = 30 * time.Second
 
+func sessionScanInterval(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return time.Second
+	}
+	seconds := cfg.SessionScanInterval
+	if seconds <= 0 {
+		seconds = cfg.ScanInterval
+	}
+	if seconds <= 0 {
+		return time.Second
+	}
+	interval := time.Duration(seconds * float64(time.Second))
+	if interval <= 0 {
+		return time.Second
+	}
+	return interval
+}
+
 // safeAfterFunc wraps time.AfterFunc with panic recovery (Issue #57).
 func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, fn func()) *time.Timer {
 	return time.AfterFunc(d, func() {
@@ -442,6 +460,8 @@ func RunDaemonLoop(
 
 	scanTicker := time.NewTicker(time.Duration(cfg.ScanInterval * float64(time.Second)))
 	defer scanTicker.Stop()
+	sessionScanTicker := time.NewTicker(sessionScanInterval(cfg))
+	defer sessionScanTicker.Stop()
 	inboxCheckTicker := time.NewTicker(inboxCheckInterval)
 	defer inboxCheckTicker.Stop()
 
@@ -464,6 +484,8 @@ func RunDaemonLoop(
 			runtime.handleWatcherError(err)
 		case <-scanTicker.C:
 			runtime.handleScanTick()
+		case <-sessionScanTicker.C:
+			runtime.handleSessionScanTick()
 		case <-inboxCheckTicker.C:
 			runtime.handleInboxCheckTick()
 		}

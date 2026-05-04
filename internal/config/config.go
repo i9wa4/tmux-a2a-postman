@@ -29,12 +29,13 @@ type Config struct {
 	A2AVersion string `toml:"a2a_version"`
 
 	// Timing settings
-	ScanInterval     float64 `toml:"scan_interval_seconds"`
-	EnterDelay       float64 `toml:"enter_delay_seconds"`
-	TmuxTimeout      float64 `toml:"tmux_timeout_seconds"`
-	StartupDelay     float64 `toml:"startup_delay_seconds"`
-	EnterVerifyDelay float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
-	EnterRetryMax    int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
+	ScanInterval        float64 `toml:"scan_interval_seconds"`
+	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
+	EnterDelay          float64 `toml:"enter_delay_seconds"`
+	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
+	StartupDelay        float64 `toml:"startup_delay_seconds"`
+	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
+	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
 	// Node state thresholds (Issue #xxx)
 	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds since pane change: active
@@ -532,6 +533,8 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 		return cfg.MinDeliveryGapSeconds == 0
 	case "startup_drain_window_seconds":
 		return cfg.StartupDrainWindowSeconds == 0
+	case "session_scan_interval_seconds":
+		return cfg.SessionScanInterval == 0
 	case "auto_ping_delay_seconds":
 		return cfg.AutoPingDelaySeconds == 0
 	case "pane_capture_max_panes":
@@ -591,6 +594,8 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 			base.MinDeliveryGapSeconds = 0
 		case "startup_drain_window_seconds":
 			base.StartupDrainWindowSeconds = 0
+		case "session_scan_interval_seconds":
+			base.SessionScanInterval = 0
 		case "auto_ping_delay_seconds":
 			base.AutoPingDelaySeconds = 0
 		case "pane_capture_max_panes":
@@ -706,6 +711,9 @@ func mergeConfig(base, override *Config) {
 	// Float64 fields
 	if override.ScanInterval != 0 {
 		base.ScanInterval = override.ScanInterval
+	}
+	if override.SessionScanInterval != 0 {
+		base.SessionScanInterval = override.SessionScanInterval
 	}
 	if override.EnterDelay != 0 {
 		base.EnterDelay = override.EnterDelay

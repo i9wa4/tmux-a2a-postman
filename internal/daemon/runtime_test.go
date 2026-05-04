@@ -101,6 +101,84 @@ func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t
 	}
 }
 
+func TestSessionScanIntervalUsesPublicConfigAndFallback(t *testing.T) {
+	cfg := &config.Config{
+		ScanInterval:        1.0,
+		SessionScanInterval: 0.25,
+	}
+	if got, want := sessionScanInterval(cfg), 250*time.Millisecond; got != want {
+		t.Fatalf("sessionScanInterval() = %s, want %s", got, want)
+	}
+
+	cfg.SessionScanInterval = 0
+	if got, want := sessionScanInterval(cfg), time.Second; got != want {
+		t.Fatalf("sessionScanInterval() fallback = %s, want %s", got, want)
+	}
+
+	cfg.ScanInterval = 0
+	if got, want := sessionScanInterval(cfg), time.Second; got != want {
+		t.Fatalf("sessionScanInterval() zero fallback = %s, want %s", got, want)
+	}
+}
+
+func TestHandleSessionScanTick_EmitsNewSessionWithoutPaneScan(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := installRuntimeSessionScanTmux(t, tmpDir, []string{"main", "review"})
+	events := make(chan tui.DaemonEvent, 1)
+
+	rt := &daemonRuntime{
+		nodes: map[string]discovery.NodeInfo{
+			"main:worker": {SessionName: "main"},
+		},
+		events:           events,
+		daemonState:      NewDaemonState(0, "ctx-fast-session"),
+		prevNodeCount:    1,
+		prevSessionNames: []string{"main"},
+		prevSessionNodes: map[string][]string{
+			"main": {"worker"},
+		},
+	}
+
+	rt.handleSessionScanTick()
+
+	select {
+	case event := <-events:
+		if event.Type != "status_update" {
+			t.Fatalf("event.Type = %q, want status_update", event.Type)
+		}
+		sessions, ok := event.Details["sessions"].([]tui.SessionInfo)
+		if !ok {
+			t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", event.Details["sessions"])
+		}
+		if !sessionInfoExists(sessions, "review", 0) {
+			t.Fatalf("sessions = %#v, want review session with zero nodes", sessions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for status_update")
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(tmux log): %v", err)
+	}
+	logText := string(logBytes)
+	if !strings.Contains(logText, "list-sessions -F") {
+		t.Fatalf("tmux log missing list-sessions call: %q", logText)
+	}
+	if strings.Contains(logText, "list-panes") {
+		t.Fatalf("session scan should not run pane discovery; tmux log: %q", logText)
+	}
+}
+
+func sessionInfoExists(sessions []tui.SessionInfo, name string, nodeCount int) bool {
+	for _, session := range sessions {
+		if session.Name == name && session.NodeCount == nodeCount {
+			return true
+		}
+	}
+	return false
+}
+
 func TestResumeMailboxProjections_RestoresKnownSessionTrees(t *testing.T) {
 	baseDir := t.TempDir()
 	primarySessionDir := filepath.Join(baseDir, "ctx-main", "review")
@@ -619,6 +697,25 @@ func installRuntimeTestTmux(t *testing.T, tmpDir string) {
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installRuntimeSessionScanTmux(t *testing.T, tmpDir string, sessions []string) string {
+	t.Helper()
+	fakeBin := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("MkdirAll(fakeBin): %v", err)
+	}
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	var sessionOutput strings.Builder
+	for i, sessionName := range sessions {
+		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
+	}
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = 'list-sessions' ]; then\n%s  exit 0\nfi\nif [ \"$1\" = 'list-panes' ]; then\n  echo 'unexpected list-panes' >&2\n  exit 42\nfi\nexit 0\n", logPath, sessionOutput.String())
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
 }
 
 func waitForFileContent(t *testing.T, path, want string, timeout time.Duration) time.Time {
@@ -1203,6 +1300,49 @@ func TestDispatchPendingAutoPings_RespectsNotBeforeAt(t *testing.T) {
 	}
 	if !state.Nodes["review:worker"].Pending {
 		t.Fatal("future pending auto-PING was cleared before not_before_at")
+	}
+}
+
+func TestRecordPendingAutoPing_UsesConfiguredAutoPingDelay(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 20, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			AutoPingDelaySeconds: 20,
+		},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%77",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "discovered", now)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	pending := state.Nodes["review:worker"]
+	if !pending.Pending {
+		t.Fatal("pending auto-PING was not recorded")
+	}
+	if pending.DelaySeconds != 20 {
+		t.Fatalf("DelaySeconds: got %v, want 20", pending.DelaySeconds)
+	}
+	if got, want := pending.NotBeforeAt, now.Add(20*time.Second).Format(time.RFC3339Nano); got != want {
+		t.Fatalf("NotBeforeAt: got %q, want %q", got, want)
 	}
 }
 

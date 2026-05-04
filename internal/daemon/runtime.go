@@ -691,21 +691,7 @@ func (rt *daemonRuntime) handleScanTick() {
 		allSessions = []string{}
 	}
 
-	snapshot := buildRuntimeStatusSnapshot(rt.nodes, allSessions, rt.daemonState.GetConfiguredSessionEnabled)
-	if snapshot.changed(rt.prevNodeCount, rt.prevSessionNames, rt.prevSessionNodes) {
-		rt.events <- tui.DaemonEvent{
-			Type:    "status_update",
-			Message: "Running",
-			Details: map[string]interface{}{
-				"node_count":    snapshot.NodeCount,
-				"sessions":      snapshot.Sessions,
-				"session_nodes": snapshot.SessionNodes,
-			},
-		}
-		rt.prevNodeCount = snapshot.NodeCount
-		rt.prevSessionNames = snapshot.NormalizedSessionNames
-		rt.prevSessionNodes = snapshot.NormalizedSessionNodes
-	}
+	rt.emitStatusUpdateIfChanged(allSessions)
 
 	paneStates, err := uinode.GetAllPanesInfo()
 	if err == nil {
@@ -745,6 +731,40 @@ func (rt *daemonRuntime) handleScanTick() {
 			"node_states": nodeStates,
 		},
 	}
+}
+
+func (rt *daemonRuntime) handleSessionScanTick() {
+	allSessions, err := discovery.DiscoverAllSessions()
+	if err != nil {
+		rt.events <- tui.DaemonEvent{
+			Type:    "error",
+			Message: fmt.Sprintf("failed to discover all sessions: %v", err),
+		}
+		return
+	}
+	rt.emitStatusUpdateIfChanged(allSessions)
+}
+
+func (rt *daemonRuntime) emitStatusUpdateIfChanged(allSessions []string) {
+	if allSessions == nil {
+		allSessions = []string{}
+	}
+	snapshot := buildRuntimeStatusSnapshot(rt.nodes, allSessions, rt.daemonState.GetConfiguredSessionEnabled)
+	if !snapshot.changed(rt.prevNodeCount, rt.prevSessionNames, rt.prevSessionNodes) {
+		return
+	}
+	rt.events <- tui.DaemonEvent{
+		Type:    "status_update",
+		Message: "Running",
+		Details: map[string]interface{}{
+			"node_count":    snapshot.NodeCount,
+			"sessions":      snapshot.Sessions,
+			"session_nodes": snapshot.SessionNodes,
+		},
+	}
+	rt.prevNodeCount = snapshot.NodeCount
+	rt.prevSessionNames = snapshot.NormalizedSessionNames
+	rt.prevSessionNodes = snapshot.NormalizedSessionNodes
 }
 
 func (rt *daemonRuntime) handleInboxCheckTick() {

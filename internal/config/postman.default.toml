@@ -54,13 +54,14 @@
 a2a_version = "1.0"
 
 # Timing settings
-scan_interval_seconds = 1.0        # Pane rescan interval
-tmux_timeout_seconds = 30.0        # Timeout for tmux commands
-enter_delay_seconds = 3.0          # Delay before sending Enter key
-enter_verify_delay_seconds = 3.0   # Delay for post-Enter capture comparison (0 = disabled)
-enter_retry_max = 2                # Max C-m retries on unchanged pane capture (0 = disabled)
-startup_delay_seconds = 10.0       # Initial startup delay
-auto_ping_delay_seconds = 10.0     # Delay before first auto-PING for newly appeared/replacement nodes
+scan_interval_seconds = 1.0          # Pane rescan interval
+session_scan_interval_seconds = 0.25 # Lightweight tmux session-list rescan interval
+tmux_timeout_seconds = 30.0          # Timeout for tmux commands
+enter_delay_seconds = 3.0            # Delay before sending Enter key
+enter_verify_delay_seconds = 3.0     # Delay for post-Enter capture comparison (0 = disabled)
+enter_retry_max = 2                  # Max C-m retries on unchanged pane capture (0 = disabled)
+startup_delay_seconds = 10.0         # Initial startup delay
+auto_ping_delay_seconds = 20.0       # Delay before first auto-PING for newly appeared/replacement nodes
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
 retention_period_days = 50            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
