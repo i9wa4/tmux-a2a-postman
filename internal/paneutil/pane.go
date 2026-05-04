@@ -15,3 +15,16 @@ func CaptureContent(paneID string) (string, error) {
 	}
 	return string(output), nil
 }
+
+// CaptureRecentContent captures visible content plus recent scrollback lines.
+func CaptureRecentContent(paneID string, tailLines int) (string, error) {
+	if tailLines <= 0 {
+		return CaptureContent(paneID)
+	}
+	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID, "-S", fmt.Sprintf("-%d", tailLines))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("capturing recent pane %s: %w", paneID, err)
+	}
+	return string(output), nil
+}

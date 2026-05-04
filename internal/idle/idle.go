@@ -43,8 +43,10 @@ type PaneCaptureState struct {
 	ChangeCount           int       // Consecutive change count (2 = active)
 	LastCaptureAt         time.Time // Last capture time
 	LastCompactionPingAt  time.Time // Last compaction-triggered PING for this pane
-	LastCompactionTrigger string    // Non-empty while a compaction marker remains visible
-	LastCompactionHash    uint32    // Full pane hash for the most recent compaction ping
+	LastCompactionTrigger string    // Non-empty while a compaction marker remains in scanned content
+	LastCompactionHash    uint32    // Scanned compaction content hash for the most recent compaction marker state
+	LastCompactionMarkers int       // Marker occurrences in scanned content for the most recent compaction state
+	LastCompactionPrefix  string    // Scanned content through the latest marker occurrence
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -178,37 +180,67 @@ func containsCompactionTrigger(runtime, content string) bool {
 	return compactionTrigger(runtime, content) != ""
 }
 
+type compactionMarkerScan struct {
+	Trigger            string
+	MarkerCount        int
+	LatestMarkerPrefix string
+}
+
 func compactionTrigger(runtime, content string) string {
+	return compactionTriggerScan(runtime, content).Trigger
+}
+
+func compactionTriggerScan(runtime, content string) compactionMarkerScan {
 	switch strings.ToLower(strings.TrimSpace(runtime)) {
 	case "claude":
-		return claudeCompactionTrigger(content)
+		return claudeCompactionTriggerScan(content)
 	case "codex":
-		return codexCompactionTrigger(content)
+		return codexCompactionTriggerScan(content)
 	default:
-		return ""
+		return compactionMarkerScan{}
 	}
 }
 
 func claudeCompactionTrigger(content string) string {
-	for _, line := range strings.Split(content, "\n") {
-		normalized := normalizeStatusLine(line)
-		if strings.HasPrefix(normalized, "conversation compacted") {
-			return "claude:conversation-compaction"
-		}
-		if strings.HasPrefix(normalized, "compacted (ctrl+o") {
-			return "claude:conversation-compaction"
-		}
-	}
-	return ""
+	return claudeCompactionTriggerScan(content).Trigger
+}
+
+func claudeCompactionTriggerScan(content string) compactionMarkerScan {
+	return scanCompactionMarkers(content, "claude:conversation-compaction", isClaudeCompactionLine)
+}
+
+func isClaudeCompactionLine(line string) bool {
+	normalized := normalizeStatusLine(line)
+	return strings.HasPrefix(normalized, "conversation compacted") ||
+		strings.HasPrefix(normalized, "compacted (ctrl+o")
 }
 
 func codexCompactionTrigger(content string) string {
-	for _, line := range strings.Split(content, "\n") {
-		if isCodexCompactionLine(line) {
-			return "codex:context-compaction"
+	return codexCompactionTriggerScan(content).Trigger
+}
+
+func codexCompactionTriggerScan(content string) compactionMarkerScan {
+	return scanCompactionMarkers(content, "codex:context-compaction", isCodexCompactionLine)
+}
+
+func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) compactionMarkerScan {
+	lines := strings.Split(content, "\n")
+	markers := 0
+	latestMarkerLine := -1
+	for i, line := range lines {
+		if isMarker(line) {
+			markers++
+			latestMarkerLine = i
 		}
 	}
-	return ""
+	if markers == 0 {
+		return compactionMarkerScan{}
+	}
+	return compactionMarkerScan{
+		Trigger:            trigger,
+		MarkerCount:        markers,
+		LatestMarkerPrefix: strings.Join(lines[:latestMarkerLine+1], "\n"),
+	}
 }
 
 func isCodexCompactionLine(line string) bool {
@@ -232,6 +264,62 @@ func filterPaneCaptureNodes(nodes map[string]discovery.NodeInfo, edgeNodes map[s
 		filtered[nodeName] = nodeInfo
 	}
 	return filtered
+}
+
+func captureCompactionContent(paneID, visibleContent string, visibleHash uint32, tailLines int) (string, uint32) {
+	if tailLines <= 0 {
+		return visibleContent, visibleHash
+	}
+	content, err := paneutil.CaptureRecentContent(paneID, tailLines)
+	if err != nil {
+		return visibleContent, visibleHash
+	}
+	return content, hashContentCRC32(content)
+}
+
+func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32) bool {
+	if state.LastCompactionTrigger == "" || scan.Trigger != state.LastCompactionTrigger {
+		return false
+	}
+	if state.LastCompactionPrefix == "" {
+		return scan.MarkerCount <= state.LastCompactionMarkers
+	}
+	if state.LastCompactionPrefix == scan.LatestMarkerPrefix {
+		if !strings.Contains(scan.LatestMarkerPrefix, "\n") {
+			return state.LastCompactionHash == compactionHash
+		}
+		return true
+	}
+	if !strings.Contains(scan.LatestMarkerPrefix, "\n") {
+		return false
+	}
+	return strings.HasSuffix(state.LastCompactionPrefix, scan.LatestMarkerPrefix)
+}
+
+func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, now time.Time) bool {
+	if !state.LastCompactionPingAt.IsZero() && now.Sub(state.LastCompactionPingAt) < compactionPingCooldown {
+		return false
+	}
+	if state.LastCompactionTrigger != "" {
+		return scan.Trigger != state.LastCompactionTrigger ||
+			scan.MarkerCount > state.LastCompactionMarkers ||
+			!sameCompactionMarker(state, scan, compactionHash)
+	}
+	return state.LastCompactionHash != compactionHash
+}
+
+func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, now time.Time) {
+	state.LastCompactionPingAt = now
+	state.LastCompactionHash = compactionHash
+	state.LastCompactionMarkers = scan.MarkerCount
+	state.LastCompactionPrefix = scan.LatestMarkerPrefix
+}
+
+func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32) {
+	if sameCompactionMarker(*state, scan, compactionHash) {
+		state.LastCompactionMarkers = scan.MarkerCount
+		state.LastCompactionPrefix = scan.LatestMarkerPrefix
+	}
 }
 
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
@@ -297,6 +385,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 
 		// Compute CRC32 hash
 		currentHash := hashContentCRC32(content)
+		compactionContent, compactionHash := captureCompactionContent(paneID, content, currentHash, cfg.PaneCaptureTailLines)
 
 		// Get previous state
 		state, exists := t.paneCaptureState[paneID]
@@ -309,9 +398,11 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				LastCaptureAt: now,
 			}
 			if _, hasNode := paneToNode[paneID]; hasNode {
-				if trigger := compactionTrigger(paneRuntimes[paneID], content); trigger != "" {
-					state.LastCompactionTrigger = trigger
-					state.LastCompactionHash = currentHash
+				if scan := compactionTriggerScan(paneRuntimes[paneID], compactionContent); scan.Trigger != "" {
+					state.LastCompactionTrigger = scan.Trigger
+					state.LastCompactionHash = compactionHash
+					state.LastCompactionMarkers = scan.MarkerCount
+					state.LastCompactionPrefix = scan.LatestMarkerPrefix
 				}
 			}
 			t.paneCaptureState[paneID] = state
@@ -321,15 +412,18 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
-			if trigger := compactionTrigger(paneRuntimes[paneID], content); trigger != "" {
-				if state.LastCompactionTrigger == "" && state.LastCompactionHash != currentHash && (state.LastCompactionPingAt.IsZero() || now.Sub(state.LastCompactionPingAt) >= compactionPingCooldown) {
-					state.LastCompactionPingAt = now
-					state.LastCompactionHash = currentHash
+			if scan := compactionTriggerScan(paneRuntimes[paneID], compactionContent); scan.Trigger != "" {
+				if shouldPingCompaction(state, scan, compactionHash, now) {
+					recordCompactionPing(&state, scan, compactionHash, now)
 					compactionTargets[nodeKey] = struct{}{}
+				} else {
+					refreshSameCompactionMarker(&state, scan, compactionHash)
 				}
-				state.LastCompactionTrigger = trigger
+				state.LastCompactionTrigger = scan.Trigger
 			} else {
 				state.LastCompactionTrigger = ""
+				state.LastCompactionMarkers = 0
+				state.LastCompactionPrefix = ""
 			}
 		}
 

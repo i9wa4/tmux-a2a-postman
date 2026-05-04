@@ -49,6 +49,7 @@ type Config struct {
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
 	PaneCaptureIntervalSeconds float64 `toml:"pane_capture_interval_seconds"`
 	PaneCaptureMaxPanes        int     `toml:"pane_capture_max_panes"`
+	PaneCaptureTailLines       int     `toml:"pane_capture_tail_lines"`
 	ActivityWindowSeconds      float64 `toml:"activity_window_seconds"`
 
 	// Paths
@@ -535,6 +536,8 @@ func localPostmanExplicitZero(cfg *Config, field string) bool {
 		return cfg.AutoPingDelaySeconds == 0
 	case "pane_capture_max_panes":
 		return cfg.PaneCaptureMaxPanes == 0
+	case "pane_capture_tail_lines":
+		return cfg.PaneCaptureTailLines == 0
 	default:
 		return false
 	}
@@ -592,6 +595,8 @@ func applyProjectLocalExplicitZero(base, override *Config) {
 			base.AutoPingDelaySeconds = 0
 		case "pane_capture_max_panes":
 			base.PaneCaptureMaxPanes = 0
+		case "pane_capture_tail_lines":
+			base.PaneCaptureTailLines = 0
 		}
 	}
 	for name, fields := range override.projectLocalExplicitZero.nodes {
@@ -745,6 +750,9 @@ func mergeConfig(base, override *Config) {
 	// Int fields
 	if override.PaneCaptureMaxPanes != 0 {
 		base.PaneCaptureMaxPanes = override.PaneCaptureMaxPanes
+	}
+	if override.PaneCaptureTailLines != 0 {
+		base.PaneCaptureTailLines = override.PaneCaptureTailLines
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
