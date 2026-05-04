@@ -206,9 +206,11 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 			return projection.DaemonSubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
 		}
 	}
-	if _, err := message.ArchiveInboxMessage(abs, msgs[0].Filename); err != nil {
+	readPath, err := message.ArchiveInboxMessage(abs, msgs[0].Filename)
+	if err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
+	recordDaemonSubmitPopRead(sessionDir, readPath, msgs[0].Filename, string(data))
 	return projection.DaemonSubmitResponse{
 		RequestID:    request.RequestID,
 		Command:      request.Command,
@@ -217,6 +219,19 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		Content:      string(data),
 		UnreadBefore: len(msgs),
 	}, nil
+}
+
+func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) {
+	content := fallbackContent
+	if readContent, err := os.ReadFile(readPath); err == nil {
+		content = string(readContent)
+	}
+	recordMailboxProjectionPayload(sessionDir, filepath.Base(sessionDir), projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, mailboxProjectionPayloadForFile(
+		filename,
+		filepath.Join("read", filename),
+		content,
+	))
+	syncMailboxProjection(sessionDir)
 }
 
 type daemonSubmitProcessResult struct {

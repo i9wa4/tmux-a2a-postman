@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -102,6 +103,72 @@ func TestProcessDaemonSubmitRequest_PopArchivesUnreadMessage(t *testing.T) {
 	}
 	if response.UnreadBefore != 2 {
 		t.Fatalf("response.UnreadBefore = %d, want 2", response.UnreadBefore)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_PopRecordsReadBeforeProjectionSync(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 6, 5, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	filename := "20260504-150109-sfb93-r001f-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyPolicy: required\n  timestamp: 2026-05-04T15:01:09+09:00\n---\n\nplease work\n"
+	recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", filename),
+		Content:   content,
+	})
+	syncMailboxProjection(sessionDir)
+
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Fatalf("projected inbox file missing before pop: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-project",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: now.Add(time.Second).UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if _, err := os.Stat(readPath); err != nil {
+		t.Fatalf("read file missing after pop: %v", err)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("inbox file still present after pop or wrong error: %v", err)
+	}
+
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(after pop): %v", err)
+	}
+	if _, err := os.Stat(readPath); err != nil {
+		t.Fatalf("read file missing after projection sync: %v", err)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("projection sync resurrected popped inbox file or wrong error: %v", err)
+	}
+
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-project"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != filename {
+		t.Fatalf("response.Filename = %q, want %q", response.Filename, filename)
 	}
 }
 

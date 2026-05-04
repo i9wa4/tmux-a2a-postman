@@ -3,6 +3,7 @@ package projection
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -26,6 +27,10 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 	projected := MailboxState{
 		InboxCounts: make(map[string]int),
 	}
+	unreadMessages := make(map[string]string)
+	deliveredMessages := make(map[string]bool)
+	readMessages := make(map[string]bool)
+	sawDelivery := false
 	sawLease := false
 	sawResolution := false
 
@@ -40,20 +45,53 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 		case "session_resolved":
 			sawResolution = true
 		case MailboxProjectionDeliveredEventType:
-			recipient, ok := projectedRecipientName(event.Payload, sessionName)
+			payload, ok := projectedMailboxPayload(event.Payload)
 			if !ok {
 				return MailboxState{}, false, nil
 			}
+			recipient, ok := projectedRecipientName(payload, sessionName)
+			if !ok {
+				return MailboxState{}, false, nil
+			}
+			messageID, ok := projectedMessageIdentity(payload)
+			if !ok {
+				return MailboxState{}, false, nil
+			}
+			sawDelivery = true
+			deliveredMessages[messageID] = true
+			if readMessages[messageID] {
+				continue
+			}
+			if _, alreadyUnread := unreadMessages[messageID]; alreadyUnread {
+				continue
+			}
+			unreadMessages[messageID] = recipient
 			projected.InboxCounts[recipient]++
 		case MailboxProjectionReadEventType:
-			recipient, ok := projectedRecipientName(event.Payload, sessionName)
+			payload, ok := projectedMailboxPayload(event.Payload)
 			if !ok {
 				return MailboxState{}, false, nil
 			}
-			if projected.InboxCounts[recipient] == 0 {
+			messageID, ok := projectedMessageIdentity(payload)
+			if !ok {
+				if sawDelivery {
+					continue
+				}
 				return MailboxState{}, false, nil
 			}
+			recipient, unread := unreadMessages[messageID]
+			if !unread {
+				if !sawDelivery {
+					return MailboxState{}, false, nil
+				}
+				if deliveredMessages[messageID] {
+					readMessages[messageID] = true
+				}
+				continue
+			}
 			projected.InboxCounts[recipient]--
+			delete(unreadMessages, messageID)
+			readMessages[messageID] = true
 		}
 	}
 
@@ -80,22 +118,38 @@ func loadCurrentSessionState(sessionDir string) (journal.SessionState, bool) {
 	return state, true
 }
 
-func projectedRecipientName(payload json.RawMessage, sessionName string) (string, bool) {
-	var envelope struct {
-		To string `json:"to"`
+func projectedMailboxPayload(raw json.RawMessage) (journal.MailboxEventPayload, bool) {
+	payload, ok := decodeMailboxEventPayload(raw)
+	if !ok {
+		return journal.MailboxEventPayload{}, false
 	}
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return "", false
-	}
-	if envelope.To == "" {
+	return payload, true
+}
+
+func projectedRecipientName(payload journal.MailboxEventPayload, sessionName string) (string, bool) {
+	if payload.To == "" {
 		return "", false
 	}
 
-	fullRecipient := nodeaddr.Full(envelope.To, sessionName)
+	fullRecipient := nodeaddr.Full(payload.To, sessionName)
 	recipientSession, recipientName, hasSession := nodeaddr.Split(fullRecipient)
 	if !hasSession || recipientSession != sessionName || recipientName == "" {
 		return "", false
 	}
 
 	return recipientName, true
+}
+
+func projectedMessageIdentity(payload journal.MailboxEventPayload) (string, bool) {
+	if payload.MessageID != "" {
+		return payload.MessageID, true
+	}
+	if !isAllowedProjectionPath(payload.Path) {
+		return "", false
+	}
+	base := filepath.Base(pathKey(payload.Path))
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return "", false
+	}
+	return base, true
 }
