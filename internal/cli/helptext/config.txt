@@ -28,6 +28,7 @@ Core config:
   notification_template            Pane hint rendered when mail arrives
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)
+  pane_capture_tail_lines          Recent lines scanned for compaction markers (default: 100; 0 = visible pane only)
 
 Edge syntax:
   edges = [

@@ -309,6 +309,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.PaneCaptureIntervalSeconds != 5.0 {
 		t.Errorf("default PaneCaptureIntervalSeconds: got %v, want 5.0", cfg.PaneCaptureIntervalSeconds)
 	}
+	if cfg.PaneCaptureTailLines != 100 {
+		t.Errorf("default PaneCaptureTailLines: got %v, want 100", cfg.PaneCaptureTailLines)
+	}
 	if !strings.HasPrefix(cfg.NotificationTemplate, "Hello, {node}!") {
 		t.Errorf("default NotificationTemplate: got %q, want prefix Hello, {node}!", cfg.NotificationTemplate)
 	}
@@ -1699,6 +1702,7 @@ min_delivery_gap_seconds = 2.0
 startup_drain_window_seconds = 11.0
 auto_ping_delay_seconds = 12.0
 pane_capture_max_panes = 5
+pane_capture_tail_lines = 25
 enter_delay_seconds = 8.0
 
 [worker]
@@ -1730,6 +1734,7 @@ min_delivery_gap_seconds = 0
 startup_drain_window_seconds = 0
 auto_ping_delay_seconds = 0
 pane_capture_max_panes = 0
+pane_capture_tail_lines = 0
 `
 }
 
@@ -1779,6 +1784,9 @@ func assertZeroValuePostmanInventory(t *testing.T, cfg *Config) {
 	}
 	if cfg.PaneCaptureMaxPanes != 0 {
 		t.Fatalf("PaneCaptureMaxPanes: got %d, want 0", cfg.PaneCaptureMaxPanes)
+	}
+	if cfg.PaneCaptureTailLines != 0 {
+		t.Fatalf("PaneCaptureTailLines: got %d, want 0", cfg.PaneCaptureTailLines)
 	}
 }
 

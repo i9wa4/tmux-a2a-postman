@@ -178,6 +178,11 @@ the exact obligation. `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal
 no-reply messages. Agents should prefer `get-health` for structured session
 JSON and `get-health-oneline` for compact coordination.
 
+Pane capture also scans recent scrollback for Claude/Codex context-compaction
+markers so recovery PINGs are not limited to the visible screen. Configure the
+depth with `pane_capture_tail_lines` in `postman.toml`; the embedded default is
+`100`, and `0` restores visible-pane-only scanning.
+
 ## 5. Configuration
 
 `postman.toml` is optional; embedded defaults from
