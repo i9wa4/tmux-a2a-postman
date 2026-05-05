@@ -153,20 +153,28 @@ finish before the notification is pasted.
 
 Agents then run commands from their own tmux panes. The pane title identifies
 the sending role/node, independent of whether the pane is Claude Code, Codex
-CLI, or another AI coding agent:
+CLI, or another AI coding agent. For agent-safe non-interactive messages, pass
+the body on stdin with a quoted heredoc delimiter:
 
 ```sh
-tmux-a2a-postman send --to worker --body 'implement X'
+tmux-a2a-postman send --to worker <<'POSTMAN_BODY'
+implement X
+POSTMAN_BODY
 ```
 
-For arbitrary Markdown, command examples, variables, mixed quotes, or multiline
-content, avoid putting the body directly inside shell quotes. Use a file or
-standard input so the body is read as text:
+The single quotes around `POSTMAN_BODY` matter. They keep shell-sensitive text
+inside the body literal, including command substitutions, backticks, variables,
+mixed quotes, and multiline shell examples.
+
+For generated message files or reviewed handoffs, use a file:
 
 ```sh
 tmux-a2a-postman send --to worker --body-file request.md
-tmux-a2a-postman send --to worker --body-stdin < request.md
 ```
+
+`--body-stdin` remains available for explicit stdin or pipe workflows. Direct
+`--body` is a legacy convenience for short, single-line literal text only; do
+not use it for agent-to-agent Markdown.
 
 The daemon discovers panes by title and routes messages through
 filesystem-backed inboxes. A recipient agent usually runs `pop` after the pane

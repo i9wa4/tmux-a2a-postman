@@ -311,14 +311,17 @@ func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
 		"--dead-letters",
 		"--resend-oldest",
 		`tmux-a2a-postman send --to <node> --body "<message>"`,
+		"tmux-a2a-postman send --to <node> --body-stdin < corrected-message.md",
 	} {
 		if strings.Contains(content, stale) {
 			t.Fatalf("dead-letter notification still contains stale recovery surface %q: %s", stale, content)
 		}
 	}
 	for _, want := range []string{
+		"tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'",
+		"<corrected message>",
+		"POSTMAN_BODY",
 		"tmux-a2a-postman send --to <node> --body-file corrected-message.md",
-		"tmux-a2a-postman send --to <node> --body-stdin < corrected-message.md",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dead-letter notification missing safe send recovery command %q: %s", want, content)

@@ -1,17 +1,19 @@
 send — compose and deliver a message
 
 Usage:
-  tmux-a2a-postman send --to <node> --body 'text'
+  tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'
+  message text
+  POSTMAN_BODY
   tmux-a2a-postman send --to <node> --body-file body.md
   tmux-a2a-postman send --to <node> --body-stdin < body.md
   tmux-a2a-postman send --help
 
 Flags:
   --to <node>             Recipient node name (required)
-  --body <text>           Message body text
+  --body <text>           Legacy short literal body text
   --body-file <path>      Read message body from file
   --body-stdin            Read message body from standard input
-  --stdin                 Alias for --body-stdin
+  --stdin                 Deprecated alias for --body-stdin
   --no-reply              Mark this message as not requiring a reply
   --reply-required        Mark this message as requiring a reply
   --reply-to <message>    Message id for legacy closure or traceability
@@ -19,12 +21,20 @@ Flags:
                           Exact obligation id this message satisfies
 
 Body input:
-  Exactly one body source is required. Use --body for simple one-line text.
-  For shell-sensitive or multiline text containing command substitutions,
-  backticks, $HOME variables, quotes, or shell examples, prefer --body-file or
-  --body-stdin. File and stdin bodies are read as-is, including the final
-  newline when present. --body - remains a literal body value; use --body-stdin
-  or --stdin to read standard input.
+  Canonical agent-safe input is stdin with a quoted heredoc delimiter:
+
+    tmux-a2a-postman send --to worker <<'POSTMAN_BODY'
+    literal $(not executed), `backticks`, and $HOME
+    POSTMAN_BODY
+
+  When no explicit body source is supplied, send reads non-interactive stdin.
+  If stdin is an interactive terminal, send fails with body-source guidance
+  instead of waiting for input. File and stdin bodies are read as-is, including
+  the final newline when present.
+
+  Use --body-file for generated or reviewed message files. Use --body-stdin
+  when an explicit stdin/pipe flag is clearer. Direct --body is legacy and
+  accepts only short, single-line, shell-plain literal text.
 
 Output:
   Always JSON.

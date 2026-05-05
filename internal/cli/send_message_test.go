@@ -289,6 +289,44 @@ func TestRunSendMessage_BodyStdinPreservesShellSensitiveText(t *testing.T) {
 	}
 }
 
+func TestRunSendMessage_DefaultStdinPreservesShellSensitiveText(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := shellSensitiveBodyForSendTest()
+	previousStdin := sendBodyStdin
+	previousIsTerminal := sendBodyStdinIsTerminal
+	sendBodyStdin = strings.NewReader(body)
+	sendBodyStdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+		sendBodyStdinIsTerminal = previousIsTerminal
+	})
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-default-stdin",
+			"--to", "worker",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-default-stdin", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), body) {
+		t.Fatalf("post content did not preserve default stdin text:\n%s", string(content))
+	}
+}
+
 func TestRunSendMessage_StdinAliasPreservesShellSensitiveText(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -322,6 +360,45 @@ func TestRunSendMessage_StdinAliasPreservesShellSensitiveText(t *testing.T) {
 	}
 	if !strings.Contains(string(content), body) {
 		t.Fatalf("post content did not preserve --stdin text:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_DefaultStdinRejectsInteractiveTerminal(t *testing.T) {
+	previousStdin := sendBodyStdin
+	previousIsTerminal := sendBodyStdinIsTerminal
+	sendBodyStdin = strings.NewReader("ignored")
+	sendBodyStdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+		sendBodyStdinIsTerminal = previousIsTerminal
+	})
+
+	err := RunSendMessage([]string{"--to", "worker"})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want body-source guidance")
+	}
+	if !strings.Contains(err.Error(), "quoted heredoc") {
+		t.Fatalf("RunSendMessage() error = %v, want quoted heredoc guidance", err)
+	}
+}
+
+func TestRunSendMessage_LegacyBodyRejectsShellSensitiveText(t *testing.T) {
+	for _, body := range []string{
+		"literal $(printf SHOULD_NOT_RUN)",
+		"literal `date`",
+		"literal $HOME",
+		"line one\nline two",
+		strings.Repeat("x", maxLegacyInlineBodyLen+1),
+	} {
+		t.Run(body, func(t *testing.T) {
+			err := RunSendMessage([]string{"--to", "worker", "--body", body})
+			if err == nil {
+				t.Fatal("RunSendMessage() error = nil, want legacy --body validation error")
+			}
+			if !strings.Contains(err.Error(), "legacy --body") {
+				t.Fatalf("RunSendMessage() error = %v, want legacy --body guidance", err)
+			}
+		})
 	}
 }
 
@@ -1045,7 +1122,8 @@ role = "orchestrator"
 		t.Fatalf("ReadFile draft: %v", err)
 	}
 	content := string(draftContent)
-	if !strings.Contains(content, "Reply: custom-reply --context ctx-default-footer-reply --to messenger") {
+	if !strings.Contains(content, "Reply with quoted heredoc:\ncustom-reply --context ctx-default-footer-reply --to messenger --reply-to ") ||
+		!strings.Contains(content, " <<'POSTMAN_BODY'") {
 		t.Fatalf("default footer missing configured reply command:\n%s", content)
 	}
 	if strings.Contains(content, "Reply: tmux-a2a-postman send --to <receiver>") {
@@ -1104,8 +1182,9 @@ role = "worker"
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
 		"obligation_id: " + payload.ObligationID,
-		"Reply: tmux-a2a-postman send --to messenger --body '<your message>' --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent,
-		"For shell-sensitive or multiline text, use --body-file or --body-stdin.",
+		"Reply with quoted heredoc:\ntmux-a2a-postman send --to messenger --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
+		"<your message>\nPOSTMAN_BODY",
+		"For generated files, use --body-file <path>.",
 		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {

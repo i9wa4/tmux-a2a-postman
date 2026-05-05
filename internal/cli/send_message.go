@@ -57,7 +57,22 @@ type sendOutput struct {
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
 
-var sendBodyStdin io.Reader = os.Stdin
+var (
+	sendBodyStdin           io.Reader = os.Stdin
+	sendBodyStdinIsTerminal           = func() bool {
+		stdinFile, ok := sendBodyStdin.(*os.File)
+		if !ok {
+			return false
+		}
+		info, err := stdinFile.Stat()
+		if err != nil {
+			return false
+		}
+		return info.Mode()&os.ModeCharDevice != 0
+	}
+)
+
+const maxLegacyInlineBodyLen = 200
 
 // performCLINotification sends a synchronous pane notification from the CLI.
 // Returns cliNotifySkipped when paneID is empty, cliNotifyOK on success, cliNotifyFailed on error.
@@ -71,7 +86,31 @@ func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTime
 	return cliNotifyOK
 }
 
-func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader io.Reader) (string, error) {
+func validateLegacyInlineBody(body string) error {
+	if len(body) > maxLegacyInlineBodyLen {
+		return fmt.Errorf("legacy --body accepts only short literal text; use quoted heredoc stdin or --body-file for longer messages")
+	}
+	if strings.ContainsAny(body, "\r\n\t") {
+		return fmt.Errorf("legacy --body accepts only single-line literal text; use quoted heredoc stdin or --body-file for multiline messages")
+	}
+	if strings.ContainsAny(body, "$`\"'\\;&|<>(){}") {
+		return fmt.Errorf("legacy --body contains shell-sensitive characters; use quoted heredoc stdin or --body-file")
+	}
+	return nil
+}
+
+func readSendBodyStdin(stdinReader io.Reader) (string, error) {
+	if stdinReader == nil {
+		return "", fmt.Errorf("reading stdin body: standard input is unavailable")
+	}
+	data, err := io.ReadAll(stdinReader)
+	if err != nil {
+		return "", fmt.Errorf("reading stdin body: %w", err)
+	}
+	return string(data), nil
+}
+
+func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader io.Reader, stdinIsTerminal bool) (string, error) {
 	stdinRequested := bodyStdin || stdin
 	sourceCount := 0
 	if body != "" {
@@ -84,12 +123,18 @@ func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader i
 		sourceCount++
 	}
 	if sourceCount == 0 {
-		return "", fmt.Errorf("--body, --body-file, or --body-stdin is required")
+		if stdinIsTerminal {
+			return "", fmt.Errorf("message body is required: pass a quoted heredoc on stdin, --body-stdin, --body-file, or legacy --body for simple literal text")
+		}
+		return readSendBodyStdin(stdinReader)
 	}
 	if sourceCount > 1 {
-		return "", fmt.Errorf("--body, --body-file, and --body-stdin are mutually exclusive")
+		return "", fmt.Errorf("--body, --body-file, and stdin body input are mutually exclusive")
 	}
 	if body != "" {
+		if err := validateLegacyInlineBody(body); err != nil {
+			return "", err
+		}
 		return body, nil
 	}
 	if bodyFile != "" {
@@ -99,14 +144,7 @@ func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader i
 		}
 		return string(data), nil
 	}
-	if stdinReader == nil {
-		return "", fmt.Errorf("reading --body-stdin: standard input is unavailable")
-	}
-	data, err := io.ReadAll(stdinReader)
-	if err != nil {
-		return "", fmt.Errorf("reading --body-stdin: %w", err)
-	}
-	return string(data), nil
+	return readSendBodyStdin(stdinReader)
 }
 
 func RunSendMessage(args []string) error {
@@ -116,7 +154,7 @@ func RunSendMessage(args []string) error {
 	body := fs.String("body", "", "message body text")
 	bodyFile := fs.String("body-file", "", "read message body from file")
 	bodyStdin := fs.Bool("body-stdin", false, "read message body from standard input")
-	stdin := fs.Bool("stdin", false, "alias for --body-stdin")
+	stdin := fs.Bool("stdin", false, "deprecated alias for --body-stdin")
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
@@ -132,10 +170,7 @@ func RunSendMessage(args []string) error {
 	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
 		return err
 	}
-	// NOTE: runCreateDraft issues only a warning (not an error) for --send
-	// without --body (see runCreateDraft:966-968). Enforce here before
-	// delegating so send never sends a placeholder-body message.
-	bodyText, err := resolveSendBody(*body, *bodyFile, *bodyStdin, *stdin, sendBodyStdin)
+	bodyText, err := resolveSendBody(*body, *bodyFile, *bodyStdin, *stdin, sendBodyStdin, sendBodyStdinIsTerminal())
 	if err != nil {
 		return err
 	}

@@ -50,7 +50,7 @@ Example:
 
 ```text
 ---
-reply_command: tmux-a2a-postman send --to {from_node} --body
+reply_command: tmux-a2a-postman send --to {from_node}
 skill_path:
   - path: ~/ghq/github.com/i9wa4/dotfiles/skills
     skills:
