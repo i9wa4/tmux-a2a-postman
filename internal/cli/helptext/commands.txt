@@ -11,7 +11,9 @@ send
     --body <text>        Message body (required)
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
-    --reply-to <message> Message id this message resolves
+    --reply-to <message> Message id for legacy closure or traceability
+    --satisfies-obligation-id <id>
+                         Exact obligation id this message satisfies
 
 pop
   Read and archive the oldest unread inbox message.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -114,6 +115,52 @@ func TestRunSendMessage_InvalidReplyToRejectedBeforeWriting(t *testing.T) {
 				"--body", "hello",
 				"--reply-to", tt.replyTo,
 			})
+			if err == nil {
+				t.Fatal("RunSendMessage() error = nil, want validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("RunSendMessage() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunSendMessage_InvalidSatisfiesObligationIDRejectedBeforeWriting(t *testing.T) {
+	tests := []struct {
+		name         string
+		obligationID string
+		want         string
+	}{
+		{
+			name:         "path",
+			obligationID: "../obl_123",
+			want:         "path separators",
+		},
+		{
+			name:         "multi_token",
+			obligationID: "obl 123",
+			want:         "whitespace",
+		},
+		{
+			name: "empty",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("POSTMAN_HOME", tmpDir)
+			args := []string{
+				"--to", "worker",
+				"--body", "hello",
+				"--satisfies-obligation-id", tt.obligationID,
+			}
+			err := RunSendMessage(args)
+			if tt.obligationID == "" {
+				if err != nil && strings.Contains(err.Error(), "--satisfies-obligation-id") {
+					t.Fatalf("RunSendMessage() error = %v, want no obligation validation error", err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatal("RunSendMessage() error = nil, want validation error")
 			}
@@ -856,6 +903,12 @@ role = "worker"
 	if payload.ReplyPolicy != "required" {
 		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
 	}
+	if payload.ObligationID == "" {
+		t.Fatal("payload.ObligationID is empty, want generated obligation id")
+	}
+	if err := envelope.ValidateObligationToken(payload.ObligationID); err != nil {
+		t.Fatalf("payload.ObligationID = %q is invalid: %v", payload.ObligationID, err)
+	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-reply-policy", "test-session", "post", payload.Sent))
 	if err != nil {
@@ -864,12 +917,76 @@ role = "worker"
 	for _, want := range []string{
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
-		"Reply: tmux-a2a-postman send --to messenger --body \"<your message>\" --reply-to " + payload.Sent,
+		"obligation_id: " + payload.ObligationID,
+		"Reply: tmux-a2a-postman send --to messenger --body \"<your message>\" --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent,
 		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))
 		}
+	}
+	if strings.Contains(string(content), "satisfies_obligation_id:") {
+		t.Fatalf("content contains unexpected satisfies_obligation_id:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_StoresSatisfiesObligationIDForExactReply(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	const obligationID = "obl_exact_123"
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-exact-reply",
+			"--to", "messenger",
+			"--body", "DONE",
+			"--reply-to", "20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
+			"--satisfies-obligation-id", obligationID,
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.ObligationID != "" {
+		t.Fatalf("payload.ObligationID = %q, want empty for no-reply exact reply", payload.ObligationID)
+	}
+	if payload.SatisfiesObligationID != obligationID {
+		t.Fatalf("payload.SatisfiesObligationID = %q, want %q", payload.SatisfiesObligationID, obligationID)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-exact-reply", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	for _, want := range []string{
+		"replyPolicy: none",
+		"replyTo: 20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
+		"satisfies_obligation_id: " + obligationID,
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("content missing %q:\n%s", want, string(content))
+		}
+	}
+	if strings.Contains(string(content), "\n  obligation_id:") {
+		t.Fatalf("content contains unexpected obligation_id:\n%s", string(content))
 	}
 }
 
@@ -925,6 +1042,7 @@ params:
   to: {recipient}
   timestamp: {timestamp}
   messageType: status_request
+  obligation_id: {obligation_id}
 ---
 
 <!-- write here -->
@@ -956,6 +1074,9 @@ role = "worker"
 	if payload.ReplyPolicy != "required" {
 		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
 	}
+	if payload.ObligationID == "" {
+		t.Fatal("payload.ObligationID is empty, want generated obligation id")
+	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-message-type-policy", "test-session", "post", payload.Sent))
 	if err != nil {
@@ -964,6 +1085,7 @@ role = "worker"
 	for _, want := range []string{
 		"messageType: status_request",
 		"replyPolicy: required",
+		"obligation_id: " + payload.ObligationID,
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))
@@ -2420,5 +2542,8 @@ func assertNoGeneratedReplyPolicyMarker(t *testing.T, value, label string) {
 	t.Helper()
 	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_REPLY_POLICY_") {
 		t.Fatalf("%s leaked generated reply policy marker:\n%s", label, value)
+	}
+	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_OBLIGATION_ID_") {
+		t.Fatalf("%s leaked generated obligation id marker:\n%s", label, value)
 	}
 }

@@ -110,6 +110,45 @@ func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsExactObligationFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  replyPolicy: required\n  obligation_id: obl_123\n  satisfies_obligation_id: obl_prev\n  obligation_group_id: group_1\n  branch_id: branch_1\n  completion_rule: all\n---\n\nplease review\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ObligationID != "obl_123" {
+		t.Fatalf("ObligationID = %q, want obl_123", got.ObligationID)
+	}
+	if got.SatisfiesObligationID != "obl_prev" {
+		t.Fatalf("SatisfiesObligationID = %q, want obl_prev", got.SatisfiesObligationID)
+	}
+	if got.ObligationGroupID != "group_1" {
+		t.Fatalf("ObligationGroupID = %q, want group_1", got.ObligationGroupID)
+	}
+	if got.BranchID != "branch_1" {
+		t.Fatalf("BranchID = %q, want branch_1", got.BranchID)
+	}
+	if got.CompletionRule != "all" {
+		t.Fatalf("CompletionRule = %q, want all", got.CompletionRule)
+	}
+}
+
+func TestParseMetadataDoesNotAcceptDecorativeObligationAliases(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  obligationId: obl_123\n  satisfiesObligationId: obl_prev\n---\n\nplease review\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ObligationID != "" {
+		t.Fatalf("ObligationID = %q, want empty", got.ObligationID)
+	}
+	if got.SatisfiesObligationID != "" {
+		t.Fatalf("SatisfiesObligationID = %q, want empty", got.SatisfiesObligationID)
+	}
+}
+
 func TestParseMetadataIgnoresNestedParamsFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: required\n    messageType: status_request\n---\n\nplain update\n"
 
@@ -200,6 +239,34 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	}
 }
 
+func TestEnsureParamsInsertsExactObligationFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"messageId":               "m1.md",
+		"replyPolicy":             "required",
+		"obligation_id":           "obl_123",
+		"satisfies_obligation_id": "obl_prev",
+		"obligation_group_id":     "group_1",
+		"branch_id":               "branch_1",
+		"completion_rule":         "all",
+	})
+
+	for _, want := range []string{
+		"messageId: m1.md",
+		"replyPolicy: required",
+		"obligation_id: obl_123",
+		"satisfies_obligation_id: obl_prev",
+		"obligation_group_id: group_1",
+		"branch_id: branch_1",
+		"completion_rule: all",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("EnsureParams() missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestEnsureParamsPreservesWiderDirectParamsIndent(t *testing.T) {
 	content := "---\nparams:\n    from: orchestrator\n    to: worker\n    messageId: old.md\n    audit:\n        replyPolicy: display-only\n---\n\nplease review\n"
 
@@ -225,6 +292,31 @@ func TestEnsureParamsPreservesWiderDirectParamsIndent(t *testing.T) {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("EnsureParams() contains unwanted %q:\n%s", unwanted, got)
 		}
+	}
+}
+
+func TestValidateObligationToken(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "opaque token", value: "obl_0123456789abcdef"},
+		{name: "empty", wantErr: true},
+		{name: "leading whitespace", value: " obl_123", wantErr: true},
+		{name: "internal whitespace", value: "obl 123", wantErr: true},
+		{name: "path separator", value: "obl/123", wantErr: true},
+		{name: "windows path separator", value: "obl\\123", wantErr: true},
+		{name: "control character", value: "obl_\n123", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateObligationToken(tt.value)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateObligationToken(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+			}
+		})
 	}
 }
 

@@ -22,13 +22,17 @@
 #
 # draft_template:
 #   {context_id}     - Current context ID
-#   {task_id}        - Unique task identifier
 #   {sender}         - Sender node name
 #   {recipient}      - Recipient node name
 #   {timestamp}      - ISO format timestamp
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
 #   {session_dir}    - Session directory path
 #   {reply_command}  - Command to create draft reply
+#   {message_id}     - Current message id
+#   {reply_policy}   - Resolved reply policy
+#   {reply_to}       - Message id this message references, when supplied
+#   {obligation_id}  - Exact obligation id for reply-required messages
+#   {satisfies_obligation_id} - Exact obligation id this message satisfies
 #   {template}       - Recipient's role template from config
 #   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
@@ -113,8 +117,11 @@ Run `tmux-a2a-postman pop` to read it. """
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
+#            {reply_arguments} - exact reply args for required mail, legacy args otherwise
+#            {obligation_id} - exact obligation id when reply is required
+#            {satisfies_obligation_id} - exact obligation id this message satisfies
 message_footer = """You can talk to: {can_talk_to}
-Reply: {reply_command} --reply-to {message_id}
+Reply: {reply_command}{reply_arguments}
 Add --reply-required only when your reply needs a response.
 No reply needed for: DONE, ACK, PING, HEARTBEAT_OK, status updates, alerts, or pane hints."""
 
@@ -151,8 +158,10 @@ How to reply: {reply_command}
 """
 
 # Draft message template (user-initiated messages via send)
-# Variables: {context_id}, {task_id}, {sender}, {recipient}, {timestamp},
-#   {session_name}, {template}, {can_talk_to}, {reply_command}
+# Variables: {context_id}, {sender}, {recipient}, {timestamp},
+#   {session_name}, {template}, {can_talk_to}, {reply_command},
+#   {message_id}, {reply_policy}, {reply_to}, {obligation_id},
+#   {satisfies_obligation_id}
 draft_template = """---
 params:
   contextId: {context_id}

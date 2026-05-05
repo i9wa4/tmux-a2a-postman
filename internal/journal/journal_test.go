@@ -50,6 +50,51 @@ func TestOpenShadowWriter_BootstrapsOwnerOnlyState(t *testing.T) {
 	}
 }
 
+func TestRecordMailboxPayloadPersistsExactObligationFields(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 2, 0, 0, time.UTC)
+
+	manager := NewManager("ctx-main", 4242)
+	if err := manager.RecordMailboxPayload(sessionDir, "main", "mailbox_projection_delivered", VisibilityMailboxProjection, MailboxEventPayload{
+		MessageID:             "m1.md",
+		From:                  "orchestrator",
+		To:                    "worker",
+		ThreadID:              "thread_1",
+		ObligationID:          "obl_123",
+		SatisfiesObligationID: "obl_prev",
+		ObligationGroupID:     "group_1",
+		BranchID:              "branch_1",
+		CompletionRule:        "all",
+		Content:               "payload",
+	}, now); err != nil {
+		t.Fatalf("RecordMailboxPayload() error = %v", err)
+	}
+
+	events, err := Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("Replay() returned %d events, want 3", len(events))
+	}
+	if events[2].ThreadID != "thread_1" {
+		t.Fatalf("event.ThreadID = %q, want thread_1", events[2].ThreadID)
+	}
+	var payload MailboxEventPayload
+	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(payload): %v", err)
+	}
+	if payload.ObligationID != "obl_123" {
+		t.Fatalf("payload.ObligationID = %q, want obl_123", payload.ObligationID)
+	}
+	if payload.SatisfiesObligationID != "obl_prev" {
+		t.Fatalf("payload.SatisfiesObligationID = %q, want obl_prev", payload.SatisfiesObligationID)
+	}
+	if payload.ObligationGroupID != "group_1" || payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
+		t.Fatalf("group fields = %q/%q/%q, want group_1/branch_1/all", payload.ObligationGroupID, payload.BranchID, payload.CompletionRule)
+	}
+}
+
 func TestResolveSession_ResumeCurrentKeepsSessionKeyAndGeneration(t *testing.T) {
 	sessionDir := t.TempDir()
 	firstNow := time.Date(2026, time.April, 14, 17, 5, 0, 0, time.UTC)

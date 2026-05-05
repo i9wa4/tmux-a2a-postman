@@ -6,7 +6,8 @@ description: |
   Use when:
   - Interpreting get-health or get-health-oneline output
   - Deciding whether to pop, reply, resend, wait, follow up, or restart
-  - Handling reply-required, no-reply, reply-to, or status request behavior
+  - Handling reply-required, no-reply, reply-to, exact obligation replies, or
+    status request behavior
   - Diagnosing pending, waiting, stale, unread, post queue, dead-letter,
     auto-ping, pane discovery, daemon restart, or slow delivery state
   Do not use for topology or postman.md syntax audits; use postman-config-auditor.
@@ -51,7 +52,7 @@ instructions, message metadata, health output, and observed send results.
 | State         | Meaning                                       | Usual action                                        |
 | ------------- | --------------------------------------------- | --------------------------------------------------- |
 | `ready`       | Pane is live with no open action or wait      | No action unless the user or workflow asks          |
-| `pending`     | Inbound reply-required message is open        | `pop`, handle the message, reply with `--reply-to`  |
+| `pending`     | Inbound reply-required message is open        | `pop`, handle the message, send an exact reply      |
 | `waiting`     | Outbound reply-required message is unresolved | Wait, or follow up only when timeout policy says so |
 | `stale`       | Pane or session is missing or unknown         | Verify pane/session before blaming workflow         |
 | `unavailable` | Daemon cannot provide canonical health        | Check daemon and session ownership                  |
@@ -64,15 +65,17 @@ instructions, message metadata, health output, and observed send results.
 A reply-required message opens action for the recipient and waiting state for
 the sender.
 
-A resolving reply must name the original message id:
+A new reply-required message carries an exact `obligation_id`. A resolving
+reply should name that obligation:
 
 ```sh
-tmux-a2a-postman send --to <sender> --body "<reply>" --reply-to <message-id>
+tmux-a2a-postman send --to <sender> --body "<reply>" --satisfies-obligation-id <obligation-id> --reply-to <message-id>
 ```
 
 Reading with `pop` clears unread state, but it does not clear reply-required
-action. Only a later message with exact `--reply-to <message-id>` clears the
-obligation.
+action. Only a later message with `--satisfies-obligation-id <obligation-id>`
+clears an exact obligation. `--reply-to <message-id>` remains useful for
+legacy messages and human traceability.
 
 Use `--reply-required` for work requests, approval requests, status requests,
 or any message where the sender needs a later resolving answer. Use
@@ -103,7 +106,9 @@ If dead letters exist, treat routing or configuration as suspect and use
 1. Run `tmux-a2a-postman get-health`.
 2. If your node is `pending`, run `tmux-a2a-postman pop`.
 3. If the popped message has `reply_policy: required`, handle it and reply with
-   `--reply-to <message-id>`.
+   `--satisfies-obligation-id <obligation_id>` when the pop output includes
+   `obligation_id`; keep `--reply-to <message_id>` for traceability when the
+   footer provides it. Otherwise use legacy `--reply-to <message_id>`.
 4. If your node is `waiting`, do not clear it by reading mail. Wait for an
    exact reply or send a bounded follow-up if the workflow timeout requires it.
 5. If a node is `stale`, verify the tmux pane, tmux session, and daemon before

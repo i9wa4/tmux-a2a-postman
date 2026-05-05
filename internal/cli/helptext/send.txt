@@ -9,11 +9,15 @@ Flags:
   --body <text>           Message body (required)
   --no-reply              Mark this message as not requiring a reply
   --reply-required        Mark this message as requiring a reply
-  --reply-to <message>    Message id this message resolves
+  --reply-to <message>    Message id for legacy closure or traceability
+  --satisfies-obligation-id <id>
+                          Exact obligation id this message satisfies
 
 Output:
   Always JSON.
   {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
+  Reply-required sends include "obligation_id".
+  Exact replies include "satisfies_obligation_id".
 
 Status:
   processed               Daemon-side handling was observed

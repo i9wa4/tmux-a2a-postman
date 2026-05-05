@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -38,16 +40,18 @@ const (
 )
 
 type sendOutput struct {
-	Sent        string                `json:"sent"`
-	Status      string                `json:"status"`
-	ContextID   string                `json:"context_id,omitempty"`
-	Session     string                `json:"session,omitempty"`
-	From        string                `json:"from,omitempty"`
-	To          string                `json:"to,omitempty"`
-	ReplyPolicy string                `json:"reply_policy,omitempty"`
-	ReplyTo     string                `json:"reply_to,omitempty"`
-	SubmitPath  projection.SubmitPath `json:"submit_path,omitempty"`
-	Notify      string                `json:"notify,omitempty"`
+	Sent                  string                `json:"sent"`
+	Status                string                `json:"status"`
+	ContextID             string                `json:"context_id,omitempty"`
+	Session               string                `json:"session,omitempty"`
+	From                  string                `json:"from,omitempty"`
+	To                    string                `json:"to,omitempty"`
+	ReplyPolicy           string                `json:"reply_policy,omitempty"`
+	ReplyTo               string                `json:"reply_to,omitempty"`
+	ObligationID          string                `json:"obligation_id,omitempty"`
+	SatisfiesObligationID string                `json:"satisfies_obligation_id,omitempty"`
+	SubmitPath            projection.SubmitPath `json:"submit_path,omitempty"`
+	Notify                string                `json:"notify,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -72,6 +76,7 @@ func RunSendMessage(args []string) error {
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
+	satisfiesObligationID := fs.String("satisfies-obligation-id", "", "obligation id this message satisfies")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -93,6 +98,9 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("--no-reply and --reply-required are mutually exclusive")
 	}
 	if err := validateReplyToMessageID(*replyTo); err != nil {
+		return err
+	}
+	if err := validateSatisfiesObligationID(*satisfiesObligationID); err != nil {
 		return err
 	}
 	cfg, err := config.LoadConfig(*configPath)
@@ -210,6 +218,8 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("generating filename: %w", err)
 	}
 	replyPolicy := message.ResolveReplyPolicyForSend(*body, *noReply, *replyRequired)
+	obligationID := ""
+	obligationIDMarker := generatedObligationIDPlaceholder(filename)
 	draftPath := filepath.Join(draftDir, filename)
 
 	content := cfg.DraftTemplate
@@ -219,19 +229,22 @@ func RunSendMessage(args []string) error {
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
-		"context_id":     resolvedContextID,
-		"sender":         sender,
-		"recipient":      *to,
-		"timestamp":      now.Format(time.RFC3339),
-		"can_talk_to":    canTalkTo,
-		"session_dir":    filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
-		"message_id":     filename,
-		"reply_policy":   generatedReplyPolicyMarker,
-		"reply_to":       *replyTo,
-		"template":       getNodeTemplate(cfg, *to),
-		"session_name":   sessionName,
-		"sender_pane_id": config.GetTmuxPaneID(),
+		"context_id":              resolvedContextID,
+		"sender":                  sender,
+		"recipient":               *to,
+		"timestamp":               now.Format(time.RFC3339),
+		"can_talk_to":             canTalkTo,
+		"session_dir":             filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":           strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":              filename,
+		"reply_policy":            generatedReplyPolicyMarker,
+		"reply_to":                *replyTo,
+		"obligation_id":           obligationIDMarker,
+		"satisfies_obligation_id": *satisfiesObligationID,
+		"reply_arguments":         "",
+		"template":                getNodeTemplate(cfg, *to),
+		"session_name":            sessionName,
+		"sender_pane_id":          config.GetTmuxPaneID(),
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -255,10 +268,22 @@ func RunSendMessage(args []string) error {
 	}
 	content = strings.ReplaceAll(content, generatedReplyPolicyMarker, replyPolicy)
 	vars["reply_policy"] = replyPolicy
+	if replyPolicy == "required" {
+		obligationID, err = generateObligationID()
+		if err != nil {
+			return err
+		}
+	}
+	content = strings.ReplaceAll(content, obligationIDMarker, obligationID)
+	vars["obligation_id"] = obligationID
+	vars["satisfies_obligation_id"] = *satisfiesObligationID
+	vars["reply_arguments"] = replyArgumentsForMessage(filename, obligationID)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":   filename,
-		"replyPolicy": replyPolicy,
-		"replyTo":     *replyTo,
+		"messageId":               filename,
+		"replyPolicy":             replyPolicy,
+		"replyTo":                 *replyTo,
+		"obligation_id":           obligationID,
+		"satisfies_obligation_id": *satisfiesObligationID,
 	})
 
 	if cfg.MessageFooter != "" {
@@ -282,6 +307,9 @@ func RunSendMessage(args []string) error {
 		footerVars["message_id"] = filename
 		footerVars["reply_policy"] = replyPolicy
 		footerVars["reply_to"] = *replyTo
+		footerVars["obligation_id"] = obligationID
+		footerVars["satisfies_obligation_id"] = *satisfiesObligationID
+		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, obligationID)
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
@@ -304,15 +332,17 @@ func RunSendMessage(args []string) error {
 			return fmt.Errorf("send outcome: %w", err)
 		}
 		return writeSendOutput(sendOutput{
-			Sent:        deliveredFilename,
-			Status:      string(status),
-			ContextID:   resolvedContextID,
-			Session:     sessionName,
-			From:        sender,
-			To:          *to,
-			ReplyPolicy: replyPolicy,
-			ReplyTo:     *replyTo,
-			SubmitPath:  projection.SubmitPathDaemon,
+			Sent:                  deliveredFilename,
+			Status:                string(status),
+			ContextID:             resolvedContextID,
+			Session:               sessionName,
+			From:                  sender,
+			To:                    *to,
+			ReplyPolicy:           replyPolicy,
+			ReplyTo:               *replyTo,
+			ObligationID:          obligationID,
+			SatisfiesObligationID: *satisfiesObligationID,
+			SubmitPath:            projection.SubmitPathDaemon,
 		})
 	}
 
@@ -357,16 +387,18 @@ func RunSendMessage(args []string) error {
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
 	return writeSendOutput(sendOutput{
-		Sent:        filename,
-		Status:      string(status),
-		ContextID:   resolvedContextID,
-		Session:     sessionName,
-		From:        sender,
-		To:          *to,
-		ReplyPolicy: replyPolicy,
-		ReplyTo:     *replyTo,
-		SubmitPath:  projection.SubmitPathPost,
-		Notify:      notifyOutputValue(notifyStatus),
+		Sent:                  filename,
+		Status:                string(status),
+		ContextID:             resolvedContextID,
+		Session:               sessionName,
+		From:                  sender,
+		To:                    *to,
+		ReplyPolicy:           replyPolicy,
+		ReplyTo:               *replyTo,
+		ObligationID:          obligationID,
+		SatisfiesObligationID: *satisfiesObligationID,
+		SubmitPath:            projection.SubmitPathPost,
+		Notify:                notifyOutputValue(notifyStatus),
 	})
 }
 
@@ -384,6 +416,35 @@ func generatedReplyPolicyPlaceholder(filename string) string {
 	return b.String()
 }
 
+func generatedObligationIDPlaceholder(filename string) string {
+	var b strings.Builder
+	b.WriteString("__TMUX_A2A_POSTMAN_GENERATED_OBLIGATION_ID_")
+	for _, r := range filename {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	b.WriteString("__")
+	return b.String()
+}
+
+func generateObligationID() (string, error) {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generating obligation id: %w", err)
+	}
+	return "obl_" + hex.EncodeToString(raw[:]), nil
+}
+
+func replyArgumentsForMessage(messageID, obligationID string) string {
+	if obligationID != "" {
+		return " --satisfies-obligation-id " + obligationID + " --reply-to " + messageID
+	}
+	return " --reply-to " + messageID
+}
+
 func validateReplyToMessageID(replyTo string) error {
 	if replyTo == "" {
 		return nil
@@ -396,6 +457,16 @@ func validateReplyToMessageID(replyTo string) error {
 	}
 	if _, err := message.ParseMessageFilename(replyTo); err != nil {
 		return fmt.Errorf("--reply-to must be a valid message id: %w", err)
+	}
+	return nil
+}
+
+func validateSatisfiesObligationID(obligationID string) error {
+	if obligationID == "" {
+		return nil
+	}
+	if err := envelope.ValidateObligationToken(obligationID); err != nil {
+		return fmt.Errorf("--satisfies-obligation-id %w", err)
 	}
 	return nil
 }

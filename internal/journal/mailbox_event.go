@@ -5,14 +5,19 @@ import "time"
 // MailboxEventPayload carries the mailbox file snapshot needed to rebuild
 // mailbox projection files from replay.
 type MailboxEventPayload struct {
-	Directory  string `json:"directory,omitempty"`
-	MessageID  string `json:"message_id,omitempty"`
-	From       string `json:"from,omitempty"`
-	To         string `json:"to,omitempty"`
-	ThreadID   string `json:"thread_id,omitempty"`
-	Path       string `json:"path,omitempty"`
-	SourcePath string `json:"source_path,omitempty"`
-	Content    string `json:"content,omitempty"`
+	Directory             string `json:"directory,omitempty"`
+	MessageID             string `json:"message_id,omitempty"`
+	From                  string `json:"from,omitempty"`
+	To                    string `json:"to,omitempty"`
+	ThreadID              string `json:"thread_id,omitempty"`
+	ObligationID          string `json:"obligation_id,omitempty"`
+	SatisfiesObligationID string `json:"satisfies_obligation_id,omitempty"`
+	ObligationGroupID     string `json:"obligation_group_id,omitempty"`
+	BranchID              string `json:"branch_id,omitempty"`
+	CompletionRule        string `json:"completion_rule,omitempty"`
+	Path                  string `json:"path,omitempty"`
+	SourcePath            string `json:"source_path,omitempty"`
+	Content               string `json:"content,omitempty"`
 }
 
 func RecordProcessMailboxPayload(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, now time.Time) error {

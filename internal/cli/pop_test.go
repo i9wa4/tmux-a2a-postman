@@ -395,6 +395,58 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 }
 
+func TestRunPop_ReportsMessageIDAndExactObligationFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+	contextID := "ctx-pop-exact-obligation"
+	messageFile := "20260328-101505-from-orchestrator-to-worker.md"
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: " + messageFile + "\n" +
+		"  replyPolicy: required\n" +
+		"  replyTo: previous.md\n" +
+		"  obligation_id: obl_123\n" +
+		"  satisfies_obligation_id: obl_prev\n" +
+		"  obligation_group_id: group_1\n" +
+		"  branch_id: branch_1\n" +
+		"  completion_rule: all\n" +
+		"  timestamp: 2026-03-28T10:15:05Z\n" +
+		"---\n\nExact payload\n"
+	inboxPath := filepath.Join(inboxDir, messageFile)
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.ID != messageFile {
+		t.Fatalf("payload.ID = %q, want %q", payload.ID, messageFile)
+	}
+	if payload.MessageID != messageFile {
+		t.Fatalf("payload.MessageID = %q, want %q", payload.MessageID, messageFile)
+	}
+	if payload.ObligationID != "obl_123" {
+		t.Fatalf("payload.ObligationID = %q, want obl_123", payload.ObligationID)
+	}
+	if payload.SatisfiesObligationID != "obl_prev" {
+		t.Fatalf("payload.SatisfiesObligationID = %q, want obl_prev", payload.SatisfiesObligationID)
+	}
+	if payload.ObligationGroupID != "group_1" || payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
+		t.Fatalf("group fields = %q/%q/%q, want group_1/branch_1/all", payload.ObligationGroupID, payload.BranchID, payload.CompletionRule)
+	}
+}
+
 func decodePopMessageOutputForTest(t *testing.T, stdout string) popMessageOutput {
 	t.Helper()
 	var payload popMessageOutput

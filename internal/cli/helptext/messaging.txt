@@ -7,13 +7,21 @@ Quick workflow (agents):
 Reply workflow:
   tmux-a2a-postman send --to <sender> --body "DONE: ..."
 
-Replies stay on the live session daemon automatically.
+Reply-required messages carry an obligation_id. Exact replies use:
+  tmux-a2a-postman send --to <sender> --body "DONE: ..." --satisfies-obligation-id <obligation_id> --reply-to <message_id>
+
+The exact obligation id clears the required action; --reply-to is retained for
+traceability and legacy messages. Replies stay on the live session daemon
+automatically.
 
 Envelope format (YAML frontmatter):
   ---
   params:
     from: <sender node name>
     to: <recipient node name>
+    messageId: <message filename>
+    replyPolicy: <none|required>
+    obligation_id: <required reply token>
     timestamp: <ISO 8601 timestamp>
   ---
 

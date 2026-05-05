@@ -56,7 +56,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
 	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]🔴")
 	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}`)
-	assertContainsNormalized(t, popHelp, `{"status":"message","id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
+	assertContainsNormalized(t, popHelp, `{"status":"message","id":"filename.md","message_id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
 	assertContainsNormalized(t, popHelp, "pop — read the next inbox message")
 	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send --help")
 	assertContainsNormalized(t, healthHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")

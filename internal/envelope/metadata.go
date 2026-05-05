@@ -3,18 +3,24 @@ package envelope
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 type Metadata struct {
-	From        string
-	To          string
-	MessageID   string
-	ReplyPolicy string
-	ReplyTo     string
-	MessageType string
-	Timestamp   string
-	ThreadID    string
-	Body        string
+	From                  string
+	To                    string
+	MessageID             string
+	ReplyPolicy           string
+	ReplyTo               string
+	MessageType           string
+	Timestamp             string
+	ThreadID              string
+	ObligationID          string
+	SatisfiesObligationID string
+	ObligationGroupID     string
+	BranchID              string
+	CompletionRule        string
+	Body                  string
 }
 
 func BodyFromContent(content string) string {
@@ -71,6 +77,16 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.Timestamp = value
 			case "thread_id":
 				metadata.ThreadID = value
+			case "obligation_id":
+				metadata.ObligationID = value
+			case "satisfies_obligation_id":
+				metadata.SatisfiesObligationID = value
+			case "obligation_group_id":
+				metadata.ObligationGroupID = value
+			case "branch_id":
+				metadata.BranchID = value
+			case "completion_rule":
+				metadata.CompletionRule = value
 			}
 		}
 	}
@@ -79,6 +95,24 @@ func ParseMetadata(content string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("missing from or to in params block")
 	}
 	return metadata, nil
+}
+
+func ValidateObligationToken(value string) error {
+	if value == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("must not contain leading or trailing whitespace")
+	}
+	if strings.ContainsAny(value, "/\\") {
+		return fmt.Errorf("must not contain path separators")
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("must not contain whitespace or control characters")
+		}
+	}
+	return nil
 }
 
 func directParamsChild(line string, childIndent int) (string, string, bool) {
@@ -261,7 +295,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "obligation_id", "satisfies_obligation_id", "obligation_group_id", "branch_id", "completion_rule"} {
 		value := strings.TrimSpace(fields[key])
 		if value == "" || existing[key] {
 			continue
@@ -385,6 +419,16 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "replyPolicy", true
 	case "replyTo", "reply_to":
 		return "replyTo", true
+	case "obligation_id":
+		return "obligation_id", true
+	case "satisfies_obligation_id":
+		return "satisfies_obligation_id", true
+	case "obligation_group_id":
+		return "obligation_group_id", true
+	case "branch_id":
+		return "branch_id", true
+	case "completion_rule":
+		return "completion_rule", true
 	default:
 		return "", false
 	}

@@ -115,17 +115,23 @@ type popEmptyOutput struct {
 }
 
 type popMessageOutput struct {
-	Status       string `json:"status"`
-	ID           string `json:"id"`
-	From         string `json:"from"`
-	To           string `json:"to"`
-	ReplyPolicy  string `json:"reply_policy,omitempty"`
-	ReplyTo      string `json:"reply_to,omitempty"`
-	Timestamp    string `json:"timestamp"`
-	Body         string `json:"body"`
-	Content      string `json:"content"`
-	UnreadBefore *int   `json:"unread_before,omitempty"`
-	Remaining    *int   `json:"remaining,omitempty"`
+	Status                string `json:"status"`
+	ID                    string `json:"id"`
+	MessageID             string `json:"message_id,omitempty"`
+	From                  string `json:"from"`
+	To                    string `json:"to"`
+	ReplyPolicy           string `json:"reply_policy,omitempty"`
+	ReplyTo               string `json:"reply_to,omitempty"`
+	ObligationID          string `json:"obligation_id,omitempty"`
+	SatisfiesObligationID string `json:"satisfies_obligation_id,omitempty"`
+	ObligationGroupID     string `json:"obligation_group_id,omitempty"`
+	BranchID              string `json:"branch_id,omitempty"`
+	CompletionRule        string `json:"completion_rule,omitempty"`
+	Timestamp             string `json:"timestamp"`
+	Body                  string `json:"body"`
+	Content               string `json:"content"`
+	UnreadBefore          *int   `json:"unread_before,omitempty"`
+	Remaining             *int   `json:"remaining,omitempty"`
 }
 
 func writeEmptyPopOutput() error {
@@ -156,8 +162,17 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	}
 	result.From = metadata.From
 	result.To = metadata.To
+	result.MessageID = metadata.MessageID
+	if result.MessageID == "" {
+		result.MessageID = filename
+	}
 	result.ReplyPolicy = metadata.ReplyPolicy
 	result.ReplyTo = metadata.ReplyTo
+	result.ObligationID = metadata.ObligationID
+	result.SatisfiesObligationID = metadata.SatisfiesObligationID
+	result.ObligationGroupID = metadata.ObligationGroupID
+	result.BranchID = metadata.BranchID
+	result.CompletionRule = metadata.CompletionRule
 	result.Timestamp = metadata.Timestamp
 	return result
 }

@@ -77,9 +77,48 @@ func writeDeadLetterFile(dstPath string, content []byte) error {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
+	payload = enrichMailboxProjectionPayload(payload)
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
+}
+
+func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal.MailboxEventPayload {
+	if payload.Content == "" {
+		return payload
+	}
+	metadata, err := envelope.ParseMetadata(payload.Content)
+	if err != nil {
+		return payload
+	}
+	if payload.MessageID == "" {
+		payload.MessageID = metadata.MessageID
+	}
+	if payload.From == "" {
+		payload.From = metadata.From
+	}
+	if payload.To == "" {
+		payload.To = metadata.To
+	}
+	if payload.ThreadID == "" {
+		payload.ThreadID = metadata.ThreadID
+	}
+	if payload.ObligationID == "" {
+		payload.ObligationID = metadata.ObligationID
+	}
+	if payload.SatisfiesObligationID == "" {
+		payload.SatisfiesObligationID = metadata.SatisfiesObligationID
+	}
+	if payload.ObligationGroupID == "" {
+		payload.ObligationGroupID = metadata.ObligationGroupID
+	}
+	if payload.BranchID == "" {
+		payload.BranchID = metadata.BranchID
+	}
+	if payload.CompletionRule == "" {
+		payload.CompletionRule = metadata.CompletionRule
+	}
+	return payload
 }
 
 func syncMailboxProjection(sessionDir string) {
