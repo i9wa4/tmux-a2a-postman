@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -368,6 +369,152 @@ func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	}
 }
 
+func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		map[string]int{"worker": 1},
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 5, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 212, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	content := sessionHealthMessageContent("critic", "worker", "m1.md", map[string]string{
+		"replyPolicy":   "required",
+		"reply_slot_id": "rslot_123",
+	}, "please review")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+
+	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	if health.SchemaVersion != 3 {
+		t.Fatalf("SchemaVersion = %d, want 3", health.SchemaVersion)
+	}
+	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
+		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)
+	}
+	if health.Severity != "needs_action" {
+		t.Fatalf("Severity = %q, want needs_action", health.Severity)
+	}
+	if health.SeveritySource != "node.flow" {
+		t.Fatalf("SeveritySource = %q, want node.flow", health.SeveritySource)
+	}
+	if health.CompactSeverity != "needs_action:node=worker:action_required=1" {
+		t.Fatalf("CompactSeverity = %q, want needs_action token", health.CompactSeverity)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if got := nodeByName["worker"].Flow.State; got != "needs_action" {
+		t.Fatalf("worker flow state = %q, want needs_action", got)
+	}
+	if got := nodeByName["worker"].Flow.ReplySlots.ActionRequiredCount; got != 1 {
+		t.Fatalf("worker action_required_count = %d, want 1", got)
+	}
+	if got := nodeByName["critic"].Flow.State; got != "expected_wait" {
+		t.Fatalf("critic flow state = %q, want expected_wait", got)
+	}
+}
+
+func TestCollectSessionDeliveryClassifiesQueuedStuckAndFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	postDir := filepath.Join(sessionDir, "post")
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if err := os.MkdirAll(postDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(post): %v", err)
+	}
+	if err := os.MkdirAll(deadLetterDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(dead-letter): %v", err)
+	}
+	postPath := filepath.Join(postDir, "m1.md")
+	if err := os.WriteFile(postPath, []byte("body"), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	now := time.Date(2026, time.April, 14, 5, 10, 0, 0, time.UTC)
+	old := now.Add(-181 * time.Second)
+	if err := os.Chtimes(postPath, old, old); err != nil {
+		t.Fatalf("Chtimes(post): %v", err)
+	}
+
+	stuck := collectSessionDelivery(sessionDir, status.SessionQueues{PostCount: 1}, now)
+	if stuck.State != "delivery_stuck" || stuck.Severity != "delivery_stuck" {
+		t.Fatalf("stuck delivery = %#v, want delivery_stuck", stuck)
+	}
+	if stuck.StuckAfterSeconds != 180 || stuck.OldestPostAgeSeconds != 181 {
+		t.Fatalf("stuck threshold/age = %d/%d, want 180/181", stuck.StuckAfterSeconds, stuck.OldestPostAgeSeconds)
+	}
+
+	if err := os.WriteFile(filepath.Join(deadLetterDir, "m1-dl-test.md"), []byte("dead"), 0o644); err != nil {
+		t.Fatalf("WriteFile(dead-letter): %v", err)
+	}
+	failed := collectSessionDelivery(sessionDir, status.SessionQueues{PostCount: 1, DeadLetterCount: 1}, now)
+	if failed.State != "delivery_failure" || failed.Severity != "delivery_failure" {
+		t.Fatalf("failed delivery = %#v, want delivery_failure", failed)
+	}
+	if failed.DeadLetterCount != 1 {
+		t.Fatalf("DeadLetterCount = %d, want 1", failed.DeadLetterCount)
+	}
+}
+
+func TestGetHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		nil,
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 15, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 222, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	blockedContent := sessionHealthMessageContent("worker", "critic", "blocked.md", nil, "BLOCKED: waiting on access")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "blocked.md", "worker", "critic", blockedContent, now.Add(time.Second))
+
+	blocked, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy(blocked) error = %v", err)
+	}
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range blocked.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if got := nodeByName["worker"].Flow.State; got != "blocked" {
+		t.Fatalf("worker flow state = %q, want blocked", got)
+	}
+	if got := nodeByName["worker"].Flow.EvidenceLevel; got != "inferred" {
+		t.Fatalf("worker blocked evidence = %q, want inferred", got)
+	}
+	if blocked.CompactSeverity != "blocked?:node=worker" {
+		t.Fatalf("CompactSeverity = %q, want inferred blocked token", blocked.CompactSeverity)
+	}
+
+	doneContent := sessionHealthMessageContent("worker", "critic", "done.md", nil, "DONE: access granted")
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "done.md", "worker", "critic", doneContent, now.Add(2*time.Second))
+	cleared, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy(cleared) error = %v", err)
+	}
+	nodeByName = map[string]status.NodeHealth{}
+	for _, node := range cleared.Nodes {
+		nodeByName[node.Name] = node
+	}
+	if got := nodeByName["worker"].Flow.State; got != "idle" {
+		t.Fatalf("worker flow state after DONE = %q, want idle", got)
+	}
+}
+
 func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
@@ -448,6 +595,9 @@ func TestGetHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
 	if nodeByName["worker"].VisibleState != "pending" {
 		t.Fatalf("worker health = %#v, want pending from unread fallback", nodeByName["worker"])
 	}
+	if nodeByName["worker"].Flow.State != "needs_action" || nodeByName["worker"].Flow.EvidenceLevel != "inferred" {
+		t.Fatalf("worker flow = %#v, want inferred needs_action from unread fallback", nodeByName["worker"].Flow)
+	}
 	if nodeByName["critic"].VisibleState != "ready" || nodeByName["critic"].InfoUnreadCount != 1 {
 		t.Fatalf("critic health = %#v, want ready info_unread=1", nodeByName["critic"])
 	}
@@ -490,6 +640,26 @@ func sessionHealthObligationContent(from, to, messageID, replyPolicy, replyTo, b
 		"  replyPolicy: " + replyPolicy + "\n" +
 		replyToLine +
 		"---\n\n" + body + "\n"
+}
+
+func sessionHealthMessageContent(from, to, messageID string, fields map[string]string, body string) string {
+	var builder strings.Builder
+	builder.WriteString("---\nparams:\n")
+	builder.WriteString("  from: " + from + "\n")
+	builder.WriteString("  to: " + to + "\n")
+	builder.WriteString("  messageId: " + messageID + "\n")
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		builder.WriteString("  " + key + ": " + fields[key] + "\n")
+	}
+	builder.WriteString("---\n\n")
+	builder.WriteString(body)
+	builder.WriteString("\n")
+	return builder.String()
 }
 
 func appendSessionHealthObligationEvent(t *testing.T, writer *journal.Writer, eventType, messageID, from, to, content string, now time.Time) {

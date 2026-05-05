@@ -97,6 +97,27 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 	}
 }
 
+func TestFormatAllSessionHealthSeverityOneline(t *testing.T) {
+	healths := status.AllSessionHealth{
+		ContextID: "20260406-ctx",
+		Sessions: []status.SessionHealth{
+			{
+				Compact:         "🔴",
+				CompactSeverity: "delivery_failure:delivery:dead_letter_count=1",
+			},
+			{
+				Compact:         "🔷🟢",
+				CompactSeverity: "needs_action:node=worker:action_required=1",
+			},
+		},
+	}
+
+	got := formatAllSessionHealthSeverityOneline(healths)
+	if got != "[0]delivery_failure:delivery:dead_letter_count=1 [1]needs_action:node=worker:action_required=1" {
+		t.Fatalf("formatAllSessionHealthSeverityOneline(...) = %q, want severity status line", got)
+	}
+}
+
 func TestRunGetSessionStatusOneline_UsesSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
@@ -210,6 +231,20 @@ func TestRunGetSessionStatusOneline_UsesSessionIDOrder(t *testing.T) {
 
 	if stdout.String() != "[0]🔷🟢:🟢 [1]🟢🔷\n" {
 		t.Fatalf("stdout = %q, want compact status line", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := RunGetSessionStatusOneline(&stdout, []string{
+		"--config", configPath,
+		"--context-id", contextID,
+		"--severity",
+	}); err != nil {
+		t.Fatalf("RunGetSessionStatusOneline(--severity): %v", err)
+	}
+
+	wantSeverity := "[0]needs_action?:node=worker:inbox_count=1 [1]needs_action?:node=critic:inbox_count=1\n"
+	if stdout.String() != wantSeverity {
+		t.Fatalf("stdout = %q, want severity status line %q", stdout.String(), wantSeverity)
 	}
 }
 

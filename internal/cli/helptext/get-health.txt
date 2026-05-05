@@ -8,8 +8,21 @@ Output:
   JSON session health contract.
   Use nodes[*].visible_state for per-node state, queues for backlog counts,
   and compact for the compact display token.
+  schema_version is 3. The legacy visible_state and compact fields remain
+  stable; contextual fields are additive.
   Reply-aware fields include action_required_count, waiting_on_reply_count,
   and info_unread_count.
+  Contextual severity fields include severity, severity_source,
+  severity_reason, compact_severity, delivery, nodes[*].node_local,
+  nodes[*].flow, and nodes[*].queues.
+  Severity ranks from least to most urgent:
+  ok, working, expected_wait, needs_action, blocked, attention_stale,
+  delivery_stuck, delivery_failure.
+  delivery.state distinguishes ok, queued, delivery_stuck, delivery_failure,
+  and unknown. Pending post delivery becomes delivery_stuck after 180 seconds.
+  nodes[*].flow separates expected waits from required action and blocked
+  reports. Blocked reports are proven from structured blocked_report metadata
+  and inferred from an exact first-line BLOCKED: report.
   nodes[*].screen_progress provides non-content pane evidence:
   evidence_state, last_capture_at, last_screen_change_at, and
   screen_fingerprint. Raw pane text is not included.

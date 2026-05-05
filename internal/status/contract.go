@@ -1,18 +1,26 @@
 package status
 
-const SchemaVersion = 2
+const SchemaVersion = 3
+
+const DeliveryStuckAfterSeconds = 180
 
 type NodeHealth struct {
 	Name                string                  `json:"name"`
 	PaneID              string                  `json:"pane_id,omitempty"`
 	PaneState           string                  `json:"pane_state,omitempty"`
 	VisibleState        string                  `json:"visible_state"`
+	Severity            string                  `json:"severity,omitempty"`
+	SeveritySource      string                  `json:"severity_source,omitempty"`
+	SeverityReason      string                  `json:"severity_reason,omitempty"`
 	InboxCount          int                     `json:"inbox_count"`
 	ActionRequiredCount int                     `json:"action_required_count,omitempty"`
 	WaitingOnReplyCount int                     `json:"waiting_on_reply_count,omitempty"`
 	InfoUnreadCount     int                     `json:"info_unread_count,omitempty"`
 	CurrentCommand      string                  `json:"current_command,omitempty"`
 	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
+	NodeLocal           *NodeLocalHealth        `json:"node_local,omitempty"`
+	Flow                *NodeFlowHealth         `json:"flow,omitempty"`
+	Queues              *NodeQueues             `json:"queues,omitempty"`
 }
 
 type ScreenProgressEvidence struct {
@@ -20,6 +28,76 @@ type ScreenProgressEvidence struct {
 	LastCaptureAt      string `json:"last_capture_at,omitempty"`
 	LastScreenChangeAt string `json:"last_screen_change_at,omitempty"`
 	ScreenFingerprint  string `json:"screen_fingerprint,omitempty"`
+}
+
+type HealthItem struct {
+	Node             string `json:"node,omitempty"`
+	MessageID        string `json:"message_id,omitempty"`
+	ReplySlotID      string `json:"reply_slot_id,omitempty"`
+	BlockedReportID  string `json:"blocked_report_id,omitempty"`
+	Scope            string `json:"scope,omitempty"`
+	ScopeID          string `json:"scope_id,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	EvidenceSource   string `json:"evidence_source,omitempty"`
+	EvidenceLevel    string `json:"evidence_level,omitempty"`
+	ObservedAt       string `json:"observed_at,omitempty"`
+	AgeSeconds       int    `json:"age_seconds,omitempty"`
+	EnqueuedAt       string `json:"enqueued_at,omitempty"`
+	EnqueuedAtSource string `json:"enqueued_at_source,omitempty"`
+}
+
+type NodeQueues struct {
+	InboxCount int `json:"inbox_count"`
+}
+
+type ReplySlotSummary struct {
+	ActionRequiredCount int `json:"action_required_count"`
+	WaitingOnReplyCount int `json:"waiting_on_reply_count"`
+	InfoUnreadCount     int `json:"info_unread_count"`
+}
+
+type BlockedState struct {
+	State     string       `json:"state"`
+	OpenCount int          `json:"open_count"`
+	Items     []HealthItem `json:"items,omitempty"`
+}
+
+type NodeFlowHealth struct {
+	State          string           `json:"state"`
+	Severity       string           `json:"severity"`
+	EvidenceLevel  string           `json:"evidence_level"`
+	EvidenceSource string           `json:"evidence_source,omitempty"`
+	Reason         string           `json:"reason,omitempty"`
+	Action         string           `json:"action,omitempty"`
+	ReplySlots     ReplySlotSummary `json:"reply_slots"`
+	Blocked        BlockedState     `json:"blocked"`
+}
+
+type NodeLocalHealth struct {
+	State          string                  `json:"state"`
+	Severity       string                  `json:"severity"`
+	EvidenceLevel  string                  `json:"evidence_level"`
+	EvidenceSource string                  `json:"evidence_source,omitempty"`
+	Reason         string                  `json:"reason,omitempty"`
+	PaneState      string                  `json:"pane_state,omitempty"`
+	CurrentCommand string                  `json:"current_command,omitempty"`
+	ScreenProgress *ScreenProgressEvidence `json:"screen_progress,omitempty"`
+}
+
+type DeliveryHealth struct {
+	State                string       `json:"state"`
+	Severity             string       `json:"severity"`
+	EvidenceLevel        string       `json:"evidence_level"`
+	EvidenceSource       string       `json:"evidence_source,omitempty"`
+	Reason               string       `json:"reason,omitempty"`
+	Action               string       `json:"action,omitempty"`
+	PostCount            int          `json:"post_count"`
+	DeadLetterCount      int          `json:"dead_letter_count"`
+	StuckAfterSeconds    int          `json:"stuck_after_seconds"`
+	OldestPostAgeSeconds int          `json:"oldest_post_age_seconds,omitempty"`
+	OldestPostObservedAt string       `json:"oldest_post_observed_at,omitempty"`
+	Items                []HealthItem `json:"items,omitempty"`
 }
 
 type WindowNode struct {
@@ -38,14 +116,20 @@ type SessionQueues struct {
 }
 
 type SessionHealth struct {
-	ContextID    string          `json:"context_id"`
-	SessionName  string          `json:"session_name"`
-	NodeCount    int             `json:"node_count"`
-	VisibleState string          `json:"visible_state"`
-	Compact      string          `json:"compact"`
-	Queues       SessionQueues   `json:"queues"`
-	Nodes        []NodeHealth    `json:"nodes"`
-	Windows      []SessionWindow `json:"windows"`
+	SchemaVersion   int             `json:"schema_version"`
+	ContextID       string          `json:"context_id"`
+	SessionName     string          `json:"session_name"`
+	NodeCount       int             `json:"node_count"`
+	VisibleState    string          `json:"visible_state"`
+	Severity        string          `json:"severity,omitempty"`
+	SeveritySource  string          `json:"severity_source,omitempty"`
+	SeverityReason  string          `json:"severity_reason,omitempty"`
+	Compact         string          `json:"compact"`
+	CompactSeverity string          `json:"compact_severity,omitempty"`
+	Queues          SessionQueues   `json:"queues"`
+	Delivery        *DeliveryHealth `json:"delivery,omitempty"`
+	Nodes           []NodeHealth    `json:"nodes"`
+	Windows         []SessionWindow `json:"windows"`
 }
 
 type DaemonOwner struct {
@@ -69,8 +153,36 @@ var stateRank = map[string]int{
 	"stale":   3,
 }
 
+var severityRank = map[string]int{
+	"ok":               0,
+	"working":          1,
+	"expected_wait":    2,
+	"needs_action":     3,
+	"blocked":          4,
+	"attention_stale":  5,
+	"delivery_stuck":   6,
+	"delivery_failure": 7,
+}
+
 func StateRank(state string) int {
 	return stateRank[NormalizeState(state)]
+}
+
+func SeverityRank(severity string) int {
+	if rank, ok := severityRank[severity]; ok {
+		return rank
+	}
+	return severityRank["ok"]
+}
+
+func WorseSeverity(left, right string) string {
+	if SeverityRank(right) > SeverityRank(left) {
+		return right
+	}
+	if left == "" {
+		return right
+	}
+	return left
 }
 
 func NormalizePaneState(state string) string {

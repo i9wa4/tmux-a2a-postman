@@ -28,6 +28,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from session)")
 	configPath := fs.String("config", "", "Config file path")
+	severity := fs.Bool("severity", false, "Print opt-in compact contextual severity tokens")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -44,6 +45,9 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	}
 
 	statusStr := formatAllSessionHealthOneline(healths)
+	if *severity {
+		statusStr = formatAllSessionHealthSeverityOneline(healths)
+	}
 	if statusStr != "" {
 		_, err := fmt.Fprintln(stdout, statusStr)
 		return err
@@ -62,4 +66,20 @@ func formatAllSessionHealthOneline(healths status.AllSessionHealth) string {
 
 func formatSessionHealthOneline(health status.SessionHealth) string {
 	return health.Compact
+}
+
+func formatAllSessionHealthSeverityOneline(healths status.AllSessionHealth) string {
+	var sessionStatuses []string
+	for i, health := range healths.Sessions {
+		sessionStatus := formatSessionHealthSeverityOneline(health)
+		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
+	}
+	return strings.Join(sessionStatuses, " ")
+}
+
+func formatSessionHealthSeverityOneline(health status.SessionHealth) string {
+	if health.CompactSeverity != "" {
+		return health.CompactSeverity
+	}
+	return "ok:session"
 }

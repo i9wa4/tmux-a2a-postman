@@ -8,8 +8,9 @@ description: |
   - Deciding whether to pop, reply, resend, wait, follow up, or restart
   - Handling reply-required, no-reply, reply-to, exact reply-slot replies, or
     status request behavior
-  - Diagnosing pending, waiting, stale, unread, post queue, dead-letter,
-    auto-ping, pane discovery, daemon restart, or slow delivery state
+  - Diagnosing pending, waiting, blocked, stale, unread, post queue,
+    dead-letter, auto-ping, pane discovery, daemon restart, or slow delivery
+    state
   Do not use for topology or postman.md syntax audits; use postman-config-auditor.
   Do not use only to send the first message; use postman-send-message.
 ---
@@ -25,6 +26,8 @@ Use `tmux-a2a-postman get-health` when making a session decision. It returns
 the canonical JSON health contract.
 
 Use `tmux-a2a-postman get-health-oneline` for a compact scan across sessions.
+Add `--severity` when you need the opt-in contextual severity token instead of
+the legacy compact visible-state marks.
 
 Use `tmux-a2a-postman pop` only when you intend to read and archive the next
 inbox message.
@@ -108,7 +111,50 @@ recipient blocked.
 If dead letters exist, treat routing or configuration as suspect and use
 `postman-config-auditor` before manually retrying delivery.
 
-## 6. Screen Progress
+## 6. Contextual Severity
+
+`get-health` schema version 3 keeps the legacy `visible_state` and `compact`
+fields stable and adds contextual severity fields. Use these fields to decide
+whether a state is an expected wait, live work, a blocked report, stale local
+evidence, or delivery trouble.
+
+Severity ranks from least to most urgent:
+
+1. `ok`
+2. `working`
+3. `expected_wait`
+4. `needs_action`
+5. `blocked`
+6. `attention_stale`
+7. `delivery_stuck`
+8. `delivery_failure`
+
+| Field                 | Use                                              |
+| --------------------- | ------------------------------------------------ |
+| `severity`            | Worst contextual severity for the session/node   |
+| `severity_source`     | Surface that produced that severity              |
+| `severity_reason`     | Short reason for the chosen severity             |
+| `compact_severity`    | ASCII token used by `get-health-oneline --severity` |
+| `delivery`            | Post queue and dead-letter delivery health       |
+| `nodes[*].node_local` | Pane-local activity/staleness evidence           |
+| `nodes[*].flow`       | Reply-slot and blocked-report workflow evidence  |
+| `nodes[*].queues`     | Node queue counts                                |
+
+Interpretation rules:
+
+1. `expected_wait` means a reply-required response is still expected. Wait or
+   follow the workflow timeout policy; do not treat this as blocked by itself.
+2. `needs_action` means the local node owes a reply. Pop and answer with the
+   exact reply slot when available.
+3. `blocked` means an open blocked report exists. Structured
+   `blocked_report` metadata is proven evidence; an exact first-line `BLOCKED:`
+   report is inferred evidence and appears with `?` in compact severity.
+4. `delivery_stuck` means the oldest pending post item is at least 180 seconds
+   old. Inspect delivery before sending more traffic.
+5. `delivery_failure` means dead-letter files exist. Audit routing before
+   retrying.
+
+## 7. Screen Progress
 
 `nodes[*].screen_progress` is non-content pane evidence. Use it to distinguish
 a pane that is changing from one that is merely quiet; do not expect raw pane
@@ -124,24 +170,29 @@ text in health output.
 `get-health-oneline` omits this detail to stay compact; use `get-health` when
 progress evidence matters.
 
-## 7. Safe Operator Flow
+## 8. Safe Operator Flow
 
 1. Run `tmux-a2a-postman get-health`.
-2. If your node is `pending`, run `tmux-a2a-postman pop`.
-3. If the popped message has `reply_policy: required`, handle it and reply with
+2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
+   and topology before creating more messages.
+3. If your node is `pending` or `needs_action`, run `tmux-a2a-postman pop`.
+4. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-reply-slot-id <reply_slot_id>` when the pop output includes
    `reply_slot_id`; keep `--reply-to <message_id>` for traceability when the
    footer provides it. Otherwise use `--reply-to <message_id>` as fallback
    closure.
-4. If your node is `waiting`, do not clear it by reading mail. Wait for an
-   exact reply or send a bounded follow-up if the workflow timeout requires it.
-5. If a node is `stale`, verify the tmux pane, tmux session, and daemon before
-   resending work.
-6. If messages are in dead-letter, audit topology and recipient names before
+5. If your node is `waiting` or `expected_wait`, do not clear it by reading
+   mail. Wait for an exact reply or send a bounded follow-up if the workflow
+   timeout requires it.
+6. If a node is `blocked`, inspect the blocked report and resolve the named
+   blocker before treating the node as stale.
+7. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
+   session, and daemon before resending work.
+8. If messages are in dead-letter, audit topology and recipient names before
    retrying.
-7. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
+9. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
-## 8. Escalation Boundaries
+## 9. Escalation Boundaries
 
 Use `postman-config-auditor` when the problem looks like a missing edge, wrong
 node name, stale `postman.md`, or dead-letter route.

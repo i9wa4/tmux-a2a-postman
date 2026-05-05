@@ -90,8 +90,9 @@ func projectedReplySlotCounts(sessionDir, sessionName string) (projection.Messag
 
 func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionHealth, error) {
 	result := status.SessionHealth{
-		ContextID:   contextID,
-		SessionName: sessionName,
+		SchemaVersion: status.SchemaVersion,
+		ContextID:     contextID,
+		SessionName:   sessionName,
 	}
 	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
 		result.VisibleState = "unavailable"
@@ -183,6 +184,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	result.Queues = queues
 	result.Windows = buildSessionWindows(result.Nodes, panes)
 	result.Compact = buildSessionCompact(result, panes)
+	enrichSessionHealth(&result, sessionDir, time.Now())
 	return result, nil
 }
 

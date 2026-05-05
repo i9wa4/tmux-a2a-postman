@@ -52,12 +52,14 @@ reply-slot identity belongs to daemon health and reply projection.
 
 ## 2. State Surfaces
 
-| Surface                                      | Values                                                | Meaning                                                   |
-| -------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| `nodes[*].pane_state`                        | `active`, `idle`, `stale`                             | Pane availability and activity fact                       |
-| `nodes[*].visible_state`                     | `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
-| `nodes[*].screen_progress.evidence_state`    | `missing`, `stale`, `changed`, `unchanged`            | Non-content pane progress evidence                        |
-| session `visible_state`                      | `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
+| Surface                                   | Values                                                | Meaning                                                   |
+| ----------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| `nodes[*].pane_state`                     | `active`, `idle`, `stale`                             | Pane availability and activity fact                       |
+| `nodes[*].visible_state`                  | `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
+| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`            | Non-content pane progress evidence                        |
+| session `visible_state`                   | `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
+| `severity`                                | See contextual severity table                         | Additive triage severity for operators                    |
+| `compact_severity`                        | ASCII token                                           | One-line severity summary for opt-in compact scans        |
 
 `active` and `idle` pane facts normalize to `ready` unless reply slots
 override them. A live pane that has not changed for a long time remains `idle`
@@ -71,6 +73,10 @@ reading raw pane text. It does not affect visible-state ranking.
 
 `unavailable` is a session-level fallback, not a per-node state. It means this
 daemon cannot provide canonical health for that tmux session.
+
+`schema_version: 3` adds contextual severity while keeping the v2
+`visible_state` and `compact` fields stable. Consumers that only need the old
+view can continue reading those fields.
 
 ## 3. Visible Node States
 
@@ -184,3 +190,56 @@ Session-level state is the worst visible state across nodes, ranked as:
 Queue facts are reported separately in `queues.post_count`,
 `queues.inbox_count`, and `queues.dead_letter_count`. Reply-slot facts are
 reported per node.
+
+## 8. Contextual Severity
+
+Contextual severity is additive. It answers what an operator should triage
+first without changing the visible-state model.
+
+Severity ranks from least to most urgent:
+
+1. `ok`
+2. `working`
+3. `expected_wait`
+4. `needs_action`
+5. `blocked`
+6. `attention_stale`
+7. `delivery_stuck`
+8. `delivery_failure`
+
+Tie-breaks prefer the most urgent delivery, node flow, or local pane signal.
+Delivery failures outrank stale panes because mail may not be reaching any
+recipient. A node that is waiting for an approval or other required reply is
+`expected_wait`, not blocked. It becomes `blocked` only when an open blocked
+report exists.
+
+`get-health` exposes the evidence as:
+
+| Field                  | Meaning                                      |
+| ---------------------- | -------------------------------------------- |
+| `severity`             | Worst contextual severity                    |
+| `severity_source`      | Surface that produced the chosen severity    |
+| `severity_reason`      | Short human-readable reason                  |
+| `compact_severity`     | ASCII one-line summary token                 |
+| `delivery`             | Session delivery health                      |
+| `nodes[*].node_local`  | Pane-local activity/staleness health         |
+| `nodes[*].flow`        | Reply-slot and blocked-report workflow state |
+| `nodes[*].queues`      | Node-local queue counts                      |
+
+`get-health-oneline` keeps the legacy compact marks by default. The opt-in
+`--severity` flag prints `compact_severity` instead. A `?` suffix marks
+inferred evidence, such as `blocked?:node=worker`.
+
+## 9. Severity Examples
+
+| Scenario            | Primary evidence                         | Severity             |
+| ------------------- | ---------------------------------------- | -------------------- |
+| Idle                | Live pane, no open action or wait        | `ok`                 |
+| Active work         | Active pane or changed screen evidence   | `working`            |
+| Approval wait       | Outbound required reply still open       | `expected_wait`      |
+| Reply-required wait | Outbound required reply still open       | `expected_wait`      |
+| Required action     | Inbound required reply open              | `needs_action`       |
+| Blocked             | Structured blocked report or `BLOCKED:`  | `blocked`            |
+| Stale pane          | Missing or stale pane evidence           | `attention_stale`    |
+| Delivery stuck      | Oldest pending post is at least 180s old | `delivery_stuck`     |
+| Dead letter         | One or more dead-letter files exist      | `delivery_failure`   |

@@ -20,6 +20,10 @@ type Metadata struct {
 	ReplySetID       string
 	BranchID         string
 	CompletionRule   string
+	BlockedReportID  string
+	BlockedScope     string
+	BlockedScopeID   string
+	BlockedReason    string
 	Body             string
 }
 
@@ -87,6 +91,14 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.BranchID = value
 			case "completion_rule":
 				metadata.CompletionRule = value
+			case "blocked_report_id":
+				metadata.BlockedReportID = value
+			case "blocked_scope":
+				metadata.BlockedScope = value
+			case "blocked_scope_id":
+				metadata.BlockedScopeID = value
+			case "blocked_reason":
+				metadata.BlockedReason = value
 			}
 		}
 	}

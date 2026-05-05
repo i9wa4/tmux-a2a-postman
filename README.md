@@ -198,10 +198,21 @@ include `--fills-reply-slot-id <reply-slot-id>`. The default footer also keeps
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
 Agents should prefer `get-health` for
 structured session JSON and `get-health-oneline` for compact coordination.
-`get-health` includes `nodes[*].screen_progress` with non-content evidence
-such as last capture time, last screen-change time, and an opaque screen
-fingerprint; raw pane text is not exposed. The oneline view stays compact and
-omits those details.
+`get-health` uses `schema_version: 3`; the legacy `visible_state` and
+`compact` fields remain stable, and contextual fields are additive. The
+additive severity fields include `severity`, `severity_source`,
+`severity_reason`, `compact_severity`, `delivery`, `nodes[*].node_local`,
+`nodes[*].flow`, and `nodes[*].queues`. Severity distinguishes expected waits
+from actionable conditions such as `needs_action`, `blocked`,
+`delivery_stuck`, and `delivery_failure`. Pending post delivery is considered
+stuck after 180 seconds.
+`get-health-oneline` keeps compact visible-state marks by default; add
+`--severity` for ASCII `compact_severity` tokens. A `?` suffix marks inferred
+evidence, for example an exact first-line `BLOCKED:` report without structured
+blocked-report metadata. `get-health` also includes
+`nodes[*].screen_progress` with non-content evidence such as last capture time,
+last screen-change time, and an opaque screen fingerprint; raw pane text is
+not exposed. The default oneline view stays compact and omits those details.
 
 Pane capture also scans recent scrollback for Claude/Codex context-compaction
 markers so recovery PINGs are not limited to the visible screen. Configure the

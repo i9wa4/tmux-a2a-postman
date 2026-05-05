@@ -23,11 +23,14 @@ func isNoActivePostmanError(err error) bool {
 }
 
 func emptySessionHealth(sessionName string) status.SessionHealth {
-	return status.SessionHealth{
-		SessionName: sessionName,
-		Nodes:       []status.NodeHealth{},
-		Windows:     []status.SessionWindow{},
+	result := status.SessionHealth{
+		SchemaVersion: status.SchemaVersion,
+		SessionName:   sessionName,
+		Nodes:         []status.NodeHealth{},
+		Windows:       []status.SessionWindow{},
 	}
+	enrichSessionHealth(&result, "", time.Now())
+	return result
 }
 
 func emptyAllSessionHealth() status.AllSessionHealth {
@@ -136,11 +139,13 @@ func collectResolvedSessionHealth(contextIDFlag, sessionFlag, configPath string)
 
 func unavailableSessionHealth(contextID, sessionName string) status.SessionHealth {
 	result := status.SessionHealth{
-		ContextID:   contextID,
-		SessionName: sessionName,
+		SchemaVersion: status.SchemaVersion,
+		ContextID:     contextID,
+		SessionName:   sessionName,
 	}
 	result.VisibleState = "unavailable"
 	result.Compact = compactSessionStatusMark(result.VisibleState)
+	enrichSessionHealth(&result, "", time.Now())
 	return result
 }
 
@@ -149,6 +154,7 @@ func projectedSessionHealth(sessionDir string) (status.SessionHealth, bool) {
 	if err != nil || !ok {
 		return status.SessionHealth{}, false
 	}
+	enrichSessionHealth(&projected, sessionDir, time.Now())
 	return projected, true
 }
 
@@ -271,5 +277,8 @@ func normalizeSessionHealth(health *status.SessionHealth) {
 	}
 	if health.Windows == nil {
 		health.Windows = []status.SessionWindow{}
+	}
+	if health.SchemaVersion == 0 || health.CompactSeverity == "" {
+		enrichSessionHealth(health, "", time.Now())
 	}
 }

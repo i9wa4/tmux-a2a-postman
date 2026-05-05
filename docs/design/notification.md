@@ -51,6 +51,28 @@ The health payload exposes `queues.post_count`, `queues.inbox_count`,
 `queues.dead_letter_count`, and per-node reply-slot counts for mailbox backlog
 checks. Per-node state is reported as `nodes[*].visible_state`.
 
+The schema version 3 payload also exposes additive contextual severity:
+`severity`, `severity_source`, `severity_reason`, `compact_severity`,
+`delivery`, `nodes[*].node_local`, `nodes[*].flow`, and `nodes[*].queues`.
+These fields distinguish expected waits from actionable or broken conditions
+without changing the visible-state fields.
+
+| Severity             | Meaning                                           |
+| -------------------- | ------------------------------------------------- |
+| `ok`                 | No open action, wait, local work, or delivery bug |
+| `working`            | Local pane activity or queued delivery is present |
+| `expected_wait`      | Waiting for an expected required reply            |
+| `needs_action`       | Inbound required reply is open                    |
+| `blocked`            | Open blocked report exists                        |
+| `attention_stale`    | Pane or session evidence is stale or unavailable  |
+| `delivery_stuck`     | Pending post delivery is at least 180 seconds old |
+| `delivery_failure`   | Dead-letter delivery failure exists               |
+
+`get-health-oneline` keeps compact visible-state marks by default. Use its
+`--severity` flag when the operator needs an ASCII severity token. Tokens with
+`?` are inferred, for example a `BLOCKED:` first line without structured
+blocked-report metadata.
+
 ## 4. Configuration
 
 The remaining notification-related public settings are:

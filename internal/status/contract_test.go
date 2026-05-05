@@ -108,3 +108,28 @@ func TestSessionVisibleState(t *testing.T) {
 		t.Fatalf("SessionVisibleState(...) = %q, want %q", got, "stale")
 	}
 }
+
+func TestSeverityRank(t *testing.T) {
+	ordered := []string{
+		"ok",
+		"working",
+		"expected_wait",
+		"needs_action",
+		"blocked",
+		"attention_stale",
+		"delivery_stuck",
+		"delivery_failure",
+	}
+
+	for i := 1; i < len(ordered); i++ {
+		if SeverityRank(ordered[i]) <= SeverityRank(ordered[i-1]) {
+			t.Fatalf("SeverityRank(%q) = %d, want greater than %q rank %d", ordered[i], SeverityRank(ordered[i]), ordered[i-1], SeverityRank(ordered[i-1]))
+		}
+	}
+	if got := WorseSeverity("needs_action", "delivery_stuck"); got != "delivery_stuck" {
+		t.Fatalf("WorseSeverity(...) = %q, want delivery_stuck", got)
+	}
+	if got := WorseSeverity("", "working"); got != "working" {
+		t.Fatalf("WorseSeverity(empty, working) = %q, want working", got)
+	}
+}
