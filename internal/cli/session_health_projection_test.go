@@ -223,6 +223,114 @@ func TestGetHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	}
 }
 
+func TestGetHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		nil,
+		nil,
+	)
+	writeSessionHealthPaneActivity(t, fixture, `{
+  "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:00:05Z","screenFingerprint":"00000011"},
+  "%12": {"status":"active","lastChangeAt":"2026-04-14T00:01:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000012"}
+}`)
+
+	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+
+	worker := nodeByName["worker"].ScreenProgress
+	if worker == nil {
+		t.Fatal("worker ScreenProgress is nil, want unchanged evidence")
+	}
+	if worker.EvidenceState != "unchanged" {
+		t.Fatalf("worker evidence_state = %q, want unchanged", worker.EvidenceState)
+	}
+	if worker.LastCaptureAt != "2026-04-14T00:00:05Z" {
+		t.Fatalf("worker last_capture_at = %q, want 2026-04-14T00:00:05Z", worker.LastCaptureAt)
+	}
+	if worker.LastScreenChangeAt != "2026-04-14T00:00:00Z" {
+		t.Fatalf("worker last_screen_change_at = %q, want 2026-04-14T00:00:00Z", worker.LastScreenChangeAt)
+	}
+	if worker.ScreenFingerprint != "00000011" {
+		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
+	}
+
+	critic := nodeByName["critic"].ScreenProgress
+	if critic == nil {
+		t.Fatal("critic ScreenProgress is nil, want changed evidence")
+	}
+	if critic.EvidenceState != "changed" {
+		t.Fatalf("critic evidence_state = %q, want changed", critic.EvidenceState)
+	}
+	if critic.LastCaptureAt != "2026-04-14T00:01:00Z" {
+		t.Fatalf("critic last_capture_at = %q, want 2026-04-14T00:01:00Z", critic.LastCaptureAt)
+	}
+	if critic.LastScreenChangeAt != "2026-04-14T00:01:00Z" {
+		t.Fatalf("critic last_screen_change_at = %q, want 2026-04-14T00:01:00Z", critic.LastScreenChangeAt)
+	}
+	if critic.ScreenFingerprint != "00000012" {
+		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+}
+
+func TestGetHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
+	fixture := writeSessionHealthProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "stale"},
+		nil,
+		nil,
+	)
+	writeSessionHealthPaneActivity(t, fixture, `{
+  "%11": "active",
+  "%12": {"status":"stale","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:05Z","screenFingerprint":"00000012"}
+}`)
+
+	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeHealth{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+
+	worker := nodeByName["worker"].ScreenProgress
+	if worker == nil {
+		t.Fatal("worker ScreenProgress is nil, want missing evidence")
+	}
+	if worker.EvidenceState != "missing" {
+		t.Fatalf("worker evidence_state = %q, want missing", worker.EvidenceState)
+	}
+	if worker.LastCaptureAt != "" || worker.LastScreenChangeAt != "" || worker.ScreenFingerprint != "" {
+		t.Fatalf("worker missing evidence should not include progress details: %#v", worker)
+	}
+
+	critic := nodeByName["critic"].ScreenProgress
+	if critic == nil {
+		t.Fatal("critic ScreenProgress is nil, want stale evidence")
+	}
+	if critic.EvidenceState != "stale" {
+		t.Fatalf("critic evidence_state = %q, want stale", critic.EvidenceState)
+	}
+	if critic.LastCaptureAt != "2026-04-14T00:02:05Z" {
+		t.Fatalf("critic last_capture_at = %q, want 2026-04-14T00:02:05Z", critic.LastCaptureAt)
+	}
+	if critic.LastScreenChangeAt != "2026-04-14T00:02:00Z" {
+		t.Fatalf("critic last_screen_change_at = %q, want 2026-04-14T00:02:00Z", critic.LastScreenChangeAt)
+	}
+	if critic.ScreenFingerprint != "00000012" {
+		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+}
+
 func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
@@ -577,6 +685,18 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 		sessionName: sessionName,
 		configPath:  configPath,
 		cfg:         cfg,
+	}
+}
+
+func writeSessionHealthPaneActivity(t *testing.T, fixture sessionHealthProjectionFixture, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(
+		filepath.Join(fixture.baseDir, fixture.contextID, "pane-activity.json"),
+		[]byte(content),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(pane-activity.json): %v", err)
 	}
 }
 

@@ -98,6 +98,12 @@ func TestExportPaneActivityToFile(t *testing.T) {
 	if pane20.LastChangeAt.IsZero() {
 		t.Errorf("expected %%20 LastChangeAt to be set")
 	}
+	if pane20.LastCaptureAt.IsZero() {
+		t.Errorf("expected %%20 LastCaptureAt to be set")
+	}
+	if pane20.ScreenFingerprint != "0000006f" {
+		t.Errorf("expected %%20 ScreenFingerprint '0000006f', got %q", pane20.ScreenFingerprint)
+	}
 
 	pane21, ok := exported["%21"]
 	if !ok {
@@ -105,6 +111,9 @@ func TestExportPaneActivityToFile(t *testing.T) {
 	}
 	if pane21.Status != "idle" {
 		t.Errorf("expected %%21 status 'idle', got %q", pane21.Status)
+	}
+	if pane21.ScreenFingerprint != "000000de" {
+		t.Errorf("expected %%21 ScreenFingerprint '000000de', got %q", pane21.ScreenFingerprint)
 	}
 }
 

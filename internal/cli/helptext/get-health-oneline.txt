@@ -12,3 +12,6 @@ Marks:
   🔷 pending   action-required inbound message is open
   🟡 waiting   outbound reply-required message is open
   🟢 ready     pane is live with no open action or wait
+
+Screen progress fingerprints stay out of this compact view; use get-health
+for nodes[*].screen_progress JSON evidence.

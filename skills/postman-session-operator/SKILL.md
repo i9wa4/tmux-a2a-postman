@@ -101,7 +101,23 @@ recipient blocked.
 If dead letters exist, treat routing or configuration as suspect and use
 `postman-config-auditor` before manually retrying delivery.
 
-## 6. Safe Operator Flow
+## 6. Screen Progress
+
+`nodes[*].screen_progress` is non-content pane evidence. Use it to distinguish
+a pane that is changing from one that is merely quiet; do not expect raw pane
+text in health output.
+
+| Field                                   | Meaning                                              |
+| --------------------------------------- | ---------------------------------------------------- |
+| `screen_progress.evidence_state`        | `missing`, `stale`, `changed`, or `unchanged`        |
+| `screen_progress.last_capture_at`       | Last pane capture timestamp when available           |
+| `screen_progress.last_screen_change_at` | Last detected screen-change timestamp when available |
+| `screen_progress.screen_fingerprint`    | Opaque screen fingerprint, not transcript content    |
+
+`get-health-oneline` omits this detail to stay compact; use `get-health` when
+progress evidence matters.
+
+## 7. Safe Operator Flow
 
 1. Run `tmux-a2a-postman get-health`.
 2. If your node is `pending`, run `tmux-a2a-postman pop`.
@@ -117,7 +133,7 @@ If dead letters exist, treat routing or configuration as suspect and use
    retrying.
 7. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
-## 7. Escalation Boundaries
+## 8. Escalation Boundaries
 
 Use `postman-config-auditor` when the problem looks like a missing edge, wrong
 node name, stale `postman.md`, or dead-letter route.

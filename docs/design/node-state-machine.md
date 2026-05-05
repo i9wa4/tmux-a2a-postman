@@ -52,17 +52,22 @@ layer, while obligation identity belongs to daemon health and reply projection.
 
 ## 2. State Surfaces
 
-| Surface                  | Values                                                 | Meaning                                                   |
-| ------------------------ | ------------------------------------------------------ | --------------------------------------------------------- |
-| `nodes[*].pane_state`    | `active`, `idle`, `stale`                              | Pane availability and activity fact                       |
-| `nodes[*].visible_state` | `ready`, `waiting`, `pending`, `stale`                 | Operator-facing node state                                |
-| session `visible_state`  | `ready`, `waiting`, `pending`, `stale`, `unavailable`  | Worst node state, or unavailable canonical session health |
+| Surface                                      | Values                                                | Meaning                                                   |
+| -------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| `nodes[*].pane_state`                        | `active`, `idle`, `stale`                             | Pane availability and activity fact                       |
+| `nodes[*].visible_state`                     | `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
+| `nodes[*].screen_progress.evidence_state`    | `missing`, `stale`, `changed`, `unchanged`            | Non-content pane progress evidence                        |
+| session `visible_state`                      | `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
 
 `active` and `idle` pane facts normalize to `ready` unless reply obligations
 override them. A live pane that has not changed for a long time remains `idle`
 internally and stays `ready` visibly when there is no open action or wait.
 Missing pane state normalizes to `stale` so unknown nodes do not look healthy
 by accident.
+
+`screen_progress` carries timestamps and an opaque fingerprint from pane
+capture state so operators can tell whether the pane is still changing without
+reading raw pane text. It does not affect visible-state ranking.
 
 `unavailable` is a session-level fallback, not a per-node state. It means this
 daemon cannot provide canonical health for that tmux session.

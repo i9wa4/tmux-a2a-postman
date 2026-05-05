@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -111,7 +112,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 		edgeNodeRank[nodeName] = idx
 	}
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
-	paneStates := loadPaneActivityStatus(filepath.Join(baseDir, contextID, "pane-activity.json"))
+	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	queues := collectSessionQueues(sessionDir)
 	obligations, useObligations := projectedObligationCounts(sessionDir, sessionName)
 	panes, err := discoverSessionPanes(sessionName)
@@ -144,9 +145,13 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 		node := status.NodeHealth{
 			Name:           simpleName,
 			PaneID:         nodeInfo.PaneID,
-			PaneState:      paneStates[nodeInfo.PaneID],
+			PaneState:      paneActivity[nodeInfo.PaneID].Status,
 			InboxCount:     inboxCount,
 			CurrentCommand: pane.currentCommand,
+			ScreenProgress: paneActivity[nodeInfo.PaneID].ScreenProgress,
+		}
+		if node.ScreenProgress == nil {
+			node.ScreenProgress = missingScreenProgressEvidence()
 		}
 		actionRequiredCount := -1
 		if useObligations {
@@ -185,8 +190,13 @@ func ownsCanonicalSessionHealth(baseDir, contextID, sessionName string) bool {
 	return config.FindSessionOwner(baseDir, sessionName, contextID) == ""
 }
 
-func loadPaneActivityStatus(stateFile string) map[string]string {
-	result := make(map[string]string)
+type paneActivityEvidence struct {
+	Status         string
+	ScreenProgress *status.ScreenProgressEvidence
+}
+
+func loadPaneActivityEvidence(stateFile string) map[string]paneActivityEvidence {
+	result := make(map[string]paneActivityEvidence)
 
 	stateData, err := os.ReadFile(stateFile)
 	if err != nil {
@@ -202,20 +212,94 @@ func loadPaneActivityStatus(stateFile string) map[string]string {
 		var plain string
 		if err := json.Unmarshal(raw, &plain); err == nil {
 			if plain != "" {
-				result[paneID] = plain
+				result[paneID] = paneActivityEvidence{
+					Status:         plain,
+					ScreenProgress: screenProgressEvidence(plain, "", "", ""),
+				}
 			}
 			continue
 		}
 
 		var enriched struct {
-			Status string `json:"status"`
+			Status            string `json:"status"`
+			LastChangeAt      string `json:"lastChangeAt"`
+			LastCaptureAt     string `json:"lastCaptureAt"`
+			ScreenFingerprint string `json:"screenFingerprint"`
 		}
 		if err := json.Unmarshal(raw, &enriched); err == nil && enriched.Status != "" {
-			result[paneID] = enriched.Status
+			result[paneID] = paneActivityEvidence{
+				Status: enriched.Status,
+				ScreenProgress: screenProgressEvidence(
+					enriched.Status,
+					enriched.LastChangeAt,
+					enriched.LastCaptureAt,
+					enriched.ScreenFingerprint,
+				),
+			}
 		}
 	}
 
 	return result
+}
+
+func missingScreenProgressEvidence() *status.ScreenProgressEvidence {
+	return &status.ScreenProgressEvidence{EvidenceState: "missing"}
+}
+
+func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFingerprint string) *status.ScreenProgressEvidence {
+	progress := missingScreenProgressEvidence()
+
+	lastChangeText, lastChangeTime, hasLastChange := normalizeProgressTimestamp(lastChangeAt)
+	lastCaptureText, lastCaptureTime, hasLastCapture := normalizeProgressTimestamp(lastCaptureAt)
+	if hasLastChange {
+		progress.LastScreenChangeAt = lastChangeText
+	}
+	if hasLastCapture {
+		progress.LastCaptureAt = lastCaptureText
+	}
+	if fingerprint := normalizeScreenFingerprint(screenFingerprint); fingerprint != "" {
+		progress.ScreenFingerprint = fingerprint
+	}
+
+	switch {
+	case paneState == "stale":
+		progress.EvidenceState = "stale"
+	case !hasLastCapture || progress.ScreenFingerprint == "":
+		progress.EvidenceState = "missing"
+	case hasLastChange && !lastCaptureTime.After(lastChangeTime):
+		progress.EvidenceState = "changed"
+	case hasLastChange:
+		progress.EvidenceState = "unchanged"
+	default:
+		progress.EvidenceState = "missing"
+	}
+
+	return progress
+}
+
+func normalizeProgressTimestamp(value string) (string, time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil || parsed.IsZero() {
+		return "", time.Time{}, false
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), parsed, true
+}
+
+func normalizeScreenFingerprint(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return ""
+		}
+	}
+	return value
 }
 
 func countMarkdownFiles(dir string) int {

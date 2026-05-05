@@ -181,6 +181,10 @@ keeps `--reply-to <message-id>` as traceability; legacy messages may still use
 `--reply-to` for closure. `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are
 terminal no-reply messages. Agents should prefer `get-health` for structured
 session JSON and `get-health-oneline` for compact coordination.
+`get-health` includes `nodes[*].screen_progress` with non-content evidence
+such as last capture time, last screen-change time, and an opaque screen
+fingerprint; raw pane text is not exposed. The oneline view stays compact and
+omits those details.
 
 Pane capture also scans recent scrollback for Claude/Codex context-compaction
 markers so recovery PINGs are not limited to the visible screen. Configure the

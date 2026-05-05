@@ -3,15 +3,23 @@ package status
 const SchemaVersion = 2
 
 type NodeHealth struct {
-	Name                string `json:"name"`
-	PaneID              string `json:"pane_id,omitempty"`
-	PaneState           string `json:"pane_state,omitempty"`
-	VisibleState        string `json:"visible_state"`
-	InboxCount          int    `json:"inbox_count"`
-	ActionRequiredCount int    `json:"action_required_count,omitempty"`
-	WaitingOnReplyCount int    `json:"waiting_on_reply_count,omitempty"`
-	InfoUnreadCount     int    `json:"info_unread_count,omitempty"`
-	CurrentCommand      string `json:"current_command,omitempty"`
+	Name                string                  `json:"name"`
+	PaneID              string                  `json:"pane_id,omitempty"`
+	PaneState           string                  `json:"pane_state,omitempty"`
+	VisibleState        string                  `json:"visible_state"`
+	InboxCount          int                     `json:"inbox_count"`
+	ActionRequiredCount int                     `json:"action_required_count,omitempty"`
+	WaitingOnReplyCount int                     `json:"waiting_on_reply_count,omitempty"`
+	InfoUnreadCount     int                     `json:"info_unread_count,omitempty"`
+	CurrentCommand      string                  `json:"current_command,omitempty"`
+	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
+}
+
+type ScreenProgressEvidence struct {
+	EvidenceState      string `json:"evidence_state"`
+	LastCaptureAt      string `json:"last_capture_at,omitempty"`
+	LastScreenChangeAt string `json:"last_screen_change_at,omitempty"`
+	ScreenFingerprint  string `json:"screen_fingerprint,omitempty"`
 }
 
 type WindowNode struct {

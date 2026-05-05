@@ -31,9 +31,12 @@ type NodeActivity struct {
 
 // PaneActivityExport holds pane activity data for JSON export.
 // Issue #123: Enriched format with lastChangeAt for external consumers.
+// Issue #398: Adds non-content capture progress evidence for health consumers.
 type PaneActivityExport struct {
-	Status       string    `json:"status"`
-	LastChangeAt time.Time `json:"lastChangeAt"`
+	Status            string    `json:"status"`
+	LastChangeAt      time.Time `json:"lastChangeAt"`
+	LastCaptureAt     time.Time `json:"lastCaptureAt"`
+	ScreenFingerprint string    `json:"screenFingerprint,omitempty"`
 }
 
 // PaneCaptureState holds pane capture state for hybrid idle detection.
@@ -158,8 +161,10 @@ func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath stri
 	export := make(map[string]PaneActivityExport, len(t.paneCaptureState))
 	for paneID, state := range t.paneCaptureState {
 		export[paneID] = PaneActivityExport{
-			Status:       statusForState(state, now, cfg),
-			LastChangeAt: state.LastChangeAt,
+			Status:            statusForState(state, now, cfg),
+			LastChangeAt:      state.LastChangeAt,
+			LastCaptureAt:     state.LastCaptureAt,
+			ScreenFingerprint: fmt.Sprintf("%08x", state.LastHash),
 		}
 	}
 	t.mu.Unlock()

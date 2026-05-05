@@ -10,3 +10,6 @@ Output:
   and compact for the compact display token.
   Reply-aware fields include action_required_count, waiting_on_reply_count,
   and info_unread_count.
+  nodes[*].screen_progress provides non-content pane evidence:
+  evidence_state, last_capture_at, last_screen_change_at, and
+  screen_fingerprint. Raw pane text is not included.
