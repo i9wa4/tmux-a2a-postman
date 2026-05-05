@@ -395,7 +395,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 }
 
-func TestRunPop_ReportsMessageIDAndExactObligationFields(t *testing.T) {
+func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 	contextID := "ctx-pop-exact-obligation"
@@ -435,6 +435,15 @@ func TestRunPop_ReportsMessageIDAndExactObligationFields(t *testing.T) {
 	}
 	if payload.MessageID != messageFile {
 		t.Fatalf("payload.MessageID = %q, want %q", payload.MessageID, messageFile)
+	}
+	if payload.ReplySlotID != "obl_123" {
+		t.Fatalf("payload.ReplySlotID = %q, want obl_123", payload.ReplySlotID)
+	}
+	if payload.FillsReplySlotID != "obl_prev" {
+		t.Fatalf("payload.FillsReplySlotID = %q, want obl_prev", payload.FillsReplySlotID)
+	}
+	if payload.ReplySetID != "group_1" {
+		t.Fatalf("payload.ReplySetID = %q, want group_1", payload.ReplySetID)
 	}
 	if payload.ObligationID != "obl_123" {
 		t.Fatalf("payload.ObligationID = %q, want obl_123", payload.ObligationID)

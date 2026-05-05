@@ -10,6 +10,9 @@ type MailboxEventPayload struct {
 	From                  string `json:"from,omitempty"`
 	To                    string `json:"to,omitempty"`
 	ThreadID              string `json:"thread_id,omitempty"`
+	ReplySlotID           string `json:"reply_slot_id,omitempty"`
+	FillsReplySlotID      string `json:"fills_reply_slot_id,omitempty"`
+	ReplySetID            string `json:"reply_set_id,omitempty"`
 	ObligationID          string `json:"obligation_id,omitempty"`
 	SatisfiesObligationID string `json:"satisfies_obligation_id,omitempty"`
 	ObligationGroupID     string `json:"obligation_group_id,omitempty"`

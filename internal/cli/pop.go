@@ -122,6 +122,9 @@ type popMessageOutput struct {
 	To                    string `json:"to"`
 	ReplyPolicy           string `json:"reply_policy,omitempty"`
 	ReplyTo               string `json:"reply_to,omitempty"`
+	ReplySlotID           string `json:"reply_slot_id,omitempty"`
+	FillsReplySlotID      string `json:"fills_reply_slot_id,omitempty"`
+	ReplySetID            string `json:"reply_set_id,omitempty"`
 	ObligationID          string `json:"obligation_id,omitempty"`
 	SatisfiesObligationID string `json:"satisfies_obligation_id,omitempty"`
 	ObligationGroupID     string `json:"obligation_group_id,omitempty"`
@@ -168,6 +171,9 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	}
 	result.ReplyPolicy = metadata.ReplyPolicy
 	result.ReplyTo = metadata.ReplyTo
+	result.ReplySlotID = metadata.ReplySlotID
+	result.FillsReplySlotID = metadata.FillsReplySlotID
+	result.ReplySetID = metadata.ReplySetID
 	result.ObligationID = metadata.ObligationID
 	result.SatisfiesObligationID = metadata.SatisfiesObligationID
 	result.ObligationGroupID = metadata.ObligationGroupID

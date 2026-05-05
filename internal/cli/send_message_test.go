@@ -155,24 +155,28 @@ func TestRunSendMessage_InvalidReplyToRejectedBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_InvalidSatisfiesObligationIDRejectedBeforeWriting(t *testing.T) {
+func TestRunSendMessage_InvalidFillsReplySlotIDRejectedBeforeWriting(t *testing.T) {
 	tests := []struct {
-		name         string
-		obligationID string
-		want         string
+		name        string
+		flag        string
+		replySlotID string
+		want        string
 	}{
 		{
-			name:         "path",
-			obligationID: "../obl_123",
-			want:         "path separators",
+			name:        "canonical path",
+			flag:        "--fills-reply-slot-id",
+			replySlotID: "../rslot_123",
+			want:        "path separators",
 		},
 		{
-			name:         "multi_token",
-			obligationID: "obl 123",
-			want:         "whitespace",
+			name:        "legacy multi token",
+			flag:        "--satisfies-obligation-id",
+			replySlotID: "obl 123",
+			want:        "whitespace",
 		},
 		{
 			name: "empty",
+			flag: "--fills-reply-slot-id",
 		},
 	}
 	for _, tt := range tests {
@@ -182,12 +186,12 @@ func TestRunSendMessage_InvalidSatisfiesObligationIDRejectedBeforeWriting(t *tes
 			args := []string{
 				"--to", "worker",
 				"--body", "hello",
-				"--satisfies-obligation-id", tt.obligationID,
+				tt.flag, tt.replySlotID,
 			}
 			err := RunSendMessage(args)
-			if tt.obligationID == "" {
-				if err != nil && strings.Contains(err.Error(), "--satisfies-obligation-id") {
-					t.Fatalf("RunSendMessage() error = %v, want no obligation validation error", err)
+			if tt.replySlotID == "" {
+				if err != nil && strings.Contains(err.Error(), tt.flag) {
+					t.Fatalf("RunSendMessage() error = %v, want no reply slot validation error", err)
 				}
 				return
 			}
@@ -1167,11 +1171,14 @@ role = "worker"
 	if payload.ReplyPolicy != "required" {
 		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
 	}
-	if payload.ObligationID == "" {
-		t.Fatal("payload.ObligationID is empty, want generated obligation id")
+	if payload.ReplySlotID == "" {
+		t.Fatal("payload.ReplySlotID is empty, want generated reply slot id")
 	}
-	if err := envelope.ValidateObligationToken(payload.ObligationID); err != nil {
-		t.Fatalf("payload.ObligationID = %q is invalid: %v", payload.ObligationID, err)
+	if err := envelope.ValidateReplySlotToken(payload.ReplySlotID); err != nil {
+		t.Fatalf("payload.ReplySlotID = %q is invalid: %v", payload.ReplySlotID, err)
+	}
+	if payload.ObligationID != payload.ReplySlotID {
+		t.Fatalf("payload.ObligationID = %q, want legacy alias %q", payload.ObligationID, payload.ReplySlotID)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-reply-policy", "test-session", "post", payload.Sent))
@@ -1181,8 +1188,8 @@ role = "worker"
 	for _, want := range []string{
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
-		"obligation_id: " + payload.ObligationID,
-		"Reply with quoted heredoc:\ntmux-a2a-postman send --to messenger --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
+		"reply_slot_id: " + payload.ReplySlotID,
+		"Reply with quoted heredoc:\ntmux-a2a-postman send --to messenger --fills-reply-slot-id " + payload.ReplySlotID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
 		"<your message>\nPOSTMAN_BODY",
 		"For generated files, use --body-file <path>.",
 		"Add --reply-required only when your reply needs a response.",
@@ -1191,8 +1198,10 @@ role = "worker"
 			t.Fatalf("content missing %q:\n%s", want, string(content))
 		}
 	}
-	if strings.Contains(string(content), "satisfies_obligation_id:") {
-		t.Fatalf("content contains unexpected satisfies_obligation_id:\n%s", string(content))
+	for _, unwanted := range []string{"obligation_id:", "satisfies_obligation_id:", "fills_reply_slot_id:"} {
+		if strings.Contains(string(content), unwanted) {
+			t.Fatalf("content contains unexpected %q:\n%s", unwanted, string(content))
+		}
 	}
 }
 
@@ -1216,7 +1225,7 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
-	const obligationID = "obl_exact_123"
+	const replySlotID = "rslot_exact_123"
 	stdout, _, err := captureCommandOutput(t, func() error {
 		return RunSendMessage([]string{
 			"--config", configPath,
@@ -1224,7 +1233,7 @@ role = "worker"
 			"--to", "messenger",
 			"--body", "DONE",
 			"--reply-to", "20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
-			"--satisfies-obligation-id", obligationID,
+			"--fills-reply-slot-id", replySlotID,
 		})
 	})
 	if err != nil {
@@ -1234,8 +1243,14 @@ role = "worker"
 	if payload.ObligationID != "" {
 		t.Fatalf("payload.ObligationID = %q, want empty for no-reply exact reply", payload.ObligationID)
 	}
-	if payload.SatisfiesObligationID != obligationID {
-		t.Fatalf("payload.SatisfiesObligationID = %q, want %q", payload.SatisfiesObligationID, obligationID)
+	if payload.ReplySlotID != "" {
+		t.Fatalf("payload.ReplySlotID = %q, want empty for no-reply exact reply", payload.ReplySlotID)
+	}
+	if payload.FillsReplySlotID != replySlotID {
+		t.Fatalf("payload.FillsReplySlotID = %q, want %q", payload.FillsReplySlotID, replySlotID)
+	}
+	if payload.SatisfiesObligationID != replySlotID {
+		t.Fatalf("payload.SatisfiesObligationID = %q, want legacy alias %q", payload.SatisfiesObligationID, replySlotID)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-exact-reply", "test-session", "post", payload.Sent))
@@ -1245,7 +1260,7 @@ role = "worker"
 	for _, want := range []string{
 		"replyPolicy: none",
 		"replyTo: 20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
-		"satisfies_obligation_id: " + obligationID,
+		"fills_reply_slot_id: " + replySlotID,
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))
@@ -1253,6 +1268,9 @@ role = "worker"
 	}
 	if strings.Contains(string(content), "\n  obligation_id:") {
 		t.Fatalf("content contains unexpected obligation_id:\n%s", string(content))
+	}
+	if strings.Contains(string(content), "\n  satisfies_obligation_id:") {
+		t.Fatalf("content contains unexpected satisfies_obligation_id:\n%s", string(content))
 	}
 }
 
@@ -1340,8 +1358,11 @@ role = "worker"
 	if payload.ReplyPolicy != "required" {
 		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
 	}
-	if payload.ObligationID == "" {
-		t.Fatal("payload.ObligationID is empty, want generated obligation id")
+	if payload.ReplySlotID == "" {
+		t.Fatal("payload.ReplySlotID is empty, want generated reply slot id")
+	}
+	if payload.ObligationID != payload.ReplySlotID {
+		t.Fatalf("payload.ObligationID = %q, want legacy alias %q", payload.ObligationID, payload.ReplySlotID)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-message-type-policy", "test-session", "post", payload.Sent))
@@ -1351,7 +1372,7 @@ role = "worker"
 	for _, want := range []string{
 		"messageType: status_request",
 		"replyPolicy: required",
-		"obligation_id: " + payload.ObligationID,
+		"obligation_id: " + payload.ReplySlotID,
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))
@@ -2809,7 +2830,7 @@ func assertNoGeneratedReplyPolicyMarker(t *testing.T, value, label string) {
 	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_REPLY_POLICY_") {
 		t.Fatalf("%s leaked generated reply policy marker:\n%s", label, value)
 	}
-	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_OBLIGATION_ID_") {
-		t.Fatalf("%s leaked generated obligation id marker:\n%s", label, value)
+	if strings.Contains(value, "__TMUX_A2A_POSTMAN_GENERATED_REPLY_SLOT_ID_") {
+		t.Fatalf("%s leaked generated reply slot id marker:\n%s", label, value)
 	}
 }

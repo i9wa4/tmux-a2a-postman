@@ -15,6 +15,9 @@ type Metadata struct {
 	MessageType           string
 	Timestamp             string
 	ThreadID              string
+	ReplySlotID           string
+	FillsReplySlotID      string
+	ReplySetID            string
 	ObligationID          string
 	SatisfiesObligationID string
 	ObligationGroupID     string
@@ -77,12 +80,18 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.Timestamp = value
 			case "thread_id":
 				metadata.ThreadID = value
-			case "obligation_id":
-				metadata.ObligationID = value
-			case "satisfies_obligation_id":
-				metadata.SatisfiesObligationID = value
-			case "obligation_group_id":
-				metadata.ObligationGroupID = value
+			case "reply_slot_id", "reply_request_id", "obligation_id":
+				if err := metadata.setReplySlotID(value, key); err != nil {
+					return Metadata{}, err
+				}
+			case "fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id":
+				if err := metadata.setFillsReplySlotID(value, key); err != nil {
+					return Metadata{}, err
+				}
+			case "reply_set_id", "reply_request_group_id", "obligation_group_id":
+				if err := metadata.setReplySetID(value, key); err != nil {
+					return Metadata{}, err
+				}
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
@@ -97,7 +106,48 @@ func ParseMetadata(content string) (Metadata, error) {
 	return metadata, nil
 }
 
-func ValidateObligationToken(value string) error {
+func (m *Metadata) setReplySlotID(value, alias string) error {
+	if err := setAliasValue(&m.ReplySlotID, value, "reply_slot_id", alias); err != nil {
+		return err
+	}
+	if value != "" {
+		m.ObligationID = m.ReplySlotID
+	}
+	return nil
+}
+
+func (m *Metadata) setFillsReplySlotID(value, alias string) error {
+	if err := setAliasValue(&m.FillsReplySlotID, value, "fills_reply_slot_id", alias); err != nil {
+		return err
+	}
+	if value != "" {
+		m.SatisfiesObligationID = m.FillsReplySlotID
+	}
+	return nil
+}
+
+func (m *Metadata) setReplySetID(value, alias string) error {
+	if err := setAliasValue(&m.ReplySetID, value, "reply_set_id", alias); err != nil {
+		return err
+	}
+	if value != "" {
+		m.ObligationGroupID = m.ReplySetID
+	}
+	return nil
+}
+
+func setAliasValue(current *string, value, canonicalName, alias string) error {
+	if value == "" {
+		return nil
+	}
+	if *current != "" && *current != value {
+		return fmt.Errorf("conflicting %s aliases: %s differs", canonicalName, alias)
+	}
+	*current = value
+	return nil
+}
+
+func ValidateReplySlotToken(value string) error {
 	if value == "" {
 		return fmt.Errorf("must not be empty")
 	}
@@ -113,6 +163,10 @@ func ValidateObligationToken(value string) error {
 		}
 	}
 	return nil
+}
+
+func ValidateObligationToken(value string) error {
+	return ValidateReplySlotToken(value)
 }
 
 func directParamsChild(line string, childIndent int) (string, string, bool) {
@@ -282,7 +336,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		}
 		if fieldKey, ok := managedParamFieldKey(key); ok {
 			existing[fieldKey] = true
-			if value := strings.TrimSpace(fields[fieldKey]); value != "" {
+			if value := managedParamFieldValue(fields, fieldKey); value != "" {
 				updatedLine := paramsIndent + key + ": " + value
 				if lines[idx] != updatedLine {
 					lines[idx] = updatedLine
@@ -295,8 +349,8 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "obligation_id", "satisfies_obligation_id", "obligation_group_id", "branch_id", "completion_rule"} {
-		value := strings.TrimSpace(fields[key])
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "reply_slot_id", "fills_reply_slot_id", "reply_set_id", "branch_id", "completion_rule"} {
+		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
 		}
@@ -419,17 +473,47 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "replyPolicy", true
 	case "replyTo", "reply_to":
 		return "replyTo", true
-	case "obligation_id":
-		return "obligation_id", true
-	case "satisfies_obligation_id":
-		return "satisfies_obligation_id", true
-	case "obligation_group_id":
-		return "obligation_group_id", true
+	case "reply_slot_id", "reply_request_id", "obligation_id":
+		return "reply_slot_id", true
+	case "fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id":
+		return "fills_reply_slot_id", true
+	case "reply_set_id", "reply_request_group_id", "obligation_group_id":
+		return "reply_set_id", true
 	case "branch_id":
 		return "branch_id", true
 	case "completion_rule":
 		return "completion_rule", true
 	default:
 		return "", false
+	}
+}
+
+func managedParamFieldValue(fields map[string]string, fieldKey string) string {
+	for _, key := range managedParamFieldAliases(fieldKey) {
+		if value := strings.TrimSpace(fields[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func managedParamFieldAliases(fieldKey string) []string {
+	switch fieldKey {
+	case "messageId":
+		return []string{"messageId", "message_id"}
+	case "replyPolicy":
+		return []string{"replyPolicy", "reply_policy", "replyObligation", "reply_obligation"}
+	case "replyTo":
+		return []string{"replyTo", "reply_to"}
+	case "reply_slot_id":
+		return []string{"reply_slot_id", "reply_request_id", "obligation_id"}
+	case "fills_reply_slot_id":
+		return []string{"fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id"}
+	case "reply_set_id":
+		return []string{"reply_set_id", "reply_request_group_id", "obligation_group_id"}
+	case "branch_id", "completion_rule":
+		return []string{fieldKey}
+	default:
+		return []string{fieldKey}
 	}
 }

@@ -31,8 +31,9 @@
 #   {message_id}     - Current message id
 #   {reply_policy}   - Resolved reply policy
 #   {reply_to}       - Message id this message references, when supplied
-#   {obligation_id}  - Exact obligation id for reply-required messages
-#   {satisfies_obligation_id} - Exact obligation id this message satisfies
+#   {reply_slot_id}  - Exact reply slot id for reply-required messages
+#   {fills_reply_slot_id} - Exact reply slot id this message fills
+#   {obligation_id}, {satisfies_obligation_id} - legacy aliases
 #   {template}       - Recipient's role template from config
 #   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
@@ -118,8 +119,9 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
 #            {reply_arguments} - exact reply args for required mail, legacy args otherwise
-#            {obligation_id} - exact obligation id when reply is required
-#            {satisfies_obligation_id} - exact obligation id this message satisfies
+#            {reply_slot_id} - exact reply slot id when reply is required
+#            {fills_reply_slot_id} - exact reply slot id this message fills
+#            {obligation_id}, {satisfies_obligation_id} - legacy aliases
 message_footer = """You can talk to: {can_talk_to}
 Reply with quoted heredoc:
 {reply_command}{reply_arguments} <<'POSTMAN_BODY'
@@ -167,8 +169,9 @@ POSTMAN_BODY
 # Draft message template (user-initiated messages via send)
 # Variables: {context_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command},
-#   {message_id}, {reply_policy}, {reply_to}, {obligation_id},
-#   {satisfies_obligation_id}
+#   {message_id}, {reply_policy}, {reply_to}, {reply_slot_id},
+#   {fills_reply_slot_id}; {obligation_id} and {satisfies_obligation_id}
+#   are legacy aliases.
 draft_template = """---
 params:
   contextId: {context_id}

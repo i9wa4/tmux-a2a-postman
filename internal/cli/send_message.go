@@ -49,6 +49,8 @@ type sendOutput struct {
 	To                    string                `json:"to,omitempty"`
 	ReplyPolicy           string                `json:"reply_policy,omitempty"`
 	ReplyTo               string                `json:"reply_to,omitempty"`
+	ReplySlotID           string                `json:"reply_slot_id,omitempty"`
+	FillsReplySlotID      string                `json:"fills_reply_slot_id,omitempty"`
 	ObligationID          string                `json:"obligation_id,omitempty"`
 	SatisfiesObligationID string                `json:"satisfies_obligation_id,omitempty"`
 	SubmitPath            projection.SubmitPath `json:"submit_path,omitempty"`
@@ -158,7 +160,9 @@ func RunSendMessage(args []string) error {
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
-	satisfiesObligationID := fs.String("satisfies-obligation-id", "", "obligation id this message satisfies")
+	fillsReplySlotID := fs.String("fills-reply-slot-id", "", "reply slot id this message fills")
+	satisfiesReplyRequestID := fs.String("satisfies-reply-request-id", "", "legacy reply request id this message satisfies")
+	satisfiesObligationID := fs.String("satisfies-obligation-id", "", "legacy obligation id this message satisfies")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -183,7 +187,17 @@ func RunSendMessage(args []string) error {
 	if err := validateReplyToMessageID(*replyTo); err != nil {
 		return err
 	}
-	if err := validateSatisfiesObligationID(*satisfiesObligationID); err != nil {
+	if err := validateReplySlotFillFlag("--fills-reply-slot-id", *fillsReplySlotID); err != nil {
+		return err
+	}
+	if err := validateReplySlotFillFlag("--satisfies-reply-request-id", *satisfiesReplyRequestID); err != nil {
+		return err
+	}
+	if err := validateReplySlotFillFlag("--satisfies-obligation-id", *satisfiesObligationID); err != nil {
+		return err
+	}
+	resolvedFillsReplySlotID, err := resolveFillsReplySlotID(*fillsReplySlotID, *satisfiesReplyRequestID, *satisfiesObligationID)
+	if err != nil {
 		return err
 	}
 	cfg, err := config.LoadConfig(*configPath)
@@ -301,8 +315,8 @@ func RunSendMessage(args []string) error {
 		return fmt.Errorf("generating filename: %w", err)
 	}
 	replyPolicy := message.ResolveReplyPolicyForSend(bodyText, *noReply, *replyRequired)
-	obligationID := ""
-	obligationIDMarker := generatedObligationIDPlaceholder(filename)
+	replySlotID := ""
+	replySlotIDMarker := generatedReplySlotIDPlaceholder(filename)
 	draftPath := filepath.Join(draftDir, filename)
 
 	content := cfg.DraftTemplate
@@ -312,22 +326,29 @@ func RunSendMessage(args []string) error {
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
-		"context_id":              resolvedContextID,
-		"sender":                  sender,
-		"recipient":               *to,
-		"timestamp":               now.Format(time.RFC3339),
-		"can_talk_to":             canTalkTo,
-		"session_dir":             filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":           strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
-		"message_id":              filename,
-		"reply_policy":            generatedReplyPolicyMarker,
-		"reply_to":                *replyTo,
-		"obligation_id":           obligationIDMarker,
-		"satisfies_obligation_id": *satisfiesObligationID,
-		"reply_arguments":         "",
-		"template":                getNodeTemplate(cfg, *to),
-		"session_name":            sessionName,
-		"sender_pane_id":          config.GetTmuxPaneID(),
+		"context_id":                 resolvedContextID,
+		"sender":                     sender,
+		"recipient":                  *to,
+		"timestamp":                  now.Format(time.RFC3339),
+		"can_talk_to":                canTalkTo,
+		"session_dir":                filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":              strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":                 filename,
+		"reply_policy":               generatedReplyPolicyMarker,
+		"reply_to":                   *replyTo,
+		"reply_slot_id":              replySlotIDMarker,
+		"fills_reply_slot_id":        resolvedFillsReplySlotID,
+		"reply_set_id":               "",
+		"reply_request_id":           replySlotIDMarker,
+		"satisfies_reply_request_id": resolvedFillsReplySlotID,
+		"reply_request_group_id":     "",
+		"obligation_id":              replySlotIDMarker,
+		"satisfies_obligation_id":    resolvedFillsReplySlotID,
+		"obligation_group_id":        "",
+		"reply_arguments":            "",
+		"template":                   getNodeTemplate(cfg, *to),
+		"session_name":               sessionName,
+		"sender_pane_id":             config.GetTmuxPaneID(),
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -352,21 +373,25 @@ func RunSendMessage(args []string) error {
 	content = strings.ReplaceAll(content, generatedReplyPolicyMarker, replyPolicy)
 	vars["reply_policy"] = replyPolicy
 	if replyPolicy == "required" {
-		obligationID, err = generateObligationID()
+		replySlotID, err = generateReplySlotID()
 		if err != nil {
 			return err
 		}
 	}
-	content = strings.ReplaceAll(content, obligationIDMarker, obligationID)
-	vars["obligation_id"] = obligationID
-	vars["satisfies_obligation_id"] = *satisfiesObligationID
-	vars["reply_arguments"] = replyArgumentsForMessage(filename, obligationID)
+	content = strings.ReplaceAll(content, replySlotIDMarker, replySlotID)
+	vars["reply_slot_id"] = replySlotID
+	vars["fills_reply_slot_id"] = resolvedFillsReplySlotID
+	vars["reply_request_id"] = replySlotID
+	vars["satisfies_reply_request_id"] = resolvedFillsReplySlotID
+	vars["obligation_id"] = replySlotID
+	vars["satisfies_obligation_id"] = resolvedFillsReplySlotID
+	vars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":               filename,
-		"replyPolicy":             replyPolicy,
-		"replyTo":                 *replyTo,
-		"obligation_id":           obligationID,
-		"satisfies_obligation_id": *satisfiesObligationID,
+		"messageId":           filename,
+		"replyPolicy":         replyPolicy,
+		"replyTo":             *replyTo,
+		"reply_slot_id":       replySlotID,
+		"fills_reply_slot_id": resolvedFillsReplySlotID,
 	})
 
 	if cfg.MessageFooter != "" {
@@ -390,9 +415,13 @@ func RunSendMessage(args []string) error {
 		footerVars["message_id"] = filename
 		footerVars["reply_policy"] = replyPolicy
 		footerVars["reply_to"] = *replyTo
-		footerVars["obligation_id"] = obligationID
-		footerVars["satisfies_obligation_id"] = *satisfiesObligationID
-		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, obligationID)
+		footerVars["reply_slot_id"] = replySlotID
+		footerVars["fills_reply_slot_id"] = resolvedFillsReplySlotID
+		footerVars["reply_request_id"] = replySlotID
+		footerVars["satisfies_reply_request_id"] = resolvedFillsReplySlotID
+		footerVars["obligation_id"] = replySlotID
+		footerVars["satisfies_obligation_id"] = resolvedFillsReplySlotID
+		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
@@ -423,8 +452,10 @@ func RunSendMessage(args []string) error {
 			To:                    *to,
 			ReplyPolicy:           replyPolicy,
 			ReplyTo:               *replyTo,
-			ObligationID:          obligationID,
-			SatisfiesObligationID: *satisfiesObligationID,
+			ReplySlotID:           replySlotID,
+			FillsReplySlotID:      resolvedFillsReplySlotID,
+			ObligationID:          replySlotID,
+			SatisfiesObligationID: resolvedFillsReplySlotID,
 			SubmitPath:            projection.SubmitPathDaemon,
 		})
 	}
@@ -478,8 +509,10 @@ func RunSendMessage(args []string) error {
 		To:                    *to,
 		ReplyPolicy:           replyPolicy,
 		ReplyTo:               *replyTo,
-		ObligationID:          obligationID,
-		SatisfiesObligationID: *satisfiesObligationID,
+		ReplySlotID:           replySlotID,
+		FillsReplySlotID:      resolvedFillsReplySlotID,
+		ObligationID:          replySlotID,
+		SatisfiesObligationID: resolvedFillsReplySlotID,
 		SubmitPath:            projection.SubmitPathPost,
 		Notify:                notifyOutputValue(notifyStatus),
 	})
@@ -499,9 +532,9 @@ func generatedReplyPolicyPlaceholder(filename string) string {
 	return b.String()
 }
 
-func generatedObligationIDPlaceholder(filename string) string {
+func generatedReplySlotIDPlaceholder(filename string) string {
 	var b strings.Builder
-	b.WriteString("__TMUX_A2A_POSTMAN_GENERATED_OBLIGATION_ID_")
+	b.WriteString("__TMUX_A2A_POSTMAN_GENERATED_REPLY_SLOT_ID_")
 	for _, r := range filename {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
@@ -513,17 +546,25 @@ func generatedObligationIDPlaceholder(filename string) string {
 	return b.String()
 }
 
-func generateObligationID() (string, error) {
-	var raw [12]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("generating obligation id: %w", err)
-	}
-	return "obl_" + hex.EncodeToString(raw[:]), nil
+func generatedObligationIDPlaceholder(filename string) string {
+	return generatedReplySlotIDPlaceholder(filename)
 }
 
-func replyArgumentsForMessage(messageID, obligationID string) string {
-	if obligationID != "" {
-		return " --satisfies-obligation-id " + obligationID + " --reply-to " + messageID
+func generateReplySlotID() (string, error) {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generating reply slot id: %w", err)
+	}
+	return "rslot_" + hex.EncodeToString(raw[:]), nil
+}
+
+func generateObligationID() (string, error) {
+	return generateReplySlotID()
+}
+
+func replyArgumentsForMessage(messageID, replySlotID string) string {
+	if replySlotID != "" {
+		return " --fills-reply-slot-id " + replySlotID + " --reply-to " + messageID
 	}
 	return " --reply-to " + messageID
 }
@@ -544,14 +585,43 @@ func validateReplyToMessageID(replyTo string) error {
 	return nil
 }
 
-func validateSatisfiesObligationID(obligationID string) error {
-	if obligationID == "" {
+func validateReplySlotFillFlag(flagName, replySlotID string) error {
+	if replySlotID == "" {
 		return nil
 	}
-	if err := envelope.ValidateObligationToken(obligationID); err != nil {
-		return fmt.Errorf("--satisfies-obligation-id %w", err)
+	if err := envelope.ValidateReplySlotToken(replySlotID); err != nil {
+		return fmt.Errorf("%s %w", flagName, err)
 	}
 	return nil
+}
+
+func resolveFillsReplySlotID(fillsReplySlotID, satisfiesReplyRequestID, satisfiesObligationID string) (string, error) {
+	type flagValue struct {
+		name  string
+		value string
+	}
+	flags := []flagValue{
+		{name: "--fills-reply-slot-id", value: fillsReplySlotID},
+		{name: "--satisfies-reply-request-id", value: satisfiesReplyRequestID},
+		{name: "--satisfies-obligation-id", value: satisfiesObligationID},
+	}
+	resolved := ""
+	resolvedName := ""
+	for _, flag := range flags {
+		if flag.value == "" {
+			continue
+		}
+		if resolved != "" && flag.value != resolved {
+			return "", fmt.Errorf("conflicting reply slot fill aliases: %s and %s differ", resolvedName, flag.name)
+		}
+		resolved = flag.value
+		resolvedName = flag.name
+	}
+	return resolved, nil
+}
+
+func validateSatisfiesObligationID(obligationID string) error {
+	return validateReplySlotFillFlag("--satisfies-obligation-id", obligationID)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

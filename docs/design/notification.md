@@ -48,8 +48,8 @@ canonical health for a tmux session. It is displayed as red, but it is not a
 per-node state.
 
 The health payload exposes `queues.post_count`, `queues.inbox_count`,
-`queues.dead_letter_count`, and per-node reply-obligation counts for mailbox
-backlog checks. Per-node state is reported as `nodes[*].visible_state`.
+`queues.dead_letter_count`, and per-node reply-slot counts for mailbox backlog
+checks. Per-node state is reported as `nodes[*].visible_state`.
 
 ## 4. Configuration
 

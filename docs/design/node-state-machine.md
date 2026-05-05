@@ -1,7 +1,7 @@
 # Node State Machine
 
 The visible node state model is intentionally small. It combines pane
-availability with reply-obligation projection so agents can tell whether a node
+availability with reply-slot projection so agents can tell whether a node
 has work, is blocked on another node, or is unavailable.
 
 It is not a full conversation workflow model. Message files remain the source
@@ -10,21 +10,21 @@ events into a compact state.
 
 ## 1. Identity Hierarchy
 
-The runtime protocol treats messages, threads, and obligations as separate
+The runtime protocol treats messages, threads, and reply slots as separate
 identities:
 
 ```text
 thread_id
   message_id
-    obligation_id
+    reply_slot_id
 ```
 
 `message_id` is the immutable mailbox filename. Current generated frontmatter
 keeps `messageId` for compatibility, while public JSON and journal payloads use
 `message_id`. `thread_id` is optional for ordinary mail and required by
-thread-bound approval/review events. `obligation_id` is generated only for
-reply-required mail and identifies the exact reply unit opened for the
-recipient.
+thread-bound approval/review events. `reply_slot_id` is generated only for
+reply-required mail and identifies the exact per-recipient slot opened for a
+future reply.
 
 Task identity is intentionally not transport metadata. A task may exist in an
 external planner, issue, or markdown artifact, but the daemon does not generate
@@ -37,18 +37,18 @@ Identity names are chosen to make lifecycle size visible to a new operator:
 | Name                  | Scale                         | Why it is not another name                                  |
 | --------------------- | ----------------------------- | ----------------------------------------------------------- |
 | `message_id`          | One delivered mailbox record  | A message is the smallest transport record, not a workflow. |
-| `thread_id`           | Conversation or workflow line | A thread can contain many messages and obligations.         |
-| `obligation_id`       | One required-reply action     | An obligation is action state opened by one required reply. |
-| `obligation_group_id` | Multi-recipient aggregate     | A group can contain several obligation branches.            |
+| `thread_id`           | Conversation or workflow line | A thread can contain many messages and reply slots.         |
+| `reply_slot_id`       | One required recipient reply  | A slot is opened by one required message and filled later.  |
+| `reply_set_id`        | Multi-recipient aggregate     | A set can contain several reply-slot branches.              |
 | `branch_id`           | One branch inside a group     | A branch is smaller than a group but still action-scoped.   |
 | `task_id`             | External work item            | A task is broader than transport and has no daemon owner.   |
 
 The names do not try to encode a strict parent/child hierarchy. They distinguish
 scale: a single delivered message, a conversational thread, an actionable
-required-reply obligation, and an optional aggregate for multi-recipient
-completion rules. This keeps `task_id` and `obligation_id` from sounding like
-same-scale runtime concepts: task identity belongs to an external planning
-layer, while obligation identity belongs to daemon health and reply projection.
+required-reply slot, and an optional aggregate for multi-recipient completion
+rules. This keeps `task_id` and `reply_slot_id` from sounding like same-scale
+runtime concepts: task identity belongs to an external planning layer, while
+reply-slot identity belongs to daemon health and reply projection.
 
 ## 2. State Surfaces
 
@@ -59,7 +59,7 @@ layer, while obligation identity belongs to daemon health and reply projection.
 | `nodes[*].screen_progress.evidence_state`    | `missing`, `stale`, `changed`, `unchanged`            | Non-content pane progress evidence                        |
 | session `visible_state`                      | `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
 
-`active` and `idle` pane facts normalize to `ready` unless reply obligations
+`active` and `idle` pane facts normalize to `ready` unless reply slots
 override them. A live pane that has not changed for a long time remains `idle`
 internally and stays `ready` visibly when there is no open action or wait.
 Missing pane state normalizes to `stale` so unknown nodes do not look healthy
@@ -76,7 +76,7 @@ daemon cannot provide canonical health for that tmux session.
 
 | State     | Meaning                                             | Source fact                            |
 | --------- | --------------------------------------------------- | -------------------------------------- |
-| `ready`   | Pane is live with no open action or wait            | tmux pane activity and obligations     |
+| `ready`   | Pane is live with no open action or wait            | tmux pane activity and reply slots     |
 | `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_reply_count > 0`           |
 | `pending` | Node has inbound reply-required action unresolved   | `action_required_count > 0`            |
 | `stale`   | Pane or session is missing, unavailable, or unknown | pane discovery/activity data           |
@@ -99,7 +99,7 @@ stateDiagram-v2
     ready --> stale: pane/session unavailable
     waiting --> stale: pane/session unavailable
     pending --> stale: pane/session unavailable
-    stale --> ready: pane returns with no open obligations
+    stale --> ready: pane returns with no open reply slots
     stale --> waiting: pane returns with outbound waits
     stale --> pending: pane returns with inbound actions
 ```
@@ -115,12 +115,13 @@ message carries a strict request class such as `status_request`,
 `approval_request`, or `reply_request`. Use `--no-reply` as an explicit
 override for terminal or informational mail.
 
-A new reply-required message carries an exact `obligation_id`. A resolving
-reply should include `--satisfies-obligation-id <obligation-id>` so health can
-clear that obligation. The default footer includes `--reply-to <message-id>` as
-compatibility and traceability; for legacy messages without an exact obligation
-ID, `--reply-to` still closes the matching open obligation for the original
-message and participant.
+A new reply-required message carries an exact `reply_slot_id`. A resolving
+reply should include `--fills-reply-slot-id <reply-slot-id>` so health can
+clear that slot. The default footer includes `--reply-to <message-id>` as
+compatibility and traceability; for legacy messages without an exact reply-slot
+ID, `--reply-to` still closes the matching open slot for the original message
+and participant. `obligation_*` and `reply_request_*` names remain accepted as
+compatibility aliases, not canonical protocol fields.
 
 The resolver treats exact first-line terminal messages as no-reply:
 
@@ -135,10 +136,10 @@ Daemon-originated PING, runtime notice mail, status updates, alerts, and pane
 hints also resolve to `none`. Ambiguous content remains no-reply unless the
 sender explicitly marks it reply-required.
 
-## 6. Obligation Facts
+## 6. Reply Slot Facts
 
-Each delivered recipient gets its own obligation. New required messages use an
-opaque `obligation_id`; legacy required messages without exact fields continue
+Each delivered recipient gets its own reply slot. New required messages use an
+opaque `reply_slot_id`; legacy required messages without exact fields continue
 to use the message ID plus participant as the fallback key.
 
 | Fact                       | Meaning                                                       |
@@ -146,8 +147,9 @@ to use the message ID plus participant as the fallback key.
 | `message_id`               | Stable message identifier used by inbox, read, and reply data |
 | `thread_id`                | Optional workflow strand for related messages and events      |
 | `reply_policy`             | `required` or `none`, resolved when the message is created    |
-| `obligation_id`            | Exact required-reply unit opened by a required message        |
-| `satisfies_obligation_id`  | Exact obligation ID this message resolves                     |
+| `reply_slot_id`            | Exact required-reply slot opened by a required message        |
+| `fills_reply_slot_id`      | Exact reply slot ID this message fills                        |
+| `reply_set_id`             | Optional aggregate of reply slots                             |
 | `reply_to`                 | Optional legacy message ID that this message resolves         |
 | `unread_count`             | All unread inbox mail, including no-reply notices             |
 | `action_required_count`    | Inbound reply-required messages not yet resolved by a reply   |
@@ -156,18 +158,20 @@ to use the message ID plus participant as the fallback key.
 
 `pop` only clears unread state. It does not clear reply-required action, because
 reading a request is not the same as answering it. Sending a resolving reply
-clears the recipient's action-required obligation and the sender's
-waiting-on-reply obligation when `satisfies_obligation_id` names the exact
-obligation. If both `satisfies_obligation_id` and `reply_to` are present and
+clears the recipient's action-required slot and the sender's waiting-on-reply
+slot when `fills_reply_slot_id` names the exact reply slot. If both
+`fills_reply_slot_id` and `reply_to` are present and
 `reply_to` names a different original message, projection fails closed and does
-not clear an arbitrary obligation. If an older journal event does not contain
+not clear an arbitrary slot. If an older journal event does not contain
 enough structured message content, projection skips that event and continues
-from later complete events instead of inventing obligation state.
+from later complete events instead of inventing reply-slot state.
 
-Grouped obligation fields are reserved for the next protocol layer:
-`obligation_group_id`, `branch_id`, and `completion_rule`. They are parsed and
-carried as metadata but do not affect L1 health counts until grouped completion
-rules are implemented.
+Grouped reply-slot fields are reserved for the next protocol layer:
+`reply_set_id`, `branch_id`, and `completion_rule`. They are parsed and carried
+as metadata but do not affect L1 health counts until grouped completion rules
+are implemented. Legacy aliases `obligation_id`, `satisfies_obligation_id`, and
+`obligation_group_id` map to `reply_slot_id`, `fills_reply_slot_id`, and
+`reply_set_id` during migration.
 
 ## 7. Health Projection
 
@@ -181,5 +185,5 @@ Session-level state is the worst visible state across nodes, ranked as:
 4. `stale`
 
 Queue facts are reported separately in `queues.post_count`,
-`queues.inbox_count`, and `queues.dead_letter_count`. Reply-obligation facts are
+`queues.inbox_count`, and `queues.dead_letter_count`. Reply-slot facts are
 reported per node.

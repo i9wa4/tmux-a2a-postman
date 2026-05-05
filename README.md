@@ -192,12 +192,13 @@ tmux-a2a-postman help directories
 
 `get-health`, `get-health-oneline`, and the default TUI are views over the same
 reply-aware contract. Use `--reply-required` only for messages that need an
-answer; reply-required messages carry `obligation_id`, and exact replies should
-include `--satisfies-obligation-id <obligation-id>`. The default footer also
-keeps `--reply-to <message-id>` as traceability; legacy messages may still use
-`--reply-to` for closure. `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are
-terminal no-reply messages. Agents should prefer `get-health` for structured
-session JSON and `get-health-oneline` for compact coordination.
+answer; reply-required messages carry `reply_slot_id`, and exact replies should
+include `--fills-reply-slot-id <reply-slot-id>`. The default footer also keeps
+`--reply-to <message-id>` as traceability; legacy messages may still use
+`--reply-to` for closure, and `obligation_*` / `reply_request_*` names are
+accepted as compatibility aliases. `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK`
+are terminal no-reply messages. Agents should prefer `get-health` for
+structured session JSON and `get-health-oneline` for compact coordination.
 `get-health` includes `nodes[*].screen_progress` with non-content evidence
 such as last capture time, last screen-change time, and an opaque screen
 fingerprint; raw pane text is not exposed. The oneline view stays compact and

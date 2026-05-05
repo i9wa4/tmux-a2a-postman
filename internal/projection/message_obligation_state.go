@@ -6,42 +6,48 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
-type MessageObligationState struct {
+type MessageReplySlotState struct {
 	UnreadCounts         map[string]int
 	ActionRequiredCounts map[string]int
 	WaitingOnReplyCounts map[string]int
 	InfoUnreadCounts     map[string]int
 }
 
-type projectedObligation struct {
-	MessageID    string
-	ObligationID string
-	From         string
-	To           string
+type MessageObligationState = MessageReplySlotState
+
+type projectedReplySlot struct {
+	MessageID   string
+	ReplySlotID string
+	From        string
+	To          string
 }
 
 func ProjectMessageObligationState(sessionDir, sessionName string) (MessageObligationState, bool, error) {
+	return ProjectMessageReplySlotState(sessionDir, sessionName)
+}
+
+func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplySlotState, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
-		return MessageObligationState{}, false, nil
+		return MessageReplySlotState{}, false, nil
 	}
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil || len(events) == 0 {
-		return MessageObligationState{}, false, err
+		return MessageReplySlotState{}, false, err
 	}
 
-	projected := MessageObligationState{
+	projected := MessageReplySlotState{
 		UnreadCounts:         make(map[string]int),
 		ActionRequiredCounts: make(map[string]int),
 		WaitingOnReplyCounts: make(map[string]int),
 		InfoUnreadCounts:     make(map[string]int),
 	}
-	openInboundExact := make(map[string]projectedObligation)
-	openInboundLegacy := make(map[string]projectedObligation)
-	openOutboundExact := make(map[string]projectedObligation)
-	openOutboundLegacy := make(map[string]projectedObligation)
-	infoUnread := make(map[string]projectedObligation)
+	openInboundExact := make(map[string]projectedReplySlot)
+	openInboundLegacy := make(map[string]projectedReplySlot)
+	openOutboundExact := make(map[string]projectedReplySlot)
+	openOutboundLegacy := make(map[string]projectedReplySlot)
+	infoUnread := make(map[string]projectedReplySlot)
 	sawLease := false
 	sawResolution := false
 	sawCompleteMailboxEvent := false
@@ -67,7 +73,7 @@ func ProjectMessageObligationState(sessionDir, sessionName string) (MessageOblig
 		if !ok {
 			continue
 		}
-		meta := obligationMetadataFromPayload(payload)
+		meta := replySlotMetadataFromPayload(payload)
 		if meta.MessageID == "" {
 			continue
 		}
@@ -80,37 +86,37 @@ func ProjectMessageObligationState(sessionDir, sessionName string) (MessageOblig
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
-			resolveInboundObligation(projected, openInboundExact, openInboundLegacy, meta)
+			resolveInboundReplySlot(projected, openInboundExact, openInboundLegacy, meta)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openObligation(openOutboundExact, openOutboundLegacy, meta)
+				openReplySlot(openOutboundExact, openOutboundLegacy, meta)
 				projected.WaitingOnReplyCounts[meta.From]++
 			}
 		case MailboxProjectionDeliveredEventType:
-			resolveOutboundObligation(projected, openOutboundExact, openOutboundLegacy, meta)
+			resolveOutboundReplySlot(projected, openOutboundExact, openOutboundLegacy, meta)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openObligation(openInboundExact, openInboundLegacy, meta)
+				openReplySlot(openInboundExact, openInboundLegacy, meta)
 				projected.ActionRequiredCounts[meta.To]++
 			} else {
-				infoUnread[obligationKey(meta.MessageID, meta.To)] = projectedObligation{MessageID: meta.MessageID, From: meta.From, To: meta.To}
+				infoUnread[replySlotKey(meta.MessageID, meta.To)] = projectedReplySlot{MessageID: meta.MessageID, From: meta.From, To: meta.To}
 				projected.InfoUnreadCounts[meta.To]++
 			}
 		case MailboxProjectionReadEventType:
 			decrementCount(projected.UnreadCounts, meta.To)
-			if obligation, ok := infoUnread[obligationKey(meta.MessageID, meta.To)]; ok {
-				decrementCount(projected.InfoUnreadCounts, obligation.To)
-				delete(infoUnread, obligationKey(meta.MessageID, meta.To))
+			if replySlot, ok := infoUnread[replySlotKey(meta.MessageID, meta.To)]; ok {
+				decrementCount(projected.InfoUnreadCounts, replySlot.To)
+				delete(infoUnread, replySlotKey(meta.MessageID, meta.To))
 			}
 		}
 	}
 
 	if !sawLease || !sawResolution || !sawCompleteMailboxEvent {
-		return MessageObligationState{}, false, nil
+		return MessageReplySlotState{}, false, nil
 	}
 	return projected, true, nil
 }
 
-func obligationMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
+func replySlotMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
 	meta, err := envelope.ParseMetadata(payload.Content)
 	if err != nil {
 		meta = envelope.Metadata{Body: envelope.BodyFromContent(payload.Content)}
@@ -124,14 +130,32 @@ func obligationMetadataFromPayload(payload journal.MailboxEventPayload) envelope
 	if meta.To == "" {
 		meta.To = payload.To
 	}
+	if meta.ReplySlotID == "" {
+		meta.ReplySlotID = payload.ReplySlotID
+	}
+	if meta.ReplySlotID == "" {
+		meta.ReplySlotID = payload.ObligationID
+	}
+	if meta.FillsReplySlotID == "" {
+		meta.FillsReplySlotID = payload.FillsReplySlotID
+	}
+	if meta.FillsReplySlotID == "" {
+		meta.FillsReplySlotID = payload.SatisfiesObligationID
+	}
+	if meta.ReplySetID == "" {
+		meta.ReplySetID = payload.ReplySetID
+	}
+	if meta.ReplySetID == "" {
+		meta.ReplySetID = payload.ObligationGroupID
+	}
 	if meta.ObligationID == "" {
-		meta.ObligationID = payload.ObligationID
+		meta.ObligationID = meta.ReplySlotID
 	}
 	if meta.SatisfiesObligationID == "" {
-		meta.SatisfiesObligationID = payload.SatisfiesObligationID
+		meta.SatisfiesObligationID = meta.FillsReplySlotID
 	}
 	if meta.ObligationGroupID == "" {
-		meta.ObligationGroupID = payload.ObligationGroupID
+		meta.ObligationGroupID = meta.ReplySetID
 	}
 	if meta.BranchID == "" {
 		meta.BranchID = payload.BranchID
@@ -142,80 +166,80 @@ func obligationMetadataFromPayload(payload journal.MailboxEventPayload) envelope
 	return meta
 }
 
-func openObligation(openExact, openLegacy map[string]projectedObligation, meta envelope.Metadata) {
-	obligation := projectedObligation{
-		MessageID:    meta.MessageID,
-		ObligationID: meta.ObligationID,
-		From:         meta.From,
-		To:           meta.To,
+func openReplySlot(openExact, openLegacy map[string]projectedReplySlot, meta envelope.Metadata) {
+	replySlot := projectedReplySlot{
+		MessageID:   meta.MessageID,
+		ReplySlotID: meta.ReplySlotID,
+		From:        meta.From,
+		To:          meta.To,
 	}
-	if meta.ObligationID != "" {
-		openExact[meta.ObligationID] = obligation
+	if meta.ReplySlotID != "" {
+		openExact[meta.ReplySlotID] = replySlot
 		return
 	}
-	openLegacy[obligationKey(meta.MessageID, meta.To)] = obligation
+	openLegacy[replySlotKey(meta.MessageID, meta.To)] = replySlot
 }
 
-func resolveInboundObligation(state MessageObligationState, openExact, openLegacy map[string]projectedObligation, meta envelope.Metadata) {
-	if meta.SatisfiesObligationID != "" {
-		key, obligation, ok := findExactObligation(openExact, meta.SatisfiesObligationID, meta.ReplyTo, meta.From)
+func resolveInboundReplySlot(state MessageReplySlotState, openExact, openLegacy map[string]projectedReplySlot, meta envelope.Metadata) {
+	if meta.FillsReplySlotID != "" {
+		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.ActionRequiredCounts, obligation.To)
+		decrementCount(state.ActionRequiredCounts, replySlot.To)
 		delete(openExact, key)
 		return
 	}
 	if meta.ReplyTo == "" {
 		return
 	}
-	key, obligation, ok := findLegacyObligation(openLegacy, meta.ReplyTo, meta.From)
+	key, replySlot, ok := findLegacyReplySlot(openLegacy, meta.ReplyTo, meta.From)
 	if !ok {
 		return
 	}
-	decrementCount(state.ActionRequiredCounts, obligation.To)
+	decrementCount(state.ActionRequiredCounts, replySlot.To)
 	delete(openLegacy, key)
 }
 
-func resolveOutboundObligation(state MessageObligationState, openExact, openLegacy map[string]projectedObligation, meta envelope.Metadata) {
-	if meta.SatisfiesObligationID != "" {
-		key, obligation, ok := findExactObligation(openExact, meta.SatisfiesObligationID, meta.ReplyTo, meta.From)
+func resolveOutboundReplySlot(state MessageReplySlotState, openExact, openLegacy map[string]projectedReplySlot, meta envelope.Metadata) {
+	if meta.FillsReplySlotID != "" {
+		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.WaitingOnReplyCounts, obligation.From)
+		decrementCount(state.WaitingOnReplyCounts, replySlot.From)
 		delete(openExact, key)
 		return
 	}
 	if meta.ReplyTo == "" {
 		return
 	}
-	key, obligation, ok := findLegacyObligation(openLegacy, meta.ReplyTo, meta.From)
+	key, replySlot, ok := findLegacyReplySlot(openLegacy, meta.ReplyTo, meta.From)
 	if !ok {
 		return
 	}
-	decrementCount(state.WaitingOnReplyCounts, obligation.From)
+	decrementCount(state.WaitingOnReplyCounts, replySlot.From)
 	delete(openLegacy, key)
 }
 
-func findExactObligation(open map[string]projectedObligation, obligationID, replyTo, participant string) (string, projectedObligation, bool) {
-	obligation, ok := open[obligationID]
+func findExactReplySlot(open map[string]projectedReplySlot, replySlotID, replyTo, participant string) (string, projectedReplySlot, bool) {
+	replySlot, ok := open[replySlotID]
 	if !ok {
-		return "", projectedObligation{}, false
+		return "", projectedReplySlot{}, false
 	}
-	if obligation.To != participant {
-		return "", projectedObligation{}, false
+	if replySlot.To != participant {
+		return "", projectedReplySlot{}, false
 	}
-	if replyTo != "" && replyTo != obligation.MessageID {
-		return "", projectedObligation{}, false
+	if replyTo != "" && replyTo != replySlot.MessageID {
+		return "", projectedReplySlot{}, false
 	}
-	return obligationID, obligation, true
+	return replySlotID, replySlot, true
 }
 
-func findLegacyObligation(open map[string]projectedObligation, messageID, participant string) (string, projectedObligation, bool) {
-	key := obligationKey(messageID, participant)
-	obligation, ok := open[key]
-	return key, obligation, ok
+func findLegacyReplySlot(open map[string]projectedReplySlot, messageID, participant string) (string, projectedReplySlot, bool) {
+	key := replySlotKey(messageID, participant)
+	replySlot, ok := open[key]
+	return key, replySlot, ok
 }
 
 func simpleNameForSession(name, sessionName string) string {
@@ -234,6 +258,6 @@ func decrementCount(counts map[string]int, key string) {
 	counts[key]--
 }
 
-func obligationKey(messageID, nodeName string) string {
+func replySlotKey(messageID, nodeName string) string {
 	return messageID + "\x00" + nodeName
 }

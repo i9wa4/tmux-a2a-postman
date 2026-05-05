@@ -17,8 +17,12 @@ Flags:
   --no-reply              Mark this message as not requiring a reply
   --reply-required        Mark this message as requiring a reply
   --reply-to <message>    Message id for legacy closure or traceability
+  --fills-reply-slot-id <id>
+                          Exact reply slot id this message fills
   --satisfies-obligation-id <id>
-                          Exact obligation id this message satisfies
+                          Legacy alias for --fills-reply-slot-id
+  --satisfies-reply-request-id <id>
+                          Legacy alias for --fills-reply-slot-id
 
 Body input:
   Canonical agent-safe input is stdin with a quoted heredoc delimiter:
@@ -39,8 +43,9 @@ Body input:
 Output:
   Always JSON.
   {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
-  Reply-required sends include "obligation_id".
-  Exact replies include "satisfies_obligation_id".
+  Reply-required sends include "reply_slot_id".
+  Exact replies include "fills_reply_slot_id".
+  Legacy obligation_* fields may also appear for compatibility.
 
 Status:
   processed               Daemon-side handling was observed

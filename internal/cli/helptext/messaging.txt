@@ -18,13 +18,14 @@ Reply workflow:
   DONE: ...
   POSTMAN_BODY
 
-Reply-required messages carry an obligation_id. Exact replies use:
-  tmux-a2a-postman send --to <sender> --satisfies-obligation-id <obligation_id> --reply-to <message_id> <<'POSTMAN_BODY'
+Reply-required messages carry a reply_slot_id. Exact replies use:
+  tmux-a2a-postman send --to <sender> --fills-reply-slot-id <reply_slot_id> --reply-to <message_id> <<'POSTMAN_BODY'
   DONE: ...
   POSTMAN_BODY
 
-The exact obligation id clears the required action; --reply-to is retained for
-traceability and legacy messages. Replies stay on the live session daemon
+The exact reply slot id clears the required action; --reply-to is retained for
+traceability and legacy messages. obligation_* and reply_request_* names are
+accepted as compatibility aliases. Replies stay on the live session daemon
 automatically.
 
 Envelope format (YAML frontmatter):
@@ -34,7 +35,7 @@ Envelope format (YAML frontmatter):
     to: <recipient node name>
     messageId: <message filename>
     replyPolicy: <none|required>
-    obligation_id: <required reply token>
+    reply_slot_id: <required reply token>
     timestamp: <ISO 8601 timestamp>
   ---
 

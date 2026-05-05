@@ -6,7 +6,7 @@ description: |
   Use when:
   - Interpreting get-health or get-health-oneline output
   - Deciding whether to pop, reply, resend, wait, follow up, or restart
-  - Handling reply-required, no-reply, reply-to, exact obligation replies, or
+  - Handling reply-required, no-reply, reply-to, exact reply-slot replies, or
     status request behavior
   - Diagnosing pending, waiting, stale, unread, post queue, dead-letter,
     auto-ping, pane discovery, daemon restart, or slow delivery state
@@ -60,16 +60,16 @@ instructions, message metadata, health output, and observed send results.
 `pending` beats `waiting` because the node has something it can do now.
 `stale` beats both because live state is not trustworthy.
 
-## 4. Reply Obligations
+## 4. Reply Slots
 
 A reply-required message opens action for the recipient and waiting state for
 the sender.
 
-A new reply-required message carries an exact `obligation_id`. A resolving
-reply should name that obligation:
+A new reply-required message carries an exact `reply_slot_id`. A resolving
+reply should fill that slot:
 
 ```sh
-tmux-a2a-postman send --to <sender> --satisfies-obligation-id <obligation-id> --reply-to <message-id> <<'POSTMAN_BODY'
+tmux-a2a-postman send --to <sender> --fills-reply-slot-id <reply-slot-id> --reply-to <message-id> <<'POSTMAN_BODY'
 <reply>
 POSTMAN_BODY
 ```
@@ -80,9 +80,10 @@ variables, quotes, and shell examples. Use `--body-file <path>` with the same
 reply flags for generated files.
 
 Reading with `pop` clears unread state, but it does not clear reply-required
-action. Only a later message with `--satisfies-obligation-id <obligation-id>`
-clears an exact obligation. `--reply-to <message-id>` remains useful for
-legacy messages and human traceability.
+action. Only a later message with `--fills-reply-slot-id <reply-slot-id>`
+clears an exact reply slot. `--reply-to <message-id>` remains useful for legacy
+messages and human traceability. `obligation_*` and `reply_request_*` names are
+accepted only as compatibility aliases.
 
 Use `--reply-required` for work requests, approval requests, status requests,
 or any message where the sender needs a later resolving answer. Use
@@ -129,8 +130,8 @@ progress evidence matters.
 1. Run `tmux-a2a-postman get-health`.
 2. If your node is `pending`, run `tmux-a2a-postman pop`.
 3. If the popped message has `reply_policy: required`, handle it and reply with
-   `--satisfies-obligation-id <obligation_id>` when the pop output includes
-   `obligation_id`; keep `--reply-to <message_id>` for traceability when the
+   `--fills-reply-slot-id <reply_slot_id>` when the pop output includes
+   `reply_slot_id`; keep `--reply-to <message_id>` for traceability when the
    footer provides it. Otherwise use legacy `--reply-to <message_id>`.
 4. If your node is `waiting`, do not clear it by reading mail. Wait for an
    exact reply or send a bounded follow-up if the workflow timeout requires it.

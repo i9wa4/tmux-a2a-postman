@@ -80,10 +80,10 @@ func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool)
 	return projected.InboxCounts, true
 }
 
-func projectedObligationCounts(sessionDir, sessionName string) (projection.MessageObligationState, bool) {
-	projected, ok, err := projection.ProjectMessageObligationState(sessionDir, sessionName)
+func projectedReplySlotCounts(sessionDir, sessionName string) (projection.MessageReplySlotState, bool) {
+	projected, ok, err := projection.ProjectMessageReplySlotState(sessionDir, sessionName)
 	if err != nil || !ok {
-		return projection.MessageObligationState{}, false
+		return projection.MessageReplySlotState{}, false
 	}
 	return projected, true
 }
@@ -114,7 +114,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	queues := collectSessionQueues(sessionDir)
-	obligations, useObligations := projectedObligationCounts(sessionDir, sessionName)
+	replySlots, useReplySlots := projectedReplySlotCounts(sessionDir, sessionName)
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
 		return result, err
@@ -154,12 +154,12 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 			node.ScreenProgress = missingScreenProgressEvidence()
 		}
 		actionRequiredCount := -1
-		if useObligations {
-			node.ActionRequiredCount = obligations.ActionRequiredCounts[simpleName]
-			node.WaitingOnReplyCount = obligations.WaitingOnReplyCounts[simpleName]
-			node.InfoUnreadCount = obligations.InfoUnreadCounts[simpleName]
+		if useReplySlots {
+			node.ActionRequiredCount = replySlots.ActionRequiredCounts[simpleName]
+			node.WaitingOnReplyCount = replySlots.WaitingOnReplyCounts[simpleName]
+			node.InfoUnreadCount = replySlots.InfoUnreadCounts[simpleName]
 			actionRequiredCount = node.ActionRequiredCount
-			if node.InboxCount > obligations.UnreadCounts[simpleName] {
+			if node.InboxCount > replySlots.UnreadCounts[simpleName] {
 				actionRequiredCount = -1
 			}
 		}

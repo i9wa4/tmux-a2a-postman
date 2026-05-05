@@ -15,8 +15,12 @@ send
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
     --reply-to <message> Message id for legacy closure or traceability
+    --fills-reply-slot-id <id>
+                         Exact reply slot id this message fills
     --satisfies-obligation-id <id>
-                         Exact obligation id this message satisfies
+                         Legacy alias for --fills-reply-slot-id
+    --satisfies-reply-request-id <id>
+                         Legacy alias for --fills-reply-slot-id
 
 pop
   Read and archive the oldest unread inbox message.

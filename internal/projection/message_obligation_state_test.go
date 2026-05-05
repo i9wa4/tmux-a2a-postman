@@ -35,6 +35,30 @@ func obligationContentWithExact(from, to, messageID, replyPolicy, replyTo, oblig
 		"---\n\n" + body + "\n"
 }
 
+func replySlotContentWithExact(from, to, messageID, replyPolicy, replyTo, replySlotID, fillsReplySlotID, body string) string {
+	replyToLine := ""
+	if replyTo != "" {
+		replyToLine = "  replyTo: " + replyTo + "\n"
+	}
+	replySlotIDLine := ""
+	if replySlotID != "" {
+		replySlotIDLine = "  reply_slot_id: " + replySlotID + "\n"
+	}
+	fillsReplySlotIDLine := ""
+	if fillsReplySlotID != "" {
+		fillsReplySlotIDLine = "  fills_reply_slot_id: " + fillsReplySlotID + "\n"
+	}
+	return "---\nparams:\n" +
+		"  from: " + from + "\n" +
+		"  to: " + to + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  replyPolicy: " + replyPolicy + "\n" +
+		replyToLine +
+		replySlotIDLine +
+		fillsReplySlotIDLine +
+		"---\n\n" + body + "\n"
+}
+
 func appendObligationMailboxEvent(t *testing.T, writer *journal.Writer, eventType string, messageID, from, to, content string, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
@@ -129,7 +153,7 @@ func TestProjectMessageObligationState_ReplyWithoutReplyToDoesNotResolve(t *test
 	}
 }
 
-func TestProjectMessageObligationState_ExactSatisfactionResolvesRequiredMessage(t *testing.T) {
+func TestProjectMessageReplySlotState_ExactFillResolvesRequiredMessage(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 24, 0, 0, time.UTC)
 
@@ -138,20 +162,20 @@ func TestProjectMessageObligationState_ExactSatisfactionResolvesRequiredMessage(
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := obligationContentWithExact("orchestrator", "worker", "m1.md", "required", "", "obl_123", "", "please work")
+	request := replySlotContentWithExact("orchestrator", "worker", "m1.md", "required", "", "rslot_123", "", "please work")
 	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
 	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := obligationContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "obl_123", "DONE")
+	reply := replySlotContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "rslot_123", "DONE")
 	appendObligationMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
 	appendObligationMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageObligationState(sessionDir, "review")
+	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageObligationState() error = %v", err)
+		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageObligationState() ok = false, want true")
+		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
 	}
 	if got.ActionRequiredCounts["worker"] != 0 {
 		t.Fatalf("worker action required = %d, want 0", got.ActionRequiredCounts["worker"])

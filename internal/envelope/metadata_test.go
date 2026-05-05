@@ -110,12 +110,48 @@ func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
 	}
 }
 
-func TestParseMetadataAcceptsExactObligationFields(t *testing.T) {
+func TestParseMetadataAcceptsExactReplySlotFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  replyPolicy: required\n  reply_slot_id: rslot_123\n  fills_reply_slot_id: rslot_prev\n  reply_set_id: rset_1\n  branch_id: branch_1\n  completion_rule: all\n---\n\nplease review\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ReplySlotID != "rslot_123" {
+		t.Fatalf("ReplySlotID = %q, want rslot_123", got.ReplySlotID)
+	}
+	if got.FillsReplySlotID != "rslot_prev" {
+		t.Fatalf("FillsReplySlotID = %q, want rslot_prev", got.FillsReplySlotID)
+	}
+	if got.ReplySetID != "rset_1" {
+		t.Fatalf("ReplySetID = %q, want rset_1", got.ReplySetID)
+	}
+	if got.ObligationID != "rslot_123" || got.SatisfiesObligationID != "rslot_prev" || got.ObligationGroupID != "rset_1" {
+		t.Fatalf("legacy aliases = %q/%q/%q, want rslot_123/rslot_prev/rset_1", got.ObligationID, got.SatisfiesObligationID, got.ObligationGroupID)
+	}
+	if got.BranchID != "branch_1" {
+		t.Fatalf("BranchID = %q, want branch_1", got.BranchID)
+	}
+	if got.CompletionRule != "all" {
+		t.Fatalf("CompletionRule = %q, want all", got.CompletionRule)
+	}
+}
+
+func TestParseMetadataAcceptsLegacyExactObligationFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  replyPolicy: required\n  obligation_id: obl_123\n  satisfies_obligation_id: obl_prev\n  obligation_group_id: group_1\n  branch_id: branch_1\n  completion_rule: all\n---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ReplySlotID != "obl_123" {
+		t.Fatalf("ReplySlotID = %q, want obl_123", got.ReplySlotID)
+	}
+	if got.FillsReplySlotID != "obl_prev" {
+		t.Fatalf("FillsReplySlotID = %q, want obl_prev", got.FillsReplySlotID)
+	}
+	if got.ReplySetID != "group_1" {
+		t.Fatalf("ReplySetID = %q, want group_1", got.ReplySetID)
 	}
 	if got.ObligationID != "obl_123" {
 		t.Fatalf("ObligationID = %q, want obl_123", got.ObligationID)
@@ -131,6 +167,18 @@ func TestParseMetadataAcceptsExactObligationFields(t *testing.T) {
 	}
 	if got.CompletionRule != "all" {
 		t.Fatalf("CompletionRule = %q, want all", got.CompletionRule)
+	}
+}
+
+func TestParseMetadataRejectsConflictingReplySlotAliases(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_slot_id: rslot_123\n  obligation_id: obl_123\n---\n\nplease review\n"
+
+	_, err := ParseMetadata(content)
+	if err == nil {
+		t.Fatal("ParseMetadata() error = nil, want conflict")
+	}
+	if !strings.Contains(err.Error(), "conflicting reply_slot_id aliases") {
+		t.Fatalf("ParseMetadata() error = %v, want reply_slot_id conflict", err)
 	}
 }
 
@@ -239,31 +287,46 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	}
 }
 
-func TestEnsureParamsInsertsExactObligationFields(t *testing.T) {
+func TestEnsureParamsInsertsExactReplySlotFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nplease review\n"
 
 	got := EnsureParams(content, map[string]string{
-		"messageId":               "m1.md",
-		"replyPolicy":             "required",
-		"obligation_id":           "obl_123",
-		"satisfies_obligation_id": "obl_prev",
-		"obligation_group_id":     "group_1",
-		"branch_id":               "branch_1",
-		"completion_rule":         "all",
+		"messageId":           "m1.md",
+		"replyPolicy":         "required",
+		"reply_slot_id":       "rslot_123",
+		"fills_reply_slot_id": "rslot_prev",
+		"reply_set_id":        "rset_1",
+		"branch_id":           "branch_1",
+		"completion_rule":     "all",
 	})
 
 	for _, want := range []string{
 		"messageId: m1.md",
 		"replyPolicy: required",
-		"obligation_id: obl_123",
-		"satisfies_obligation_id: obl_prev",
-		"obligation_group_id: group_1",
+		"reply_slot_id: rslot_123",
+		"fills_reply_slot_id: rslot_prev",
+		"reply_set_id: rset_1",
 		"branch_id: branch_1",
 		"completion_rule: all",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("EnsureParams() missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestEnsureParamsPreservesLegacyReplySlotAliasKeys(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  obligation_id: old\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"reply_slot_id": "rslot_123",
+	})
+
+	if !strings.Contains(got, "obligation_id: rslot_123") {
+		t.Fatalf("EnsureParams() did not update legacy alias key:\n%s", got)
+	}
+	if strings.Contains(got, "reply_slot_id: rslot_123") {
+		t.Fatalf("EnsureParams() inserted duplicate canonical key:\n%s", got)
 	}
 }
 
