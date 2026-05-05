@@ -306,13 +306,23 @@ func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
 		t.Fatalf("ReadFile(notification): %v", err)
 	}
 	content := string(data)
-	for _, stale := range []string{"tmux-a2a-postman read", "--dead-letters", "--resend-oldest"} {
+	for _, stale := range []string{
+		"tmux-a2a-postman read",
+		"--dead-letters",
+		"--resend-oldest",
+		`tmux-a2a-postman send --to <node> --body "<message>"`,
+	} {
 		if strings.Contains(content, stale) {
 			t.Fatalf("dead-letter notification still contains stale recovery surface %q: %s", stale, content)
 		}
 	}
-	if !strings.Contains(content, "tmux-a2a-postman send --to <node> --body \"<message>\"") {
-		t.Fatalf("dead-letter notification missing public send recovery command: %s", content)
+	for _, want := range []string{
+		"tmux-a2a-postman send --to <node> --body-file corrected-message.md",
+		"tmux-a2a-postman send --to <node> --body-stdin < corrected-message.md",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("dead-letter notification missing safe send recovery command %q: %s", want, content)
+		}
 	}
 	if !strings.Contains(content, filepath.Join(sessionDir, "dead-letter", deadLetterBasename)) {
 		t.Fatalf("dead-letter notification missing dead-letter path: %s", content)

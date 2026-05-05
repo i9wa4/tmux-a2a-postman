@@ -931,7 +931,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
 
 	content := fmt.Sprintf(
-		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above, then send a corrected message:\ntmux-a2a-postman send --to <node> --body \"<message>\"\n",
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above, then send a corrected message using a safe body source:\ntmux-a2a-postman send --to <node> --body-file corrected-message.md\ntmux-a2a-postman send --to <node> --body-stdin < corrected-message.md\n",
 		contextID,
 		senderSimpleName,
 		now.Format(time.RFC3339),
