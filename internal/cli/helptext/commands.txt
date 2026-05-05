@@ -8,7 +8,10 @@ send
   Output: JSON
   Flags:
     --to <node>          Recipient node name (required)
-    --body <text>        Message body (required)
+    --body <text>        Message body text
+    --body-file <path>   Read message body from file
+    --body-stdin         Read message body from standard input
+    --stdin              Alias for --body-stdin
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
     --reply-to <message> Message id for legacy closure or traceability

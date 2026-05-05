@@ -1,17 +1,30 @@
 send — compose and deliver a message
 
 Usage:
-  tmux-a2a-postman send --to <node> --body "text"
+  tmux-a2a-postman send --to <node> --body 'text'
+  tmux-a2a-postman send --to <node> --body-file body.md
+  tmux-a2a-postman send --to <node> --body-stdin < body.md
   tmux-a2a-postman send --help
 
 Flags:
   --to <node>             Recipient node name (required)
-  --body <text>           Message body (required)
+  --body <text>           Message body text
+  --body-file <path>      Read message body from file
+  --body-stdin            Read message body from standard input
+  --stdin                 Alias for --body-stdin
   --no-reply              Mark this message as not requiring a reply
   --reply-required        Mark this message as requiring a reply
   --reply-to <message>    Message id for legacy closure or traceability
   --satisfies-obligation-id <id>
                           Exact obligation id this message satisfies
+
+Body input:
+  Exactly one body source is required. Use --body for simple one-line text.
+  For shell-sensitive or multiline text containing command substitutions,
+  backticks, $HOME variables, quotes, or shell examples, prefer --body-file or
+  --body-stdin. File and stdin bodies are read as-is, including the final
+  newline when present. --body - remains a literal body value; use --body-stdin
+  or --stdin to read standard input.
 
 Output:
   Always JSON.

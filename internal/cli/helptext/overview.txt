@@ -6,7 +6,7 @@ Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start
 
 Quick Start:
   1. Start daemon:    tmux-a2a-postman start
-  2. Send a message:  tmux-a2a-postman send --to <node> --body "text"
+  2. Send a message:  tmux-a2a-postman send --to <node> --body 'text'
   3. Read next msg:   tmux-a2a-postman pop
 
 Key Concepts:
@@ -21,7 +21,7 @@ Key Concepts:
                ---
 
 Default operator surface:
-  send                       Send a message in one step (--to and --body required)
+  send                       Send a message in one step (--to and one body source required)
   pop                        Read and archive the oldest unread inbox message
   get-health                 Print canonical session health JSON
   get-health-oneline         Print compact all-session health
@@ -33,7 +33,9 @@ Lifecycle and recovery:
   Legacy and diagnostic helpers are internal, not CLI commands.
 
 Messaging Protocol:
-  send --to <node> --body "text"          Send a message in one step
+  send --to <node> --body 'text'          Send a message in one step
+  send --to <node> --body-file body.md    Send shell-sensitive or multiline text
+  send --to <node> --body-stdin < body.md Send body from standard input
   pop                                      Read and archive oldest message
   get-health                              Inspect agent-readable session health
   get-health-oneline                      Inspect compact all-session health

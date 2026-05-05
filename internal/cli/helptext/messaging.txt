@@ -1,14 +1,19 @@
 Messaging — send and receive messages
 
 Quick workflow (agents):
-  Send:  tmux-a2a-postman send --to <node> --body "text"
+  Send:  tmux-a2a-postman send --to <node> --body 'text'
   Read:  tmux-a2a-postman pop
 
+Safe body input:
+  Use --body-file <path> or --body-stdin for shell-sensitive or multiline text,
+  including command substitutions, backticks, $HOME variables, quotes, or shell
+  examples. File and stdin bodies are read as-is.
+
 Reply workflow:
-  tmux-a2a-postman send --to <sender> --body "DONE: ..."
+  tmux-a2a-postman send --to <sender> --body 'DONE: ...'
 
 Reply-required messages carry an obligation_id. Exact replies use:
-  tmux-a2a-postman send --to <sender> --body "DONE: ..." --satisfies-obligation-id <obligation_id> --reply-to <message_id>
+  tmux-a2a-postman send --to <sender> --body 'DONE: ...' --satisfies-obligation-id <obligation_id> --reply-to <message_id>
 
 The exact obligation id clears the required action; --reply-to is retained for
 traceability and legacy messages. Replies stay on the live session daemon

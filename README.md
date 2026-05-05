@@ -156,7 +156,16 @@ the sending role/node, independent of whether the pane is Claude Code, Codex
 CLI, or another AI coding agent:
 
 ```sh
-tmux-a2a-postman send --to worker --body "implement X"
+tmux-a2a-postman send --to worker --body 'implement X'
+```
+
+For arbitrary Markdown, command examples, variables, mixed quotes, or multiline
+content, avoid putting the body directly inside shell quotes. Use a file or
+standard input so the body is read as text:
+
+```sh
+tmux-a2a-postman send --to worker --body-file request.md
+tmux-a2a-postman send --to worker --body-stdin < request.md
 ```
 
 The daemon discovers panes by title and routes messages through

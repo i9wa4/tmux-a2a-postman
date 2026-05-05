@@ -95,7 +95,7 @@ base_dir = ""                      # Override session dir (default: XDG_STATE_HO
 edges = []
 
 # Global settings
-reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
+reply_command = "tmux-a2a-postman send --to <recipient> --body '<your message>'"
 ui_node = "messenger"            # Optional target filter for startup auto-PING
 auto_enable_new_sessions = true    # Auto-enable sessions with configured node panes (default: true)
 auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
@@ -122,6 +122,7 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {satisfies_obligation_id} - exact obligation id this message satisfies
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}{reply_arguments}
+For shell-sensitive or multiline text, use --body-file or --body-stdin.
 Add --reply-required only when your reply needs a response.
 No reply needed for: DONE, ACK, PING, HEARTBEAT_OK, status updates, alerts, or pane hints."""
 

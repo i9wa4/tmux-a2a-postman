@@ -69,8 +69,12 @@ A new reply-required message carries an exact `obligation_id`. A resolving
 reply should name that obligation:
 
 ```sh
-tmux-a2a-postman send --to <sender> --body "<reply>" --satisfies-obligation-id <obligation-id> --reply-to <message-id>
+tmux-a2a-postman send --to <sender> --body '<reply>' --satisfies-obligation-id <obligation-id> --reply-to <message-id>
 ```
+
+For shell-sensitive or multiline replies, use `--body-file <path>` or
+`--body-stdin` with the same reply flags. This preserves literal command
+substitutions, backticks, `$HOME` variables, quotes, and shell examples.
 
 Reading with `pop` clears unread state, but it does not clear reply-required
 action. Only a later message with `--satisfies-obligation-id <obligation-id>`

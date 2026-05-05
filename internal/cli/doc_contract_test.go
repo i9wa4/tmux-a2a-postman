@@ -158,7 +158,9 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"help [topic]",
 	)
 	assertContainsAllNormalized(t, sendSkill,
-		"tmux-a2a-postman send --to <node> --body \"message text\"",
+		"tmux-a2a-postman send --to <node> --body 'message text'",
+		"tmux-a2a-postman send --to <node> --body-file path/to/body.md",
+		"tmux-a2a-postman send --to <node> --body-stdin < path/to/body.md",
 		"The sender is auto-detected from the current tmux pane title.",
 		"tmux-a2a-postman help send",
 	)

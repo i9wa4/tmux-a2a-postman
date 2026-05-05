@@ -16,6 +16,36 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
+func shellSensitiveBodyForSendTest() string {
+	return "literal command substitution: $(printf SHOULD_NOT_RUN)\n" +
+		"literal backticks: `date`\n" +
+		"literal HOME variable: $HOME\n" +
+		"quotes: \"double\" and 'single'\n" +
+		"multiline shell example:\n" +
+		"cat <<'EOF'\n" +
+		"echo \"$HOME\"\n" +
+		"EOF\n"
+}
+
+func writeSendBodySourceConfig(t *testing.T, dir string) string {
+	t.Helper()
+
+	configPath := filepath.Join(dir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	return configPath
+}
+
 func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
@@ -185,6 +215,162 @@ func TestRunSendMessage_ReplyPolicyFlagsAreMutuallyExclusive(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("RunSendMessage() error = %v, want mutually exclusive", err)
+	}
+}
+
+func TestRunSendMessage_BodyFilePreservesShellSensitiveText(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := shellSensitiveBodyForSendTest()
+	bodyPath := filepath.Join(tmpDir, "body.md")
+	if err := os.WriteFile(bodyPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile body: %v", err)
+	}
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-body-file",
+			"--to", "worker",
+			"--body-file", bodyPath,
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-body-file", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), body) {
+		t.Fatalf("post content did not preserve body-file text:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_BodyStdinPreservesShellSensitiveText(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := shellSensitiveBodyForSendTest()
+	previousStdin := sendBodyStdin
+	sendBodyStdin = strings.NewReader(body)
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+	})
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-body-stdin",
+			"--to", "worker",
+			"--body-stdin",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-body-stdin", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), body) {
+		t.Fatalf("post content did not preserve stdin text:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_StdinAliasPreservesShellSensitiveText(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := shellSensitiveBodyForSendTest()
+	previousStdin := sendBodyStdin
+	sendBodyStdin = strings.NewReader(body)
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+	})
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-stdin-alias",
+			"--to", "worker",
+			"--stdin",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-stdin-alias", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), body) {
+		t.Fatalf("post content did not preserve --stdin text:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_BodySourcesAreMutuallyExclusive(t *testing.T) {
+	tmpDir := t.TempDir()
+	bodyPath := filepath.Join(tmpDir, "body.md")
+	if err := os.WriteFile(bodyPath, []byte("from file"), 0o600); err != nil {
+		t.Fatalf("WriteFile body: %v", err)
+	}
+
+	err := RunSendMessage([]string{
+		"--to", "worker",
+		"--body", "from flag",
+		"--body-file", bodyPath,
+	})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want mutually exclusive body source error")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("RunSendMessage() error = %v, want mutually exclusive", err)
+	}
+}
+
+func TestRunSendMessage_BodyDashRemainsLiteralBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendMessage([]string{
+			"--config", configPath,
+			"--context-id", "ctx-body-dash",
+			"--to", "worker",
+			"--body", "-",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-body-dash", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), "\n-\n\n---") {
+		t.Fatalf("--body - was not preserved as literal body:\n%s", string(content))
 	}
 }
 
@@ -918,7 +1104,8 @@ role = "worker"
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
 		"obligation_id: " + payload.ObligationID,
-		"Reply: tmux-a2a-postman send --to messenger --body \"<your message>\" --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent,
+		"Reply: tmux-a2a-postman send --to messenger --body '<your message>' --satisfies-obligation-id " + payload.ObligationID + " --reply-to " + payload.Sent,
+		"For shell-sensitive or multiline text, use --body-file or --body-stdin.",
 		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {

@@ -14,7 +14,16 @@ description: |
 Send one message to a recipient node in the current tmux-a2a-postman session:
 
 ```sh
-tmux-a2a-postman send --to <node> --body "message text"
+tmux-a2a-postman send --to <node> --body 'message text'
+```
+
+For shell-sensitive or multiline text containing command substitutions,
+backticks, `$HOME` variables, quotes, or shell examples, use a file or standard
+input instead of a direct `--body` argument:
+
+```sh
+tmux-a2a-postman send --to <node> --body-file path/to/body.md
+tmux-a2a-postman send --to <node> --body-stdin < path/to/body.md
 ```
 
 The sender is auto-detected from the current tmux pane title. Use

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,8 @@ type sendOutput struct {
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
 
+var sendBodyStdin io.Reader = os.Stdin
+
 // performCLINotification sends a synchronous pane notification from the CLI.
 // Returns cliNotifySkipped when paneID is empty, cliNotifyOK on success, cliNotifyFailed on error.
 func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int, fn sendToPaneFunc) cliNotifyStatus {
@@ -68,11 +71,52 @@ func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTime
 	return cliNotifyOK
 }
 
+func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader io.Reader) (string, error) {
+	stdinRequested := bodyStdin || stdin
+	sourceCount := 0
+	if body != "" {
+		sourceCount++
+	}
+	if bodyFile != "" {
+		sourceCount++
+	}
+	if stdinRequested {
+		sourceCount++
+	}
+	if sourceCount == 0 {
+		return "", fmt.Errorf("--body, --body-file, or --body-stdin is required")
+	}
+	if sourceCount > 1 {
+		return "", fmt.Errorf("--body, --body-file, and --body-stdin are mutually exclusive")
+	}
+	if body != "" {
+		return body, nil
+	}
+	if bodyFile != "" {
+		data, err := os.ReadFile(bodyFile)
+		if err != nil {
+			return "", fmt.Errorf("reading --body-file: %w", err)
+		}
+		return string(data), nil
+	}
+	if stdinReader == nil {
+		return "", fmt.Errorf("reading --body-stdin: standard input is unavailable")
+	}
+	data, err := io.ReadAll(stdinReader)
+	if err != nil {
+		return "", fmt.Errorf("reading --body-stdin: %w", err)
+	}
+	return string(data), nil
+}
+
 func RunSendMessage(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	to := fs.String("to", "", "recipient node name (required)")
-	body := fs.String("body", "", "message body (required)")
+	body := fs.String("body", "", "message body text")
+	bodyFile := fs.String("body-file", "", "read message body from file")
+	bodyStdin := fs.Bool("body-stdin", false, "read message body from standard input")
+	stdin := fs.Bool("stdin", false, "alias for --body-stdin")
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
@@ -91,8 +135,12 @@ func RunSendMessage(args []string) error {
 	// NOTE: runCreateDraft issues only a warning (not an error) for --send
 	// without --body (see runCreateDraft:966-968). Enforce here before
 	// delegating so send never sends a placeholder-body message.
-	if *body == "" {
-		return fmt.Errorf("--body is required")
+	bodyText, err := resolveSendBody(*body, *bodyFile, *bodyStdin, *stdin, sendBodyStdin)
+	if err != nil {
+		return err
+	}
+	if bodyText == "" {
+		return fmt.Errorf("message body is empty")
 	}
 	if *noReply && *replyRequired {
 		return fmt.Errorf("--no-reply and --reply-required are mutually exclusive")
@@ -217,7 +265,7 @@ func RunSendMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("generating filename: %w", err)
 	}
-	replyPolicy := message.ResolveReplyPolicyForSend(*body, *noReply, *replyRequired)
+	replyPolicy := message.ResolveReplyPolicyForSend(bodyText, *noReply, *replyRequired)
 	obligationID := ""
 	obligationIDMarker := generatedObligationIDPlaceholder(filename)
 	draftPath := filepath.Join(draftDir, filename)
@@ -250,9 +298,9 @@ func RunSendMessage(args []string) error {
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	content = template.ExpandTemplate(content, vars, timeout, cfg.AllowShellForDraftTemplate())
 
-	stripped, err := notification.StripVT(*body)
+	stripped, err := notification.StripVT(bodyText)
 	if err != nil {
-		return fmt.Errorf("--body contains invalid UTF-8: %w", err)
+		return fmt.Errorf("message body contains invalid UTF-8: %w", err)
 	}
 	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
 	if !*noReply && !*replyRequired {
