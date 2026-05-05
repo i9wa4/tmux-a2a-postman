@@ -56,19 +56,16 @@ func TestRecordMailboxPayloadPersistsExactReplySlotFields(t *testing.T) {
 
 	manager := NewManager("ctx-main", 4242)
 	if err := manager.RecordMailboxPayload(sessionDir, "main", "mailbox_projection_delivered", VisibilityMailboxProjection, MailboxEventPayload{
-		MessageID:             "m1.md",
-		From:                  "orchestrator",
-		To:                    "worker",
-		ThreadID:              "thread_1",
-		ReplySlotID:           "rslot_123",
-		FillsReplySlotID:      "rslot_prev",
-		ReplySetID:            "rset_1",
-		ObligationID:          "obl_123",
-		SatisfiesObligationID: "obl_prev",
-		ObligationGroupID:     "group_1",
-		BranchID:              "branch_1",
-		CompletionRule:        "all",
-		Content:               "payload",
+		MessageID:        "m1.md",
+		From:             "orchestrator",
+		To:               "worker",
+		ThreadID:         "thread_1",
+		ReplySlotID:      "rslot_123",
+		FillsReplySlotID: "rslot_prev",
+		ReplySetID:       "rset_1",
+		BranchID:         "branch_1",
+		CompletionRule:   "all",
+		Content:          "payload",
 	}, now); err != nil {
 		t.Fatalf("RecordMailboxPayload() error = %v", err)
 	}
@@ -96,14 +93,8 @@ func TestRecordMailboxPayloadPersistsExactReplySlotFields(t *testing.T) {
 	if payload.ReplySetID != "rset_1" {
 		t.Fatalf("payload.ReplySetID = %q, want rset_1", payload.ReplySetID)
 	}
-	if payload.ObligationID != "obl_123" {
-		t.Fatalf("payload.ObligationID = %q, want obl_123", payload.ObligationID)
-	}
-	if payload.SatisfiesObligationID != "obl_prev" {
-		t.Fatalf("payload.SatisfiesObligationID = %q, want obl_prev", payload.SatisfiesObligationID)
-	}
-	if payload.ObligationGroupID != "group_1" || payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
-		t.Fatalf("group fields = %q/%q/%q, want group_1/branch_1/all", payload.ObligationGroupID, payload.BranchID, payload.CompletionRule)
+	if payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
+		t.Fatalf("group fields = %q/%q, want branch_1/all", payload.BranchID, payload.CompletionRule)
 	}
 }
 

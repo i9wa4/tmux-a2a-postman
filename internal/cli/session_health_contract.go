@@ -163,7 +163,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 				actionRequiredCount = -1
 			}
 		}
-		node.VisibleState = status.VisibleStateWithObligations(node.PaneState, node.InboxCount, actionRequiredCount, node.WaitingOnReplyCount)
+		node.VisibleState = status.VisibleStateWithReplySlots(node.PaneState, node.InboxCount, actionRequiredCount, node.WaitingOnReplyCount)
 		result.Nodes = append(result.Nodes, node)
 	}
 

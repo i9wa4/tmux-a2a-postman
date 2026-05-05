@@ -112,24 +112,6 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	if payload.ReplySetID == "" {
 		payload.ReplySetID = metadata.ReplySetID
 	}
-	if payload.ObligationID == "" {
-		payload.ObligationID = metadata.ObligationID
-	}
-	if payload.ObligationID == "" {
-		payload.ObligationID = payload.ReplySlotID
-	}
-	if payload.SatisfiesObligationID == "" {
-		payload.SatisfiesObligationID = metadata.SatisfiesObligationID
-	}
-	if payload.SatisfiesObligationID == "" {
-		payload.SatisfiesObligationID = payload.FillsReplySlotID
-	}
-	if payload.ObligationGroupID == "" {
-		payload.ObligationGroupID = metadata.ObligationGroupID
-	}
-	if payload.ObligationGroupID == "" {
-		payload.ObligationGroupID = payload.ReplySetID
-	}
 	if payload.BranchID == "" {
 		payload.BranchID = metadata.BranchID
 	}

@@ -7,23 +7,20 @@ import (
 )
 
 type Metadata struct {
-	From                  string
-	To                    string
-	MessageID             string
-	ReplyPolicy           string
-	ReplyTo               string
-	MessageType           string
-	Timestamp             string
-	ThreadID              string
-	ReplySlotID           string
-	FillsReplySlotID      string
-	ReplySetID            string
-	ObligationID          string
-	SatisfiesObligationID string
-	ObligationGroupID     string
-	BranchID              string
-	CompletionRule        string
-	Body                  string
+	From             string
+	To               string
+	MessageID        string
+	ReplyPolicy      string
+	ReplyTo          string
+	MessageType      string
+	Timestamp        string
+	ThreadID         string
+	ReplySlotID      string
+	FillsReplySlotID string
+	ReplySetID       string
+	BranchID         string
+	CompletionRule   string
+	Body             string
 }
 
 func BodyFromContent(content string) string {
@@ -80,18 +77,12 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.Timestamp = value
 			case "thread_id":
 				metadata.ThreadID = value
-			case "reply_slot_id", "reply_request_id", "obligation_id":
-				if err := metadata.setReplySlotID(value, key); err != nil {
-					return Metadata{}, err
-				}
-			case "fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id":
-				if err := metadata.setFillsReplySlotID(value, key); err != nil {
-					return Metadata{}, err
-				}
-			case "reply_set_id", "reply_request_group_id", "obligation_group_id":
-				if err := metadata.setReplySetID(value, key); err != nil {
-					return Metadata{}, err
-				}
+			case "reply_slot_id":
+				metadata.ReplySlotID = value
+			case "fills_reply_slot_id":
+				metadata.FillsReplySlotID = value
+			case "reply_set_id":
+				metadata.ReplySetID = value
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
@@ -104,47 +95,6 @@ func ParseMetadata(content string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("missing from or to in params block")
 	}
 	return metadata, nil
-}
-
-func (m *Metadata) setReplySlotID(value, alias string) error {
-	if err := setAliasValue(&m.ReplySlotID, value, "reply_slot_id", alias); err != nil {
-		return err
-	}
-	if value != "" {
-		m.ObligationID = m.ReplySlotID
-	}
-	return nil
-}
-
-func (m *Metadata) setFillsReplySlotID(value, alias string) error {
-	if err := setAliasValue(&m.FillsReplySlotID, value, "fills_reply_slot_id", alias); err != nil {
-		return err
-	}
-	if value != "" {
-		m.SatisfiesObligationID = m.FillsReplySlotID
-	}
-	return nil
-}
-
-func (m *Metadata) setReplySetID(value, alias string) error {
-	if err := setAliasValue(&m.ReplySetID, value, "reply_set_id", alias); err != nil {
-		return err
-	}
-	if value != "" {
-		m.ObligationGroupID = m.ReplySetID
-	}
-	return nil
-}
-
-func setAliasValue(current *string, value, canonicalName, alias string) error {
-	if value == "" {
-		return nil
-	}
-	if *current != "" && *current != value {
-		return fmt.Errorf("conflicting %s aliases: %s differs", canonicalName, alias)
-	}
-	*current = value
-	return nil
 }
 
 func ValidateReplySlotToken(value string) error {
@@ -163,10 +113,6 @@ func ValidateReplySlotToken(value string) error {
 		}
 	}
 	return nil
-}
-
-func ValidateObligationToken(value string) error {
-	return ValidateReplySlotToken(value)
 }
 
 func directParamsChild(line string, childIndent int) (string, string, bool) {
@@ -473,11 +419,11 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "replyPolicy", true
 	case "replyTo", "reply_to":
 		return "replyTo", true
-	case "reply_slot_id", "reply_request_id", "obligation_id":
+	case "reply_slot_id":
 		return "reply_slot_id", true
-	case "fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id":
+	case "fills_reply_slot_id":
 		return "fills_reply_slot_id", true
-	case "reply_set_id", "reply_request_group_id", "obligation_group_id":
+	case "reply_set_id":
 		return "reply_set_id", true
 	case "branch_id":
 		return "branch_id", true
@@ -506,11 +452,11 @@ func managedParamFieldAliases(fieldKey string) []string {
 	case "replyTo":
 		return []string{"replyTo", "reply_to"}
 	case "reply_slot_id":
-		return []string{"reply_slot_id", "reply_request_id", "obligation_id"}
+		return []string{"reply_slot_id"}
 	case "fills_reply_slot_id":
-		return []string{"fills_reply_slot_id", "satisfies_reply_request_id", "satisfies_obligation_id"}
+		return []string{"fills_reply_slot_id"}
 	case "reply_set_id":
-		return []string{"reply_set_id", "reply_request_group_id", "obligation_group_id"}
+		return []string{"reply_set_id"}
 	case "branch_id", "completion_rule":
 		return []string{fieldKey}
 	default:

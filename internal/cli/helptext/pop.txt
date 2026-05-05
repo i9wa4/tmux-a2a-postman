@@ -16,7 +16,5 @@ Fields:
   reply_slot_id           Exact reply slot id opened by reply-required mail
   fills_reply_slot_id     Exact reply slot id filled by this message
   reply_set_id            Aggregate reply slot set id when grouped
-  obligation_id           Legacy alias for reply_slot_id
-  satisfies_obligation_id Legacy alias for fills_reply_slot_id
-  reply_to                Legacy message id this message resolves
+  reply_to                Message id this message references
   remaining               Unread messages remaining after this command

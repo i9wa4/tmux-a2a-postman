@@ -38,7 +38,7 @@ func TestVisibleState(t *testing.T) {
 	}
 }
 
-func TestVisibleStateWithObligations(t *testing.T) {
+func TestVisibleStateWithReplySlots(t *testing.T) {
 	tests := []struct {
 		name                string
 		paneState           string
@@ -48,7 +48,7 @@ func TestVisibleStateWithObligations(t *testing.T) {
 		want                string
 	}{
 		{
-			name:      "ready_without_obligations",
+			name:      "ready_without_reply_slots",
 			paneState: "active",
 			want:      "ready",
 		},
@@ -73,7 +73,7 @@ func TestVisibleStateWithObligations(t *testing.T) {
 			want:                "pending",
 		},
 		{
-			name:                "stale_beats_obligations",
+			name:                "stale_beats_reply_slots",
 			paneState:           "stale",
 			actionRequiredCount: 1,
 			waitingOnReplyCount: 1,
@@ -90,9 +90,9 @@ func TestVisibleStateWithObligations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := VisibleStateWithObligations(tt.paneState, tt.unreadCount, tt.actionRequiredCount, tt.waitingOnReplyCount)
+			got := VisibleStateWithReplySlots(tt.paneState, tt.unreadCount, tt.actionRequiredCount, tt.waitingOnReplyCount)
 			if got != tt.want {
-				t.Fatalf("VisibleStateWithObligations(...) = %q, want %q", got, tt.want)
+				t.Fatalf("VisibleStateWithReplySlots(...) = %q, want %q", got, tt.want)
 			}
 		})
 	}

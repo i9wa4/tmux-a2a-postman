@@ -14,13 +14,9 @@ send
     --stdin              Deprecated alias for --body-stdin
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
-    --reply-to <message> Message id for legacy closure or traceability
+    --reply-to <message> Message id for fallback closure or traceability
     --fills-reply-slot-id <id>
                          Exact reply slot id this message fills
-    --satisfies-obligation-id <id>
-                         Legacy alias for --fills-reply-slot-id
-    --satisfies-reply-request-id <id>
-                         Legacy alias for --fills-reply-slot-id
 
 pop
   Read and archive the oldest unread inbox message.

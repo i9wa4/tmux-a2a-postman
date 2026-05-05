@@ -41,20 +41,18 @@ const (
 )
 
 type sendOutput struct {
-	Sent                  string                `json:"sent"`
-	Status                string                `json:"status"`
-	ContextID             string                `json:"context_id,omitempty"`
-	Session               string                `json:"session,omitempty"`
-	From                  string                `json:"from,omitempty"`
-	To                    string                `json:"to,omitempty"`
-	ReplyPolicy           string                `json:"reply_policy,omitempty"`
-	ReplyTo               string                `json:"reply_to,omitempty"`
-	ReplySlotID           string                `json:"reply_slot_id,omitempty"`
-	FillsReplySlotID      string                `json:"fills_reply_slot_id,omitempty"`
-	ObligationID          string                `json:"obligation_id,omitempty"`
-	SatisfiesObligationID string                `json:"satisfies_obligation_id,omitempty"`
-	SubmitPath            projection.SubmitPath `json:"submit_path,omitempty"`
-	Notify                string                `json:"notify,omitempty"`
+	Sent             string                `json:"sent"`
+	Status           string                `json:"status"`
+	ContextID        string                `json:"context_id,omitempty"`
+	Session          string                `json:"session,omitempty"`
+	From             string                `json:"from,omitempty"`
+	To               string                `json:"to,omitempty"`
+	ReplyPolicy      string                `json:"reply_policy,omitempty"`
+	ReplyTo          string                `json:"reply_to,omitempty"`
+	ReplySlotID      string                `json:"reply_slot_id,omitempty"`
+	FillsReplySlotID string                `json:"fills_reply_slot_id,omitempty"`
+	SubmitPath       projection.SubmitPath `json:"submit_path,omitempty"`
+	Notify           string                `json:"notify,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -161,8 +159,6 @@ func RunSendMessage(args []string) error {
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	fillsReplySlotID := fs.String("fills-reply-slot-id", "", "reply slot id this message fills")
-	satisfiesReplyRequestID := fs.String("satisfies-reply-request-id", "", "legacy reply request id this message satisfies")
-	satisfiesObligationID := fs.String("satisfies-obligation-id", "", "legacy obligation id this message satisfies")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -188,16 +184,6 @@ func RunSendMessage(args []string) error {
 		return err
 	}
 	if err := validateReplySlotFillFlag("--fills-reply-slot-id", *fillsReplySlotID); err != nil {
-		return err
-	}
-	if err := validateReplySlotFillFlag("--satisfies-reply-request-id", *satisfiesReplyRequestID); err != nil {
-		return err
-	}
-	if err := validateReplySlotFillFlag("--satisfies-obligation-id", *satisfiesObligationID); err != nil {
-		return err
-	}
-	resolvedFillsReplySlotID, err := resolveFillsReplySlotID(*fillsReplySlotID, *satisfiesReplyRequestID, *satisfiesObligationID)
-	if err != nil {
 		return err
 	}
 	cfg, err := config.LoadConfig(*configPath)
@@ -326,29 +312,23 @@ func RunSendMessage(args []string) error {
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
-		"context_id":                 resolvedContextID,
-		"sender":                     sender,
-		"recipient":                  *to,
-		"timestamp":                  now.Format(time.RFC3339),
-		"can_talk_to":                canTalkTo,
-		"session_dir":                filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":              strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
-		"message_id":                 filename,
-		"reply_policy":               generatedReplyPolicyMarker,
-		"reply_to":                   *replyTo,
-		"reply_slot_id":              replySlotIDMarker,
-		"fills_reply_slot_id":        resolvedFillsReplySlotID,
-		"reply_set_id":               "",
-		"reply_request_id":           replySlotIDMarker,
-		"satisfies_reply_request_id": resolvedFillsReplySlotID,
-		"reply_request_group_id":     "",
-		"obligation_id":              replySlotIDMarker,
-		"satisfies_obligation_id":    resolvedFillsReplySlotID,
-		"obligation_group_id":        "",
-		"reply_arguments":            "",
-		"template":                   getNodeTemplate(cfg, *to),
-		"session_name":               sessionName,
-		"sender_pane_id":             config.GetTmuxPaneID(),
+		"context_id":          resolvedContextID,
+		"sender":              sender,
+		"recipient":           *to,
+		"timestamp":           now.Format(time.RFC3339),
+		"can_talk_to":         canTalkTo,
+		"session_dir":         filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":       strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":          filename,
+		"reply_policy":        generatedReplyPolicyMarker,
+		"reply_to":            *replyTo,
+		"reply_slot_id":       replySlotIDMarker,
+		"fills_reply_slot_id": *fillsReplySlotID,
+		"reply_set_id":        "",
+		"reply_arguments":     "",
+		"template":            getNodeTemplate(cfg, *to),
+		"session_name":        sessionName,
+		"sender_pane_id":      config.GetTmuxPaneID(),
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -380,18 +360,14 @@ func RunSendMessage(args []string) error {
 	}
 	content = strings.ReplaceAll(content, replySlotIDMarker, replySlotID)
 	vars["reply_slot_id"] = replySlotID
-	vars["fills_reply_slot_id"] = resolvedFillsReplySlotID
-	vars["reply_request_id"] = replySlotID
-	vars["satisfies_reply_request_id"] = resolvedFillsReplySlotID
-	vars["obligation_id"] = replySlotID
-	vars["satisfies_obligation_id"] = resolvedFillsReplySlotID
+	vars["fills_reply_slot_id"] = *fillsReplySlotID
 	vars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
 		"messageId":           filename,
 		"replyPolicy":         replyPolicy,
 		"replyTo":             *replyTo,
 		"reply_slot_id":       replySlotID,
-		"fills_reply_slot_id": resolvedFillsReplySlotID,
+		"fills_reply_slot_id": *fillsReplySlotID,
 	})
 
 	if cfg.MessageFooter != "" {
@@ -416,11 +392,7 @@ func RunSendMessage(args []string) error {
 		footerVars["reply_policy"] = replyPolicy
 		footerVars["reply_to"] = *replyTo
 		footerVars["reply_slot_id"] = replySlotID
-		footerVars["fills_reply_slot_id"] = resolvedFillsReplySlotID
-		footerVars["reply_request_id"] = replySlotID
-		footerVars["satisfies_reply_request_id"] = resolvedFillsReplySlotID
-		footerVars["obligation_id"] = replySlotID
-		footerVars["satisfies_obligation_id"] = resolvedFillsReplySlotID
+		footerVars["fills_reply_slot_id"] = *fillsReplySlotID
 		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
@@ -444,19 +416,17 @@ func RunSendMessage(args []string) error {
 			return fmt.Errorf("send outcome: %w", err)
 		}
 		return writeSendOutput(sendOutput{
-			Sent:                  deliveredFilename,
-			Status:                string(status),
-			ContextID:             resolvedContextID,
-			Session:               sessionName,
-			From:                  sender,
-			To:                    *to,
-			ReplyPolicy:           replyPolicy,
-			ReplyTo:               *replyTo,
-			ReplySlotID:           replySlotID,
-			FillsReplySlotID:      resolvedFillsReplySlotID,
-			ObligationID:          replySlotID,
-			SatisfiesObligationID: resolvedFillsReplySlotID,
-			SubmitPath:            projection.SubmitPathDaemon,
+			Sent:             deliveredFilename,
+			Status:           string(status),
+			ContextID:        resolvedContextID,
+			Session:          sessionName,
+			From:             sender,
+			To:               *to,
+			ReplyPolicy:      replyPolicy,
+			ReplyTo:          *replyTo,
+			ReplySlotID:      replySlotID,
+			FillsReplySlotID: *fillsReplySlotID,
+			SubmitPath:       projection.SubmitPathDaemon,
 		})
 	}
 
@@ -501,20 +471,18 @@ func RunSendMessage(args []string) error {
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
 	return writeSendOutput(sendOutput{
-		Sent:                  filename,
-		Status:                string(status),
-		ContextID:             resolvedContextID,
-		Session:               sessionName,
-		From:                  sender,
-		To:                    *to,
-		ReplyPolicy:           replyPolicy,
-		ReplyTo:               *replyTo,
-		ReplySlotID:           replySlotID,
-		FillsReplySlotID:      resolvedFillsReplySlotID,
-		ObligationID:          replySlotID,
-		SatisfiesObligationID: resolvedFillsReplySlotID,
-		SubmitPath:            projection.SubmitPathPost,
-		Notify:                notifyOutputValue(notifyStatus),
+		Sent:             filename,
+		Status:           string(status),
+		ContextID:        resolvedContextID,
+		Session:          sessionName,
+		From:             sender,
+		To:               *to,
+		ReplyPolicy:      replyPolicy,
+		ReplyTo:          *replyTo,
+		ReplySlotID:      replySlotID,
+		FillsReplySlotID: *fillsReplySlotID,
+		SubmitPath:       projection.SubmitPathPost,
+		Notify:           notifyOutputValue(notifyStatus),
 	})
 }
 
@@ -546,20 +514,12 @@ func generatedReplySlotIDPlaceholder(filename string) string {
 	return b.String()
 }
 
-func generatedObligationIDPlaceholder(filename string) string {
-	return generatedReplySlotIDPlaceholder(filename)
-}
-
 func generateReplySlotID() (string, error) {
 	var raw [12]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generating reply slot id: %w", err)
 	}
 	return "rslot_" + hex.EncodeToString(raw[:]), nil
-}
-
-func generateObligationID() (string, error) {
-	return generateReplySlotID()
 }
 
 func replyArgumentsForMessage(messageID, replySlotID string) string {
@@ -593,35 +553,6 @@ func validateReplySlotFillFlag(flagName, replySlotID string) error {
 		return fmt.Errorf("%s %w", flagName, err)
 	}
 	return nil
-}
-
-func resolveFillsReplySlotID(fillsReplySlotID, satisfiesReplyRequestID, satisfiesObligationID string) (string, error) {
-	type flagValue struct {
-		name  string
-		value string
-	}
-	flags := []flagValue{
-		{name: "--fills-reply-slot-id", value: fillsReplySlotID},
-		{name: "--satisfies-reply-request-id", value: satisfiesReplyRequestID},
-		{name: "--satisfies-obligation-id", value: satisfiesObligationID},
-	}
-	resolved := ""
-	resolvedName := ""
-	for _, flag := range flags {
-		if flag.value == "" {
-			continue
-		}
-		if resolved != "" && flag.value != resolved {
-			return "", fmt.Errorf("conflicting reply slot fill aliases: %s and %s differ", resolvedName, flag.name)
-		}
-		resolved = flag.value
-		resolvedName = flag.name
-	}
-	return resolved, nil
-}
-
-func validateSatisfiesObligationID(obligationID string) error {
-	return validateReplySlotFillFlag("--satisfies-obligation-id", obligationID)
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

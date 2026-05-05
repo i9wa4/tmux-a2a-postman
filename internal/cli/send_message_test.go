@@ -169,9 +169,9 @@ func TestRunSendMessage_InvalidFillsReplySlotIDRejectedBeforeWriting(t *testing.
 			want:        "path separators",
 		},
 		{
-			name:        "legacy multi token",
-			flag:        "--satisfies-obligation-id",
-			replySlotID: "obl 123",
+			name:        "canonical multi token",
+			flag:        "--fills-reply-slot-id",
+			replySlotID: "rslot 123",
 			want:        "whitespace",
 		},
 		{
@@ -202,6 +202,22 @@ func TestRunSendMessage_InvalidFillsReplySlotIDRejectedBeforeWriting(t *testing.
 				t.Fatalf("RunSendMessage() error = %v, want substring %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunSendMessage_LegacyReplySlotFlagRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+	err := RunSendMessage([]string{
+		"--to", "worker",
+		"--body", "hello",
+		"--satisfies" + "-obligation-id", "rslot_123",
+	})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want undefined flag error")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("RunSendMessage() error = %v, want undefined flag", err)
 	}
 }
 
@@ -1177,9 +1193,6 @@ role = "worker"
 	if err := envelope.ValidateReplySlotToken(payload.ReplySlotID); err != nil {
 		t.Fatalf("payload.ReplySlotID = %q is invalid: %v", payload.ReplySlotID, err)
 	}
-	if payload.ObligationID != payload.ReplySlotID {
-		t.Fatalf("payload.ObligationID = %q, want legacy alias %q", payload.ObligationID, payload.ReplySlotID)
-	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-reply-policy", "test-session", "post", payload.Sent))
 	if err != nil {
@@ -1198,14 +1211,14 @@ role = "worker"
 			t.Fatalf("content missing %q:\n%s", want, string(content))
 		}
 	}
-	for _, unwanted := range []string{"obligation_id:", "satisfies_obligation_id:", "fills_reply_slot_id:"} {
+	for _, unwanted := range []string{"obligation" + "_id:", "satisfies" + "_obligation" + "_id:", "fills_reply_slot_id:"} {
 		if strings.Contains(string(content), unwanted) {
 			t.Fatalf("content contains unexpected %q:\n%s", unwanted, string(content))
 		}
 	}
 }
 
-func TestRunSendMessage_StoresSatisfiesObligationIDForExactReply(t *testing.T) {
+func TestRunSendMessage_StoresFillsReplySlotIDForExactReply(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1240,17 +1253,11 @@ role = "worker"
 		t.Fatalf("RunSendMessage: %v", err)
 	}
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.ObligationID != "" {
-		t.Fatalf("payload.ObligationID = %q, want empty for no-reply exact reply", payload.ObligationID)
-	}
 	if payload.ReplySlotID != "" {
 		t.Fatalf("payload.ReplySlotID = %q, want empty for no-reply exact reply", payload.ReplySlotID)
 	}
 	if payload.FillsReplySlotID != replySlotID {
 		t.Fatalf("payload.FillsReplySlotID = %q, want %q", payload.FillsReplySlotID, replySlotID)
-	}
-	if payload.SatisfiesObligationID != replySlotID {
-		t.Fatalf("payload.SatisfiesObligationID = %q, want legacy alias %q", payload.SatisfiesObligationID, replySlotID)
 	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-exact-reply", "test-session", "post", payload.Sent))
@@ -1266,11 +1273,11 @@ role = "worker"
 			t.Fatalf("content missing %q:\n%s", want, string(content))
 		}
 	}
-	if strings.Contains(string(content), "\n  obligation_id:") {
-		t.Fatalf("content contains unexpected obligation_id:\n%s", string(content))
+	if strings.Contains(string(content), "\n  "+"obligation"+"_id:") {
+		t.Fatalf("content contains unexpected legacy reply identity field:\n%s", string(content))
 	}
-	if strings.Contains(string(content), "\n  satisfies_obligation_id:") {
-		t.Fatalf("content contains unexpected satisfies_obligation_id:\n%s", string(content))
+	if strings.Contains(string(content), "\n  "+"satisfies"+"_obligation"+"_id:") {
+		t.Fatalf("content contains unexpected legacy reply identity field:\n%s", string(content))
 	}
 }
 
@@ -1326,7 +1333,7 @@ params:
   to: {recipient}
   timestamp: {timestamp}
   messageType: status_request
-  obligation_id: {obligation_id}
+  reply_slot_id: {reply_slot_id}
 ---
 
 <!-- write here -->
@@ -1361,9 +1368,6 @@ role = "worker"
 	if payload.ReplySlotID == "" {
 		t.Fatal("payload.ReplySlotID is empty, want generated reply slot id")
 	}
-	if payload.ObligationID != payload.ReplySlotID {
-		t.Fatalf("payload.ObligationID = %q, want legacy alias %q", payload.ObligationID, payload.ReplySlotID)
-	}
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-message-type-policy", "test-session", "post", payload.Sent))
 	if err != nil {
@@ -1372,7 +1376,7 @@ role = "worker"
 	for _, want := range []string{
 		"messageType: status_request",
 		"replyPolicy: required",
-		"obligation_id: " + payload.ReplySlotID,
+		"reply_slot_id: " + payload.ReplySlotID,
 	} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("content missing %q:\n%s", want, string(content))

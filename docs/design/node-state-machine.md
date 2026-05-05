@@ -118,10 +118,8 @@ override for terminal or informational mail.
 A new reply-required message carries an exact `reply_slot_id`. A resolving
 reply should include `--fills-reply-slot-id <reply-slot-id>` so health can
 clear that slot. The default footer includes `--reply-to <message-id>` as
-compatibility and traceability; for legacy messages without an exact reply-slot
-ID, `--reply-to` still closes the matching open slot for the original message
-and participant. `obligation_*` and `reply_request_*` names remain accepted as
-compatibility aliases, not canonical protocol fields.
+traceability; for messages without an exact reply-slot ID, `--reply-to` still
+closes the matching open slot for the original message and participant.
 
 The resolver treats exact first-line terminal messages as no-reply:
 
@@ -138,9 +136,9 @@ sender explicitly marks it reply-required.
 
 ## 6. Reply Slot Facts
 
-Each delivered recipient gets its own reply slot. New required messages use an
-opaque `reply_slot_id`; legacy required messages without exact fields continue
-to use the message ID plus participant as the fallback key.
+Each delivered recipient gets its own reply slot. Required messages with an
+opaque `reply_slot_id` use exact closure; messages without exact fields use the
+message ID plus participant as the fallback key.
 
 | Fact                       | Meaning                                                       |
 | -------------------------- | ------------------------------------------------------------- |
@@ -150,7 +148,7 @@ to use the message ID plus participant as the fallback key.
 | `reply_slot_id`            | Exact required-reply slot opened by a required message        |
 | `fills_reply_slot_id`      | Exact reply slot ID this message fills                        |
 | `reply_set_id`             | Optional aggregate of reply slots                             |
-| `reply_to`                 | Optional legacy message ID that this message resolves         |
+| `reply_to`                 | Optional message ID this message references                   |
 | `unread_count`             | All unread inbox mail, including no-reply notices             |
 | `action_required_count`    | Inbound reply-required messages not yet resolved by a reply   |
 | `waiting_on_reply_count`   | Outbound reply-required messages not yet resolved by a reply  |
@@ -159,7 +157,8 @@ to use the message ID plus participant as the fallback key.
 `pop` only clears unread state. It does not clear reply-required action, because
 reading a request is not the same as answering it. Sending a resolving reply
 clears the recipient's action-required slot and the sender's waiting-on-reply
-slot when `fills_reply_slot_id` names the exact reply slot. If both
+slot when `fills_reply_slot_id` names the exact reply slot. Required messages
+without an exact slot still use `reply_to` fallback closure. If both
 `fills_reply_slot_id` and `reply_to` are present and
 `reply_to` names a different original message, projection fails closed and does
 not clear an arbitrary slot. If an older journal event does not contain
@@ -169,9 +168,7 @@ from later complete events instead of inventing reply-slot state.
 Grouped reply-slot fields are reserved for the next protocol layer:
 `reply_set_id`, `branch_id`, and `completion_rule`. They are parsed and carried
 as metadata but do not affect L1 health counts until grouped completion rules
-are implemented. Legacy aliases `obligation_id`, `satisfies_obligation_id`, and
-`obligation_group_id` map to `reply_slot_id`, `fills_reply_slot_id`, and
-`reply_set_id` during migration.
+are implemented.
 
 ## 7. Health Projection
 

@@ -81,9 +81,8 @@ reply flags for generated files.
 
 Reading with `pop` clears unread state, but it does not clear reply-required
 action. Only a later message with `--fills-reply-slot-id <reply-slot-id>`
-clears an exact reply slot. `--reply-to <message-id>` remains useful for legacy
-messages and human traceability. `obligation_*` and `reply_request_*` names are
-accepted only as compatibility aliases.
+clears an exact reply slot. `--reply-to <message-id>` remains useful for
+fallback message-link closure and human traceability.
 
 Use `--reply-required` for work requests, approval requests, status requests,
 or any message where the sender needs a later resolving answer. Use
@@ -132,7 +131,8 @@ progress evidence matters.
 3. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-reply-slot-id <reply_slot_id>` when the pop output includes
    `reply_slot_id`; keep `--reply-to <message_id>` for traceability when the
-   footer provides it. Otherwise use legacy `--reply-to <message_id>`.
+   footer provides it. Otherwise use `--reply-to <message_id>` as fallback
+   closure.
 4. If your node is `waiting`, do not clear it by reading mail. Wait for an
    exact reply or send a bounded follow-up if the workflow timeout requires it.
 5. If a node is `stale`, verify the tmux pane, tmux session, and daemon before

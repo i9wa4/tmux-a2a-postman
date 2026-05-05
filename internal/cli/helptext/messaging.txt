@@ -24,9 +24,8 @@ Reply-required messages carry a reply_slot_id. Exact replies use:
   POSTMAN_BODY
 
 The exact reply slot id clears the required action; --reply-to is retained for
-traceability and legacy messages. obligation_* and reply_request_* names are
-accepted as compatibility aliases. Replies stay on the live session daemon
-automatically.
+traceability and fallback message-link closure. Replies stay on the live
+session daemon automatically.
 
 Envelope format (YAML frontmatter):
   ---

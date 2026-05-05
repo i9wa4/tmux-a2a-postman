@@ -398,7 +398,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
-	contextID := "ctx-pop-exact-obligation"
+	contextID := "ctx-pop-exact-reply-slot"
 	messageFile := "20260328-101505-from-orchestrator-to-worker.md"
 	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
 	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
@@ -411,9 +411,9 @@ func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 		"  messageId: " + messageFile + "\n" +
 		"  replyPolicy: required\n" +
 		"  replyTo: previous.md\n" +
-		"  obligation_id: obl_123\n" +
-		"  satisfies_obligation_id: obl_prev\n" +
-		"  obligation_group_id: group_1\n" +
+		"  reply_slot_id: rslot_123\n" +
+		"  fills_reply_slot_id: rslot_prev\n" +
+		"  reply_set_id: rset_1\n" +
 		"  branch_id: branch_1\n" +
 		"  completion_rule: all\n" +
 		"  timestamp: 2026-03-28T10:15:05Z\n" +
@@ -436,23 +436,17 @@ func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 	if payload.MessageID != messageFile {
 		t.Fatalf("payload.MessageID = %q, want %q", payload.MessageID, messageFile)
 	}
-	if payload.ReplySlotID != "obl_123" {
-		t.Fatalf("payload.ReplySlotID = %q, want obl_123", payload.ReplySlotID)
+	if payload.ReplySlotID != "rslot_123" {
+		t.Fatalf("payload.ReplySlotID = %q, want rslot_123", payload.ReplySlotID)
 	}
-	if payload.FillsReplySlotID != "obl_prev" {
-		t.Fatalf("payload.FillsReplySlotID = %q, want obl_prev", payload.FillsReplySlotID)
+	if payload.FillsReplySlotID != "rslot_prev" {
+		t.Fatalf("payload.FillsReplySlotID = %q, want rslot_prev", payload.FillsReplySlotID)
 	}
-	if payload.ReplySetID != "group_1" {
-		t.Fatalf("payload.ReplySetID = %q, want group_1", payload.ReplySetID)
+	if payload.ReplySetID != "rset_1" {
+		t.Fatalf("payload.ReplySetID = %q, want rset_1", payload.ReplySetID)
 	}
-	if payload.ObligationID != "obl_123" {
-		t.Fatalf("payload.ObligationID = %q, want obl_123", payload.ObligationID)
-	}
-	if payload.SatisfiesObligationID != "obl_prev" {
-		t.Fatalf("payload.SatisfiesObligationID = %q, want obl_prev", payload.SatisfiesObligationID)
-	}
-	if payload.ObligationGroupID != "group_1" || payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
-		t.Fatalf("group fields = %q/%q/%q, want group_1/branch_1/all", payload.ObligationGroupID, payload.BranchID, payload.CompletionRule)
+	if payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
+		t.Fatalf("group fields = %q/%q, want branch_1/all", payload.BranchID, payload.CompletionRule)
 	}
 }
 

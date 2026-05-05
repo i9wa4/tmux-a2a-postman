@@ -95,10 +95,10 @@ func NormalizeState(state string) string {
 }
 
 func VisibleState(paneState string, unreadCount int) string {
-	return VisibleStateWithObligations(paneState, unreadCount, -1, 0)
+	return VisibleStateWithReplySlots(paneState, unreadCount, -1, 0)
 }
 
-func VisibleStateWithObligations(paneState string, unreadCount, actionRequiredCount, waitingOnReplyCount int) string {
+func VisibleStateWithReplySlots(paneState string, unreadCount, actionRequiredCount, waitingOnReplyCount int) string {
 	state := NormalizePaneState(paneState)
 	if state == "stale" {
 		return state
