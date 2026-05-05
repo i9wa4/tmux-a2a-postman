@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -345,6 +347,57 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestDefaultConfigOnlyInitializesStructuralFields(t *testing.T) {
+	got := DefaultConfig()
+	want := &Config{
+		Edges:     []string{},
+		Nodes:     map[string]NodeConfig{},
+		NodeOrder: []string{},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultConfig() = %#v, want structural-only %#v", got, want)
+	}
+}
+
+func TestEmbeddedNonZeroDefaultsAreDeclaredInTOML(t *testing.T) {
+	var rootSections map[string]toml.Primitive
+	md, err := toml.Decode(string(defaultConfigBytes), &rootSections)
+	if err != nil {
+		t.Fatalf("Decode embedded defaults: %v", err)
+	}
+	cfg, err := loadEmbeddedConfig()
+	if err != nil {
+		t.Fatalf("loadEmbeddedConfig: %v", err)
+	}
+
+	assertNonZeroTOMLTaggedFieldsDeclared(t, "postman", *cfg, md)
+	assertNonZeroTOMLTaggedFieldsDeclared(t, "node_defaults", cfg.NodeDefaults, md)
+}
+
+func assertNonZeroTOMLTaggedFieldsDeclared(t *testing.T, section string, value any, md toml.MetaData) {
+	t.Helper()
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		tomlKey := field.Tag.Get("toml")
+		if tomlKey == "" || tomlKey == "-" {
+			continue
+		}
+		tomlKey, _, _ = strings.Cut(tomlKey, ",")
+		if rv.Field(i).IsZero() {
+			continue
+		}
+		if !tomlHasField(md, section, tomlKey) {
+			t.Fatalf("%s.%s has non-zero embedded default but no [%s].%s key in postman.default.toml", section, field.Name, section, tomlKey)
+		}
 	}
 }
 

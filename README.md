@@ -193,6 +193,10 @@ depth with `pane_capture_tail_lines` in `postman.toml`; the embedded default is
 `internal/config/postman.default.toml` are enough to run the daemon. A minimal
 `postman.md` can contain only Mermaid edges:
 
+Default values shown in docs and help text are references to the embedded
+TOML. Changing a public default means updating `postman.default.toml`, docs,
+and tests together.
+
 ```mermaid
 ---
 title: postman.md edge topology

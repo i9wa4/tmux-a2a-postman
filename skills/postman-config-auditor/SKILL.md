@@ -73,6 +73,9 @@ Important merge rules:
 - A `postman.toml` file is optional. Treat a TOML file that only restates
   embedded defaults as deletion-worthy unless it documents an intentional local
   override.
+- Public non-zero defaults are owned by
+  `internal/config/postman.default.toml` and guarded by config SSOT tests. Do
+  not treat `DefaultConfig()` literals as product defaults.
 
 ## 3. Audit Checklist
 

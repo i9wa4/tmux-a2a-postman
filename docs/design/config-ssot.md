@@ -30,6 +30,15 @@ embedded default TOML.
 Keeping defaults in one file also makes reviews easier: changing a public
 default means changing `postman.default.toml`, docs, and tests together.
 
+## Regression Guards
+
+- `internal/config/config_test.go` asserts `DefaultConfig()` stays limited to
+  structural containers.
+- `internal/config/config_test.go` asserts each non-zero embedded default loaded
+  into public TOML-tagged fields is declared in `postman.default.toml`.
+- Project-local zero-value overlay tests assert explicit zero overrides still
+  survive the embedded defaults layer.
+
 ## Minimal Topology
 
 ````markdown
