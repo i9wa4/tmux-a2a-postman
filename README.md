@@ -198,7 +198,10 @@ evidence, and blockers before relaying, approving, or closing work.
 Agents should prefer `get-status` for
 structured session JSON, `inspect-input --id <message_id-or-input_request_id>`
 to identify a specific open reply-required item without popping inbox mail,
-and `get-status-oneline` for compact coordination.
+`inspect-message --id <message_id>` to inspect a persisted message after it is
+read or archived, and `get-status-oneline` for compact coordination.
+`inspect-message` is read-only and can print focused output with `--path` or
+`--body` when a single stored message matches.
 `get-status` uses `schema_version: 3`; `visible_state` and `compact` are
 compact operator fields, while detailed contextual fields carry the semantic
 explanation. The severity fields include `severity`, `severity_source`,

@@ -29,6 +29,7 @@ Default operator surface:
   get-status                 Print canonical session health JSON
   get-status-oneline         Print compact all-session health
   inspect-input              Inspect open reply-required work by id
+  inspect-message            Inspect persisted message content by id
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -42,6 +43,7 @@ Messaging Protocol:
   get-status                                Inspect agent-readable session health
   get-status-oneline                        Inspect compact all-session health
   inspect-input --id <id>                   Inspect an open input request by id
+  inspect-message --id <message_id>         Inspect persisted message content by id
   version                                   Print the build version JSON
 
 Topics:
@@ -57,6 +59,7 @@ Topics:
   get-status           tmux-a2a-postman help get-status
   get-status-oneline   tmux-a2a-postman help get-status-oneline
   inspect-input        tmux-a2a-postman help inspect-input
+  inspect-message      tmux-a2a-postman help inspect-message
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

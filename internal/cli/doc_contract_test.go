@@ -131,6 +131,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
 	configAuditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
 	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
 
 	assertContainsAllNormalized(t, readme,
@@ -142,6 +143,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"pop",
 		"get-status",
 		"get-status-oneline",
+		"inspect-message --id <message_id>",
 		"Mermaid",
 		"edges",
 		"message footer",
@@ -157,8 +159,14 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"pop",
 		"get-status",
 		"get-status-oneline",
+		"inspect-message",
 		"version",
 		"help [topic]",
+	)
+	assertContainsAllNormalized(t, operatorSkill,
+		"tmux-a2a-postman inspect-message --id <message_id>",
+		"read-only historical lookup",
+		"Use `--path` for the stored Markdown path and `--body` for sender-authored body text.",
 	)
 	assertContainsAllNormalized(t, sendSkill,
 		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
@@ -180,10 +188,11 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	)
 
 	publicDocs := map[string]string{
-		"README.md":                              readme,
-		"internal/cli/helptext/commands.txt":     commandsHelp,
-		"skills/postman-send-message/SKILL.md":   sendSkill,
-		"skills/postman-config-auditor/SKILL.md": configAuditorSkill,
+		"README.md":                                readme,
+		"internal/cli/helptext/commands.txt":       commandsHelp,
+		"skills/postman-send-message/SKILL.md":     sendSkill,
+		"skills/postman-session-operator/SKILL.md": operatorSkill,
+		"skills/postman-config-auditor/SKILL.md":   configAuditorSkill,
 	}
 	for path, content := range publicDocs {
 		if strings.Contains(content, ".#skill-check") {

@@ -183,6 +183,33 @@ func TestDispatch_InspectInputPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
+func TestDispatch_InspectMessagePrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"inspect-message",
+		[]string{"--id", "message.md"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			InspectMessage: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman inspect-message" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman inspect-message")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--id", "message.md"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("inspect-message args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 	var gotArgs []string
 

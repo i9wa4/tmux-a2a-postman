@@ -33,6 +33,11 @@ Use `tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>` when
 you need the concrete open reply-required item behind `pending` or `waiting`
 without reading inbox mail.
 
+Use `tmux-a2a-postman inspect-message --id <message_id>` as a read-only
+historical lookup when you need a persisted message after it was read,
+archived, or no longer tied to an open input request. Use `--path` for the
+stored Markdown path and `--body` for sender-authored body text.
+
 Use `tmux-a2a-postman pop` only when you intend to read and archive the next
 inbox message.
 
@@ -211,8 +216,10 @@ progress evidence matters.
    you need the exact open item before reading. Then run
    `tmux-a2a-postman pop` when you are ready to handle and archive the message.
 4. After `pop`, use `frontmatter` for routing metadata and input-request
-   identifiers. If you need the sender-authored content, open and read the
-   returned `markdown_path`; default JSON does not include inline body/content.
+   identifiers. If you need the sender-authored content, run
+   `tmux-a2a-postman inspect-message --id <message_id> --body` or open the
+   returned `markdown_path`; default pop JSON does not include inline
+   body/content.
 5. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-input-request-id <input_request_id>` when the pop output includes
    `input_request_id`; keep `--reply-to <message_id>` for traceability when the

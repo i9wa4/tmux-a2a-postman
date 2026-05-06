@@ -1,0 +1,47 @@
+inspect-message — inspect persisted message content by id
+
+Usage:
+  tmux-a2a-postman inspect-message --id <message_id>
+  tmux-a2a-postman inspect-message --id <message_id> --json
+  tmux-a2a-postman inspect-message --id <message_id> --path
+  tmux-a2a-postman inspect-message --id <message_id> --body
+  tmux-a2a-postman inspect-message --session <tmux-session> --id <message_id>
+  tmux-a2a-postman inspect-message --help
+
+Output:
+  JSON status object by default.
+  status is "found" when exactly one unread or read message matches the id.
+  status is "not_found" when no persisted message matches the id.
+  status is "ambiguous" when more than one persisted message matches the id.
+
+Search scope:
+  Current context and tmux session only.
+  Searches unread `inbox/<node>/` messages and archived `read/` messages.
+  The command is read-only: it does not move inbox mail, mark messages read, or
+  satisfy input requests.
+
+Fields:
+  message.message_id
+  message.markdown_path
+  message.storage_state
+  message.node
+  message.frontmatter
+  message.from
+  message.to
+  message.timestamp
+  message.reply_policy
+  message.reply_to
+  message.input_request_id
+  message.fills_input_request_id
+  message.input_request_set_id
+  message.branch_id
+  message.completion_rule
+
+Modes:
+  --json prints the default structured JSON explicitly.
+  --path prints only the matched Markdown path when there is exactly one match.
+  --body prints only the matched Markdown body when there is exactly one match.
+
+Use inspect-input for currently open reply-required work. Use inspect-message
+when you already know a historical message_id and need the stored message after
+it was read, archived, or no longer tied to an open input request.

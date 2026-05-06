@@ -66,6 +66,7 @@ func main() {
 			GetSessionStatus:        cli.RunGetSessionStatus,
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			InspectInput:            cli.RunInspectInput,
+			InspectMessage:          cli.RunInspectMessage,
 			SendMessage:             cli.RunSendMessage,
 			SendHeredoc:             cli.RunSendHeredoc,
 			Stop: func(args []string) error {
