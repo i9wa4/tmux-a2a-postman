@@ -347,7 +347,7 @@ link to `markdown_path` for human reading. If the project adds `parts`, make it
 an explicit opt-in or a compact body-only mode so the default remains
 machine-friendly.
 
-### AgentCard Alignment
+## AgentCard Alignment
 
 A2A AgentCard describes an agent's identity, interfaces, capabilities, security
 requirements, input/output modes, and skills. Postman has related material, but
@@ -371,7 +371,7 @@ postman wants a real custom binding or only a documentation analogy. If a
 future export exists, call it AgentCard-like until it exposes the required A2A
 fields honestly.
 
-### Version and Migration Policy
+## Version and Migration Policy
 
 Recommended baseline:
 
@@ -409,7 +409,7 @@ Migration handling:
 5. Document the current A2A source version in docs even if per-message
    frontmatter stays absent.
 
-### Concrete Recommendations
+## Concrete Recommendations
 
 1. Add this docs page as the canonical A2A respect explanation.
 2. Keep postman-native runtime fields authoritative for now:
@@ -427,7 +427,7 @@ Migration handling:
 8. Treat `reply_set_id` as grouped reply-slot aggregation, not
    `referenceTaskIds`.
 
-### Rejected Alternatives
+## Rejected Alternatives
 
 | Alternative                            | Reason rejected                                                       |
 | -------------------------------------- | --------------------------------------------------------------------- |
@@ -438,7 +438,7 @@ Migration handling:
 | Put A2A reference only in build output  | Archived messages would not be self-describing.                       |
 | Put full A2A AgentCard in docs now     | Would imply a discovery surface that does not exist.                   |
 
-### Open Questions
+## Open Questions
 
 | Question                                      | Decision needed                                                   |
 | --------------------------------------------- | ----------------------------------------------------------------- |
