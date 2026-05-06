@@ -22,28 +22,30 @@ func demoteATXHeadings(content string, levels int) string {
 	for _, line := range lines {
 		text := strings.TrimRight(line, "\r\n")
 		lineBreak := line[len(text):]
-		if markerChar, markerLen, ok := fenceMarker(text); ok {
-			if !inFence {
-				inFence = true
-				fenceChar = markerChar
-				fenceLen = markerLen
-			} else if markerChar == fenceChar && markerLen >= fenceLen {
+		if inFence {
+			if closingFence(text, fenceChar, fenceLen) {
 				inFence = false
 			}
 			b.WriteString(text)
 			b.WriteString(lineBreak)
 			continue
 		}
-		if !inFence {
-			text = demoteATXHeadingLine(text, levels)
+		if markerChar, markerLen, ok := openingFence(text); ok {
+			inFence = true
+			fenceChar = markerChar
+			fenceLen = markerLen
+			b.WriteString(text)
+			b.WriteString(lineBreak)
+			continue
 		}
+		text = demoteATXHeadingLine(text, levels)
 		b.WriteString(text)
 		b.WriteString(lineBreak)
 	}
 	return b.String()
 }
 
-func fenceMarker(line string) (byte, int, bool) {
+func openingFence(line string) (byte, int, bool) {
 	i := 0
 	for i < len(line) && i < 3 && line[i] == ' ' {
 		i++
@@ -57,7 +59,36 @@ func fenceMarker(line string) (byte, int, bool) {
 		j++
 	}
 	count := j - i
-	return ch, count, count >= 3
+	if count < 3 {
+		return 0, 0, false
+	}
+	if ch == '`' && strings.Contains(line[j:], "`") {
+		return 0, 0, false
+	}
+	return ch, count, true
+}
+
+func closingFence(line string, ch byte, minLen int) bool {
+	i := 0
+	for i < len(line) && i < 3 && line[i] == ' ' {
+		i++
+	}
+	if i >= len(line) || line[i] != ch {
+		return false
+	}
+	j := i
+	for j < len(line) && line[j] == ch {
+		j++
+	}
+	if j-i < minLen {
+		return false
+	}
+	for ; j < len(line); j++ {
+		if line[j] != ' ' && line[j] != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 func demoteATXHeadingLine(line string, levels int) string {

@@ -278,3 +278,59 @@ func TestMarkdownSectionContentDemotesATXHeadingsOutsideFences(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownSectionContentPreservesFenceLikeContentLines(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantCode   string
+		wantBody   string
+		unwanted   string
+		wantDemote string
+	}{
+		{
+			name: "backtick content line with trailing text",
+			input: strings.Join([]string{
+				"```text",
+				"```literal fence text",
+				"# still code",
+				"```",
+				"# outside",
+				"",
+			}, "\n"),
+			wantCode:   "```literal fence text\n# still code",
+			wantBody:   "```\n### outside",
+			unwanted:   "```literal fence text\n### still code",
+			wantDemote: "### outside",
+		},
+		{
+			name: "tilde content line with trailing text",
+			input: strings.Join([]string{
+				"~~~text",
+				"~~~literal fence text",
+				"# still code",
+				"~~~",
+				"## outside",
+				"",
+			}, "\n"),
+			wantCode:   "~~~literal fence text\n# still code",
+			wantBody:   "~~~\n#### outside",
+			unwanted:   "~~~literal fence text\n### still code",
+			wantDemote: "#### outside",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MarkdownSectionContent(tc.input)
+			for _, want := range []string{tc.wantCode, tc.wantBody, tc.wantDemote} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("MarkdownSectionContent() missing %q:\n%s", want, got)
+				}
+			}
+			if strings.Contains(got, tc.unwanted) {
+				t.Fatalf("MarkdownSectionContent() contains unwanted %q:\n%s", tc.unwanted, got)
+			}
+		})
+	}
+}
