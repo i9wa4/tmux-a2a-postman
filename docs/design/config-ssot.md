@@ -30,6 +30,11 @@ embedded default TOML.
 Keeping defaults in one file also makes reviews easier: changing a public
 default means changing `postman.default.toml`, docs, and tests together.
 
+Claude Code and Codex CLI runtime differences are tracked separately in
+[Agent Runtime Feature Differences](../agent-runtime-feature-differences.md).
+Do not encode runtime-specific behavior in `postman.toml` defaults unless a
+follow-up issue explicitly changes the public config surface.
+
 ## Regression Guards
 
 - `internal/config/config_test.go` asserts `DefaultConfig()` stays limited to

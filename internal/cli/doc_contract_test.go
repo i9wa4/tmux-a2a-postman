@@ -274,6 +274,58 @@ func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testin
 	assertContainsNormalized(t, releasing, "`gh skill publish --dry-run`; the published Git tag and GitHub Release are enough for `gh skill install` to resolve versions.")
 }
 
+func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
+	runtimeDifferences := readRepoFile(t, "docs/agent-runtime-feature-differences.md")
+	readme := readRepoFile(t, "README.md")
+	configSSOT := readRepoFile(t, "docs/design/config-ssot.md")
+	productDirection := readRepoFile(t, "docs/design/product-direction.md")
+	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
+
+	assertContainsAllNormalized(t, runtimeDifferences,
+		"Feature / behavior area",
+		"Claude Code behavior",
+		"Codex CLI behavior",
+		"Parity status",
+		"Source / reference",
+		"Owner / update trigger",
+		"Last reviewed date",
+		"Temporary task artifacts may record discoveries",
+		"repo-relative paths or stable URLs only",
+		"Runtime behavior changes need a separate issue.",
+	)
+	assertContainsAllNormalized(t, readme,
+		"Claude Code and Codex CLI have different runtime surfaces outside postman",
+		"docs/agent-runtime-feature-differences.md",
+	)
+	assertContainsAllNormalized(t, configSSOT,
+		"Agent Runtime Feature Differences",
+		"Do not encode runtime-specific behavior in `postman.toml` defaults",
+	)
+	assertContainsAllNormalized(t, productDirection,
+		"which behavior belongs to tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI",
+		"Agent Runtime Feature Differences",
+	)
+	assertContainsAllNormalized(t, postmanMDReference,
+		"Agent Runtime Feature Differences",
+		"do not duplicate the long-term runtime comparison here",
+	)
+
+	publicDocs := map[string]string{
+		"README.md": readme,
+		"docs/agent-runtime-feature-differences.md":              runtimeDifferences,
+		"docs/design/config-ssot.md":                             configSSOT,
+		"docs/design/product-direction.md":                       productDirection,
+		"skills/postman-config-auditor/references/postman-md.md": postmanMDReference,
+	}
+	for path, content := range publicDocs {
+		for _, localPath := range []string{"/home/", "/nix/store/", "~/ghq/"} {
+			if strings.Contains(content, localPath) {
+				t.Fatalf("%s exposes machine-local path fragment %q", path, localPath)
+			}
+		}
+	}
+}
+
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)")

@@ -15,6 +15,11 @@ Around that core, the product is gaining runtime surfaces:
 - compact all-session health
 - a default TUI over the same health contract
 
+Runtime surfaces must stay explicit about which behavior belongs to
+tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI. The
+canonical comparison is
+[Agent Runtime Feature Differences](../agent-runtime-feature-differences.md).
+
 It is not becoming:
 
 - a dashboard-first control plane

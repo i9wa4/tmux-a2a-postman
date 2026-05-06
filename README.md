@@ -131,7 +131,9 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 
 See the
 [GitHub CLI `gh skill install` manual](https://cli.github.com/manual/gh_skill_install)
-for supported agents and scopes.
+for supported agents and scopes. Claude Code and Codex CLI have different
+runtime surfaces outside postman; the canonical comparison lives in
+[docs/agent-runtime-feature-differences.md](docs/agent-runtime-feature-differences.md).
 
 ## 4. Usage
 
