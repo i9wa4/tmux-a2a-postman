@@ -9,17 +9,17 @@ layer for operator escalation.
 
 ## 1. Surfaces
 
-| Surface       | Trigger                         | Destination        |
-| ------------- | ------------------------------- | ------------------ |
-| Inbox file    | Routed `send` or daemon PING    | `inbox/{node}/`    |
-| Pane hint     | Successful inbox delivery       | Recipient tmux pane |
-| Health JSON   | `get-health`                    | stdout             |
-| Health line   | `get-health-oneline`            | stdout             |
-| Default TUI   | Daemon runtime health snapshots | daemon pane        |
+| Surface     | Trigger                              | Destination         |
+| ----------- | ------------------------------------ | ------------------- |
+| Inbox file  | Routed `send-heredoc` or daemon PING | `inbox/{node}/`     |
+| Pane hint   | Successful inbox delivery            | Recipient tmux pane |
+| Health JSON | `get-health`                         | stdout              |
+| Health line | `get-health-oneline`                 | stdout              |
+| Default TUI | Daemon runtime health snapshots      | daemon pane         |
 
 ## 2. Delivery Path
 
-1. `send` writes a message request.
+1. `send-heredoc` writes a message request.
 2. The daemon validates the route from `edges`.
 3. Valid mail is moved into `inbox/{node}/`.
 4. The recipient pane receives `notification_template`.
@@ -77,13 +77,13 @@ blocked-report metadata.
 
 The remaining notification-related public settings are:
 
-| Field                      | Purpose                                          |
-| -------------------------- | ------------------------------------------------ |
-| `notification_template`    | Pane hint rendered when mail arrives             |
-| `message_footer`           | Reply guidance appended to stored `send` mail    |
-| `daemon_message_template`  | Envelope body for daemon-originated startup PING |
-| `ui_node`                  | Optional target filter for startup auto-PING     |
-| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes  |
+| Field                      | Purpose                                                   |
+| -------------------------- | --------------------------------------------------------- |
+| `notification_template`    | Pane hint rendered when mail arrives                      |
+| `message_footer`           | Reply guidance appended to stored `send-heredoc` mail     |
+| `daemon_message_template`  | Envelope body for daemon-originated startup PING          |
+| `ui_node`                  | Optional target filter for startup auto-PING              |
+| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes           |
 
 `ui_node` is not a general escalation channel. It is normally set by marking a
 node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline

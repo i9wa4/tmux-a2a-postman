@@ -4,7 +4,7 @@ tmux-a2a-postman is becoming a simple session runtime for agent teams in tmux.
 
 The message lane remains the center:
 
-- `send`
+- `send-heredoc`
 - `pop`
 - routing and reply flow
 - dead-letter handling

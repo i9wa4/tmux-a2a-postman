@@ -8,8 +8,8 @@ Any AI coding agent can occupy the roles you define, turning tmux sessions into
 durable workspaces for human-directed handoffs, delegation, and review.
 
 It runs one daemon per local user account, treats tmux pane titles as role/node
-names, and delivers `send` messages to filesystem-backed inboxes. Agents read
-mail with `pop` and inspect shared health with `get-health` or
+names, and delivers `send-heredoc` messages to filesystem-backed inboxes.
+Agents read mail with `pop` and inspect shared health with `get-health` or
 `get-health-oneline`.
 
 ## 1. Concept

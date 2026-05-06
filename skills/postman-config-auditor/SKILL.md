@@ -119,8 +119,8 @@ Important merge rules:
 - Confirm each active node has clear reply behavior, completion words, and
   escalation rules when the workflow needs a response.
 - Confirm intentionally quiet nodes say that explicitly.
-- Confirm templates use `tmux-a2a-postman send`, `pop`, and `get-health`
-  instead of raw runtime filesystem manipulation.
+- Confirm templates use `tmux-a2a-postman send-heredoc`, `pop`, and
+  `get-health` instead of raw runtime filesystem manipulation.
 - Confirm templates do not duplicate context injected by system templates:
   `message_footer`, `draft_template`, `daemon_message_template`,
   `notification_template`, or dead-letter notification text.
@@ -177,13 +177,13 @@ contract:
 Move tmux-a2a-postman product-spec explanations out of local `postman.md` when
 they can be selected by skill:
 
-| Product-spec content                         | Preferred skill                |
-| -------------------------------------------- | ------------------------------ |
-| `pop`, `send`, `get-health`, reply semantics | `postman-session-operator`     |
-| `pending`, `waiting`, `stale`, queues        | `postman-session-operator`     |
-| dead-letter diagnosis and safe retry flow    | `postman-session-operator`     |
-| `postman.md` syntax, edges, merge order      | `postman-config-auditor`       |
-| `skill_path` catalog behavior                | `postman-config-auditor`       |
+| Product-spec content                                  | Preferred skill            |
+| ----------------------------------------------------- | -------------------------- |
+| `pop`, `send-heredoc`, `get-health`, reply semantics  | `postman-session-operator` |
+| `pending`, `waiting`, `stale`, queues                 | `postman-session-operator` |
+| dead-letter diagnosis and safe retry flow             | `postman-session-operator` |
+| `postman.md` syntax, edges, merge order               | `postman-config-auditor`   |
+| `skill_path` catalog behavior                         | `postman-config-auditor`   |
 
 Flag these imbalance patterns:
 

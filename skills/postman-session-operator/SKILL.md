@@ -38,9 +38,9 @@ inbox message.
 
 ## 2. Command Semantics
 
-`send` validates the auto-detected sender pane title, configured edges, and the
-recipient before delivery. A failed send is stronger evidence than stale footer
-text.
+`send-heredoc` validates the auto-detected sender pane title, configured edges,
+and the recipient before delivery. A failed `send-heredoc` is stronger
+evidence than stale footer text.
 
 Use `--reply-required` when the recipient must answer. Use `--no-reply` to force
 an informational message. Without either flag, the reply policy is resolved from

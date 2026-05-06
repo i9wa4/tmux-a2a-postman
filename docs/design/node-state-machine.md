@@ -116,8 +116,9 @@ something it can do now.
 
 ## 5. Reply Policy
 
-Normal `send` is no-reply unless the sender uses `--reply-required` or the
-message carries a strict request class such as `status_request`,
+Normal `send-heredoc` mail is no-reply unless the sender uses
+`--reply-required` or the message carries a strict request class such as
+`status_request`,
 `approval_request`, or `reply_request`. Use `--no-reply` as an explicit
 override for terminal or informational mail.
 
