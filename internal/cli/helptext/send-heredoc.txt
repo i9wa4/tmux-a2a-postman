@@ -11,8 +11,8 @@ Flags:
   --no-reply              Mark this message as not requiring a reply
   --reply-required        Mark this message as requiring a reply
   --reply-to <message>    Message id for fallback closure or traceability
-  --fills-reply-slot-id <id>
-                          Exact reply slot id this message fills
+  --fills-input-request-id <id>
+                          Exact input request id this message fills
 
 Body input:
   Use a quoted heredoc delimiter:
@@ -31,8 +31,8 @@ Body input:
 Output:
   Always JSON.
   {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
-  Reply-required sends include "reply_slot_id".
-  Exact replies include "fills_reply_slot_id".
+  Reply-required sends include "input_request_id".
+  Exact replies include "fills_input_request_id".
 
 Status:
   processed               Daemon-side handling was observed

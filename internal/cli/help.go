@@ -19,7 +19,7 @@ var helpTopicFiles = map[string]string{
 	"get-health":         "helptext/get-health.txt",
 	"get-health-oneline": "helptext/get-health-oneline.txt",
 	"help":               "helptext/help.txt",
-	"inspect-reply":      "helptext/inspect-reply.txt",
+	"inspect-input":      "helptext/inspect-input.txt",
 	"messaging":          "helptext/messaging.txt",
 	"pop":                "helptext/pop.txt",
 	"send":               "helptext/send.txt",

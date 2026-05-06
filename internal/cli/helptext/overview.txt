@@ -28,7 +28,7 @@ Default operator surface:
   pop                        Read and archive the oldest unread inbox message
   get-health                 Print canonical session health JSON
   get-health-oneline         Print compact all-session health
-  inspect-reply              Inspect open reply-required work by id
+  inspect-input              Inspect open reply-required work by id
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -41,7 +41,7 @@ Messaging Protocol:
   pop                                        Read and archive oldest message
   get-health                                Inspect agent-readable session health
   get-health-oneline                        Inspect compact all-session health
-  inspect-reply --id <id>                   Inspect an open reply slot by id
+  inspect-input --id <id>                   Inspect an open input request by id
   version                                   Print the build version JSON
 
 Topics:
@@ -56,7 +56,7 @@ Topics:
   pop                  tmux-a2a-postman help pop
   get-health           tmux-a2a-postman help get-health
   get-health-oneline   tmux-a2a-postman help get-health-oneline
-  inspect-reply        tmux-a2a-postman help inspect-reply
+  inspect-input        tmux-a2a-postman help inspect-input
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

@@ -19,20 +19,20 @@ Reply workflow:
   DONE: ...
   POSTMAN_BODY
 
-Reply-required messages carry a reply_slot_id. Exact replies use:
-  tmux-a2a-postman send-heredoc --to <sender> --fills-reply-slot-id <reply_slot_id> --reply-to <message_id> <<'POSTMAN_BODY'
+Reply-required messages carry an input_request_id. Exact replies use:
+  tmux-a2a-postman send-heredoc --to <sender> --fills-input-request-id <input_request_id> --reply-to <message_id> <<'POSTMAN_BODY'
   DONE: ...
   POSTMAN_BODY
 
-The exact reply slot id clears the required action; --reply-to is retained for
+The exact input request id clears the required action; --reply-to is retained for
 traceability and fallback message-link closure. Replies stay on the live
 session daemon automatically.
 
 Inspect open reply-required work without popping inbox mail:
-  tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>
+  tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
 
-get-health also exposes open reply-slot detail arrays under
-nodes[*].flow.reply_slots.action_required and waiting_on_reply.
+get-health also exposes open input-request detail arrays under
+nodes[*].flow.input_requests.input_required and waiting_on_input.
 
 Envelope format (YAML frontmatter):
   ---
@@ -41,7 +41,7 @@ Envelope format (YAML frontmatter):
     to: <recipient node name>
     messageId: <message filename>
     replyPolicy: <none|required>
-    reply_slot_id: <required reply token>
+    input_request_id: <required reply token>
     timestamp: <ISO 8601 timestamp>
   ---
 

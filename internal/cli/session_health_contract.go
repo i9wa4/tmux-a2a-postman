@@ -80,10 +80,10 @@ func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool)
 	return projected.InboxCounts, true
 }
 
-func projectedReplySlotCounts(sessionDir, sessionName string) (projection.MessageReplySlotState, bool) {
-	projected, ok, err := projection.ProjectMessageReplySlotState(sessionDir, sessionName)
+func projectedInputRequestCounts(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {
+	projected, ok, err := projection.ProjectMessageInputRequestState(sessionDir, sessionName)
 	if err != nil || !ok {
-		return projection.MessageReplySlotState{}, false
+		return projection.MessageInputRequestState{}, false
 	}
 	return projected, true
 }
@@ -115,7 +115,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	queues := collectSessionQueues(sessionDir)
-	replySlots, useReplySlots := projectedReplySlotCounts(sessionDir, sessionName)
+	inputRequests, useInputRequests := projectedInputRequestCounts(sessionDir, sessionName)
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
 		return result, err
@@ -154,19 +154,19 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 		if node.ScreenProgress == nil {
 			node.ScreenProgress = missingScreenProgressEvidence()
 		}
-		actionRequiredCount := -1
-		if useReplySlots {
-			node.ActionRequiredCount = replySlots.ActionRequiredCounts[simpleName]
-			node.WaitingOnReplyCount = replySlots.WaitingOnReplyCounts[simpleName]
-			node.InfoUnreadCount = replySlots.InfoUnreadCounts[simpleName]
-			node.ActionRequired = statusReplySlotDetails(replySlots.ActionRequired, simpleName, "inbound")
-			node.WaitingOnReply = statusReplySlotDetails(replySlots.WaitingOnReply, simpleName, "outbound")
-			actionRequiredCount = node.ActionRequiredCount
-			if node.InboxCount > replySlots.UnreadCounts[simpleName] {
-				actionRequiredCount = -1
+		inputRequiredCount := -1
+		if useInputRequests {
+			node.InputRequiredCount = inputRequests.InputRequiredCounts[simpleName]
+			node.WaitingOnInputCount = inputRequests.WaitingOnInputCounts[simpleName]
+			node.InfoUnreadCount = inputRequests.InfoUnreadCounts[simpleName]
+			node.InputRequired = statusInputRequestDetails(inputRequests.InputRequired, simpleName, "inbound")
+			node.WaitingOnInput = statusInputRequestDetails(inputRequests.WaitingOnInput, simpleName, "outbound")
+			inputRequiredCount = node.InputRequiredCount
+			if node.InboxCount > inputRequests.UnreadCounts[simpleName] {
+				inputRequiredCount = -1
 			}
 		}
-		node.VisibleState = status.VisibleStateWithReplySlots(node.PaneState, node.InboxCount, actionRequiredCount, node.WaitingOnReplyCount)
+		node.VisibleState = status.VisibleStateWithInputRequests(node.PaneState, node.InboxCount, inputRequiredCount, node.WaitingOnInputCount)
 		result.Nodes = append(result.Nodes, node)
 	}
 
@@ -190,28 +190,28 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	return result, nil
 }
 
-func statusReplySlotDetails(replySlots []projection.ReplySlotDetail, nodeName, direction string) []status.ReplySlotDetail {
-	if len(replySlots) == 0 {
+func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, nodeName, direction string) []status.InputRequestDetail {
+	if len(inputRequests) == 0 {
 		return nil
 	}
-	result := make([]status.ReplySlotDetail, 0, len(replySlots))
-	for _, replySlot := range replySlots {
-		if direction == "inbound" && replySlot.Recipient != nodeName {
+	result := make([]status.InputRequestDetail, 0, len(inputRequests))
+	for _, inputRequest := range inputRequests {
+		if direction == "inbound" && inputRequest.Recipient != nodeName {
 			continue
 		}
-		if direction == "outbound" && replySlot.Sender != nodeName {
+		if direction == "outbound" && inputRequest.Sender != nodeName {
 			continue
 		}
-		result = append(result, status.ReplySlotDetail{
-			Direction:      replySlot.Direction,
-			MessageID:      replySlot.MessageID,
-			ReplySlotID:    replySlot.ReplySlotID,
-			Sender:         replySlot.Sender,
-			Recipient:      replySlot.Recipient,
-			ReplyPolicy:    replySlot.ReplyPolicy,
-			OpenedAt:       replySlot.OpenedAt,
-			OpenedAtSource: replySlot.OpenedAtSource,
-			ReadAt:         replySlot.ReadAt,
+		result = append(result, status.InputRequestDetail{
+			Direction:      inputRequest.Direction,
+			MessageID:      inputRequest.MessageID,
+			InputRequestID: inputRequest.InputRequestID,
+			Sender:         inputRequest.Sender,
+			Recipient:      inputRequest.Recipient,
+			ReplyPolicy:    inputRequest.ReplyPolicy,
+			OpenedAt:       inputRequest.OpenedAt,
+			OpenedAtSource: inputRequest.OpenedAtSource,
+			ReadAt:         inputRequest.ReadAt,
 		})
 	}
 	return result

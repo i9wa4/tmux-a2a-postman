@@ -14,7 +14,7 @@ type Handlers struct {
 	Pop                     func(args []string) error
 	GetSessionHealth        func(args []string) error
 	GetSessionStatusOneline func(args []string) error
-	InspectReply            func(args []string) error
+	InspectInput            func(args []string) error
 	SendMessage             func(args []string) error
 	SendHeredoc             func(args []string) error
 	Stop                    func(args []string) error
@@ -61,10 +61,10 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman get-health-oneline",
 			Err:   handlers.GetSessionStatusOneline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "inspect-reply":
+	case "inspect-input":
 		return Result{
-			Label: "postman inspect-reply",
-			Err:   handlers.InspectReply(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+			Label: "postman inspect-input",
+			Err:   handlers.InspectInput(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "send":
 		return Result{

@@ -10,30 +10,30 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-type inspectReplyOutput struct {
+type inspectInputOutput struct {
 	Status      string              `json:"status"`
 	ID          string              `json:"id"`
 	MatchCount  int                 `json:"match_count"`
-	Matches     []inspectReplyMatch `json:"matches,omitempty"`
+	Matches     []inspectInputMatch `json:"matches,omitempty"`
 	ContextID   string              `json:"context_id,omitempty"`
 	SessionName string              `json:"session_name,omitempty"`
 }
 
-type inspectReplyMatch struct {
-	ContextID   string                 `json:"context_id"`
-	SessionName string                 `json:"session_name"`
-	Node        string                 `json:"node"`
-	MatchedBy   string                 `json:"matched_by"`
-	ReplySlot   status.ReplySlotDetail `json:"reply_slot"`
+type inspectInputMatch struct {
+	ContextID    string                    `json:"context_id"`
+	SessionName  string                    `json:"session_name"`
+	Node         string                    `json:"node"`
+	MatchedBy    string                    `json:"matched_by"`
+	InputRequest status.InputRequestDetail `json:"input_request"`
 }
 
-func RunInspectReply(args []string) error {
-	fs := flag.NewFlagSet("inspect-reply", flag.ContinueOnError)
+func RunInspectInput(args []string) error {
+	fs := flag.NewFlagSet("inspect-input", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
 	sessionName := fs.String("session", "", "tmux session name (optional, defaults to current tmux session)")
-	id := fs.String("id", "", "message_id or reply_slot_id to inspect")
+	id := fs.String("id", "", "message_id or input_request_id to inspect")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func RunInspectReply(args []string) error {
 		return fmt.Errorf("tmux session name required (run inside tmux or pass --session)")
 	}
 
-	output := inspectReplyOutput{
+	output := inspectInputOutput{
 		Status:      "not_found",
 		ID:          *id,
 		ContextID:   health.ContextID,
@@ -59,8 +59,8 @@ func RunInspectReply(args []string) error {
 		if node.Flow == nil {
 			continue
 		}
-		output.Matches = append(output.Matches, inspectReplyMatches(*id, health, node, node.Flow.ReplySlots.ActionRequired)...)
-		output.Matches = append(output.Matches, inspectReplyMatches(*id, health, node, node.Flow.ReplySlots.WaitingOnReply)...)
+		output.Matches = append(output.Matches, inspectInputMatches(*id, health, node, node.Flow.InputRequests.InputRequired)...)
+		output.Matches = append(output.Matches, inspectInputMatches(*id, health, node, node.Flow.InputRequests.WaitingOnInput)...)
 	}
 	output.MatchCount = len(output.Matches)
 	if output.MatchCount > 0 {
@@ -72,32 +72,32 @@ func RunInspectReply(args []string) error {
 	return enc.Encode(output)
 }
 
-func inspectReplyMatches(id string, health status.SessionHealth, node status.NodeHealth, replySlots []status.ReplySlotDetail) []inspectReplyMatch {
-	if len(replySlots) == 0 {
+func inspectInputMatches(id string, health status.SessionHealth, node status.NodeHealth, inputRequests []status.InputRequestDetail) []inspectInputMatch {
+	if len(inputRequests) == 0 {
 		return nil
 	}
-	var matches []inspectReplyMatch
-	for _, replySlot := range replySlots {
-		matchedBy := replySlotMatchField(id, replySlot)
+	var matches []inspectInputMatch
+	for _, inputRequest := range inputRequests {
+		matchedBy := inputRequestMatchField(id, inputRequest)
 		if matchedBy == "" {
 			continue
 		}
-		matches = append(matches, inspectReplyMatch{
-			ContextID:   health.ContextID,
-			SessionName: health.SessionName,
-			Node:        node.Name,
-			MatchedBy:   matchedBy,
-			ReplySlot:   replySlot,
+		matches = append(matches, inspectInputMatch{
+			ContextID:    health.ContextID,
+			SessionName:  health.SessionName,
+			Node:         node.Name,
+			MatchedBy:    matchedBy,
+			InputRequest: inputRequest,
 		})
 	}
 	return matches
 }
 
-func replySlotMatchField(id string, replySlot status.ReplySlotDetail) string {
-	if replySlot.ReplySlotID == id {
-		return "reply_slot_id"
+func inputRequestMatchField(id string, inputRequest status.InputRequestDetail) string {
+	if inputRequest.InputRequestID == id {
+		return "input_request_id"
 	}
-	if replySlot.MessageID == id {
+	if inputRequest.MessageID == id {
 		return "message_id"
 	}
 	return ""

@@ -7,22 +7,22 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
-func replySlotContent(from, to, messageID, replyPolicy, replyTo, body string) string {
-	return replySlotContentWithExact(from, to, messageID, replyPolicy, replyTo, "", "", body)
+func inputRequestContent(from, to, messageID, replyPolicy, replyTo, body string) string {
+	return inputRequestContentWithExact(from, to, messageID, replyPolicy, replyTo, "", "", body)
 }
 
-func replySlotContentWithExact(from, to, messageID, replyPolicy, replyTo, replySlotID, fillsReplySlotID, body string) string {
+func inputRequestContentWithExact(from, to, messageID, replyPolicy, replyTo, inputRequestID, fillsInputRequestID, body string) string {
 	replyToLine := ""
 	if replyTo != "" {
 		replyToLine = "  replyTo: " + replyTo + "\n"
 	}
-	replySlotIDLine := ""
-	if replySlotID != "" {
-		replySlotIDLine = "  reply_slot_id: " + replySlotID + "\n"
+	inputRequestIDLine := ""
+	if inputRequestID != "" {
+		inputRequestIDLine = "  input_request_id: " + inputRequestID + "\n"
 	}
-	fillsReplySlotIDLine := ""
-	if fillsReplySlotID != "" {
-		fillsReplySlotIDLine = "  fills_reply_slot_id: " + fillsReplySlotID + "\n"
+	fillsInputRequestIDLine := ""
+	if fillsInputRequestID != "" {
+		fillsInputRequestIDLine = "  fills_input_request_id: " + fillsInputRequestID + "\n"
 	}
 	return "---\nparams:\n" +
 		"  from: " + from + "\n" +
@@ -30,12 +30,12 @@ func replySlotContentWithExact(from, to, messageID, replyPolicy, replyTo, replyS
 		"  messageId: " + messageID + "\n" +
 		"  replyPolicy: " + replyPolicy + "\n" +
 		replyToLine +
-		replySlotIDLine +
-		fillsReplySlotIDLine +
+		inputRequestIDLine +
+		fillsInputRequestIDLine +
 		"---\n\n" + body + "\n"
 }
 
-func appendReplySlotMailboxEvent(t *testing.T, writer *journal.Writer, eventType string, messageID, from, to, content string, now time.Time) {
+func appendInputRequestMailboxEvent(t *testing.T, writer *journal.Writer, eventType string, messageID, from, to, content string, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: messageID,
@@ -47,7 +47,7 @@ func appendReplySlotMailboxEvent(t *testing.T, writer *journal.Writer, eventType
 	}
 }
 
-func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.T) {
+func TestProjectMessageInputRequestState_RepliesResolveRequiredMessages(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 20, 0, 0, time.UTC)
 
@@ -56,28 +56,28 @@ func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContent("orchestrator", "worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionReadEventType, "m1.md", "orchestrator", "worker", request, now.Add(3*time.Second))
+	request := inputRequestContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "m1.md", "orchestrator", "worker", request, now.Add(3*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required after read = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required after read = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting after send = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting after send = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
-	if len(got.ActionRequired) != 1 {
-		t.Fatalf("action required details = %#v, want one detail", got.ActionRequired)
+	if len(got.InputRequired) != 1 {
+		t.Fatalf("action required details = %#v, want one detail", got.InputRequired)
 	}
-	action := got.ActionRequired[0]
+	action := got.InputRequired[0]
 	if action.Direction != "inbound" || action.MessageID != "m1.md" || action.Sender != "orchestrator" || action.Recipient != "worker" || action.ReplyPolicy != "required" {
 		t.Fatalf("action detail = %#v, want inbound m1 orchestrator->worker required", action)
 	}
@@ -87,10 +87,10 @@ func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.
 	if action.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
 		t.Fatalf("action read_at = %q, want read timestamp", action.ReadAt)
 	}
-	if len(got.WaitingOnReply) != 1 {
-		t.Fatalf("waiting details = %#v, want one detail", got.WaitingOnReply)
+	if len(got.WaitingOnInput) != 1 {
+		t.Fatalf("waiting details = %#v, want one detail", got.WaitingOnInput)
 	}
-	waiting := got.WaitingOnReply[0]
+	waiting := got.WaitingOnInput[0]
 	if waiting.Direction != "outbound" || waiting.MessageID != "m1.md" || waiting.Sender != "orchestrator" || waiting.Recipient != "worker" || waiting.ReplyPolicy != "required" {
 		t.Fatalf("waiting detail = %#v, want outbound m1 orchestrator->worker required", waiting)
 	}
@@ -101,32 +101,32 @@ func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.
 		t.Fatalf("waiting read_at = %q, want recipient read timestamp", waiting.ReadAt)
 	}
 
-	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
+	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
 
-	got, ok, err = ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err = ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() after reply error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() after reply error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() after reply ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() after reply ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 0 {
-		t.Fatalf("worker action required after reply = %d, want 0", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 0 {
+		t.Fatalf("worker action required after reply = %d, want 0", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 0 {
-		t.Fatalf("orchestrator waiting after reply = %d, want 0", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 0 {
+		t.Fatalf("orchestrator waiting after reply = %d, want 0", got.WaitingOnInputCounts["orchestrator"])
 	}
 	if got.InfoUnreadCounts["orchestrator"] != 1 {
 		t.Fatalf("orchestrator info unread = %d, want 1", got.InfoUnreadCounts["orchestrator"])
 	}
-	if len(got.ActionRequired) != 0 || len(got.WaitingOnReply) != 0 {
-		t.Fatalf("reply slot details after reply = action:%#v waiting:%#v, want empty", got.ActionRequired, got.WaitingOnReply)
+	if len(got.InputRequired) != 0 || len(got.WaitingOnInput) != 0 {
+		t.Fatalf("input request details after reply = action:%#v waiting:%#v, want empty", got.InputRequired, got.WaitingOnInput)
 	}
 }
 
-func TestProjectMessageReplySlotState_ReplyWithoutReplyToDoesNotResolve(t *testing.T) {
+func TestProjectMessageInputRequestState_ReplyWithoutReplyToDoesNotResolve(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 25, 0, 0, time.UTC)
 
@@ -135,30 +135,30 @@ func TestProjectMessageReplySlotState_ReplyWithoutReplyToDoesNotResolve(t *testi
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContent("orchestrator", "worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_ExactFillResolvesRequiredMessage(t *testing.T) {
+func TestProjectMessageInputRequestState_ExactFillResolvesRequiredMessage(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 24, 0, 0, time.UTC)
 
@@ -167,30 +167,30 @@ func TestProjectMessageReplySlotState_ExactFillResolvesRequiredMessage(t *testin
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContentWithExact("orchestrator", "worker", "m1.md", "required", "", "rslot_123", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_123", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "rslot_123", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "ireq_123", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 0 {
-		t.Fatalf("worker action required = %d, want 0", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 0 {
+		t.Fatalf("worker action required = %d, want 0", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 0 {
-		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 0 {
+		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_ExactFillWithMatchingReplyToResolvesRequiredMessage(t *testing.T) {
+func TestProjectMessageInputRequestState_ExactFillWithMatchingReplyToResolvesRequiredMessage(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 24, 15, 0, time.UTC)
 
@@ -199,30 +199,30 @@ func TestProjectMessageReplySlotState_ExactFillWithMatchingReplyToResolvesRequir
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContentWithExact("orchestrator", "worker", "m1.md", "required", "", "rslot_123", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_123", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContentWithExact("worker", "orchestrator", "m2.md", "none", "m1.md", "", "rslot_123", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "m1.md", "", "ireq_123", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 0 {
-		t.Fatalf("worker action required = %d, want 0", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 0 {
+		t.Fatalf("worker action required = %d, want 0", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 0 {
-		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 0 {
+		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_ExactReplySlotIgnoresReplyToFallback(t *testing.T) {
+func TestProjectMessageInputRequestState_ExactInputRequestIgnoresReplyToFallback(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 24, 30, 0, time.UTC)
 
@@ -231,30 +231,30 @@ func TestProjectMessageReplySlotState_ExactReplySlotIgnoresReplyToFallback(t *te
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContentWithExact("orchestrator", "worker", "m1.md", "required", "", "rslot_123", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_123", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_MismatchedReplyToFailsExactClose(t *testing.T) {
+func TestProjectMessageInputRequestState_MismatchedReplyToFailsExactClose(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 24, 45, 0, time.UTC)
 
@@ -263,30 +263,30 @@ func TestProjectMessageReplySlotState_MismatchedReplyToFailsExactClose(t *testin
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContentWithExact("orchestrator", "worker", "m1.md", "required", "", "rslot_123", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_123", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContentWithExact("worker", "orchestrator", "m2.md", "none", "other.md", "", "rslot_123", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "other.md", "", "ireq_123", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_ReplyToMissDoesNotResolve(t *testing.T) {
+func TestProjectMessageInputRequestState_ReplyToMissDoesNotResolve(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 26, 0, 0, time.UTC)
 
@@ -295,30 +295,30 @@ func TestProjectMessageReplySlotState_ReplyToMissDoesNotResolve(t *testing.T) {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContent("orchestrator", "worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+	request := inputRequestContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
 
-	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "missing.md", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "missing.md", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_TracksMultipleRecipients(t *testing.T) {
+func TestProjectMessageInputRequestState_TracksMultipleRecipients(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 30, 0, 0, time.UTC)
 
@@ -327,47 +327,47 @@ func TestProjectMessageReplySlotState_TracksMultipleRecipients(t *testing.T) {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	workerRequest := replySlotContent("orchestrator", "worker", "m1.md", "required", "", "please work")
-	criticRequest := replySlotContent("orchestrator", "critic", "m2.md", "required", "", "please review")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", workerRequest, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", workerRequest, now.Add(2*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "orchestrator", "critic", criticRequest, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "orchestrator", "critic", criticRequest, now.Add(4*time.Second))
+	workerRequest := inputRequestContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	criticRequest := inputRequestContent("orchestrator", "critic", "m2.md", "required", "", "please review")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", workerRequest, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", workerRequest, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "orchestrator", "critic", criticRequest, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "orchestrator", "critic", criticRequest, now.Add(4*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 2 {
-		t.Fatalf("orchestrator waiting = %d, want 2", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 2 {
+		t.Fatalf("orchestrator waiting = %d, want 2", got.WaitingOnInputCounts["orchestrator"])
 	}
-	if got.ActionRequiredCounts["worker"] != 1 || got.ActionRequiredCounts["critic"] != 1 {
-		t.Fatalf("action counts = %#v, want worker=1 critic=1", got.ActionRequiredCounts)
+	if got.InputRequiredCounts["worker"] != 1 || got.InputRequiredCounts["critic"] != 1 {
+		t.Fatalf("action counts = %#v, want worker=1 critic=1", got.InputRequiredCounts)
 	}
 
-	workerReply := replySlotContent("worker", "orchestrator", "m3.md", "none", "m1.md", "ACK")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m3.md", "worker", "orchestrator", workerReply, now.Add(5*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m3.md", "worker", "orchestrator", workerReply, now.Add(6*time.Second))
+	workerReply := inputRequestContent("worker", "orchestrator", "m3.md", "none", "m1.md", "ACK")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m3.md", "worker", "orchestrator", workerReply, now.Add(5*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m3.md", "worker", "orchestrator", workerReply, now.Add(6*time.Second))
 
-	got, ok, err = ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err = ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() after reply error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() after reply error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() after reply ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() after reply ok = false, want true")
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting after one reply = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting after one reply = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
-	if got.ActionRequiredCounts["worker"] != 0 || got.ActionRequiredCounts["critic"] != 1 {
-		t.Fatalf("action counts after one reply = %#v, want worker=0 critic=1", got.ActionRequiredCounts)
+	if got.InputRequiredCounts["worker"] != 0 || got.InputRequiredCounts["critic"] != 1 {
+		t.Fatalf("action counts after one reply = %#v, want worker=0 critic=1", got.InputRequiredCounts)
 	}
 }
 
-func TestProjectMessageReplySlotState_ReplyToDoesNotMatchSessionQualifiedRecipientBySimpleName(t *testing.T) {
+func TestProjectMessageInputRequestState_ReplyToDoesNotMatchSessionQualifiedRecipientBySimpleName(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 50, 0, 0, time.UTC)
 
@@ -376,24 +376,24 @@ func TestProjectMessageReplySlotState_ReplyToDoesNotMatchSessionQualifiedRecipie
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
-	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(2*time.Second))
+	request := inputRequestContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
+	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(2*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_ReplyToMatchesSessionQualifiedParticipant(t *testing.T) {
+func TestProjectMessageInputRequestState_ReplyToMatchesSessionQualifiedParticipant(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 51, 0, 0, time.UTC)
 
@@ -402,24 +402,24 @@ func TestProjectMessageReplySlotState_ReplyToMatchesSessionQualifiedParticipant(
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	request := replySlotContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
-	reply := replySlotContent("remote:worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "remote:worker", "orchestrator", reply, now.Add(2*time.Second))
+	request := inputRequestContent("orchestrator", "remote:worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "remote:worker", request, now.Add(time.Second))
+	reply := inputRequestContent("remote:worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "remote:worker", "orchestrator", reply, now.Add(2*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 0 {
-		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 0 {
+		t.Fatalf("orchestrator waiting = %d, want 0", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_SkipsIncompleteMailboxEvents(t *testing.T) {
+func TestProjectMessageInputRequestState_SkipsIncompleteMailboxEvents(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 55, 0, 0, time.UTC)
 
@@ -433,26 +433,26 @@ func TestProjectMessageReplySlotState_SkipsIncompleteMailboxEvents(t *testing.T)
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("AppendEvent(incomplete delivered): %v", err)
 	}
-	content := replySlotContent("orchestrator", "worker", "m1.md", "required", "", "please work")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", content, now.Add(2*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", content, now.Add(3*time.Second))
+	content := inputRequestContent("orchestrator", "worker", "m1.md", "required", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", content, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", content, now.Add(3*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.ActionRequiredCounts["worker"] != 1 {
-		t.Fatalf("worker action required = %d, want 1", got.ActionRequiredCounts["worker"])
+	if got.InputRequiredCounts["worker"] != 1 {
+		t.Fatalf("worker action required = %d, want 1", got.InputRequiredCounts["worker"])
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
 }
 
-func TestProjectMessageReplySlotState_KeysReplySlotsByMessageAndRecipient(t *testing.T) {
+func TestProjectMessageInputRequestState_KeysInputRequestsByMessageAndRecipient(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 40, 0, 0, time.UTC)
 
@@ -461,28 +461,28 @@ func TestProjectMessageReplySlotState_KeysReplySlotsByMessageAndRecipient(t *tes
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 
-	workerRequest := replySlotContent("orchestrator", "worker", "broadcast.md", "required", "", "please work")
-	criticRequest := replySlotContent("orchestrator", "critic", "broadcast.md", "required", "", "please review")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "broadcast.md", "orchestrator", "worker", workerRequest, now.Add(time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "broadcast.md", "orchestrator", "worker", workerRequest, now.Add(2*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "broadcast.md", "orchestrator", "critic", criticRequest, now.Add(3*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "broadcast.md", "orchestrator", "critic", criticRequest, now.Add(4*time.Second))
+	workerRequest := inputRequestContent("orchestrator", "worker", "broadcast.md", "required", "", "please work")
+	criticRequest := inputRequestContent("orchestrator", "critic", "broadcast.md", "required", "", "please review")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "broadcast.md", "orchestrator", "worker", workerRequest, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "broadcast.md", "orchestrator", "worker", workerRequest, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "broadcast.md", "orchestrator", "critic", criticRequest, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "broadcast.md", "orchestrator", "critic", criticRequest, now.Add(4*time.Second))
 
-	workerReply := replySlotContent("worker", "orchestrator", "worker-reply.md", "none", "broadcast.md", "ACK")
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "worker-reply.md", "worker", "orchestrator", workerReply, now.Add(5*time.Second))
-	appendReplySlotMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "worker-reply.md", "worker", "orchestrator", workerReply, now.Add(6*time.Second))
+	workerReply := inputRequestContent("worker", "orchestrator", "worker-reply.md", "none", "broadcast.md", "ACK")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "worker-reply.md", "worker", "orchestrator", workerReply, now.Add(5*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "worker-reply.md", "worker", "orchestrator", workerReply, now.Add(6*time.Second))
 
-	got, ok, err := ProjectMessageReplySlotState(sessionDir, "review")
+	got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
 	if err != nil {
-		t.Fatalf("ProjectMessageReplySlotState() error = %v", err)
+		t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("ProjectMessageReplySlotState() ok = false, want true")
+		t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
 	}
-	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
-		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
+	if got.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("orchestrator waiting = %d, want 1", got.WaitingOnInputCounts["orchestrator"])
 	}
-	if got.ActionRequiredCounts["worker"] != 0 || got.ActionRequiredCounts["critic"] != 1 {
-		t.Fatalf("action counts = %#v, want worker=0 critic=1", got.ActionRequiredCounts)
+	if got.InputRequiredCounts["worker"] != 0 || got.InputRequiredCounts["critic"] != 1 {
+		t.Fatalf("action counts = %#v, want worker=0 critic=1", got.InputRequiredCounts)
 	}
 }

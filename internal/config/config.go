@@ -100,16 +100,6 @@ type localExplicitZeroInventory struct {
 	nodes        map[string]map[string]bool
 }
 
-// AgentCard holds agent card information.
-type AgentCard struct {
-	ID          string   `toml:"id"`
-	Name        string   `toml:"name"`
-	Constraints string   `toml:"constraints"`
-	TalksTo     []string `toml:"talks_to"`
-	Template    string   `toml:"template"`
-	Role        string   `toml:"role"`
-}
-
 // BoolVal dereferences a *bool with a default fallback (#219).
 func BoolVal(p *bool, defaultVal bool) bool {
 	if p == nil {

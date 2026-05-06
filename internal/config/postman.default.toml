@@ -31,8 +31,8 @@
 #   {message_id}     - Current message id
 #   {reply_policy}   - Resolved reply policy
 #   {reply_to}       - Message id this message references, when supplied
-#   {reply_slot_id}  - Exact reply slot id for reply-required messages
-#   {fills_reply_slot_id} - Exact reply slot id this message fills
+#   {input_request_id}  - Exact input request id for reply-required messages
+#   {fills_input_request_id} - Exact input request id this message fills
 #   {template}       - Recipient's role template from config
 #   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
@@ -115,8 +115,8 @@ Run `tmux-a2a-postman pop` to read it. """
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
 #            {reply_arguments} - exact reply args for required mail, reply-to args otherwise
-#            {reply_slot_id} - exact reply slot id when reply is required
-#            {fills_reply_slot_id} - exact reply slot id this message fills
+#            {input_request_id} - exact input request id when reply is required
+#            {fills_input_request_id} - exact input request id this message fills
 message_footer = """You can talk to: {can_talk_to}
 Reply with quoted heredoc:
 {reply_command}{reply_arguments} <<'POSTMAN_BODY'
@@ -163,8 +163,8 @@ POSTMAN_BODY
 # Draft message template (user-initiated messages via send)
 # Variables: {context_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command},
-#   {message_id}, {reply_policy}, {reply_to}, {reply_slot_id},
-#   {fills_reply_slot_id}
+#   {message_id}, {reply_policy}, {reply_to}, {input_request_id},
+#   {fills_input_request_id}
 # The <!-- write here --> placeholder is replaced with sender-authored Markdown.
 # ATX headings in {template}, {role_content}, and sender-authored Markdown are
 # demoted when inserted so they remain inside the surrounding envelope section.

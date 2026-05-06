@@ -235,6 +235,7 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		HandledAt:    time.Now().UTC().Format(time.RFC3339),
 		Filename:     msgs[0].Filename,
 		Content:      string(data),
+		MarkdownPath: readPath,
 		UnreadBefore: len(msgs),
 	}, nil
 }

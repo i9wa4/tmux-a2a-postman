@@ -1,7 +1,7 @@
 # Node State Machine
 
 The visible node state model is intentionally small. It combines pane
-availability with reply-slot projection so agents can tell whether a node
+availability with input-request projection so agents can tell whether a node
 has work, is blocked on another node, or is unavailable.
 
 It is not a full conversation workflow model. Message files remain the source
@@ -10,19 +10,19 @@ events into a compact state.
 
 ## 1. Identity Hierarchy
 
-The runtime protocol treats messages, threads, and reply slots as separate
+The runtime protocol treats messages, threads, and input requests as separate
 identities:
 
 ```text
 thread_id
   message_id
-    reply_slot_id
+    input_request_id
 ```
 
-`message_id` is the immutable mailbox filename. Current generated frontmatter
-keeps `messageId` for compatibility, while public JSON and journal payloads use
-`message_id`. `thread_id` is optional for ordinary mail and required by
-thread-bound approval/review events. `reply_slot_id` is generated only for
+`message_id` is the immutable mailbox filename. Generated frontmatter keeps
+`messageId` as the stored archive key, while public JSON and journal payloads
+use `message_id`. `thread_id` is optional for ordinary mail and required by
+thread-bound approval/review events. `input_request_id` is generated only for
 reply-required mail and identifies the exact per-recipient slot opened for a
 future reply.
 
@@ -37,18 +37,18 @@ Identity names are chosen to make lifecycle size visible to a new operator:
 | Name                  | Scale                         | Why it is not another name                                  |
 | --------------------- | ----------------------------- | ----------------------------------------------------------- |
 | `message_id`          | One delivered mailbox record  | A message is the smallest transport record, not a workflow. |
-| `thread_id`           | Conversation or workflow line | A thread can contain many messages and reply slots.         |
-| `reply_slot_id`       | One required recipient reply  | A slot is opened by one required message and filled later.  |
-| `reply_set_id`        | Multi-recipient aggregate     | A set can contain several reply-slot branches.              |
+| `thread_id`           | Conversation or workflow line | A thread can contain many messages and input requests.      |
+| `input_request_id`    | One required recipient reply  | A request is opened by one required message and filled later. |
+| `input_request_set_id` | Multi-recipient aggregate    | A set can contain several input-request branches.           |
 | `branch_id`           | One branch inside a group     | A branch is smaller than a group but still action-scoped.   |
 | `task_id`             | External work item            | A task is broader than transport and has no daemon owner.   |
 
 The names do not try to encode a strict parent/child hierarchy. They distinguish
 scale: a single delivered message, a conversational thread, an actionable
-required-reply slot, and an optional aggregate for multi-recipient completion
-rules. This keeps `task_id` and `reply_slot_id` from sounding like same-scale
+required-input request, and an optional aggregate for multi-recipient completion
+rules. This keeps `task_id` and `input_request_id` from sounding like same-scale
 runtime concepts: task identity belongs to an external planning layer, while
-reply-slot identity belongs to daemon health and reply projection.
+input-request identity belongs to daemon health and reply projection.
 
 ## 2. State Surfaces
 
@@ -61,7 +61,7 @@ reply-slot identity belongs to daemon health and reply projection.
 | `severity`                                | See contextual severity table                         | Additive triage severity for operators                    |
 | `compact_severity`                        | ASCII token                                           | One-line severity summary for opt-in compact scans        |
 
-`active` and `idle` pane facts normalize to `ready` unless reply slots
+`active` and `idle` pane facts normalize to `ready` unless input requests
 override them. A live pane that has not changed for a long time remains `idle`
 internally and stays `ready` visibly when there is no open action or wait.
 Missing pane state normalizes to `stale` so unknown nodes do not look healthy
@@ -74,17 +74,17 @@ reading raw pane text. It does not affect visible-state ranking.
 `unavailable` is a session-level fallback, not a per-node state. It means this
 daemon cannot provide canonical health for that tmux session.
 
-`schema_version: 3` adds contextual severity while keeping the v2
-`visible_state` and `compact` fields stable. Consumers that only need the old
-view can continue reading those fields.
+`schema_version: 3` reports contextual severity alongside `visible_state` and
+`compact`. Consumers that only need the compact operator view can read those
+fields.
 
 ## 3. Visible Node States
 
 | State     | Meaning                                             | Source fact                            |
 | --------- | --------------------------------------------------- | -------------------------------------- |
-| `ready`   | Pane is live with no open action or wait            | tmux pane activity and reply slots     |
-| `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_reply_count > 0`           |
-| `pending` | Node has inbound reply-required action unresolved   | `action_required_count > 0`            |
+| `ready`   | Pane is live with no open action or wait            | tmux pane activity and input requests  |
+| `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_input_count > 0`           |
+| `pending` | Node has inbound reply-required action unresolved   | `input_required_count > 0`             |
 | `stale`   | Pane or session is missing, unavailable, or unknown | pane discovery/activity data           |
 
 Unread no-reply mail is still counted as unread mail, but it does not make a
@@ -105,7 +105,7 @@ stateDiagram-v2
     ready --> stale: pane/session unavailable
     waiting --> stale: pane/session unavailable
     pending --> stale: pane/session unavailable
-    stale --> ready: pane returns with no open reply slots
+    stale --> ready: pane returns with no open input requests
     stale --> waiting: pane returns with outbound waits
     stale --> pending: pane returns with inbound actions
 ```
@@ -122,10 +122,10 @@ Normal `send-heredoc` mail is no-reply unless the sender uses
 `approval_request`, or `reply_request`. Use `--no-reply` as an explicit
 override for terminal or informational mail.
 
-A new reply-required message carries an exact `reply_slot_id`. A resolving
-reply should include `--fills-reply-slot-id <reply-slot-id>` so health can
+A new reply-required message carries an exact `input_request_id`. A resolving
+reply should include `--fills-input-request-id <input-request-id>` so health can
 clear that slot. The default footer includes `--reply-to <message-id>` as
-traceability; for messages without an exact reply-slot ID, `--reply-to` still
+traceability; for messages without an exact input-request ID, `--reply-to` still
 closes the matching open slot for the original message and participant.
 
 The resolver treats exact first-line terminal messages as no-reply:
@@ -141,41 +141,41 @@ Daemon-originated PING, runtime notice mail, status updates, alerts, and pane
 hints also resolve to `none`. Ambiguous content remains no-reply unless the
 sender explicitly marks it reply-required.
 
-## 6. Reply Slot Facts
+## 6. Input Request Facts
 
-Each delivered recipient gets its own reply slot. Required messages with an
-opaque `reply_slot_id` use exact closure; messages without exact fields use the
-message ID plus participant as the fallback key.
+Each delivered recipient gets its own input request. Required messages with an
+opaque `input_request_id` use exact closure; messages without exact fields use
+the message ID plus participant as the fallback key.
 
 | Fact                       | Meaning                                                       |
 | -------------------------- | ------------------------------------------------------------- |
 | `message_id`               | Stable message identifier used by inbox, read, and reply data |
 | `thread_id`                | Optional workflow strand for related messages and events      |
 | `reply_policy`             | `required` or `none`, resolved when the message is created    |
-| `reply_slot_id`            | Exact required-reply slot opened by a required message        |
-| `fills_reply_slot_id`      | Exact reply slot ID this message fills                        |
-| `reply_set_id`             | Optional aggregate of reply slots                             |
+| `input_request_id`        | Exact required-input request opened by a required message        |
+| `fills_input_request_id`  | Exact input request ID this message fills                        |
+| `input_request_set_id`    | Optional aggregate of input requests                             |
 | `reply_to`                 | Optional message ID this message references                   |
 | `unread_count`             | All unread inbox mail, including no-reply notices             |
-| `action_required_count`    | Inbound reply-required messages not yet resolved by a reply   |
-| `waiting_on_reply_count`   | Outbound reply-required messages not yet resolved by a reply  |
+| `input_required_count`    | Inbound reply-required messages not yet resolved by a reply    |
+| `waiting_on_input_count`   | Outbound reply-required messages not yet resolved by a reply  |
 | `info_unread_count`        | Unread no-reply mail that does not require action             |
 
 `pop` only clears unread state. It does not clear reply-required action, because
 reading a request is not the same as answering it. Sending a resolving reply
-clears the recipient's action-required slot and the sender's waiting-on-reply
-slot when `fills_reply_slot_id` names the exact reply slot. Required messages
-without an exact slot still use `reply_to` fallback closure. If both
-`fills_reply_slot_id` and `reply_to` are present and
+clears the recipient's input-required request and the sender's waiting-on-input
+request when `fills_input_request_id` names the exact input request. Required
+messages without an exact slot still use `reply_to` fallback closure. If both
+`fills_input_request_id` and `reply_to` are present and
 `reply_to` names a different original message, projection fails closed and does
 not clear an arbitrary slot. If an older journal event does not contain
 enough structured message content, projection skips that event and continues
-from later complete events instead of inventing reply-slot state.
+from later complete events instead of inventing input-request state.
 
-Grouped reply-slot fields are reserved for the next protocol layer:
-`reply_set_id`, `branch_id`, and `completion_rule`. They are parsed and carried
-as metadata but do not affect L1 health counts until grouped completion rules
-are implemented.
+Grouped input-request fields are reserved for the next protocol layer:
+`input_request_set_id`, `branch_id`, and `completion_rule`. They are parsed and
+carried as metadata but do not affect L1 health counts until grouped
+completion rules are implemented.
 
 ## 7. Health Projection
 
@@ -189,7 +189,7 @@ Session-level state is the worst visible state across nodes, ranked as:
 4. `stale`
 
 Queue facts are reported separately in `queues.post_count`,
-`queues.inbox_count`, and `queues.dead_letter_count`. Reply-slot facts are
+`queues.inbox_count`, and `queues.dead_letter_count`. Input-request facts are
 reported per node.
 
 ## 8. Contextual Severity
@@ -224,10 +224,10 @@ report exists.
 | `compact_severity`     | ASCII one-line summary token                 |
 | `delivery`             | Session delivery health                      |
 | `nodes[*].node_local`  | Pane-local activity/staleness health         |
-| `nodes[*].flow`        | Reply-slot and blocked-report workflow state |
+| `nodes[*].flow`        | Input-request and blocked-report workflow state |
 | `nodes[*].queues`      | Node-local queue counts                      |
 
-`get-health-oneline` keeps the legacy compact marks by default. The opt-in
+`get-health-oneline` prints compact visible-state marks by default. The opt-in
 `--severity` flag prints `compact_severity` instead. A `?` suffix marks
 inferred evidence, such as `blocked?:node=worker`.
 

@@ -7,14 +7,14 @@ Usage:
 Output:
   Always JSON.
   {"status":"empty"}
-  {"status":"message","id":"filename.md","message_id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}
+  {"status":"message","message_id":"filename.md","markdown_path":"/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}
 
 Fields:
-  message_id              Stable message identity; id remains for compatibility
-  body                    Parsed message body
-  content                 Stored message file content exactly as written
-  reply_slot_id           Exact reply slot id opened by reply-required mail
-  fills_reply_slot_id     Exact reply slot id filled by this message
-  reply_set_id            Aggregate reply slot set id when grouped
+  message_id              Stable message identity
+  markdown_path           Archived Markdown message path
+  frontmatter             Structured YAML frontmatter from the archived message
+  input_request_id        Exact input request id opened by reply-required mail
+  fills_input_request_id  Exact input request id filled by this message
+  input_request_set_id    Aggregate input request set id when grouped
   reply_to                Message id this message references
   remaining               Unread messages remaining after this command

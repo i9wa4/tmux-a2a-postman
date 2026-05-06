@@ -17,6 +17,6 @@ Topics:
   pop
   get-health
   get-health-oneline
-  inspect-reply
+  inspect-input
   version
   help

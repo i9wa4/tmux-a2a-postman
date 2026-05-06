@@ -9,9 +9,9 @@ Output:
   [0]🔷🟡:🟢 [1]🔴
 
 Severity Output:
-  [0]needs_action:node=worker:action_required=1 [1]delivery_stuck:delivery:oldest_post_age=181s
+  [0]needs_action:node=worker:input_required=1 [1]delivery_stuck:delivery:oldest_post_age=181s
 
-  The default view stays compatible and prints compact visible-state marks.
+  The default view prints compact visible-state marks.
   Use --severity for opt-in contextual severity tokens from compact_severity.
   A ? suffix marks inferred evidence, for example blocked?:node=worker.
 

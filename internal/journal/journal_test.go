@@ -50,22 +50,22 @@ func TestOpenShadowWriter_BootstrapsOwnerOnlyState(t *testing.T) {
 	}
 }
 
-func TestRecordMailboxPayloadPersistsExactReplySlotFields(t *testing.T) {
+func TestRecordMailboxPayloadPersistsExactInputRequestFields(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 17, 2, 0, 0, time.UTC)
 
 	manager := NewManager("ctx-main", 4242)
 	if err := manager.RecordMailboxPayload(sessionDir, "main", "mailbox_projection_delivered", VisibilityMailboxProjection, MailboxEventPayload{
-		MessageID:        "m1.md",
-		From:             "orchestrator",
-		To:               "worker",
-		ThreadID:         "thread_1",
-		ReplySlotID:      "rslot_123",
-		FillsReplySlotID: "rslot_prev",
-		ReplySetID:       "rset_1",
-		BranchID:         "branch_1",
-		CompletionRule:   "all",
-		Content:          "payload",
+		MessageID:           "m1.md",
+		From:                "orchestrator",
+		To:                  "worker",
+		ThreadID:            "thread_1",
+		InputRequestID:      "ireq_123",
+		FillsInputRequestID: "ireq_prev",
+		InputRequestSetID:   "ireqset_1",
+		BranchID:            "branch_1",
+		CompletionRule:      "all",
+		Content:             "payload",
 	}, now); err != nil {
 		t.Fatalf("RecordMailboxPayload() error = %v", err)
 	}
@@ -84,14 +84,14 @@ func TestRecordMailboxPayloadPersistsExactReplySlotFields(t *testing.T) {
 	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload): %v", err)
 	}
-	if payload.ReplySlotID != "rslot_123" {
-		t.Fatalf("payload.ReplySlotID = %q, want rslot_123", payload.ReplySlotID)
+	if payload.InputRequestID != "ireq_123" {
+		t.Fatalf("payload.InputRequestID = %q, want ireq_123", payload.InputRequestID)
 	}
-	if payload.FillsReplySlotID != "rslot_prev" {
-		t.Fatalf("payload.FillsReplySlotID = %q, want rslot_prev", payload.FillsReplySlotID)
+	if payload.FillsInputRequestID != "ireq_prev" {
+		t.Fatalf("payload.FillsInputRequestID = %q, want ireq_prev", payload.FillsInputRequestID)
 	}
-	if payload.ReplySetID != "rset_1" {
-		t.Fatalf("payload.ReplySetID = %q, want rset_1", payload.ReplySetID)
+	if payload.InputRequestSetID != "ireqset_1" {
+		t.Fatalf("payload.InputRequestSetID = %q, want ireqset_1", payload.InputRequestSetID)
 	}
 	if payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
 		t.Fatalf("group fields = %q/%q, want branch_1/all", payload.BranchID, payload.CompletionRule)

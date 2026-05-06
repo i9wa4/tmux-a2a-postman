@@ -38,13 +38,13 @@ func TestVisibleState(t *testing.T) {
 	}
 }
 
-func TestVisibleStateWithReplySlots(t *testing.T) {
+func TestVisibleStateWithInputRequests(t *testing.T) {
 	tests := []struct {
 		name                string
 		paneState           string
 		unreadCount         int
-		actionRequiredCount int
-		waitingOnReplyCount int
+		inputRequiredCount  int
+		waitingOnInputCount int
 		want                string
 	}{
 		{
@@ -53,46 +53,46 @@ func TestVisibleStateWithReplySlots(t *testing.T) {
 			want:      "ready",
 		},
 		{
-			name:                "pending_from_action_required",
-			paneState:           "ready",
-			unreadCount:         0,
-			actionRequiredCount: 1,
-			want:                "pending",
+			name:               "pending_from_input_required",
+			paneState:          "ready",
+			unreadCount:        0,
+			inputRequiredCount: 1,
+			want:               "pending",
 		},
 		{
 			name:                "waiting_from_outbound_required",
 			paneState:           "ready",
-			waitingOnReplyCount: 1,
+			waitingOnInputCount: 1,
 			want:                "waiting",
 		},
 		{
 			name:                "pending_beats_waiting",
 			paneState:           "ready",
-			actionRequiredCount: 1,
-			waitingOnReplyCount: 1,
+			inputRequiredCount:  1,
+			waitingOnInputCount: 1,
 			want:                "pending",
 		},
 		{
 			name:                "stale_beats_reply_slots",
 			paneState:           "stale",
-			actionRequiredCount: 1,
-			waitingOnReplyCount: 1,
+			inputRequiredCount:  1,
+			waitingOnInputCount: 1,
 			want:                "stale",
 		},
 		{
-			name:                "informational_unread_does_not_make_pending",
-			paneState:           "ready",
-			unreadCount:         1,
-			actionRequiredCount: 0,
-			want:                "ready",
+			name:               "informational_unread_does_not_make_pending",
+			paneState:          "ready",
+			unreadCount:        1,
+			inputRequiredCount: 0,
+			want:               "ready",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := VisibleStateWithReplySlots(tt.paneState, tt.unreadCount, tt.actionRequiredCount, tt.waitingOnReplyCount)
+			got := VisibleStateWithInputRequests(tt.paneState, tt.unreadCount, tt.inputRequiredCount, tt.waitingOnInputCount)
 			if got != tt.want {
-				t.Fatalf("VisibleStateWithReplySlots(...) = %q, want %q", got, tt.want)
+				t.Fatalf("VisibleStateWithInputRequests(...) = %q, want %q", got, tt.want)
 			}
 		})
 	}

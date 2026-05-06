@@ -95,8 +95,8 @@ func TestResolveReplyPolicyFromContentWithoutMetadataDefaultsToNone(t *testing.T
 	}
 }
 
-func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
-	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: required\n  timestamp: 2026-05-03T09:00:00Z\n---\n\nplease review\n"
+func TestParseMetadataAcceptsReplyPolicy(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_policy: required\n  timestamp: 2026-05-03T09:00:00Z\n---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
@@ -110,21 +110,21 @@ func TestParseMetadataAcceptsReplyObligationAlias(t *testing.T) {
 	}
 }
 
-func TestParseMetadataAcceptsExactReplySlotFields(t *testing.T) {
-	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  replyPolicy: required\n  reply_slot_id: rslot_123\n  fills_reply_slot_id: rslot_prev\n  reply_set_id: rset_1\n  branch_id: branch_1\n  completion_rule: all\n---\n\nplease review\n"
+func TestParseMetadataAcceptsExactInputRequestFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  replyPolicy: required\n  input_request_id: ireq_123\n  fills_input_request_id: ireq_prev\n  input_request_set_id: ireqset_1\n  branch_id: branch_1\n  completion_rule: all\n---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
 	}
-	if got.ReplySlotID != "rslot_123" {
-		t.Fatalf("ReplySlotID = %q, want rslot_123", got.ReplySlotID)
+	if got.InputRequestID != "ireq_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_123", got.InputRequestID)
 	}
-	if got.FillsReplySlotID != "rslot_prev" {
-		t.Fatalf("FillsReplySlotID = %q, want rslot_prev", got.FillsReplySlotID)
+	if got.FillsInputRequestID != "ireq_prev" {
+		t.Fatalf("FillsInputRequestID = %q, want ireq_prev", got.FillsInputRequestID)
 	}
-	if got.ReplySetID != "rset_1" {
-		t.Fatalf("ReplySetID = %q, want rset_1", got.ReplySetID)
+	if got.InputRequestSetID != "ireqset_1" {
+		t.Fatalf("InputRequestSetID = %q, want ireqset_1", got.InputRequestSetID)
 	}
 	if got.BranchID != "branch_1" {
 		t.Fatalf("BranchID = %q, want branch_1", got.BranchID)
@@ -135,7 +135,7 @@ func TestParseMetadataAcceptsExactReplySlotFields(t *testing.T) {
 }
 
 func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
-	replySlotAlias := "obligation" + "_id"
+	inputRequestAlias := "obligation" + "_id"
 	fillsAlias := "satisfies" + "_obligation" + "_id"
 	setAlias := "obligation" + "_group" + "_id"
 	content := "---\nparams:\n" +
@@ -143,9 +143,9 @@ func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
 		"  to: worker\n" +
 		"  messageId: m1.md\n" +
 		"  replyPolicy: required\n" +
-		"  " + replySlotAlias + ": rslot_legacy\n" +
-		"  " + fillsAlias + ": rslot_prev\n" +
-		"  " + setAlias + ": rset_1\n" +
+		"  " + inputRequestAlias + ": ireq_legacy\n" +
+		"  " + fillsAlias + ": ireq_prev\n" +
+		"  " + setAlias + ": ireqset_1\n" +
 		"  branch_id: branch_1\n" +
 		"  completion_rule: all\n" +
 		"---\n\nplease review\n"
@@ -154,14 +154,14 @@ func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
 	}
-	if got.ReplySlotID != "" {
-		t.Fatalf("ReplySlotID = %q, want empty", got.ReplySlotID)
+	if got.InputRequestID != "" {
+		t.Fatalf("InputRequestID = %q, want empty", got.InputRequestID)
 	}
-	if got.FillsReplySlotID != "" {
-		t.Fatalf("FillsReplySlotID = %q, want empty", got.FillsReplySlotID)
+	if got.FillsInputRequestID != "" {
+		t.Fatalf("FillsInputRequestID = %q, want empty", got.FillsInputRequestID)
 	}
-	if got.ReplySetID != "" {
-		t.Fatalf("ReplySetID = %q, want empty", got.ReplySetID)
+	if got.InputRequestSetID != "" {
+		t.Fatalf("InputRequestSetID = %q, want empty", got.InputRequestSetID)
 	}
 	if got.BranchID != "branch_1" {
 		t.Fatalf("BranchID = %q, want branch_1", got.BranchID)
@@ -171,21 +171,21 @@ func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
 	}
 }
 
-func TestParseMetadataKeepsCanonicalReplySlotWhenLegacyIdentityFieldPresent(t *testing.T) {
+func TestParseMetadataKeepsCanonicalInputRequestWhenLegacyIdentityFieldPresent(t *testing.T) {
 	legacyAlias := "reply" + "_request" + "_id"
 	content := "---\nparams:\n" +
 		"  from: orchestrator\n" +
 		"  to: worker\n" +
-		"  reply_slot_id: rslot_123\n" +
-		"  " + legacyAlias + ": rslot_legacy\n" +
+		"  input_request_id: ireq_123\n" +
+		"  " + legacyAlias + ": ireq_legacy\n" +
 		"---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
 	}
-	if got.ReplySlotID != "rslot_123" {
-		t.Fatalf("ReplySlotID = %q, want rslot_123", got.ReplySlotID)
+	if got.InputRequestID != "ireq_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_123", got.InputRequestID)
 	}
 }
 
@@ -193,19 +193,19 @@ func TestParseMetadataDoesNotAcceptDecorativeReplyIdentityAliases(t *testing.T) 
 	content := "---\nparams:\n" +
 		"  from: orchestrator\n" +
 		"  to: worker\n" +
-		"  replySlotId: rslot_123\n" +
-		"  fillsReplySlotId: rslot_prev\n" +
+		"  inputRequestId: ireq_123\n" +
+		"  fillsInputRequestId: ireq_prev\n" +
 		"---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
 	}
-	if got.ReplySlotID != "" {
-		t.Fatalf("ReplySlotID = %q, want empty", got.ReplySlotID)
+	if got.InputRequestID != "" {
+		t.Fatalf("InputRequestID = %q, want empty", got.InputRequestID)
 	}
-	if got.FillsReplySlotID != "" {
-		t.Fatalf("FillsReplySlotID = %q, want empty", got.FillsReplySlotID)
+	if got.FillsInputRequestID != "" {
+		t.Fatalf("FillsInputRequestID = %q, want empty", got.FillsInputRequestID)
 	}
 }
 
@@ -242,20 +242,20 @@ func TestParseMetadataAcceptsWiderDirectParamsIndent(t *testing.T) {
 	}
 }
 
-func TestParseMetadataReplyPolicyAliasesUseLastWins(t *testing.T) {
+func TestParseMetadataReplyPolicyDuplicatesUseLastWins(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
 		want    string
 	}{
 		{
-			name:    "reply obligation after reply policy",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			name:    "second reply policy wins",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_policy: required\n---\n\nbody\n",
 			want:    "required",
 		},
 		{
-			name:    "reply policy after reply obligation",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: required\n  replyPolicy: none\n---\n\nbody\n",
+			name:    "last reply policy wins",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_policy: required\n  replyPolicy: none\n---\n\nbody\n",
 			want:    "none",
 		},
 	}
@@ -299,25 +299,25 @@ func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	}
 }
 
-func TestEnsureParamsInsertsExactReplySlotFields(t *testing.T) {
+func TestEnsureParamsInsertsExactInputRequestFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nplease review\n"
 
 	got := EnsureParams(content, map[string]string{
-		"messageId":           "m1.md",
-		"replyPolicy":         "required",
-		"reply_slot_id":       "rslot_123",
-		"fills_reply_slot_id": "rslot_prev",
-		"reply_set_id":        "rset_1",
-		"branch_id":           "branch_1",
-		"completion_rule":     "all",
+		"messageId":              "m1.md",
+		"replyPolicy":            "required",
+		"input_request_id":       "ireq_123",
+		"fills_input_request_id": "ireq_prev",
+		"input_request_set_id":   "ireqset_1",
+		"branch_id":              "branch_1",
+		"completion_rule":        "all",
 	})
 
 	for _, want := range []string{
 		"messageId: m1.md",
 		"replyPolicy: required",
-		"reply_slot_id: rslot_123",
-		"fills_reply_slot_id: rslot_prev",
-		"reply_set_id: rset_1",
+		"input_request_id: ireq_123",
+		"fills_input_request_id: ireq_prev",
+		"input_request_set_id: ireqset_1",
 		"branch_id: branch_1",
 		"completion_rule: all",
 	} {
@@ -327,15 +327,15 @@ func TestEnsureParamsInsertsExactReplySlotFields(t *testing.T) {
 	}
 }
 
-func TestEnsureParamsInsertsCanonicalReplySlotWhenLegacyIdentityFieldExists(t *testing.T) {
+func TestEnsureParamsInsertsCanonicalInputRequestWhenLegacyIdentityFieldExists(t *testing.T) {
 	legacyAlias := "obligation" + "_id"
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  " + legacyAlias + ": old\n---\n\nplease review\n"
 
 	got := EnsureParams(content, map[string]string{
-		"reply_slot_id": "rslot_123",
+		"input_request_id": "ireq_123",
 	})
 
-	if !strings.Contains(got, "reply_slot_id: rslot_123") {
+	if !strings.Contains(got, "input_request_id: ireq_123") {
 		t.Fatalf("EnsureParams() did not insert canonical key:\n%s", got)
 	}
 	if !strings.Contains(got, legacyAlias+": old") {
@@ -371,26 +371,26 @@ func TestEnsureParamsPreservesWiderDirectParamsIndent(t *testing.T) {
 	}
 }
 
-func TestValidateReplySlotToken(t *testing.T) {
+func TestValidateInputRequestToken(t *testing.T) {
 	tests := []struct {
 		name    string
 		value   string
 		wantErr bool
 	}{
-		{name: "opaque token", value: "rslot_0123456789abcdef"},
+		{name: "opaque token", value: "ireq_0123456789abcdef"},
 		{name: "empty", wantErr: true},
-		{name: "leading whitespace", value: " rslot_123", wantErr: true},
+		{name: "leading whitespace", value: " ireq_123", wantErr: true},
 		{name: "internal whitespace", value: "rslot 123", wantErr: true},
 		{name: "path separator", value: "rslot/123", wantErr: true},
 		{name: "windows path separator", value: "rslot\\123", wantErr: true},
-		{name: "control character", value: "rslot_\n123", wantErr: true},
+		{name: "control character", value: "ireq_\n123", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateReplySlotToken(tt.value)
+			err := ValidateInputRequestToken(tt.value)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("ValidateReplySlotToken(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
+				t.Fatalf("ValidateInputRequestToken(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
 			}
 		})
 	}
@@ -428,8 +428,8 @@ func TestParamsReplyPolicyUsesPlaceholder(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "params alias placeholder",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			name:    "params snake_case placeholder",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_policy: {reply_policy}\n---\n\nbody\n",
 			want:    true,
 		},
 		{
@@ -453,8 +453,8 @@ func TestParamsReplyPolicyUsesPlaceholder(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "explicit policy overrides placeholder alias",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			name:    "explicit policy overrides snake_case placeholder",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_policy: {reply_policy}\n---\n\nbody\n",
 			want:    false,
 		},
 	}
@@ -490,20 +490,20 @@ func TestExplicitParamsReplyPolicy(t *testing.T) {
 			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  audit:\n    replyPolicy: required\n---\n\nbody\n",
 		},
 		{
-			name:    "explicit wins over placeholder alias",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: {reply_policy}\n---\n\nbody\n",
+			name:    "explicit wins over snake_case placeholder",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_policy: {reply_policy}\n---\n\nbody\n",
 			want:    "required",
 			wantOK:  true,
 		},
 		{
-			name:    "last explicit alias wins over earlier explicit",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			name:    "last explicit snake_case wins over earlier explicit",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: none\n  reply_policy: required\n---\n\nbody\n",
 			want:    "required",
 			wantOK:  true,
 		},
 		{
-			name:    "last explicit reply policy wins over earlier alias",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_obligation: required\n  replyPolicy: none\n---\n\nbody\n",
+			name:    "last explicit reply policy wins over earlier snake_case",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_policy: required\n  replyPolicy: none\n---\n\nbody\n",
 			want:    "none",
 			wantOK:  true,
 		},
@@ -534,20 +534,20 @@ func TestExplicitParamsReplyPolicyIgnoringGenerated(t *testing.T) {
 		wantOK  bool
 	}{
 		{
-			name:    "explicit value wins over generated alias",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_obligation: __generated_reply_policy__\n---\n\nbody\n",
+			name:    "explicit value wins over generated snake_case",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  reply_policy: __generated_reply_policy__\n---\n\nbody\n",
 			want:    "required",
 			wantOK:  true,
 		},
 		{
 			name:    "expanded-only field is explicit",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: __generated_reply_policy__\n  reply_obligation: none\n---\n\nbody\n",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: __generated_reply_policy__\n  reply_policy: none\n---\n\nbody\n",
 			want:    "none",
 			wantOK:  true,
 		},
 		{
-			name:    "last expanded explicit alias wins",
-			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  replyPolicy: none\n  reply_obligation: required\n---\n\nbody\n",
+			name:    "last expanded explicit snake_case wins",
+			content: "---\nparams:\n  from: orchestrator\n  to: worker\n  replyPolicy: required\n  replyPolicy: none\n  reply_policy: required\n---\n\nbody\n",
 			want:    "required",
 			wantOK:  true,
 		},

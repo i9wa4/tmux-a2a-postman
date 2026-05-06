@@ -54,7 +54,7 @@ func ProjectBlockedReportState(sessionDir, sessionName string) (BlockedReportSta
 		if !ok || payload.Content == "" {
 			continue
 		}
-		meta := replySlotMetadataFromPayload(payload)
+		meta := inputRequestMetadataFromPayload(payload)
 		if meta.MessageID == "" {
 			continue
 		}
@@ -184,11 +184,11 @@ func blockedScope(meta envelope.Metadata) (string, string) {
 		}
 		return scope, meta.BlockedScopeID
 	}
-	if meta.ReplySlotID != "" {
-		return "reply_slot", meta.ReplySlotID
+	if meta.InputRequestID != "" {
+		return "input_request", meta.InputRequestID
 	}
-	if meta.FillsReplySlotID != "" {
-		return "reply_slot", meta.FillsReplySlotID
+	if meta.FillsInputRequestID != "" {
+		return "input_request", meta.FillsInputRequestID
 	}
 	if meta.ThreadID != "" {
 		return "thread", meta.ThreadID

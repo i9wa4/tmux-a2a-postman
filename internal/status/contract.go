@@ -13,11 +13,11 @@ type NodeHealth struct {
 	SeveritySource      string                  `json:"severity_source,omitempty"`
 	SeverityReason      string                  `json:"severity_reason,omitempty"`
 	InboxCount          int                     `json:"inbox_count"`
-	ActionRequiredCount int                     `json:"action_required_count,omitempty"`
-	WaitingOnReplyCount int                     `json:"waiting_on_reply_count,omitempty"`
+	InputRequiredCount  int                     `json:"input_required_count,omitempty"`
+	WaitingOnInputCount int                     `json:"waiting_on_input_count,omitempty"`
 	InfoUnreadCount     int                     `json:"info_unread_count,omitempty"`
-	ActionRequired      []ReplySlotDetail       `json:"-"`
-	WaitingOnReply      []ReplySlotDetail       `json:"-"`
+	InputRequired       []InputRequestDetail    `json:"-"`
+	WaitingOnInput      []InputRequestDetail    `json:"-"`
 	CurrentCommand      string                  `json:"current_command,omitempty"`
 	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
 	NodeLocal           *NodeLocalHealth        `json:"node_local,omitempty"`
@@ -35,7 +35,7 @@ type ScreenProgressEvidence struct {
 type HealthItem struct {
 	Node             string `json:"node,omitempty"`
 	MessageID        string `json:"message_id,omitempty"`
-	ReplySlotID      string `json:"reply_slot_id,omitempty"`
+	InputRequestID   string `json:"input_request_id,omitempty"`
 	BlockedReportID  string `json:"blocked_report_id,omitempty"`
 	Scope            string `json:"scope,omitempty"`
 	ScopeID          string `json:"scope_id,omitempty"`
@@ -53,18 +53,18 @@ type NodeQueues struct {
 	InboxCount int `json:"inbox_count"`
 }
 
-type ReplySlotSummary struct {
-	ActionRequiredCount int               `json:"action_required_count"`
-	WaitingOnReplyCount int               `json:"waiting_on_reply_count"`
-	InfoUnreadCount     int               `json:"info_unread_count"`
-	ActionRequired      []ReplySlotDetail `json:"action_required,omitempty"`
-	WaitingOnReply      []ReplySlotDetail `json:"waiting_on_reply,omitempty"`
+type InputRequestSummary struct {
+	InputRequiredCount  int                  `json:"input_required_count"`
+	WaitingOnInputCount int                  `json:"waiting_on_input_count"`
+	InfoUnreadCount     int                  `json:"info_unread_count"`
+	InputRequired       []InputRequestDetail `json:"input_required,omitempty"`
+	WaitingOnInput      []InputRequestDetail `json:"waiting_on_input,omitempty"`
 }
 
-type ReplySlotDetail struct {
+type InputRequestDetail struct {
 	Direction      string `json:"direction"`
 	MessageID      string `json:"message_id"`
-	ReplySlotID    string `json:"reply_slot_id,omitempty"`
+	InputRequestID string `json:"input_request_id,omitempty"`
 	Sender         string `json:"sender"`
 	Recipient      string `json:"recipient"`
 	ReplyPolicy    string `json:"reply_policy,omitempty"`
@@ -80,14 +80,14 @@ type BlockedState struct {
 }
 
 type NodeFlowHealth struct {
-	State          string           `json:"state"`
-	Severity       string           `json:"severity"`
-	EvidenceLevel  string           `json:"evidence_level"`
-	EvidenceSource string           `json:"evidence_source,omitempty"`
-	Reason         string           `json:"reason,omitempty"`
-	Action         string           `json:"action,omitempty"`
-	ReplySlots     ReplySlotSummary `json:"reply_slots"`
-	Blocked        BlockedState     `json:"blocked"`
+	State          string              `json:"state"`
+	Severity       string              `json:"severity"`
+	EvidenceLevel  string              `json:"evidence_level"`
+	EvidenceSource string              `json:"evidence_source,omitempty"`
+	Reason         string              `json:"reason,omitempty"`
+	Action         string              `json:"action,omitempty"`
+	InputRequests  InputRequestSummary `json:"input_requests"`
+	Blocked        BlockedState        `json:"blocked"`
 }
 
 type NodeLocalHealth struct {
@@ -223,21 +223,21 @@ func NormalizeState(state string) string {
 }
 
 func VisibleState(paneState string, unreadCount int) string {
-	return VisibleStateWithReplySlots(paneState, unreadCount, -1, 0)
+	return VisibleStateWithInputRequests(paneState, unreadCount, -1, 0)
 }
 
-func VisibleStateWithReplySlots(paneState string, unreadCount, actionRequiredCount, waitingOnReplyCount int) string {
+func VisibleStateWithInputRequests(paneState string, unreadCount, inputRequiredCount, waitingOnInputCount int) string {
 	state := NormalizePaneState(paneState)
 	if state == "stale" {
 		return state
 	}
-	if actionRequiredCount > 0 {
+	if inputRequiredCount > 0 {
 		return "pending"
 	}
-	if actionRequiredCount < 0 && unreadCount > 0 {
+	if inputRequiredCount < 0 && unreadCount > 0 {
 		return "pending"
 	}
-	if waitingOnReplyCount > 0 {
+	if waitingOnInputCount > 0 {
 		return "waiting"
 	}
 	return state

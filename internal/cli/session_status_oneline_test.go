@@ -107,13 +107,13 @@ func TestFormatAllSessionHealthSeverityOneline(t *testing.T) {
 			},
 			{
 				Compact:         "🔷🟢",
-				CompactSeverity: "needs_action:node=worker:action_required=1",
+				CompactSeverity: "needs_action:node=worker:input_required=1",
 			},
 		},
 	}
 
 	got := formatAllSessionHealthSeverityOneline(healths)
-	if got != "[0]delivery_failure:delivery:dead_letter_count=1 [1]needs_action:node=worker:action_required=1" {
+	if got != "[0]delivery_failure:delivery:dead_letter_count=1 [1]needs_action:node=worker:input_required=1" {
 		t.Fatalf("formatAllSessionHealthSeverityOneline(...) = %q, want severity status line", got)
 	}
 }

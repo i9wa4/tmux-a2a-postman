@@ -181,16 +181,17 @@ tmux-a2a-postman help config
 tmux-a2a-postman help directories
 ```
 
-`get-health`, `get-health-oneline`, and the default TUI are views over the same
-reply-aware contract. Use `--reply-required` only for messages that need an
-answer; reply-required messages carry `reply_slot_id`, and exact replies should
-include `--fills-reply-slot-id <reply-slot-id>`. The default footer also keeps
-`--reply-to <message-id>` as traceability and fallback message-link closure.
+`get-health`, `get-health-oneline`, and the default TUI are views over the
+same reply-aware contract. Use `--reply-required` only for messages that need
+an answer; reply-required messages carry `input_request_id`, and exact replies
+should include `--fills-input-request-id <input-request-id>`. The default
+footer also keeps `--reply-to <message-id>` as traceability and fallback
+message-link closure.
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
 Agents should prefer `get-health` for
-structured session JSON, `inspect-reply --id <message_id-or-reply_slot_id>` to
-identify a specific open reply-required item without popping inbox mail, and
-`get-health-oneline` for compact coordination.
+structured session JSON, `inspect-input --id <message_id-or-input_request_id>`
+to identify a specific open reply-required item without popping inbox mail,
+and `get-health-oneline` for compact coordination.
 `get-health` uses `schema_version: 3`; `visible_state` and `compact` are
 compact operator fields, while detailed contextual fields carry the semantic
 explanation. The severity fields include `severity`, `severity_source`,
@@ -199,8 +200,8 @@ explanation. The severity fields include `severity`, `severity_source`,
 from actionable conditions such as `needs_action`, `blocked`,
 `delivery_stuck`, and `delivery_failure`. Pending post delivery is considered
 stuck after 180 seconds. Open reply-required work appears under
-`nodes[*].flow.reply_slots.action_required` and `waiting_on_reply` with
-`direction`, `message_id`, `reply_slot_id`, `sender`, `recipient`,
+`nodes[*].flow.input_requests.input_required` and `waiting_on_input` with
+`direction`, `message_id`, `input_request_id`, `sender`, `recipient`,
 `reply_policy`, and available open/read timestamps.
 `get-health-oneline` keeps compact visible-state marks by default; add
 `--severity` for ASCII `compact_severity` tokens. A `?` suffix marks inferred

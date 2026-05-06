@@ -204,35 +204,6 @@ role = "observer"
 	}
 }
 
-func TestLoadConfig_LegacyA2AVersionIsIgnored(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	configPath := filepath.Join(tmpDir, "config.toml")
-
-	content := `
-[postman]
-a2a_version = "9.9"
-edges = ["orchestrator --- worker"]
-
-[orchestrator]
-
-[worker]
-	`
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig with legacy a2a_version failed: %v", err)
-	}
-	if cfg.ScanInterval != 1.0 {
-		t.Errorf("ScanInterval: got %v, want embedded default 1.0", cfg.ScanInterval)
-	}
-}
-
 func TestLoadConfig_EdgesOnlyTOMLMaterializesNodes(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

@@ -1,0 +1,28 @@
+inspect-input — inspect an open input request by id
+
+Usage:
+  tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
+  tmux-a2a-postman inspect-input --session <tmux-session> --id <id>
+  tmux-a2a-postman inspect-input --help
+
+Output:
+  JSON status object.
+  status is "found" when an open input_required or waiting_on_input request
+  matches the id, otherwise "not_found".
+
+Matching:
+  --id matches current open input_request_id values first, then message_id.
+  Satisfied input requests, wrong ids, and no-reply traffic return not_found.
+
+Fields:
+  matches[*].node
+  matches[*].matched_by
+  matches[*].input_request.direction
+  matches[*].input_request.message_id
+  matches[*].input_request.input_request_id
+  matches[*].input_request.sender
+  matches[*].input_request.recipient
+  matches[*].input_request.reply_policy
+  matches[*].input_request.opened_at
+  matches[*].input_request.opened_at_source
+  matches[*].input_request.read_at

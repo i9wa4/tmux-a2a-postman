@@ -359,18 +359,18 @@ func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
-	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].ActionRequiredCount != 1 {
-		t.Fatalf("worker health = %#v, want pending action_required=1", nodeByName["worker"])
+	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].InputRequiredCount != 1 {
+		t.Fatalf("worker health = %#v, want pending input_required=1", nodeByName["worker"])
 	}
-	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnReplyCount != 1 {
-		t.Fatalf("critic health = %#v, want waiting waiting_on_reply=1", nodeByName["critic"])
+	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnInputCount != 1 {
+		t.Fatalf("critic health = %#v, want waiting waiting_on_input=1", nodeByName["critic"])
 	}
 	if health.Compact != "🔷🟡" {
 		t.Fatalf("health.Compact = %q, want 🔷🟡", health.Compact)
 	}
 }
 
-func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
+func TestGetHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -384,8 +384,8 @@ func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
 	content := sessionHealthMessageContent("critic", "worker", "m1.md", map[string]string{
-		"replyPolicy":   "required",
-		"reply_slot_id": "rslot_123",
+		"replyPolicy":      "required",
+		"input_request_id": "ireq_123",
 	}, "please review")
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
@@ -408,7 +408,7 @@ func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
 	if health.SeveritySource != "node.flow" {
 		t.Fatalf("SeveritySource = %q, want node.flow", health.SeveritySource)
 	}
-	if health.CompactSeverity != "needs_action:node=worker:action_required=1" {
+	if health.CompactSeverity != "needs_action:node=worker:input_required=1" {
 		t.Fatalf("CompactSeverity = %q, want needs_action token", health.CompactSeverity)
 	}
 
@@ -419,38 +419,38 @@ func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
 	if got := nodeByName["worker"].Flow.State; got != "needs_action" {
 		t.Fatalf("worker flow state = %q, want needs_action", got)
 	}
-	if got := nodeByName["worker"].Flow.ReplySlots.ActionRequiredCount; got != 1 {
-		t.Fatalf("worker action_required_count = %d, want 1", got)
+	if got := nodeByName["worker"].Flow.InputRequests.InputRequiredCount; got != 1 {
+		t.Fatalf("worker input_required_count = %d, want 1", got)
 	}
-	if got := nodeByName["worker"].Flow.ReplySlots.ActionRequired; len(got) != 1 {
-		t.Fatalf("worker action_required details = %#v, want one detail", got)
+	if got := nodeByName["worker"].Flow.InputRequests.InputRequired; len(got) != 1 {
+		t.Fatalf("worker input_required details = %#v, want one detail", got)
 	} else {
 		detail := got[0]
-		if detail.Direction != "inbound" || detail.MessageID != "m1.md" || detail.ReplySlotID != "rslot_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
-			t.Fatalf("worker action_required detail = %#v, want public reply-slot identifiers", detail)
+		if detail.Direction != "inbound" || detail.MessageID != "m1.md" || detail.InputRequestID != "ireq_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
+			t.Fatalf("worker input_required detail = %#v, want public input-request identifiers", detail)
 		}
 		if detail.OpenedAt != now.Add(2*time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionDeliveredEventType {
-			t.Fatalf("worker action_required opened evidence = %#v, want delivered timestamp/source", detail)
+			t.Fatalf("worker input_required opened evidence = %#v, want delivered timestamp/source", detail)
 		}
 		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
-			t.Fatalf("worker action_required read_at = %q, want recipient read timestamp", detail.ReadAt)
+			t.Fatalf("worker input_required read_at = %q, want recipient read timestamp", detail.ReadAt)
 		}
 	}
 	if got := nodeByName["critic"].Flow.State; got != "expected_wait" {
 		t.Fatalf("critic flow state = %q, want expected_wait", got)
 	}
-	if got := nodeByName["critic"].Flow.ReplySlots.WaitingOnReply; len(got) != 1 {
-		t.Fatalf("critic waiting_on_reply details = %#v, want one detail", got)
+	if got := nodeByName["critic"].Flow.InputRequests.WaitingOnInput; len(got) != 1 {
+		t.Fatalf("critic waiting_on_input details = %#v, want one detail", got)
 	} else {
 		detail := got[0]
-		if detail.Direction != "outbound" || detail.MessageID != "m1.md" || detail.ReplySlotID != "rslot_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
-			t.Fatalf("critic waiting_on_reply detail = %#v, want public reply-slot identifiers", detail)
+		if detail.Direction != "outbound" || detail.MessageID != "m1.md" || detail.InputRequestID != "ireq_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
+			t.Fatalf("critic waiting_on_input detail = %#v, want public input-request identifiers", detail)
 		}
 		if detail.OpenedAt != now.Add(time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionPostConsumedEventType {
-			t.Fatalf("critic waiting_on_reply opened evidence = %#v, want post-consumed timestamp/source", detail)
+			t.Fatalf("critic waiting_on_input opened evidence = %#v, want post-consumed timestamp/source", detail)
 		}
 		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
-			t.Fatalf("critic waiting_on_reply read_at = %q, want recipient read timestamp", detail.ReadAt)
+			t.Fatalf("critic waiting_on_input read_at = %q, want recipient read timestamp", detail.ReadAt)
 		}
 	}
 }
@@ -583,11 +583,11 @@ func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
-	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].ActionRequiredCount != 1 {
-		t.Fatalf("worker health = %#v, want pending action_required=1", nodeByName["worker"])
+	if nodeByName["worker"].VisibleState != "pending" || nodeByName["worker"].InputRequiredCount != 1 {
+		t.Fatalf("worker health = %#v, want pending input_required=1", nodeByName["worker"])
 	}
-	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnReplyCount != 1 {
-		t.Fatalf("critic health = %#v, want waiting waiting_on_reply=1", nodeByName["critic"])
+	if nodeByName["critic"].VisibleState != "waiting" || nodeByName["critic"].WaitingOnInputCount != 1 {
+		t.Fatalf("critic health = %#v, want waiting waiting_on_input=1", nodeByName["critic"])
 	}
 }
 

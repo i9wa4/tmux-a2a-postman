@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"gopkg.in/yaml.v3"
 )
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
@@ -62,7 +64,11 @@ func RunPop(args []string) error {
 		if remaining < 0 {
 			remaining = 0
 		}
-		return writePopMessageOutput(response.Content, response.Filename, intPtr(response.UnreadBefore), intPtr(remaining))
+		markdownPath := response.MarkdownPath
+		if markdownPath == "" && response.Filename != "" {
+			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
+		}
+		return writePopMessageOutput(response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining))
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
@@ -99,11 +105,12 @@ func RunPop(args []string) error {
 	}
 
 	remaining := len(msgs)
-	if _, err := archivePoppedMessage(abs, msgs[0].Filename); err != nil {
+	readPath, err := archivePoppedMessage(abs, msgs[0].Filename)
+	if err != nil {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(string(data), msgs[0].Filename, intPtr(len(msgs)), intPtr(remaining))
+	return writePopMessageOutput(string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining))
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -115,32 +122,31 @@ type popEmptyOutput struct {
 }
 
 type popMessageOutput struct {
-	Status           string `json:"status"`
-	ID               string `json:"id"`
-	MessageID        string `json:"message_id,omitempty"`
-	From             string `json:"from"`
-	To               string `json:"to"`
-	ReplyPolicy      string `json:"reply_policy,omitempty"`
-	ReplyTo          string `json:"reply_to,omitempty"`
-	ReplySlotID      string `json:"reply_slot_id,omitempty"`
-	FillsReplySlotID string `json:"fills_reply_slot_id,omitempty"`
-	ReplySetID       string `json:"reply_set_id,omitempty"`
-	BranchID         string `json:"branch_id,omitempty"`
-	CompletionRule   string `json:"completion_rule,omitempty"`
-	Timestamp        string `json:"timestamp"`
-	Body             string `json:"body"`
-	Content          string `json:"content"`
-	UnreadBefore     *int   `json:"unread_before,omitempty"`
-	Remaining        *int   `json:"remaining,omitempty"`
+	Status              string         `json:"status"`
+	MessageID           string         `json:"message_id,omitempty"`
+	MarkdownPath        string         `json:"markdown_path,omitempty"`
+	Frontmatter         map[string]any `json:"frontmatter,omitempty"`
+	From                string         `json:"from"`
+	To                  string         `json:"to"`
+	ReplyPolicy         string         `json:"reply_policy,omitempty"`
+	ReplyTo             string         `json:"reply_to,omitempty"`
+	InputRequestID      string         `json:"input_request_id,omitempty"`
+	FillsInputRequestID string         `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID   string         `json:"input_request_set_id,omitempty"`
+	BranchID            string         `json:"branch_id,omitempty"`
+	CompletionRule      string         `json:"completion_rule,omitempty"`
+	Timestamp           string         `json:"timestamp"`
+	UnreadBefore        *int           `json:"unread_before,omitempty"`
+	Remaining           *int           `json:"remaining,omitempty"`
 }
 
 func writeEmptyPopOutput() error {
 	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})
 }
 
-func writePopMessageOutput(content, filename string, unreadBefore, remaining *int) error {
+func writePopMessageOutput(content, filename, markdownPath string, unreadBefore, remaining *int) error {
 	output := parseMessageContent(content, filename)
-	output.Content = content
+	output.MarkdownPath = markdownPath
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
 	return json.NewEncoder(os.Stdout).Encode(output)
@@ -152,9 +158,9 @@ func intPtr(value int) *int {
 
 func parseMessageContent(content, filename string) popMessageOutput {
 	result := popMessageOutput{
-		Status: "message",
-		ID:     filename,
-		Body:   envelope.BodyFromContent(content),
+		Status:      "message",
+		MessageID:   filename,
+		Frontmatter: frontmatterFromContent(content),
 	}
 	metadata, err := envelope.ParseMetadata(content)
 	if err != nil {
@@ -168,11 +174,28 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	}
 	result.ReplyPolicy = metadata.ReplyPolicy
 	result.ReplyTo = metadata.ReplyTo
-	result.ReplySlotID = metadata.ReplySlotID
-	result.FillsReplySlotID = metadata.FillsReplySlotID
-	result.ReplySetID = metadata.ReplySetID
+	result.InputRequestID = metadata.InputRequestID
+	result.FillsInputRequestID = metadata.FillsInputRequestID
+	result.InputRequestSetID = metadata.InputRequestSetID
 	result.BranchID = metadata.BranchID
 	result.CompletionRule = metadata.CompletionRule
 	result.Timestamp = metadata.Timestamp
 	return result
+}
+
+func frontmatterFromContent(content string) map[string]any {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return nil
+	}
+	rest := content[first+4:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return nil
+	}
+	var frontmatter map[string]any
+	if err := yaml.Unmarshal([]byte(rest[:second]), &frontmatter); err != nil {
+		return nil
+	}
+	return frontmatter
 }

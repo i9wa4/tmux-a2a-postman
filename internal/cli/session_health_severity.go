@@ -215,14 +215,14 @@ func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.Bl
 		State:          "idle",
 		Severity:       "ok",
 		EvidenceLevel:  "proven",
-		EvidenceSource: "reply_slots",
-		Reason:         "no open reply slots or blocked reports",
-		ReplySlots: status.ReplySlotSummary{
-			ActionRequiredCount: node.ActionRequiredCount,
-			WaitingOnReplyCount: node.WaitingOnReplyCount,
+		EvidenceSource: "input_requests",
+		Reason:         "no open input requests or blocked reports",
+		InputRequests: status.InputRequestSummary{
+			InputRequiredCount:  node.InputRequiredCount,
+			WaitingOnInputCount: node.WaitingOnInputCount,
 			InfoUnreadCount:     node.InfoUnreadCount,
-			ActionRequired:      node.ActionRequired,
-			WaitingOnReply:      node.WaitingOnReply,
+			InputRequired:       node.InputRequired,
+			WaitingOnInput:      node.WaitingOnInput,
 		},
 		Blocked: status.BlockedState{
 			State:     "clear",
@@ -243,11 +243,11 @@ func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.Bl
 		flow.Action = "inspect_blocker"
 		return flow
 	}
-	if node.ActionRequiredCount > 0 {
+	if node.InputRequiredCount > 0 {
 		flow.State = "needs_action"
 		flow.Severity = "needs_action"
-		flow.EvidenceSource = "flow.reply_slots"
-		flow.Reason = "inbound required reply slot is open"
+		flow.EvidenceSource = "flow.input_requests"
+		flow.Reason = "inbound required input request is open"
 		flow.Action = "pop_and_reply"
 		return flow
 	}
@@ -260,11 +260,11 @@ func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.Bl
 		flow.Action = "pop_and_classify"
 		return flow
 	}
-	if node.WaitingOnReplyCount > 0 {
+	if node.WaitingOnInputCount > 0 {
 		flow.State = "expected_wait"
 		flow.Severity = "expected_wait"
-		flow.EvidenceSource = "flow.reply_slots"
-		flow.Reason = "outbound required reply slot is waiting"
+		flow.EvidenceSource = "flow.input_requests"
+		flow.Reason = "outbound required input request is waiting"
 		flow.Action = "wait"
 		return flow
 	}
@@ -365,12 +365,12 @@ func compactNodeSeverity(node status.NodeHealth) string {
 	case "working":
 		return "working" + inferred + ":node=" + node.Name
 	case "expected_wait":
-		return "expected_wait:node=" + node.Name + ":waiting_on_reply=" + strconv.Itoa(node.WaitingOnReplyCount)
+		return "expected_wait:node=" + node.Name + ":waiting_on_input=" + strconv.Itoa(node.WaitingOnInputCount)
 	case "needs_action":
-		if node.ActionRequiredCount == 0 && node.InboxCount > 0 {
+		if node.InputRequiredCount == 0 && node.InboxCount > 0 {
 			return "needs_action" + inferred + ":node=" + node.Name + ":inbox_count=" + strconv.Itoa(node.InboxCount)
 		}
-		return "needs_action:node=" + node.Name + ":action_required=" + strconv.Itoa(node.ActionRequiredCount)
+		return "needs_action:node=" + node.Name + ":input_required=" + strconv.Itoa(node.InputRequiredCount)
 	case "blocked":
 		if node.Flow != nil && len(node.Flow.Blocked.Items) > 0 && node.Flow.Blocked.Items[0].BlockedReportID != "" {
 			return "blocked" + inferred + ":node=" + node.Name + ":blocked_report=" + node.Flow.Blocked.Items[0].BlockedReportID

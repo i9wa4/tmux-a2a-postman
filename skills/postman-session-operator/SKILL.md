@@ -6,7 +6,7 @@ description: |
   Use when:
   - Interpreting get-health or get-health-oneline output
   - Deciding whether to pop, reply, resend, wait, follow up, or restart
-  - Handling reply-required, no-reply, reply-to, exact reply-slot replies, or
+  - Handling reply-required, no-reply, reply-to, exact input-request replies, or
     status request behavior
   - Diagnosing pending, waiting, blocked, stale, unread, post queue,
     dead-letter, auto-ping, pane discovery, daemon restart, or slow delivery
@@ -27,9 +27,9 @@ the canonical JSON health contract.
 
 Use `tmux-a2a-postman get-health-oneline` for a compact scan across sessions.
 Add `--severity` when you need the opt-in contextual severity token instead of
-the legacy compact visible-state marks.
+the default compact visible-state marks.
 
-Use `tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>` when
+Use `tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>` when
 you need the concrete open reply-required item behind `pending` or `waiting`
 without reading inbox mail.
 
@@ -48,7 +48,10 @@ message metadata and ordinary message bodies are usually no-reply.
 
 `pop` reads and archives the next unread inbox message in one step. Do not run
 it for diagnostics where archiving would be wrong. Never move runtime `post/`,
-`inbox/`, `read/`, or dead-letter files manually.
+`inbox/`, `read/`, or dead-letter files manually. The JSON output identifies
+the archived Markdown with `markdown_path` and exposes structured
+`frontmatter`; when sender-authored content is needed, read `markdown_path`
+after `pop` instead of expecting inline body/content in the JSON.
 
 Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body
@@ -67,22 +70,23 @@ instructions, message metadata, health output, and observed send results.
 `pending` beats `waiting` because the node has something it can do now.
 `stale` beats both because live state is not trustworthy.
 
-## 4. Reply Slots
+## 4. Input Requests
 
 A reply-required message opens action for the recipient and waiting state for
 the sender.
 
-`get-health` exposes concrete open reply-slot details at
-`nodes[*].flow.reply_slots.action_required` and `waiting_on_reply`. Each detail
-includes `direction`, `message_id`, `reply_slot_id`, `sender`, `recipient`,
-`reply_policy`, and available open/read timestamps. Use `inspect-reply --id`
-for a focused lookup by `message_id` or `reply_slot_id`.
+`get-health` exposes concrete open input-request details at
+`nodes[*].flow.input_requests.input_required` and `waiting_on_input`. Each
+detail includes `direction`, `message_id`, `input_request_id`, `sender`,
+`recipient`, `reply_policy`, and available open/read timestamps. Use
+`inspect-input --id` for a focused lookup by `message_id` or
+`input_request_id`.
 
-A new reply-required message carries an exact `reply_slot_id`. A resolving
+A new reply-required message carries an exact `input_request_id`. A resolving
 reply should fill that slot:
 
 ```sh
-tmux-a2a-postman send-heredoc --to <sender> --fills-reply-slot-id <reply-slot-id> --reply-to <message-id> <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to <sender> --fills-input-request-id <input-request-id> --reply-to <message-id> <<'POSTMAN_BODY'
 <reply>
 POSTMAN_BODY
 ```
@@ -93,8 +97,8 @@ variables, quotes, code fences, and shell examples. Do not pass reply bodies
 through argv, file-body shortcuts, or generic pipe-oriented guidance.
 
 Reading with `pop` clears unread state, but it does not clear reply-required
-action. Only a later message with `--fills-reply-slot-id <reply-slot-id>`
-clears an exact reply slot. `--reply-to <message-id>` remains useful for
+action. Only a later message with `--fills-input-request-id <input-request-id>`
+clears an exact input request. `--reply-to <message-id>` remains useful for
 fallback message-link closure and human traceability.
 
 Use `--reply-required` for work requests, approval requests, status requests,
@@ -114,8 +118,8 @@ recipient blocked.
 | `queues.post_count`        | Messages still waiting in the post queue |
 | `queues.inbox_count`       | Unread inbox messages                    |
 | `queues.dead_letter_count` | Delivery failed or route unavailable     |
-| `action_required_count`    | Inbound required replies still open      |
-| `waiting_on_reply_count`   | Outbound required replies still open     |
+| `input_required_count`    | Inbound required replies still open      |
+| `waiting_on_input_count`   | Outbound required replies still open     |
 | `info_unread_count`        | Unread no-reply messages                 |
 
 If dead letters exist, treat routing or configuration as suspect and use
@@ -123,8 +127,8 @@ If dead letters exist, treat routing or configuration as suspect and use
 
 ## 6. Contextual Severity
 
-`get-health` schema version 3 keeps the legacy `visible_state` and `compact`
-fields stable and adds contextual severity fields. Use these fields to decide
+`get-health` schema version 3 exposes `visible_state`, `compact`, and
+contextual severity fields. Use these fields to decide
 whether a state is an expected wait, live work, a blocked report, stale local
 evidence, or delivery trouble.
 
@@ -147,7 +151,7 @@ Severity ranks from least to most urgent:
 | `compact_severity`    | ASCII token used by `get-health-oneline --severity` |
 | `delivery`            | Post queue and dead-letter delivery health       |
 | `nodes[*].node_local` | Pane-local activity/staleness evidence           |
-| `nodes[*].flow`       | Reply-slot and blocked-report workflow evidence  |
+| `nodes[*].flow`       | Input-request and blocked-report workflow evidence |
 | `nodes[*].queues`     | Node queue counts                                |
 
 Interpretation rules:
@@ -155,7 +159,7 @@ Interpretation rules:
 1. `expected_wait` means a reply-required response is still expected. Wait or
    follow the workflow timeout policy; do not treat this as blocked by itself.
 2. `needs_action` means the local node owes a reply. Pop and answer with the
-   exact reply slot when available.
+   exact input request when available.
 3. `blocked` means an open blocked report exists. Structured
    `blocked_report` metadata is proven evidence; an exact first-line `BLOCKED:`
    report is inferred evidence and appears with `?` in compact severity.
@@ -186,25 +190,28 @@ progress evidence matters.
 2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
    and topology before creating more messages.
 3. If your node is `pending` or `needs_action`, inspect
-   `nodes[*].flow.reply_slots.action_required` or run
-   `tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>` when you
-   need the exact open item before reading. Then run `tmux-a2a-postman pop`
-   when you are ready to handle and archive the message.
-4. If the popped message has `reply_policy: required`, handle it and reply with
-   `--fills-reply-slot-id <reply_slot_id>` when the pop output includes
-   `reply_slot_id`; keep `--reply-to <message_id>` for traceability when the
+   `nodes[*].flow.input_requests.input_required` or run
+   `tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>` when
+   you need the exact open item before reading. Then run
+   `tmux-a2a-postman pop` when you are ready to handle and archive the message.
+4. After `pop`, use `frontmatter` for routing metadata and input-request
+   identifiers. If you need the sender-authored content, open and read the
+   returned `markdown_path`; default JSON does not include inline body/content.
+5. If the popped message has `reply_policy: required`, handle it and reply with
+   `--fills-input-request-id <input_request_id>` when the pop output includes
+   `input_request_id`; keep `--reply-to <message_id>` for traceability when the
    footer provides it. Otherwise use `--reply-to <message_id>` as fallback
    closure.
-5. If your node is `waiting` or `expected_wait`, do not clear it by reading
+6. If your node is `waiting` or `expected_wait`, do not clear it by reading
    mail. Wait for an exact reply or send a bounded follow-up if the workflow
    timeout requires it.
-6. If a node is `blocked`, inspect the blocked report and resolve the named
+7. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
-7. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
+8. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
    session, and daemon before resending work.
-8. If messages are in dead-letter, audit topology and recipient names before
+9. If messages are in dead-letter, audit topology and recipient names before
    retrying.
-9. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
+10. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
 ## 9. Escalation Boundaries
 

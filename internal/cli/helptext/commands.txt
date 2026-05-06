@@ -15,8 +15,8 @@ send-heredoc
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
     --reply-to <message> Message id for fallback closure or traceability
-    --fills-reply-slot-id <id>
-                         Exact reply slot id this message fills
+    --fills-input-request-id <id>
+                         Exact input request id this message fills
 
 send
   Legacy command name. Message body sending is disabled here.
@@ -37,11 +37,11 @@ get-health-oneline
   Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
 
-inspect-reply
-  Inspect open reply-required work by message_id or reply_slot_id.
+inspect-input
+  Inspect open reply-required work by message_id or input_request_id.
   Output: JSON
   Usage:
-    tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>
+    tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
 
 version
   Print the build version JSON.
@@ -63,4 +63,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-health, get-health-oneline, inspect-reply, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-health, get-health-oneline, inspect-input, version, help

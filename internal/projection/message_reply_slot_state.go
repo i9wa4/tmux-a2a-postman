@@ -8,19 +8,19 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
 
-type MessageReplySlotState struct {
+type MessageInputRequestState struct {
 	UnreadCounts         map[string]int
-	ActionRequiredCounts map[string]int
-	WaitingOnReplyCounts map[string]int
+	InputRequiredCounts  map[string]int
+	WaitingOnInputCounts map[string]int
 	InfoUnreadCounts     map[string]int
-	ActionRequired       []ReplySlotDetail
-	WaitingOnReply       []ReplySlotDetail
+	InputRequired        []InputRequestDetail
+	WaitingOnInput       []InputRequestDetail
 }
 
-type ReplySlotDetail struct {
+type InputRequestDetail struct {
 	Direction      string
 	MessageID      string
-	ReplySlotID    string
+	InputRequestID string
 	Sender         string
 	Recipient      string
 	ReplyPolicy    string
@@ -29,28 +29,28 @@ type ReplySlotDetail struct {
 	ReadAt         string
 }
 
-func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplySlotState, bool, error) {
+func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInputRequestState, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
-		return MessageReplySlotState{}, false, nil
+		return MessageInputRequestState{}, false, nil
 	}
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil || len(events) == 0 {
-		return MessageReplySlotState{}, false, err
+		return MessageInputRequestState{}, false, err
 	}
 
-	projected := MessageReplySlotState{
+	projected := MessageInputRequestState{
 		UnreadCounts:         make(map[string]int),
-		ActionRequiredCounts: make(map[string]int),
-		WaitingOnReplyCounts: make(map[string]int),
+		InputRequiredCounts:  make(map[string]int),
+		WaitingOnInputCounts: make(map[string]int),
 		InfoUnreadCounts:     make(map[string]int),
 	}
-	openInboundExact := make(map[string]ReplySlotDetail)
-	openInboundFallback := make(map[string]ReplySlotDetail)
-	openOutboundExact := make(map[string]ReplySlotDetail)
-	openOutboundFallback := make(map[string]ReplySlotDetail)
-	infoUnread := make(map[string]ReplySlotDetail)
+	openInboundExact := make(map[string]InputRequestDetail)
+	openInboundFallback := make(map[string]InputRequestDetail)
+	openOutboundExact := make(map[string]InputRequestDetail)
+	openOutboundFallback := make(map[string]InputRequestDetail)
+	infoUnread := make(map[string]InputRequestDetail)
 	sawLease := false
 	sawResolution := false
 	sawCompleteMailboxEvent := false
@@ -76,7 +76,7 @@ func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplyS
 		if !ok {
 			continue
 		}
-		meta := replySlotMetadataFromPayload(payload)
+		meta := inputRequestMetadataFromPayload(payload)
 		if meta.MessageID == "" {
 			continue
 		}
@@ -89,41 +89,41 @@ func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplyS
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
-			resolveInboundReplySlot(projected, openInboundExact, openInboundFallback, meta)
+			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openReplySlot(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type)
-				projected.WaitingOnReplyCounts[meta.From]++
+				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type)
+				projected.WaitingOnInputCounts[meta.From]++
 			}
 		case MailboxProjectionDeliveredEventType:
-			resolveOutboundReplySlot(projected, openOutboundExact, openOutboundFallback, meta)
+			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openReplySlot(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type)
-				projected.ActionRequiredCounts[meta.To]++
+				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type)
+				projected.InputRequiredCounts[meta.To]++
 			} else {
-				infoUnread[replySlotKey(meta.MessageID, meta.To)] = ReplySlotDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
+				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
 				projected.InfoUnreadCounts[meta.To]++
 			}
 		case MailboxProjectionReadEventType:
 			decrementCount(projected.UnreadCounts, meta.To)
-			markReplySlotRead(openInboundExact, openInboundFallback, meta, event.OccurredAt)
-			markReplySlotRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt)
-			if replySlot, ok := infoUnread[replySlotKey(meta.MessageID, meta.To)]; ok {
-				decrementCount(projected.InfoUnreadCounts, replySlot.Recipient)
-				delete(infoUnread, replySlotKey(meta.MessageID, meta.To))
+			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt)
+			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt)
+			if inputRequest, ok := infoUnread[inputRequestKey(meta.MessageID, meta.To)]; ok {
+				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
+				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
 			}
 		}
 	}
 
 	if !sawLease || !sawResolution || !sawCompleteMailboxEvent {
-		return MessageReplySlotState{}, false, nil
+		return MessageInputRequestState{}, false, nil
 	}
-	projected.ActionRequired = sortedReplySlotDetails(openInboundExact, openInboundFallback)
-	projected.WaitingOnReply = sortedReplySlotDetails(openOutboundExact, openOutboundFallback)
+	projected.InputRequired = sortedInputRequestDetails(openInboundExact, openInboundFallback)
+	projected.WaitingOnInput = sortedInputRequestDetails(openOutboundExact, openOutboundFallback)
 	return projected, true, nil
 }
 
-func replySlotMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
+func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
 	meta, err := envelope.ParseMetadata(payload.Content)
 	if err != nil {
 		meta = envelope.Metadata{Body: envelope.BodyFromContent(payload.Content)}
@@ -137,14 +137,14 @@ func replySlotMetadataFromPayload(payload journal.MailboxEventPayload) envelope.
 	if meta.To == "" {
 		meta.To = payload.To
 	}
-	if meta.ReplySlotID == "" {
-		meta.ReplySlotID = payload.ReplySlotID
+	if meta.InputRequestID == "" {
+		meta.InputRequestID = payload.InputRequestID
 	}
-	if meta.FillsReplySlotID == "" {
-		meta.FillsReplySlotID = payload.FillsReplySlotID
+	if meta.FillsInputRequestID == "" {
+		meta.FillsInputRequestID = payload.FillsInputRequestID
 	}
-	if meta.ReplySetID == "" {
-		meta.ReplySetID = payload.ReplySetID
+	if meta.InputRequestSetID == "" {
+		meta.InputRequestSetID = payload.InputRequestSetID
 	}
 	if meta.BranchID == "" {
 		meta.BranchID = payload.BranchID
@@ -155,121 +155,121 @@ func replySlotMetadataFromPayload(payload journal.MailboxEventPayload) envelope.
 	return meta
 }
 
-func openReplySlot(openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata, direction, openedAt, openedAtSource string) {
-	replySlot := ReplySlotDetail{
+func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource string) {
+	inputRequest := InputRequestDetail{
 		Direction:      direction,
 		MessageID:      meta.MessageID,
-		ReplySlotID:    meta.ReplySlotID,
+		InputRequestID: meta.InputRequestID,
 		Sender:         meta.From,
 		Recipient:      meta.To,
 		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
 		OpenedAt:       openedAt,
 		OpenedAtSource: openedAtSource,
 	}
-	if meta.ReplySlotID != "" {
-		openExact[meta.ReplySlotID] = replySlot
+	if meta.InputRequestID != "" {
+		openExact[meta.InputRequestID] = inputRequest
 		return
 	}
-	openFallback[replySlotKey(meta.MessageID, meta.To)] = replySlot
+	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
 }
 
-func resolveInboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata) {
-	if meta.FillsReplySlotID != "" {
-		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
+func resolveInboundInputRequest(state MessageInputRequestState, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
+	if meta.FillsInputRequestID != "" {
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.ActionRequiredCounts, replySlot.Recipient)
+		decrementCount(state.InputRequiredCounts, inputRequest.Recipient)
 		delete(openExact, key)
 		return
 	}
 	if meta.ReplyTo == "" {
 		return
 	}
-	key, replySlot, ok := findFallbackReplySlot(openFallback, meta.ReplyTo, meta.From)
+	key, inputRequest, ok := findFallbackInputRequest(openFallback, meta.ReplyTo, meta.From)
 	if !ok {
 		return
 	}
-	decrementCount(state.ActionRequiredCounts, replySlot.Recipient)
+	decrementCount(state.InputRequiredCounts, inputRequest.Recipient)
 	delete(openFallback, key)
 }
 
-func resolveOutboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata) {
-	if meta.FillsReplySlotID != "" {
-		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
+func resolveOutboundInputRequest(state MessageInputRequestState, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
+	if meta.FillsInputRequestID != "" {
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.WaitingOnReplyCounts, replySlot.Sender)
+		decrementCount(state.WaitingOnInputCounts, inputRequest.Sender)
 		delete(openExact, key)
 		return
 	}
 	if meta.ReplyTo == "" {
 		return
 	}
-	key, replySlot, ok := findFallbackReplySlot(openFallback, meta.ReplyTo, meta.From)
+	key, inputRequest, ok := findFallbackInputRequest(openFallback, meta.ReplyTo, meta.From)
 	if !ok {
 		return
 	}
-	decrementCount(state.WaitingOnReplyCounts, replySlot.Sender)
+	decrementCount(state.WaitingOnInputCounts, inputRequest.Sender)
 	delete(openFallback, key)
 }
 
-func markReplySlotRead(openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata, readAt string) {
+func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, readAt string) {
 	if readAt == "" {
 		return
 	}
-	if meta.ReplySlotID != "" {
-		if replySlot, ok := openExact[meta.ReplySlotID]; ok {
-			replySlot.ReadAt = readAt
-			openExact[meta.ReplySlotID] = replySlot
+	if meta.InputRequestID != "" {
+		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
+			inputRequest.ReadAt = readAt
+			openExact[meta.InputRequestID] = inputRequest
 			return
 		}
 	}
-	for key, replySlot := range openExact {
-		if replySlot.MessageID == meta.MessageID && replySlot.Recipient == meta.To {
-			replySlot.ReadAt = readAt
-			openExact[key] = replySlot
+	for key, inputRequest := range openExact {
+		if inputRequest.MessageID == meta.MessageID && inputRequest.Recipient == meta.To {
+			inputRequest.ReadAt = readAt
+			openExact[key] = inputRequest
 			return
 		}
 	}
-	key := replySlotKey(meta.MessageID, meta.To)
-	if replySlot, ok := openFallback[key]; ok {
-		replySlot.ReadAt = readAt
-		openFallback[key] = replySlot
+	key := inputRequestKey(meta.MessageID, meta.To)
+	if inputRequest, ok := openFallback[key]; ok {
+		inputRequest.ReadAt = readAt
+		openFallback[key] = inputRequest
 	}
 }
 
-func findExactReplySlot(open map[string]ReplySlotDetail, replySlotID, replyTo, participant string) (string, ReplySlotDetail, bool) {
-	replySlot, ok := open[replySlotID]
+func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, replyTo, participant string) (string, InputRequestDetail, bool) {
+	inputRequest, ok := open[inputRequestID]
 	if !ok {
-		return "", ReplySlotDetail{}, false
+		return "", InputRequestDetail{}, false
 	}
-	if replySlot.Recipient != participant {
-		return "", ReplySlotDetail{}, false
+	if inputRequest.Recipient != participant {
+		return "", InputRequestDetail{}, false
 	}
-	if replyTo != "" && replyTo != replySlot.MessageID {
-		return "", ReplySlotDetail{}, false
+	if replyTo != "" && replyTo != inputRequest.MessageID {
+		return "", InputRequestDetail{}, false
 	}
-	return replySlotID, replySlot, true
+	return inputRequestID, inputRequest, true
 }
 
-func findFallbackReplySlot(open map[string]ReplySlotDetail, messageID, participant string) (string, ReplySlotDetail, bool) {
-	key := replySlotKey(messageID, participant)
-	replySlot, ok := open[key]
-	return key, replySlot, ok
+func findFallbackInputRequest(open map[string]InputRequestDetail, messageID, participant string) (string, InputRequestDetail, bool) {
+	key := inputRequestKey(messageID, participant)
+	inputRequest, ok := open[key]
+	return key, inputRequest, ok
 }
 
-func sortedReplySlotDetails(exact, fallback map[string]ReplySlotDetail) []ReplySlotDetail {
+func sortedInputRequestDetails(exact, fallback map[string]InputRequestDetail) []InputRequestDetail {
 	if len(exact) == 0 && len(fallback) == 0 {
 		return nil
 	}
-	result := make([]ReplySlotDetail, 0, len(exact)+len(fallback))
-	for _, replySlot := range exact {
-		result = append(result, replySlot)
+	result := make([]InputRequestDetail, 0, len(exact)+len(fallback))
+	for _, inputRequest := range exact {
+		result = append(result, inputRequest)
 	}
-	for _, replySlot := range fallback {
-		result = append(result, replySlot)
+	for _, inputRequest := range fallback {
+		result = append(result, inputRequest)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].OpenedAt != result[j].OpenedAt {
@@ -278,8 +278,8 @@ func sortedReplySlotDetails(exact, fallback map[string]ReplySlotDetail) []ReplyS
 		if result[i].MessageID != result[j].MessageID {
 			return result[i].MessageID < result[j].MessageID
 		}
-		if result[i].ReplySlotID != result[j].ReplySlotID {
-			return result[i].ReplySlotID < result[j].ReplySlotID
+		if result[i].InputRequestID != result[j].InputRequestID {
+			return result[i].InputRequestID < result[j].InputRequestID
 		}
 		if result[i].Sender != result[j].Sender {
 			return result[i].Sender < result[j].Sender
@@ -305,6 +305,6 @@ func decrementCount(counts map[string]int, key string) {
 	counts[key]--
 }
 
-func replySlotKey(messageID, nodeName string) string {
+func inputRequestKey(messageID, nodeName string) string {
 	return messageID + "\x00" + nodeName
 }

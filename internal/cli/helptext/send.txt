@@ -1,4 +1,4 @@
-send — legacy command name
+send — body argv is disabled
 
 Message body sending is disabled on `send`.
 

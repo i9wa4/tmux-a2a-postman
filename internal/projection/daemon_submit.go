@@ -43,6 +43,7 @@ type DaemonSubmitResponse struct {
 	Empty         bool                `json:"empty,omitempty"`
 	Filename      string              `json:"filename,omitempty"`
 	Content       string              `json:"content,omitempty"`
+	MarkdownPath  string              `json:"markdown_path,omitempty"`
 	UnreadBefore  int                 `json:"unread_before,omitempty"`
 	Error         string              `json:"error,omitempty"`
 }

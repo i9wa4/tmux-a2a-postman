@@ -156,15 +156,15 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 	})
 }
 
-func TestDispatch_InspectReplyPrependsContextAndConfig(t *testing.T) {
+func TestDispatch_InspectInputPrependsContextAndConfig(t *testing.T) {
 	var gotArgs []string
 
 	result := Dispatch(
-		"inspect-reply",
-		[]string{"--id", "rslot_123"},
+		"inspect-input",
+		[]string{"--id", "ireq_123"},
 		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 		Handlers{
-			InspectReply: func(args []string) error {
+			InspectInput: func(args []string) error {
 				gotArgs = append([]string(nil), args...)
 				return nil
 			},
@@ -174,12 +174,12 @@ func TestDispatch_InspectReplyPrependsContextAndConfig(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("Dispatch returned error: %v", result.Err)
 	}
-	if result.Label != "postman inspect-reply" {
-		t.Fatalf("label = %q, want %q", result.Label, "postman inspect-reply")
+	if result.Label != "postman inspect-input" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman inspect-input")
 	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--id", "rslot_123"}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--id", "ireq_123"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("inspect-reply args = %#v, want %#v", gotArgs, wantArgs)
+		t.Fatalf("inspect-input args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
 

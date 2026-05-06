@@ -83,12 +83,8 @@ func TestRunPop_RequeuedMessagePreservesOriginalPayload(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Content != content {
-		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
-	}
-	if payload.Body != "Requeued original payload" {
-		t.Fatalf("payload.Body = %q, want original payload", payload.Body)
-	}
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	assertPopPayloadArchive(t, payload, content)
 	readPath := filepath.Join(readDir, messageFile)
 	archived, err := os.ReadFile(readPath)
 	if err != nil {
@@ -141,12 +137,8 @@ func TestRunPop_RestoredArchivedMessagePreservesCanonicalReadTracking(t *testing
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Content != content {
-		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
-	}
-	if payload.Body != "Archived original payload" {
-		t.Fatalf("payload.Body = %q, want archived payload", payload.Body)
-	}
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	assertPopPayloadArchive(t, payload, content)
 	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
 		t.Fatalf("restored inbox copy still present or wrong error: %v", err)
 	}
@@ -189,11 +181,10 @@ func TestRunPop_DoesNotAppendHardCodedReplyHint(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Body != "Cross-session payload" {
-		t.Fatalf("payload.Body = %q, want popped payload", payload.Body)
-	}
-	if strings.Contains(payload.Content, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
-		t.Fatalf("payload.Content still contains hard-coded next steps reply hint:\n%s", payload.Content)
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	archived := readPopArchiveForTest(t, payload)
+	if strings.Contains(archived, "Next steps: Reply with tmux-a2a-postman send --to review-session:orchestrator --body \"<your message>\"") {
+		t.Fatalf("archived content still contains hard-coded next steps reply hint:\n%s", archived)
 	}
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
@@ -232,12 +223,8 @@ func TestRunPop_PrintsOnlyStoredMessageOnDefaultPop(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Content != content {
-		t.Fatalf("payload.Content changed:\n got %q\nwant %q", payload.Content, content)
-	}
-	if payload.Body != "Primary payload" {
-		t.Fatalf("payload.Body = %q, want Primary payload", payload.Body)
-	}
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	assertPopPayloadArchive(t, payload, content)
 	if strings.Contains(stdout, "Local Runtime Context") {
 		t.Fatalf("stdout unexpectedly rendered extra runtime block:\n%s", stdout)
 	}
@@ -274,8 +261,9 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 		t.Fatalf("stdout leaked runtime block into json mode:\n%s", stdout)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Body != "JSON payload" {
-		t.Fatalf("payload.Body = %q, want JSON payload", payload.Body)
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	if payload.MarkdownPath == "" {
+		t.Fatal("payload.MarkdownPath is empty")
 	}
 }
 
@@ -289,7 +277,7 @@ func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
 		t.Fatalf("MkdirAll inbox: %v", err)
 	}
 	filename := "20260415-010103-from-orchestrator-to-worker.md"
-	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-15T01:01:03Z\n  reply_obligation: required\n  reply_to: 20260415-010000-from-worker-to-orchestrator.md\n---\n\nReview this\n"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-15T01:01:03Z\n  replyPolicy: required\n  reply_to: 20260415-010000-from-worker-to-orchestrator.md\n---\n\nReview this\n"
 	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile inbox: %v", err)
 	}
@@ -313,8 +301,10 @@ func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
 	if payload.ReplyTo != "20260415-010000-from-worker-to-orchestrator.md" {
 		t.Fatalf("ReplyTo = %q, want reply_to alias value", payload.ReplyTo)
 	}
-	if payload.Body != "Review this" {
-		t.Fatalf("Body = %q, want Review this", payload.Body)
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	params := popFrontmatterParamsForTest(t, payload)
+	if params["replyPolicy"] != "required" {
+		t.Fatalf("frontmatter params replyPolicy = %#v, want required", params["replyPolicy"])
 	}
 }
 
@@ -381,8 +371,9 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 		t.Fatalf("request.Node = %q, want %q", request.Node, "worker")
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.Body != "daemon submit pop payload" {
-		t.Fatalf("payload.Body = %q, want daemon submit payload", payload.Body)
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
+		t.Fatalf("payload.MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
 	}
 	if strings.Contains(stdout, "## Local Runtime Context") {
 		t.Fatalf("stdout unexpectedly rendered runtime context block:\n%s", stdout)
@@ -395,10 +386,10 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 }
 
-func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
+func TestRunPop_ReportsMessageIDAndExactInputRequestFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
-	contextID := "ctx-pop-exact-reply-slot"
+	contextID := "ctx-pop-exact-input-request"
 	messageFile := "20260328-101505-from-orchestrator-to-worker.md"
 	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
 	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
@@ -411,9 +402,9 @@ func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 		"  messageId: " + messageFile + "\n" +
 		"  replyPolicy: required\n" +
 		"  replyTo: previous.md\n" +
-		"  reply_slot_id: rslot_123\n" +
-		"  fills_reply_slot_id: rslot_prev\n" +
-		"  reply_set_id: rset_1\n" +
+		"  input_request_id: ireq_123\n" +
+		"  fills_input_request_id: ireq_prev\n" +
+		"  input_request_set_id: ireqset_1\n" +
 		"  branch_id: branch_1\n" +
 		"  completion_rule: all\n" +
 		"  timestamp: 2026-03-28T10:15:05Z\n" +
@@ -430,20 +421,17 @@ func TestRunPop_ReportsMessageIDAndExactReplySlotFields(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	if payload.ID != messageFile {
-		t.Fatalf("payload.ID = %q, want %q", payload.ID, messageFile)
-	}
 	if payload.MessageID != messageFile {
 		t.Fatalf("payload.MessageID = %q, want %q", payload.MessageID, messageFile)
 	}
-	if payload.ReplySlotID != "rslot_123" {
-		t.Fatalf("payload.ReplySlotID = %q, want rslot_123", payload.ReplySlotID)
+	if payload.InputRequestID != "ireq_123" {
+		t.Fatalf("payload.InputRequestID = %q, want ireq_123", payload.InputRequestID)
 	}
-	if payload.FillsReplySlotID != "rslot_prev" {
-		t.Fatalf("payload.FillsReplySlotID = %q, want rslot_prev", payload.FillsReplySlotID)
+	if payload.FillsInputRequestID != "ireq_prev" {
+		t.Fatalf("payload.FillsInputRequestID = %q, want ireq_prev", payload.FillsInputRequestID)
 	}
-	if payload.ReplySetID != "rset_1" {
-		t.Fatalf("payload.ReplySetID = %q, want rset_1", payload.ReplySetID)
+	if payload.InputRequestSetID != "ireqset_1" {
+		t.Fatalf("payload.InputRequestSetID = %q, want ireqset_1", payload.InputRequestSetID)
 	}
 	if payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
 		t.Fatalf("group fields = %q/%q, want branch_1/all", payload.BranchID, payload.CompletionRule)
@@ -460,4 +448,45 @@ func decodePopMessageOutputForTest(t *testing.T, stdout string) popMessageOutput
 		t.Fatalf("payload.Status = %q, want message", payload.Status)
 	}
 	return payload
+}
+
+func assertPopPayloadOmitsInlineMarkdown(t *testing.T, stdout string) {
+	t.Helper()
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	for _, removed := range []string{"id", "body", "content"} {
+		if _, ok := raw[removed]; ok {
+			t.Fatalf("pop output still includes %q: %s", removed, stdout)
+		}
+	}
+}
+
+func assertPopPayloadArchive(t *testing.T, payload popMessageOutput, want string) {
+	t.Helper()
+	if got := readPopArchiveForTest(t, payload); got != want {
+		t.Fatalf("archived content changed:\n got %q\nwant %q", got, want)
+	}
+}
+
+func readPopArchiveForTest(t *testing.T, payload popMessageOutput) string {
+	t.Helper()
+	if payload.MarkdownPath == "" {
+		t.Fatal("payload.MarkdownPath is empty")
+	}
+	data, err := os.ReadFile(payload.MarkdownPath)
+	if err != nil {
+		t.Fatalf("ReadFile markdown_path: %v", err)
+	}
+	return string(data)
+}
+
+func popFrontmatterParamsForTest(t *testing.T, payload popMessageOutput) map[string]any {
+	t.Helper()
+	params, ok := payload.Frontmatter["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload.Frontmatter params = %#v, want object", payload.Frontmatter["params"])
+	}
+	return params
 }

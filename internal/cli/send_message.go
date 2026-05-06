@@ -41,18 +41,18 @@ const (
 )
 
 type sendOutput struct {
-	Sent             string                `json:"sent"`
-	Status           string                `json:"status"`
-	ContextID        string                `json:"context_id,omitempty"`
-	Session          string                `json:"session,omitempty"`
-	From             string                `json:"from,omitempty"`
-	To               string                `json:"to,omitempty"`
-	ReplyPolicy      string                `json:"reply_policy,omitempty"`
-	ReplyTo          string                `json:"reply_to,omitempty"`
-	ReplySlotID      string                `json:"reply_slot_id,omitempty"`
-	FillsReplySlotID string                `json:"fills_reply_slot_id,omitempty"`
-	SubmitPath       projection.SubmitPath `json:"submit_path,omitempty"`
-	Notify           string                `json:"notify,omitempty"`
+	Sent                string                `json:"sent"`
+	Status              string                `json:"status"`
+	ContextID           string                `json:"context_id,omitempty"`
+	Session             string                `json:"session,omitempty"`
+	From                string                `json:"from,omitempty"`
+	To                  string                `json:"to,omitempty"`
+	ReplyPolicy         string                `json:"reply_policy,omitempty"`
+	ReplyTo             string                `json:"reply_to,omitempty"`
+	InputRequestID      string                `json:"input_request_id,omitempty"`
+	FillsInputRequestID string                `json:"fills_input_request_id,omitempty"`
+	SubmitPath          projection.SubmitPath `json:"submit_path,omitempty"`
+	Notify              string                `json:"notify,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -126,7 +126,7 @@ func RunSendHeredoc(args []string) error {
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
-	fillsReplySlotID := fs.String("fills-reply-slot-id", "", "reply slot id this message fills")
+	fillsInputRequestID := fs.String("fills-input-request-id", "", "input request id this message fills")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -154,7 +154,7 @@ func RunSendHeredoc(args []string) error {
 	if err := validateReplyToMessageID(*replyTo); err != nil {
 		return err
 	}
-	if err := validateReplySlotFillFlag("--fills-reply-slot-id", *fillsReplySlotID); err != nil {
+	if err := validateInputRequestFillFlag("--fills-input-request-id", *fillsInputRequestID); err != nil {
 		return err
 	}
 	cfg, err := config.LoadConfig(*configPath)
@@ -272,8 +272,8 @@ func RunSendHeredoc(args []string) error {
 		return fmt.Errorf("generating filename: %w", err)
 	}
 	replyPolicy := message.ResolveReplyPolicyForSend(bodyText, *noReply, *replyRequired)
-	replySlotID := ""
-	replySlotIDMarker := generatedReplySlotIDPlaceholder(filename)
+	inputRequestID := ""
+	inputRequestIDMarker := generatedInputRequestIDPlaceholder(filename)
 	draftPath := filepath.Join(draftDir, filename)
 
 	content := cfg.DraftTemplate
@@ -283,23 +283,23 @@ func RunSendHeredoc(args []string) error {
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
-		"context_id":          resolvedContextID,
-		"sender":              sender,
-		"recipient":           *to,
-		"timestamp":           now.Format(time.RFC3339),
-		"can_talk_to":         canTalkTo,
-		"session_dir":         filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":       strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
-		"message_id":          filename,
-		"reply_policy":        generatedReplyPolicyMarker,
-		"reply_to":            *replyTo,
-		"reply_slot_id":       replySlotIDMarker,
-		"fills_reply_slot_id": *fillsReplySlotID,
-		"reply_set_id":        "",
-		"reply_arguments":     "",
-		"template":            envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
-		"session_name":        sessionName,
-		"sender_pane_id":      config.GetTmuxPaneID(),
+		"context_id":             resolvedContextID,
+		"sender":                 sender,
+		"recipient":              *to,
+		"timestamp":              now.Format(time.RFC3339),
+		"can_talk_to":            canTalkTo,
+		"session_dir":            filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":          strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":             filename,
+		"reply_policy":           generatedReplyPolicyMarker,
+		"reply_to":               *replyTo,
+		"input_request_id":       inputRequestIDMarker,
+		"fills_input_request_id": *fillsInputRequestID,
+		"input_request_set_id":   "",
+		"reply_arguments":        "",
+		"template":               envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
+		"session_name":           sessionName,
+		"sender_pane_id":         config.GetTmuxPaneID(),
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -324,21 +324,21 @@ func RunSendHeredoc(args []string) error {
 	content = strings.ReplaceAll(content, generatedReplyPolicyMarker, replyPolicy)
 	vars["reply_policy"] = replyPolicy
 	if replyPolicy == "required" {
-		replySlotID, err = generateReplySlotID()
+		inputRequestID, err = generateInputRequestID()
 		if err != nil {
 			return err
 		}
 	}
-	content = strings.ReplaceAll(content, replySlotIDMarker, replySlotID)
-	vars["reply_slot_id"] = replySlotID
-	vars["fills_reply_slot_id"] = *fillsReplySlotID
-	vars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
+	content = strings.ReplaceAll(content, inputRequestIDMarker, inputRequestID)
+	vars["input_request_id"] = inputRequestID
+	vars["fills_input_request_id"] = *fillsInputRequestID
+	vars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":           filename,
-		"replyPolicy":         replyPolicy,
-		"replyTo":             *replyTo,
-		"reply_slot_id":       replySlotID,
-		"fills_reply_slot_id": *fillsReplySlotID,
+		"messageId":              filename,
+		"replyPolicy":            replyPolicy,
+		"replyTo":                *replyTo,
+		"input_request_id":       inputRequestID,
+		"fills_input_request_id": *fillsInputRequestID,
 	})
 
 	if cfg.MessageFooter != "" {
@@ -362,9 +362,9 @@ func RunSendHeredoc(args []string) error {
 		footerVars["message_id"] = filename
 		footerVars["reply_policy"] = replyPolicy
 		footerVars["reply_to"] = *replyTo
-		footerVars["reply_slot_id"] = replySlotID
-		footerVars["fills_reply_slot_id"] = *fillsReplySlotID
-		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, replySlotID)
+		footerVars["input_request_id"] = inputRequestID
+		footerVars["fills_input_request_id"] = *fillsInputRequestID
+		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
 	}
@@ -387,17 +387,17 @@ func RunSendHeredoc(args []string) error {
 			return fmt.Errorf("send outcome: %w", err)
 		}
 		return writeSendOutput(sendOutput{
-			Sent:             deliveredFilename,
-			Status:           string(status),
-			ContextID:        resolvedContextID,
-			Session:          sessionName,
-			From:             sender,
-			To:               *to,
-			ReplyPolicy:      replyPolicy,
-			ReplyTo:          *replyTo,
-			ReplySlotID:      replySlotID,
-			FillsReplySlotID: *fillsReplySlotID,
-			SubmitPath:       projection.SubmitPathDaemon,
+			Sent:                deliveredFilename,
+			Status:              string(status),
+			ContextID:           resolvedContextID,
+			Session:             sessionName,
+			From:                sender,
+			To:                  *to,
+			ReplyPolicy:         replyPolicy,
+			ReplyTo:             *replyTo,
+			InputRequestID:      inputRequestID,
+			FillsInputRequestID: *fillsInputRequestID,
+			SubmitPath:          projection.SubmitPathDaemon,
 		})
 	}
 
@@ -442,18 +442,18 @@ func RunSendHeredoc(args []string) error {
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
 	return writeSendOutput(sendOutput{
-		Sent:             filename,
-		Status:           string(status),
-		ContextID:        resolvedContextID,
-		Session:          sessionName,
-		From:             sender,
-		To:               *to,
-		ReplyPolicy:      replyPolicy,
-		ReplyTo:          *replyTo,
-		ReplySlotID:      replySlotID,
-		FillsReplySlotID: *fillsReplySlotID,
-		SubmitPath:       projection.SubmitPathPost,
-		Notify:           notifyOutputValue(notifyStatus),
+		Sent:                filename,
+		Status:              string(status),
+		ContextID:           resolvedContextID,
+		Session:             sessionName,
+		From:                sender,
+		To:                  *to,
+		ReplyPolicy:         replyPolicy,
+		ReplyTo:             *replyTo,
+		InputRequestID:      inputRequestID,
+		FillsInputRequestID: *fillsInputRequestID,
+		SubmitPath:          projection.SubmitPathPost,
+		Notify:              notifyOutputValue(notifyStatus),
 	})
 }
 
@@ -471,7 +471,7 @@ func generatedReplyPolicyPlaceholder(filename string) string {
 	return b.String()
 }
 
-func generatedReplySlotIDPlaceholder(filename string) string {
+func generatedInputRequestIDPlaceholder(filename string) string {
 	var b strings.Builder
 	b.WriteString("__TMUX_A2A_POSTMAN_GENERATED_REPLY_SLOT_ID_")
 	for _, r := range filename {
@@ -485,17 +485,17 @@ func generatedReplySlotIDPlaceholder(filename string) string {
 	return b.String()
 }
 
-func generateReplySlotID() (string, error) {
+func generateInputRequestID() (string, error) {
 	var raw [12]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("generating reply slot id: %w", err)
+		return "", fmt.Errorf("generating input request id: %w", err)
 	}
-	return "rslot_" + hex.EncodeToString(raw[:]), nil
+	return "ireq_" + hex.EncodeToString(raw[:]), nil
 }
 
-func replyArgumentsForMessage(messageID, replySlotID string) string {
-	if replySlotID != "" {
-		return " --fills-reply-slot-id " + replySlotID + " --reply-to " + messageID
+func replyArgumentsForMessage(messageID, inputRequestID string) string {
+	if inputRequestID != "" {
+		return " --fills-input-request-id " + inputRequestID + " --reply-to " + messageID
 	}
 	return " --reply-to " + messageID
 }
@@ -516,11 +516,11 @@ func validateReplyToMessageID(replyTo string) error {
 	return nil
 }
 
-func validateReplySlotFillFlag(flagName, replySlotID string) error {
-	if replySlotID == "" {
+func validateInputRequestFillFlag(flagName, inputRequestID string) error {
+	if inputRequestID == "" {
 		return nil
 	}
-	if err := envelope.ValidateReplySlotToken(replySlotID); err != nil {
+	if err := envelope.ValidateInputRequestToken(inputRequestID); err != nil {
 		return fmt.Errorf("%s %w", flagName, err)
 	}
 	return nil

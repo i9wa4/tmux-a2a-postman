@@ -7,24 +7,24 @@ import (
 )
 
 type Metadata struct {
-	From             string
-	To               string
-	MessageID        string
-	ReplyPolicy      string
-	ReplyTo          string
-	MessageType      string
-	Timestamp        string
-	ThreadID         string
-	ReplySlotID      string
-	FillsReplySlotID string
-	ReplySetID       string
-	BranchID         string
-	CompletionRule   string
-	BlockedReportID  string
-	BlockedScope     string
-	BlockedScopeID   string
-	BlockedReason    string
-	Body             string
+	From                string
+	To                  string
+	MessageID           string
+	ReplyPolicy         string
+	ReplyTo             string
+	MessageType         string
+	Timestamp           string
+	ThreadID            string
+	InputRequestID      string
+	FillsInputRequestID string
+	InputRequestSetID   string
+	BranchID            string
+	CompletionRule      string
+	BlockedReportID     string
+	BlockedScope        string
+	BlockedScopeID      string
+	BlockedReason       string
+	Body                string
 }
 
 func BodyFromContent(content string) string {
@@ -71,8 +71,6 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.MessageID = value
 			case "replyPolicy", "reply_policy":
 				metadata.ReplyPolicy = value
-			case "replyObligation", "reply_obligation":
-				metadata.ReplyPolicy = value
 			case "replyTo", "reply_to":
 				metadata.ReplyTo = value
 			case "messageType", "message_type":
@@ -81,12 +79,12 @@ func ParseMetadata(content string) (Metadata, error) {
 				metadata.Timestamp = value
 			case "thread_id":
 				metadata.ThreadID = value
-			case "reply_slot_id":
-				metadata.ReplySlotID = value
-			case "fills_reply_slot_id":
-				metadata.FillsReplySlotID = value
-			case "reply_set_id":
-				metadata.ReplySetID = value
+			case "input_request_id":
+				metadata.InputRequestID = value
+			case "fills_input_request_id":
+				metadata.FillsInputRequestID = value
+			case "input_request_set_id":
+				metadata.InputRequestSetID = value
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
@@ -109,7 +107,7 @@ func ParseMetadata(content string) (Metadata, error) {
 	return metadata, nil
 }
 
-func ValidateReplySlotToken(value string) error {
+func ValidateInputRequestToken(value string) error {
 	if value == "" {
 		return fmt.Errorf("must not be empty")
 	}
@@ -307,7 +305,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "reply_slot_id", "fills_reply_slot_id", "reply_set_id", "branch_id", "completion_rule"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
@@ -427,16 +425,16 @@ func managedParamFieldKey(key string) (string, bool) {
 	switch key {
 	case "messageId", "message_id":
 		return "messageId", true
-	case "replyPolicy", "reply_policy", "replyObligation", "reply_obligation":
+	case "replyPolicy", "reply_policy":
 		return "replyPolicy", true
 	case "replyTo", "reply_to":
 		return "replyTo", true
-	case "reply_slot_id":
-		return "reply_slot_id", true
-	case "fills_reply_slot_id":
-		return "fills_reply_slot_id", true
-	case "reply_set_id":
-		return "reply_set_id", true
+	case "input_request_id":
+		return "input_request_id", true
+	case "fills_input_request_id":
+		return "fills_input_request_id", true
+	case "input_request_set_id":
+		return "input_request_set_id", true
 	case "branch_id":
 		return "branch_id", true
 	case "completion_rule":
@@ -460,15 +458,15 @@ func managedParamFieldAliases(fieldKey string) []string {
 	case "messageId":
 		return []string{"messageId", "message_id"}
 	case "replyPolicy":
-		return []string{"replyPolicy", "reply_policy", "replyObligation", "reply_obligation"}
+		return []string{"replyPolicy", "reply_policy"}
 	case "replyTo":
 		return []string{"replyTo", "reply_to"}
-	case "reply_slot_id":
-		return []string{"reply_slot_id"}
-	case "fills_reply_slot_id":
-		return []string{"fills_reply_slot_id"}
-	case "reply_set_id":
-		return []string{"reply_set_id"}
+	case "input_request_id":
+		return []string{"input_request_id"}
+	case "fills_input_request_id":
+		return []string{"fills_input_request_id"}
+	case "input_request_set_id":
+		return []string{"input_request_set_id"}
 	case "branch_id", "completion_rule":
 		return []string{fieldKey}
 	default:
