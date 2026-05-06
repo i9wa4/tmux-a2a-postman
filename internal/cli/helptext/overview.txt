@@ -34,7 +34,7 @@ Default operator surface:
 Lifecycle and recovery:
   start                      Start the daemon (single-column TUI)
   stop                       Stop the running daemon for this tmux session
-  Legacy and diagnostic helpers are internal, not CLI commands.
+  Use `help commands` for the full command list and diagnostic topics.
 
 Messaging Protocol:
   send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin

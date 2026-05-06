@@ -19,8 +19,8 @@ send-heredoc
                          Exact input request id this message fills
 
 send
-  Legacy command name. Message body sending is disabled here.
-  Use send-heredoc so the command surface makes quoted heredoc safety explicit.
+  Body argv is disabled; use send-heredoc for message delivery.
+  This command returns explicit safety guidance for shell-expansion risks.
 
 pop
   Read and archive the oldest unread inbox message.
