@@ -228,7 +228,7 @@ func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testin
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
-	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)")
+	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)")
 
 	directoriesHelp := readRepoFile(t, "internal/cli/helptext/directories.txt")
 	assertContainsNormalized(t, directoriesHelp, "Directories — session directory layout")

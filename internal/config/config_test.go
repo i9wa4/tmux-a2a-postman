@@ -364,8 +364,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
-	if cfg.RetentionPeriodDays != 50 {
-		t.Errorf("default RetentionPeriodDays: got %d, want 50", cfg.RetentionPeriodDays)
+	if cfg.RetentionPeriodDays != 30 {
+		t.Errorf("default RetentionPeriodDays: got %d, want 30", cfg.RetentionPeriodDays)
 	}
 	if cfg.AutoPingDelaySeconds != 20.0 {
 		t.Errorf("default AutoPingDelaySeconds: got %v, want 20.0", cfg.AutoPingDelaySeconds)

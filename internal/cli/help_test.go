@@ -114,7 +114,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
-		"retention_period_days            Inactive runtime cleanup window (default: 50; 0 = disabled)",
+		"retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)",
 		"pane_capture_tail_lines          Recent lines scanned for compaction markers",
 		"get-health, get-health-oneline, and the default TUI read the same canonical health contract.",
 	} {
