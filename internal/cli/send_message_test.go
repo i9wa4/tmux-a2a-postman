@@ -1158,6 +1158,73 @@ role = "orchestrator"
 	}
 }
 
+func TestRunSendMessage_DefaultEnvelopeBoundsSenderMarkdownHeadings(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := "[postman]\n" +
+		"edges = [\"messenger --- worker\"]\n\n" +
+		"[messenger]\n" +
+		"role = \"messenger\"\n\n" +
+		"[worker]\n" +
+		"role = \"worker\"\n" +
+		"template = \"\"\"# Worker Role\n\n" +
+		"## Checklist\n\n" +
+		"```sh\n" +
+		"# keep role code literal\n" +
+		"```\n" +
+		"\"\"\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := "# User Request\n\n## Details\n\n```sh\n# keep body code literal\n```\n"
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, body, []string{
+			"--config", configPath,
+			"--context-id", "ctx-markdown-envelope",
+			"--to", "worker",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	contentBytes, err := os.ReadFile(filepath.Join(tmpDir, "ctx-markdown-envelope", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	content := string(contentBytes)
+	for _, want := range []string{
+		"## Recipient Instructions",
+		"### Worker Role",
+		"#### Checklist",
+		"```sh\n# keep role code literal\n```",
+		"## Sender Message",
+		"---\n\n### User Request",
+		"#### Details",
+		"```sh\n# keep body code literal\n```",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("content missing %q:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{
+		"\n# Worker Role",
+		"\n## Checklist",
+		"\n# User Request",
+		"\n## Details",
+		"```sh\n### keep body code literal",
+	} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("content contains unwanted %q:\n%s", unwanted, content)
+		}
+	}
+}
+
 func TestRunSendMessage_StoresReplyPolicyMetadataAndReplyToFooter(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

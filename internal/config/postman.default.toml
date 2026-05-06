@@ -110,7 +110,7 @@ notification_template = """Hello, {node}!
 You've got mail: {filename}
 Run `tmux-a2a-postman pop` to read it. """
 
-# Message footer (appended to outgoing messages by `send-heredoc` after the message content)
+# Message footer (appended to outgoing messages by `send-heredoc` after the bounded sender message section)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
@@ -151,11 +151,11 @@ POSTMAN_BODY
 
 {talks_to_line}
 
-## Role of {node}
+## Recipient Instructions
 
 {role_content}
 
-## Message
+## Daemon Message
 
 {message}
 """
@@ -165,6 +165,9 @@ POSTMAN_BODY
 #   {session_name}, {template}, {can_talk_to}, {reply_command},
 #   {message_id}, {reply_policy}, {reply_to}, {reply_slot_id},
 #   {fills_reply_slot_id}
+# The <!-- write here --> placeholder is replaced with sender-authored Markdown.
+# ATX headings in {template}, {role_content}, and sender-authored Markdown are
+# demoted when inserted so they remain inside the surrounding envelope section.
 draft_template = """---
 params:
   contextId: {context_id}
@@ -178,11 +181,13 @@ params:
 
 # Message
 
-## Role of {recipient}
+## Recipient Instructions
 
 {template}
 
-## Content
+## Sender Message
+
+---
 
 <!-- write here -->
 """

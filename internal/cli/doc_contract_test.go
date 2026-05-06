@@ -104,6 +104,9 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	assertContainsNormalized(t, notificationDoc, "If the same role reappears with a new pane ID, that replacement pane is treated as newly appeared.")
 	assertContainsNormalized(t, notificationDoc, "`ui_node` is not a general escalation channel.")
 	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
+	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
+	assertContainsNormalized(t, notificationDoc, "Sender Message")
+	assertContainsNormalized(t, notificationDoc, "sender message section instead of becoming a top-level transport section")
 }
 
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {

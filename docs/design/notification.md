@@ -80,10 +80,19 @@ The remaining notification-related public settings are:
 | Field                      | Purpose                                                   |
 | -------------------------- | --------------------------------------------------------- |
 | `notification_template`    | Pane hint rendered when mail arrives                      |
-| `message_footer`           | Reply guidance appended to stored `send-heredoc` mail     |
-| `daemon_message_template`  | Envelope body for daemon-originated startup PING          |
+| `message_footer`           | Reply guidance appended after the sender message section  |
+| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown    |
+| `daemon_message_template`  | Structured envelope for daemon-originated startup PING    |
 | `ui_node`                  | Optional target filter for startup auto-PING              |
 | `auto_enable_new_sessions` | Auto-enable sessions with configured node panes           |
+
+Stored message Markdown is an envelope. The default `send-heredoc` template
+keeps recipient instructions and sender-authored content in separate sections:
+`Recipient Instructions` and `Sender Message`. Sender body headings are demoted
+before insertion so a body that starts with `#` or `##` stays visually inside
+the sender message section instead of becoming a top-level transport section.
+Daemon PING mail uses the same pattern with `Recipient Instructions` and
+`Daemon Message`.
 
 `ui_node` is not a general escalation channel. It is normally set by marking a
 node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline

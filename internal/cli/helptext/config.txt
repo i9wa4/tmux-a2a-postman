@@ -26,6 +26,8 @@ Core config:
   ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node
   auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)
   message_footer                   Footer appended to stored send-heredoc mail
+  draft_template                   Structured envelope for stored send-heredoc Markdown
+  daemon_message_template          Structured envelope for daemon-originated PING mail
   skill_path                       postman.md YAML frontmatter skill catalog sources
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.25)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)

@@ -278,7 +278,7 @@ func RunSendHeredoc(args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\nYou can only talk to: {can_talk_to}\n\n# Content\n\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n<!-- write here -->\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
@@ -297,7 +297,7 @@ func RunSendHeredoc(args []string) error {
 		"fills_reply_slot_id": *fillsReplySlotID,
 		"reply_set_id":        "",
 		"reply_arguments":     "",
-		"template":            getNodeTemplate(cfg, *to),
+		"template":            envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
 		"session_name":        sessionName,
 		"sender_pane_id":      config.GetTmuxPaneID(),
 	}
@@ -309,7 +309,7 @@ func RunSendHeredoc(args []string) error {
 	if err != nil {
 		return fmt.Errorf("message body contains invalid UTF-8: %w", err)
 	}
-	content = strings.ReplaceAll(content, "<!-- write here -->", stripped)
+	content = strings.ReplaceAll(content, "<!-- write here -->", envelope.MarkdownSectionContent(stripped))
 	if !*noReply && !*replyRequired {
 		if metadata, err := envelope.ParseMetadata(content); err == nil {
 			if explicitReplyPolicy, ok := envelope.ExplicitParamsReplyPolicyIgnoringGenerated(content, generatedReplyPolicyMarker); ok {

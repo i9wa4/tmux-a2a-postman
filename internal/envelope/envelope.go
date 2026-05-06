@@ -108,6 +108,7 @@ func buildEnvelope(
 	// Sentinel obfuscation: prevent user-configured template content from terminating the
 	// protocol prematurely. @path references are unaffected (no sentinel in file paths).
 	recipientTemplate = strings.ReplaceAll(recipientTemplate, "<!-- end of message -->", "<!-- end of msg -->")
+	recipientTemplate = MarkdownSectionContent(recipientTemplate)
 
 	// talks_to_line: session-aware liveness-filtered neighbor list.
 	// Uses notification-path semantics: same-session priority, exact key lookup.
@@ -225,5 +226,6 @@ func BuildRoleContent(cfg *config.Config, nodeName string) string {
 	} else {
 		roleContent = nodeTemplate
 	}
-	return strings.ReplaceAll(roleContent, "<!-- end of message -->", "<!-- end of msg -->")
+	roleContent = strings.ReplaceAll(roleContent, "<!-- end of message -->", "<!-- end of msg -->")
+	return MarkdownSectionContent(roleContent)
 }

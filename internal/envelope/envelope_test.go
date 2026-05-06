@@ -81,6 +81,36 @@ func TestBuildEnvelope_SentinelObfuscation(t *testing.T) {
 	}
 }
 
+func TestBuildRoleContentDemotesTemplateHeadings(t *testing.T) {
+	cfg := &config.Config{
+		CommonTemplate: "# Common",
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Template: "## Worker\n\n```sh\n# keep code literal\n```"},
+		},
+	}
+
+	got := BuildRoleContent(cfg, "worker")
+
+	for _, want := range []string{
+		"### Common",
+		"#### Worker",
+		"```sh\n# keep code literal\n```",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("BuildRoleContent() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"\n# Common",
+		"\n## Worker",
+		"```sh\n### keep code literal",
+	} {
+		if strings.Contains("\n"+got, unwanted) {
+			t.Fatalf("BuildRoleContent() contains unwanted %q:\n%s", unwanted, got)
+		}
+	}
+}
+
 func TestBuildEnvelope_TalksToLine(t *testing.T) {
 	cfg := &config.Config{
 		TmuxTimeout: 5.0,
@@ -220,5 +250,31 @@ func TestRenderReplyCommand_ExpandsConfiguredPlaceholders(t *testing.T) {
 	want := "custom-reply --context ctx-wrapper --node worker"
 	if got != want {
 		t.Fatalf("RenderReplyCommand() = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownSectionContentDemotesATXHeadingsOutsideFences(t *testing.T) {
+	input := "# Top\n\n## Child\n\n```sh\n# keep shell comment\n```\n\n###### Deep\n"
+
+	got := MarkdownSectionContent(input)
+
+	for _, want := range []string{
+		"### Top",
+		"#### Child",
+		"```sh\n# keep shell comment\n```",
+		"###### Deep",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MarkdownSectionContent() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"\n# Top",
+		"\n## Child",
+		"```sh\n### keep shell comment",
+	} {
+		if strings.Contains("\n"+got, unwanted) {
+			t.Fatalf("MarkdownSectionContent() contains unwanted %q:\n%s", unwanted, got)
+		}
 	}
 }
