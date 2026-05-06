@@ -159,6 +159,8 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 			node.ActionRequiredCount = replySlots.ActionRequiredCounts[simpleName]
 			node.WaitingOnReplyCount = replySlots.WaitingOnReplyCounts[simpleName]
 			node.InfoUnreadCount = replySlots.InfoUnreadCounts[simpleName]
+			node.ActionRequired = statusReplySlotDetails(replySlots.ActionRequired, simpleName, "inbound")
+			node.WaitingOnReply = statusReplySlotDetails(replySlots.WaitingOnReply, simpleName, "outbound")
 			actionRequiredCount = node.ActionRequiredCount
 			if node.InboxCount > replySlots.UnreadCounts[simpleName] {
 				actionRequiredCount = -1
@@ -186,6 +188,33 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	result.Compact = buildSessionCompact(result, panes)
 	enrichSessionHealth(&result, sessionDir, time.Now())
 	return result, nil
+}
+
+func statusReplySlotDetails(replySlots []projection.ReplySlotDetail, nodeName, direction string) []status.ReplySlotDetail {
+	if len(replySlots) == 0 {
+		return nil
+	}
+	result := make([]status.ReplySlotDetail, 0, len(replySlots))
+	for _, replySlot := range replySlots {
+		if direction == "inbound" && replySlot.Recipient != nodeName {
+			continue
+		}
+		if direction == "outbound" && replySlot.Sender != nodeName {
+			continue
+		}
+		result = append(result, status.ReplySlotDetail{
+			Direction:      replySlot.Direction,
+			MessageID:      replySlot.MessageID,
+			ReplySlotID:    replySlot.ReplySlotID,
+			Sender:         replySlot.Sender,
+			Recipient:      replySlot.Recipient,
+			ReplyPolicy:    replySlot.ReplyPolicy,
+			OpenedAt:       replySlot.OpenedAt,
+			OpenedAtSource: replySlot.OpenedAtSource,
+			ReadAt:         replySlot.ReadAt,
+		})
+	}
+	return result
 }
 
 func ownsCanonicalSessionHealth(baseDir, contextID, sessionName string) bool {

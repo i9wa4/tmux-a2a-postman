@@ -1,51 +1,16 @@
-send — compose and deliver a message
+send — legacy command name
 
-Usage:
-  tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'
-  message text
+Message body sending is disabled on `send`.
+
+Use the heredoc-explicit command instead:
+
+  tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
+  literal $(not executed), `backticks`, and $HOME
   POSTMAN_BODY
-  tmux-a2a-postman send --to <node> --body-file body.md
-  tmux-a2a-postman send --to <node> --body-stdin < body.md
-  tmux-a2a-postman send --help
 
-Flags:
-  --to <node>             Recipient node name (required)
-  --body <text>           Legacy short literal body text
-  --body-file <path>      Read message body from file
-  --body-stdin            Read message body from standard input
-  --stdin                 Deprecated alias for --body-stdin
-  --no-reply              Mark this message as not requiring a reply
-  --reply-required        Mark this message as requiring a reply
-  --reply-to <message>    Message id for fallback closure or traceability
-  --fills-reply-slot-id <id>
-                          Exact reply slot id this message fills
-
-Body input:
-  Canonical agent-safe input is stdin with a quoted heredoc delimiter:
-
-    tmux-a2a-postman send --to worker <<'POSTMAN_BODY'
-    literal $(not executed), `backticks`, and $HOME
-    POSTMAN_BODY
-
-  When no explicit body source is supplied, send reads non-interactive stdin.
-  If stdin is an interactive terminal, send fails with body-source guidance
-  instead of waiting for input. File and stdin bodies are read as-is, including
-  the final newline when present.
-
-  Use --body-file for generated or reviewed message files. Use --body-stdin
-  when an explicit stdin/pipe flag is clearer. Direct --body is legacy and
-  accepts only short, single-line, shell-plain literal text.
-
-Output:
-  Always JSON.
-  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
-  Reply-required sends include "reply_slot_id".
-  Exact replies include "fills_reply_slot_id".
-
-Status:
-  processed               Daemon-side handling was observed
-  queued                  Local handoff succeeded, but daemon handling was not observed
-
-submit_path:
-  daemon-submit           Request/response path owned by the running daemon
-  post                    Direct write to the session post/ queue
+Reason:
+  AI-generated message text often contains shell snippets, backticks,
+  command substitutions, variables, quotes, or code fences. Passing that body
+  through argv, file shortcuts, or generic pipe-oriented guidance can cause
+  shell-expansion mistakes. The supported fast path is an explicit quoted
+  heredoc using <<'POSTMAN_BODY'.

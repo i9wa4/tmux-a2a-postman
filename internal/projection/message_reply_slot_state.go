@@ -1,6 +1,8 @@
 package projection
 
 import (
+	"sort"
+
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -11,13 +13,20 @@ type MessageReplySlotState struct {
 	ActionRequiredCounts map[string]int
 	WaitingOnReplyCounts map[string]int
 	InfoUnreadCounts     map[string]int
+	ActionRequired       []ReplySlotDetail
+	WaitingOnReply       []ReplySlotDetail
 }
 
-type projectedReplySlot struct {
-	MessageID   string
-	ReplySlotID string
-	From        string
-	To          string
+type ReplySlotDetail struct {
+	Direction      string
+	MessageID      string
+	ReplySlotID    string
+	Sender         string
+	Recipient      string
+	ReplyPolicy    string
+	OpenedAt       string
+	OpenedAtSource string
+	ReadAt         string
 }
 
 func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplySlotState, bool, error) {
@@ -37,11 +46,11 @@ func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplyS
 		WaitingOnReplyCounts: make(map[string]int),
 		InfoUnreadCounts:     make(map[string]int),
 	}
-	openInboundExact := make(map[string]projectedReplySlot)
-	openInboundFallback := make(map[string]projectedReplySlot)
-	openOutboundExact := make(map[string]projectedReplySlot)
-	openOutboundFallback := make(map[string]projectedReplySlot)
-	infoUnread := make(map[string]projectedReplySlot)
+	openInboundExact := make(map[string]ReplySlotDetail)
+	openInboundFallback := make(map[string]ReplySlotDetail)
+	openOutboundExact := make(map[string]ReplySlotDetail)
+	openOutboundFallback := make(map[string]ReplySlotDetail)
+	infoUnread := make(map[string]ReplySlotDetail)
 	sawLease := false
 	sawResolution := false
 	sawCompleteMailboxEvent := false
@@ -82,23 +91,25 @@ func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplyS
 		case MailboxProjectionPostConsumedEventType:
 			resolveInboundReplySlot(projected, openInboundExact, openInboundFallback, meta)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openReplySlot(openOutboundExact, openOutboundFallback, meta)
+				openReplySlot(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type)
 				projected.WaitingOnReplyCounts[meta.From]++
 			}
 		case MailboxProjectionDeliveredEventType:
 			resolveOutboundReplySlot(projected, openOutboundExact, openOutboundFallback, meta)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openReplySlot(openInboundExact, openInboundFallback, meta)
+				openReplySlot(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type)
 				projected.ActionRequiredCounts[meta.To]++
 			} else {
-				infoUnread[replySlotKey(meta.MessageID, meta.To)] = projectedReplySlot{MessageID: meta.MessageID, From: meta.From, To: meta.To}
+				infoUnread[replySlotKey(meta.MessageID, meta.To)] = ReplySlotDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
 				projected.InfoUnreadCounts[meta.To]++
 			}
 		case MailboxProjectionReadEventType:
 			decrementCount(projected.UnreadCounts, meta.To)
+			markReplySlotRead(openInboundExact, openInboundFallback, meta, event.OccurredAt)
+			markReplySlotRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt)
 			if replySlot, ok := infoUnread[replySlotKey(meta.MessageID, meta.To)]; ok {
-				decrementCount(projected.InfoUnreadCounts, replySlot.To)
+				decrementCount(projected.InfoUnreadCounts, replySlot.Recipient)
 				delete(infoUnread, replySlotKey(meta.MessageID, meta.To))
 			}
 		}
@@ -107,6 +118,8 @@ func ProjectMessageReplySlotState(sessionDir, sessionName string) (MessageReplyS
 	if !sawLease || !sawResolution || !sawCompleteMailboxEvent {
 		return MessageReplySlotState{}, false, nil
 	}
+	projected.ActionRequired = sortedReplySlotDetails(openInboundExact, openInboundFallback)
+	projected.WaitingOnReply = sortedReplySlotDetails(openOutboundExact, openOutboundFallback)
 	return projected, true, nil
 }
 
@@ -142,12 +155,16 @@ func replySlotMetadataFromPayload(payload journal.MailboxEventPayload) envelope.
 	return meta
 }
 
-func openReplySlot(openExact, openFallback map[string]projectedReplySlot, meta envelope.Metadata) {
-	replySlot := projectedReplySlot{
-		MessageID:   meta.MessageID,
-		ReplySlotID: meta.ReplySlotID,
-		From:        meta.From,
-		To:          meta.To,
+func openReplySlot(openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata, direction, openedAt, openedAtSource string) {
+	replySlot := ReplySlotDetail{
+		Direction:      direction,
+		MessageID:      meta.MessageID,
+		ReplySlotID:    meta.ReplySlotID,
+		Sender:         meta.From,
+		Recipient:      meta.To,
+		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
+		OpenedAt:       openedAt,
+		OpenedAtSource: openedAtSource,
 	}
 	if meta.ReplySlotID != "" {
 		openExact[meta.ReplySlotID] = replySlot
@@ -156,13 +173,13 @@ func openReplySlot(openExact, openFallback map[string]projectedReplySlot, meta e
 	openFallback[replySlotKey(meta.MessageID, meta.To)] = replySlot
 }
 
-func resolveInboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]projectedReplySlot, meta envelope.Metadata) {
+func resolveInboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata) {
 	if meta.FillsReplySlotID != "" {
 		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.ActionRequiredCounts, replySlot.To)
+		decrementCount(state.ActionRequiredCounts, replySlot.Recipient)
 		delete(openExact, key)
 		return
 	}
@@ -173,17 +190,17 @@ func resolveInboundReplySlot(state MessageReplySlotState, openExact, openFallbac
 	if !ok {
 		return
 	}
-	decrementCount(state.ActionRequiredCounts, replySlot.To)
+	decrementCount(state.ActionRequiredCounts, replySlot.Recipient)
 	delete(openFallback, key)
 }
 
-func resolveOutboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]projectedReplySlot, meta envelope.Metadata) {
+func resolveOutboundReplySlot(state MessageReplySlotState, openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata) {
 	if meta.FillsReplySlotID != "" {
 		key, replySlot, ok := findExactReplySlot(openExact, meta.FillsReplySlotID, meta.ReplyTo, meta.From)
 		if !ok {
 			return
 		}
-		decrementCount(state.WaitingOnReplyCounts, replySlot.From)
+		decrementCount(state.WaitingOnReplyCounts, replySlot.Sender)
 		delete(openExact, key)
 		return
 	}
@@ -194,28 +211,82 @@ func resolveOutboundReplySlot(state MessageReplySlotState, openExact, openFallba
 	if !ok {
 		return
 	}
-	decrementCount(state.WaitingOnReplyCounts, replySlot.From)
+	decrementCount(state.WaitingOnReplyCounts, replySlot.Sender)
 	delete(openFallback, key)
 }
 
-func findExactReplySlot(open map[string]projectedReplySlot, replySlotID, replyTo, participant string) (string, projectedReplySlot, bool) {
+func markReplySlotRead(openExact, openFallback map[string]ReplySlotDetail, meta envelope.Metadata, readAt string) {
+	if readAt == "" {
+		return
+	}
+	if meta.ReplySlotID != "" {
+		if replySlot, ok := openExact[meta.ReplySlotID]; ok {
+			replySlot.ReadAt = readAt
+			openExact[meta.ReplySlotID] = replySlot
+			return
+		}
+	}
+	for key, replySlot := range openExact {
+		if replySlot.MessageID == meta.MessageID && replySlot.Recipient == meta.To {
+			replySlot.ReadAt = readAt
+			openExact[key] = replySlot
+			return
+		}
+	}
+	key := replySlotKey(meta.MessageID, meta.To)
+	if replySlot, ok := openFallback[key]; ok {
+		replySlot.ReadAt = readAt
+		openFallback[key] = replySlot
+	}
+}
+
+func findExactReplySlot(open map[string]ReplySlotDetail, replySlotID, replyTo, participant string) (string, ReplySlotDetail, bool) {
 	replySlot, ok := open[replySlotID]
 	if !ok {
-		return "", projectedReplySlot{}, false
+		return "", ReplySlotDetail{}, false
 	}
-	if replySlot.To != participant {
-		return "", projectedReplySlot{}, false
+	if replySlot.Recipient != participant {
+		return "", ReplySlotDetail{}, false
 	}
 	if replyTo != "" && replyTo != replySlot.MessageID {
-		return "", projectedReplySlot{}, false
+		return "", ReplySlotDetail{}, false
 	}
 	return replySlotID, replySlot, true
 }
 
-func findFallbackReplySlot(open map[string]projectedReplySlot, messageID, participant string) (string, projectedReplySlot, bool) {
+func findFallbackReplySlot(open map[string]ReplySlotDetail, messageID, participant string) (string, ReplySlotDetail, bool) {
 	key := replySlotKey(messageID, participant)
 	replySlot, ok := open[key]
 	return key, replySlot, ok
+}
+
+func sortedReplySlotDetails(exact, fallback map[string]ReplySlotDetail) []ReplySlotDetail {
+	if len(exact) == 0 && len(fallback) == 0 {
+		return nil
+	}
+	result := make([]ReplySlotDetail, 0, len(exact)+len(fallback))
+	for _, replySlot := range exact {
+		result = append(result, replySlot)
+	}
+	for _, replySlot := range fallback {
+		result = append(result, replySlot)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].OpenedAt != result[j].OpenedAt {
+			return result[i].OpenedAt < result[j].OpenedAt
+		}
+		if result[i].MessageID != result[j].MessageID {
+			return result[i].MessageID < result[j].MessageID
+		}
+		if result[i].ReplySlotID != result[j].ReplySlotID {
+			return result[i].ReplySlotID < result[j].ReplySlotID
+		}
+		if result[i].Sender != result[j].Sender {
+			return result[i].Sender < result[j].Sender
+		}
+		return result[i].Recipient < result[j].Recipient
+	})
+	return result
 }
 
 func simpleNameForSession(name, sessionName string) string {

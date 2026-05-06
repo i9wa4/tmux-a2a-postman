@@ -65,7 +65,9 @@ func main() {
 			Pop:                     cli.RunPop,
 			GetSessionHealth:        cli.RunGetSessionHealth,
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
+			InspectReply:            cli.RunInspectReply,
 			SendMessage:             cli.RunSendMessage,
+			SendHeredoc:             cli.RunSendHeredoc,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},

@@ -531,7 +531,7 @@ func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
 func TestLoadMarkdownConfig(t *testing.T) {
 	content := `---
 ui_node: messenger
-reply_command: send --to <r> --body "<m>"
+reply_command: send-heredoc --to <r>
 ---
 
 ## ` + "`edges`" + `
@@ -573,7 +573,7 @@ Worker template.
 		if cfg.UINode != "messenger" {
 			t.Errorf("UINode: got %q, want %q", cfg.UINode, "messenger")
 		}
-		if cfg.ReplyCommand != `send --to <r> --body "<m>"` {
+		if cfg.ReplyCommand != `send-heredoc --to <r>` {
 			t.Errorf("ReplyCommand: got %q", cfg.ReplyCommand)
 		}
 	})

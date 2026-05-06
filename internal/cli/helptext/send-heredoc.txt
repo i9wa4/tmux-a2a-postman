@@ -1,0 +1,43 @@
+send-heredoc — compose and deliver a message with a quoted heredoc
+
+Usage:
+  tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
+  message text
+  POSTMAN_BODY
+  tmux-a2a-postman send-heredoc --help
+
+Flags:
+  --to <node>             Recipient node name (required)
+  --no-reply              Mark this message as not requiring a reply
+  --reply-required        Mark this message as requiring a reply
+  --reply-to <message>    Message id for fallback closure or traceability
+  --fills-reply-slot-id <id>
+                          Exact reply slot id this message fills
+
+Body input:
+  Use a quoted heredoc delimiter:
+
+    tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
+    literal $(not executed), `backticks`, and $HOME
+    ```sh
+    echo "$HOME"
+    ```
+    POSTMAN_BODY
+
+  The quoted delimiter preserves command substitutions, backticks, variables,
+  quotes, and code fences as literal message text. Do not pass message text as
+  argv. Do not use file-body or generic stdin shortcuts.
+
+Output:
+  Always JSON.
+  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
+  Reply-required sends include "reply_slot_id".
+  Exact replies include "fills_reply_slot_id".
+
+Status:
+  processed               Daemon-side handling was observed
+  queued                  Local handoff succeeded, but daemon handling was not observed
+
+submit_path:
+  daemon-submit           Request/response path owned by the running daemon
+  post                    Direct write to the session post/ queue

@@ -2,30 +2,37 @@ Messaging — send and receive messages
 
 Quick workflow (agents):
   Send:
-    tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'
+    tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
     message text
     POSTMAN_BODY
   Read:  tmux-a2a-postman pop
 
 Safe body input:
-  Use quoted heredoc stdin for frequent agent-to-agent messages. The quoted
-  delimiter preserves command substitutions, backticks, $HOME variables,
-  quotes, and shell examples as literal text. Use --body-file <path> for
-  generated files or --body-stdin for explicit stdin/pipe workflows.
+  Use send-heredoc with a quoted heredoc delimiter for frequent agent-to-agent
+  messages. The quoted delimiter preserves command substitutions, backticks,
+  $HOME variables, quotes, code fences, and shell examples as literal text.
+  Do not pass message text through argv, file-body shortcuts, or generic
+  pipe-oriented guidance.
 
 Reply workflow:
-  tmux-a2a-postman send --to <sender> <<'POSTMAN_BODY'
+  tmux-a2a-postman send-heredoc --to <sender> <<'POSTMAN_BODY'
   DONE: ...
   POSTMAN_BODY
 
 Reply-required messages carry a reply_slot_id. Exact replies use:
-  tmux-a2a-postman send --to <sender> --fills-reply-slot-id <reply_slot_id> --reply-to <message_id> <<'POSTMAN_BODY'
+  tmux-a2a-postman send-heredoc --to <sender> --fills-reply-slot-id <reply_slot_id> --reply-to <message_id> <<'POSTMAN_BODY'
   DONE: ...
   POSTMAN_BODY
 
 The exact reply slot id clears the required action; --reply-to is retained for
 traceability and fallback message-link closure. Replies stay on the live
 session daemon automatically.
+
+Inspect open reply-required work without popping inbox mail:
+  tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>
+
+get-health also exposes open reply-slot detail arrays under
+nodes[*].flow.reply_slots.action_required and waiting_on_reply.
 
 Envelope format (YAML frontmatter):
   ---
@@ -39,4 +46,4 @@ Envelope format (YAML frontmatter):
   ---
 
 Sender is auto-detected from the tmux pane title (no --from flag).
-`send` and `pop` print JSON by default.
+`send-heredoc` and `pop` print JSON by default.

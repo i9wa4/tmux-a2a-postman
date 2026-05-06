@@ -19,11 +19,11 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "tmux-a2a-postman — A2A message routing daemon for tmux panes") {
 		t.Fatalf("stdout missing overview header: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'") {
-		t.Fatalf("stdout missing heredoc send quick-start line: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'") {
+		t.Fatalf("stdout missing send-heredoc quick-start line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "send --to <node> --body-file body.md") {
-		t.Fatalf("stdout missing body-file guidance: %q", stdout.String())
+	if strings.Contains(stdout.String(), "--message-file") {
+		t.Fatalf("stdout still contains message-file guidance: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("stdout missing explicit-command guidance: %q", stdout.String())

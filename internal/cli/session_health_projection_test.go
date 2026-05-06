@@ -348,6 +348,7 @@ func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	content := sessionHealthObligationContent("critic", "worker", "m1.md", "required", "", "please review")
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
 
 	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
@@ -388,6 +389,7 @@ func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
 	}, "please review")
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
 	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
 
 	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
@@ -420,8 +422,36 @@ func TestGetHealthAddsSchemaV3SeverityForReplySlots(t *testing.T) {
 	if got := nodeByName["worker"].Flow.ReplySlots.ActionRequiredCount; got != 1 {
 		t.Fatalf("worker action_required_count = %d, want 1", got)
 	}
+	if got := nodeByName["worker"].Flow.ReplySlots.ActionRequired; len(got) != 1 {
+		t.Fatalf("worker action_required details = %#v, want one detail", got)
+	} else {
+		detail := got[0]
+		if detail.Direction != "inbound" || detail.MessageID != "m1.md" || detail.ReplySlotID != "rslot_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
+			t.Fatalf("worker action_required detail = %#v, want public reply-slot identifiers", detail)
+		}
+		if detail.OpenedAt != now.Add(2*time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionDeliveredEventType {
+			t.Fatalf("worker action_required opened evidence = %#v, want delivered timestamp/source", detail)
+		}
+		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
+			t.Fatalf("worker action_required read_at = %q, want recipient read timestamp", detail.ReadAt)
+		}
+	}
 	if got := nodeByName["critic"].Flow.State; got != "expected_wait" {
 		t.Fatalf("critic flow state = %q, want expected_wait", got)
+	}
+	if got := nodeByName["critic"].Flow.ReplySlots.WaitingOnReply; len(got) != 1 {
+		t.Fatalf("critic waiting_on_reply details = %#v, want one detail", got)
+	} else {
+		detail := got[0]
+		if detail.Direction != "outbound" || detail.MessageID != "m1.md" || detail.ReplySlotID != "rslot_123" || detail.Sender != "critic" || detail.Recipient != "worker" || detail.ReplyPolicy != "required" {
+			t.Fatalf("critic waiting_on_reply detail = %#v, want public reply-slot identifiers", detail)
+		}
+		if detail.OpenedAt != now.Add(time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionPostConsumedEventType {
+			t.Fatalf("critic waiting_on_reply opened evidence = %#v, want post-consumed timestamp/source", detail)
+		}
+		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
+			t.Fatalf("critic waiting_on_reply read_at = %q, want recipient read timestamp", detail.ReadAt)
+		}
 	}
 }
 

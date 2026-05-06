@@ -163,7 +163,7 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 
 	cfg := &config.Config{
 		TmuxTimeout:  5.0,
-		ReplyCommand: "tmux-a2a-postman send --to <recipient> --body \"<your message>\"",
+		ReplyCommand: "tmux-a2a-postman send-heredoc --to <recipient>",
 	}
 
 	if err := SendPingToNode(nodeInfo, "ctx-ping", "worker", "Reply: {reply_command}", cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
@@ -174,7 +174,7 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	if strings.Contains(body, "<recipient>") {
 		t.Fatalf("ping content still contains recipient placeholder: %q", body)
 	}
-	if !strings.Contains(body, "send --to worker") {
+	if !strings.Contains(body, "send-heredoc --to worker") {
 		t.Fatalf("ping content missing concrete reply target: %q", body)
 	}
 }

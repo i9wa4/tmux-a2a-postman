@@ -29,6 +29,10 @@ Use `tmux-a2a-postman get-health-oneline` for a compact scan across sessions.
 Add `--severity` when you need the opt-in contextual severity token instead of
 the legacy compact visible-state marks.
 
+Use `tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>` when
+you need the concrete open reply-required item behind `pending` or `waiting`
+without reading inbox mail.
+
 Use `tmux-a2a-postman pop` only when you intend to read and archive the next
 inbox message.
 
@@ -68,19 +72,25 @@ instructions, message metadata, health output, and observed send results.
 A reply-required message opens action for the recipient and waiting state for
 the sender.
 
+`get-health` exposes concrete open reply-slot details at
+`nodes[*].flow.reply_slots.action_required` and `waiting_on_reply`. Each detail
+includes `direction`, `message_id`, `reply_slot_id`, `sender`, `recipient`,
+`reply_policy`, and available open/read timestamps. Use `inspect-reply --id`
+for a focused lookup by `message_id` or `reply_slot_id`.
+
 A new reply-required message carries an exact `reply_slot_id`. A resolving
 reply should fill that slot:
 
 ```sh
-tmux-a2a-postman send --to <sender> --fills-reply-slot-id <reply-slot-id> --reply-to <message-id> <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to <sender> --fills-reply-slot-id <reply-slot-id> --reply-to <message-id> <<'POSTMAN_BODY'
 <reply>
 POSTMAN_BODY
 ```
 
 Use quoted heredoc stdin for non-interactive replies. The single quotes around
 `POSTMAN_BODY` preserve literal command substitutions, backticks, `$HOME`
-variables, quotes, and shell examples. Use `--body-file <path>` with the same
-reply flags for generated files.
+variables, quotes, code fences, and shell examples. Do not pass reply bodies
+through argv, file-body shortcuts, or generic pipe-oriented guidance.
 
 Reading with `pop` clears unread state, but it does not clear reply-required
 action. Only a later message with `--fills-reply-slot-id <reply-slot-id>`
@@ -175,7 +185,11 @@ progress evidence matters.
 1. Run `tmux-a2a-postman get-health`.
 2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
    and topology before creating more messages.
-3. If your node is `pending` or `needs_action`, run `tmux-a2a-postman pop`.
+3. If your node is `pending` or `needs_action`, inspect
+   `nodes[*].flow.reply_slots.action_required` or run
+   `tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>` when you
+   need the exact open item before reading. Then run `tmux-a2a-postman pop`
+   when you are ready to handle and archive the message.
 4. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-reply-slot-id <reply_slot_id>` when the pop output includes
    `reply_slot_id`; keep `--reply-to <message_id>` for traceability when the

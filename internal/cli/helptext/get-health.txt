@@ -11,7 +11,12 @@ Output:
   schema_version is 3. The legacy visible_state and compact fields remain
   stable; contextual fields are additive.
   Reply-aware fields include action_required_count, waiting_on_reply_count,
-  and info_unread_count.
+  and info_unread_count. nodes[*].flow.reply_slots includes action_required
+  and waiting_on_reply detail arrays for open reply-required work. Details
+  include direction, message_id, reply_slot_id, sender, recipient,
+  reply_policy, opened_at, opened_at_source, and read_at when available.
+  Use inspect-reply --id <message_id-or-reply_slot_id> to inspect a specific
+  open reply slot without reading inbox mail.
   Contextual severity fields include severity, severity_source,
   severity_reason, compact_severity, delivery, nodes[*].node_local,
   nodes[*].flow, and nodes[*].queues.

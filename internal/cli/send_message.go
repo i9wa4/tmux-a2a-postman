@@ -72,8 +72,6 @@ var (
 	}
 )
 
-const maxLegacyInlineBodyLen = 200
-
 // performCLINotification sends a synchronous pane notification from the CLI.
 // Returns cliNotifySkipped when paneID is empty, cliNotifyOK on success, cliNotifyFailed on error.
 func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int, fn sendToPaneFunc) cliNotifyStatus {
@@ -84,19 +82,6 @@ func performCLINotification(paneID, notificationMsg string, enterDelay, tmuxTime
 		return cliNotifyFailed
 	}
 	return cliNotifyOK
-}
-
-func validateLegacyInlineBody(body string) error {
-	if len(body) > maxLegacyInlineBodyLen {
-		return fmt.Errorf("legacy --body accepts only short literal text; use quoted heredoc stdin or --body-file for longer messages")
-	}
-	if strings.ContainsAny(body, "\r\n\t") {
-		return fmt.Errorf("legacy --body accepts only single-line literal text; use quoted heredoc stdin or --body-file for multiline messages")
-	}
-	if strings.ContainsAny(body, "$`\"'\\;&|<>(){}") {
-		return fmt.Errorf("legacy --body contains shell-sensitive characters; use quoted heredoc stdin or --body-file")
-	}
-	return nil
 }
 
 func readSendBodyStdin(stdinReader io.Reader) (string, error) {
@@ -110,51 +95,34 @@ func readSendBodyStdin(stdinReader io.Reader) (string, error) {
 	return string(data), nil
 }
 
-func resolveSendBody(body, bodyFile string, bodyStdin, stdin bool, stdinReader io.Reader, stdinIsTerminal bool) (string, error) {
-	stdinRequested := bodyStdin || stdin
-	sourceCount := 0
-	if body != "" {
-		sourceCount++
+func sendHeredocBodySourceError() error {
+	return fmt.Errorf("message body is required as a quoted heredoc: use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'; argv, file, and pipe body input can cause shell-expansion mistakes")
+}
+
+func resolveSendHeredocBody(stdinReader io.Reader, stdinIsTerminal bool) (string, error) {
+	if stdinIsTerminal {
+		return "", sendHeredocBodySourceError()
 	}
-	if bodyFile != "" {
-		sourceCount++
-	}
-	if stdinRequested {
-		sourceCount++
-	}
-	if sourceCount == 0 {
-		if stdinIsTerminal {
-			return "", fmt.Errorf("message body is required: pass a quoted heredoc on stdin, --body-stdin, --body-file, or legacy --body for simple literal text")
-		}
-		return readSendBodyStdin(stdinReader)
-	}
-	if sourceCount > 1 {
-		return "", fmt.Errorf("--body, --body-file, and stdin body input are mutually exclusive")
-	}
-	if body != "" {
-		if err := validateLegacyInlineBody(body); err != nil {
-			return "", err
-		}
-		return body, nil
-	}
-	if bodyFile != "" {
-		data, err := os.ReadFile(bodyFile)
+	if stdinFile, ok := stdinReader.(*os.File); ok {
+		info, err := stdinFile.Stat()
 		if err != nil {
-			return "", fmt.Errorf("reading --body-file: %w", err)
+			return "", fmt.Errorf("checking heredoc stdin body: %w", err)
 		}
-		return string(data), nil
+		if info.Mode().IsRegular() {
+			return "", sendHeredocBodySourceError()
+		}
 	}
 	return readSendBodyStdin(stdinReader)
 }
 
 func RunSendMessage(args []string) error {
-	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+	return fmt.Errorf("send no longer accepts message bodies because argv, file, and pipe body input can cause shell-expansion mistakes; use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
+}
+
+func RunSendHeredoc(args []string) error {
+	fs := flag.NewFlagSet("send-heredoc", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	to := fs.String("to", "", "recipient node name (required)")
-	body := fs.String("body", "", "message body text")
-	bodyFile := fs.String("body-file", "", "read message body from file")
-	bodyStdin := fs.Bool("body-stdin", false, "read message body from standard input")
-	stdin := fs.Bool("stdin", false, "deprecated alias for --body-stdin")
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
@@ -164,13 +132,16 @@ func RunSendMessage(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("send-heredoc reads message bodies only from quoted heredoc stdin; do not pass body text as arguments")
+	}
 	if *to == "" {
 		return fmt.Errorf("--to is required")
 	}
 	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
 		return err
 	}
-	bodyText, err := resolveSendBody(*body, *bodyFile, *bodyStdin, *stdin, sendBodyStdin, sendBodyStdinIsTerminal())
+	bodyText, err := resolveSendHeredocBody(sendBodyStdin, sendBodyStdinIsTerminal())
 	if err != nil {
 		return err
 	}

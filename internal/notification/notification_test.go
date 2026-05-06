@@ -60,7 +60,7 @@ func TestBuildNotification_SentinelObfuscation(t *testing.T) {
 		// Protocol wrapper ends with the real sentinel.
 		NotificationTemplate: "<!-- message start -->\n{template}\n<!-- end of message -->\n",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send --to <recipient>",
+		ReplyCommand:         "postman send-heredoc --to <recipient>",
 		Nodes: map[string]config.NodeConfig{
 			"worker": {Template: nodeTemplate},
 		},
@@ -89,7 +89,7 @@ func TestBuildNotification(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message from {from_node} to {node}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send --to <recipient>",
+		ReplyCommand:         "postman send-heredoc --to <recipient>",
 	}
 
 	adjacency := map[string][]string{
@@ -126,7 +126,7 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Reply: {reply_command}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "tmux-a2a-postman send --to <recipient> --body \"<your message>\"",
+		ReplyCommand:         "tmux-a2a-postman send-heredoc --to <recipient>",
 	}
 
 	notification := BuildNotification(
@@ -144,7 +144,7 @@ func TestBuildNotification_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	if strings.Contains(notification, "<recipient>") {
 		t.Fatalf("notification still contains recipient placeholder: %q", notification)
 	}
-	if !strings.Contains(notification, "send --to worker") {
+	if !strings.Contains(notification, "send-heredoc --to worker") {
 		t.Fatalf("notification missing concrete reply target: %q", notification)
 	}
 }
@@ -286,7 +286,7 @@ func TestBuildNotification_LivenessFiltering(t *testing.T) {
 	cfg := &config.Config{
 		NotificationTemplate: "Message: {talks_to_line}",
 		TmuxTimeout:          5.0,
-		ReplyCommand:         "postman send --to <recipient>",
+		ReplyCommand:         "postman send-heredoc --to <recipient>",
 	}
 
 	adjacency := map[string][]string{

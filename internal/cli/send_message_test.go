@@ -21,10 +21,53 @@ func shellSensitiveBodyForSendTest() string {
 		"literal backticks: `date`\n" +
 		"literal HOME variable: $HOME\n" +
 		"quotes: \"double\" and 'single'\n" +
+		"code fence:\n" +
+		"```sh\n" +
+		"echo \"$HOME\" && printf '%s\\n' `date`\n" +
+		"```\n" +
 		"multiline shell example:\n" +
 		"cat <<'EOF'\n" +
 		"echo \"$HOME\"\n" +
 		"EOF\n"
+}
+
+func writeSendMessageBodyFile(t *testing.T, body string) string {
+	t.Helper()
+
+	bodyPath := filepath.Join(t.TempDir(), "message.md")
+	if err := os.WriteFile(bodyPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile message body: %v", err)
+	}
+	return bodyPath
+}
+
+func withSendHeredocBody(t *testing.T, body string, fn func() error) error {
+	t.Helper()
+
+	previousStdin := sendBodyStdin
+	previousIsTerminal := sendBodyStdinIsTerminal
+	sendBodyStdin = strings.NewReader(body)
+	sendBodyStdinIsTerminal = func() bool { return false }
+	defer func() {
+		sendBodyStdin = previousStdin
+		sendBodyStdinIsTerminal = previousIsTerminal
+	}()
+
+	return fn()
+}
+
+func runSendHeredocWithBody(t *testing.T, body string, args []string) error {
+	t.Helper()
+	return withSendHeredocBody(t, body, func() error {
+		return RunSendHeredoc(args)
+	})
+}
+
+func captureSendHeredocWithBody(t *testing.T, body string, args []string) (string, string, error) {
+	t.Helper()
+	return captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, body, args)
+	})
 }
 
 func writeSendBodySourceConfig(t *testing.T, dir string) string {
@@ -46,35 +89,62 @@ role = "worker"
 	return configPath
 }
 
-func TestRunSendMessage_BasicFlagAccepted(t *testing.T) {
+func TestRunSendMessage_InlineBodyFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunSendMessage([]string{"--to", "worker", "--body", "hello"})
-	if err != nil && strings.Contains(err.Error(), "flag provided but not defined") {
-		t.Errorf("unexpected flag-parse error: %v", err)
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--body", "hello"})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want undefined --body flag")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined: -body") {
+		t.Fatalf("RunSendMessage() error = %v, want undefined --body flag", err)
+	}
+}
+
+func TestRunSendMessage_LegacySendWithHeredocBodyRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	previousStdin := sendBodyStdin
+	previousIsTerminal := sendBodyStdinIsTerminal
+	sendBodyStdin = strings.NewReader("hello from heredoc")
+	sendBodyStdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+		sendBodyStdinIsTerminal = previousIsTerminal
+	})
+
+	err := RunSendMessage([]string{"--to", "worker"})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want legacy send rejection")
+	}
+	for _, want := range []string{"send no longer accepts message bodies", "send-heredoc", "shell-expansion"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("RunSendMessage() error = %v, want substring %q", err, want)
+		}
 	}
 }
 
 func TestRunSendMessage_FlagHelpOmitsHiddenAndRemovedFlags(t *testing.T) {
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{"-h"})
+		return RunSendHeredoc([]string{"-h"})
 	})
 	if err == nil {
-		t.Fatal("RunSendMessage(-h) = nil, want help error")
+		t.Fatal("RunSendHeredoc(-h) = nil, want help error")
 	}
 	if !strings.Contains(err.Error(), "flag: help requested") {
-		t.Fatalf("RunSendMessage(-h) error = %v, want help requested", err)
+		t.Fatalf("RunSendHeredoc(-h) error = %v, want help requested", err)
 	}
 	if stdout != "" {
 		t.Fatalf("stdout = %q, want empty", stdout)
 	}
-	if !strings.Contains(stderr, "Usage of send:") {
+	if !strings.Contains(stderr, "Usage of send-heredoc:") {
 		t.Fatalf("stderr missing help header: %q", stderr)
 	}
 	if strings.Contains(stderr, "--context-id") {
 		t.Fatalf("stderr still exposes hidden context override: %q", stderr)
 	}
-	for _, removed := range []string{"--config", "--json", "--params", "--idempotency-key", "--session"} {
+	for _, removed := range []string{"--config", "--json", "--params", "--idempotency-key", "--session", "--message-file", "--body"} {
 		if strings.Contains(stderr, removed) {
 			t.Fatalf("stderr still exposes hidden/removed flag %s: %q", removed, stderr)
 		}
@@ -84,7 +154,7 @@ func TestRunSendMessage_FlagHelpOmitsHiddenAndRemovedFlags(t *testing.T) {
 func TestRunSendMessage_FromFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunSendMessage([]string{"--to", "worker", "--body", "hello", "--from", "orchestrator"})
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--from", "orchestrator"})
 	if err == nil {
 		t.Fatal("expected unknown-flag error for --from, got nil")
 	}
@@ -98,11 +168,10 @@ func TestRunSendMessage_InvalidToNodeName(t *testing.T) {
 	configPath := writeMinimalNodeConfig(t, tmpDir)
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-invalid-to",
 		"--to", "worker_alt",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected invalid --to node name error, got nil")
@@ -140,9 +209,8 @@ func TestRunSendMessage_InvalidReplyToRejectedBeforeWriting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			t.Setenv("POSTMAN_HOME", tmpDir)
-			err := RunSendMessage([]string{
+			err := runSendHeredocWithBody(t, "hello", []string{
 				"--to", "worker",
-				"--body", "hello",
 				"--reply-to", tt.replyTo,
 			})
 			if err == nil {
@@ -185,10 +253,9 @@ func TestRunSendMessage_InvalidFillsReplySlotIDRejectedBeforeWriting(t *testing.
 			t.Setenv("POSTMAN_HOME", tmpDir)
 			args := []string{
 				"--to", "worker",
-				"--body", "hello",
 				tt.flag, tt.replySlotID,
 			}
-			err := RunSendMessage(args)
+			err := runSendHeredocWithBody(t, "hello", args)
 			if tt.replySlotID == "" {
 				if err != nil && strings.Contains(err.Error(), tt.flag) {
 					t.Fatalf("RunSendMessage() error = %v, want no reply slot validation error", err)
@@ -208,9 +275,8 @@ func TestRunSendMessage_InvalidFillsReplySlotIDRejectedBeforeWriting(t *testing.
 func TestRunSendMessage_LegacyReplySlotFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--to", "worker",
-		"--body", "hello",
 		"--satisfies" + "-obligation-id", "rslot_123",
 	})
 	if err == nil {
@@ -224,9 +290,8 @@ func TestRunSendMessage_LegacyReplySlotFlagRejected(t *testing.T) {
 func TestRunSendMessage_ReplyPolicyFlagsAreMutuallyExclusive(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--to", "worker",
-		"--body", "hello",
 		"--no-reply",
 		"--reply-required",
 	})
@@ -238,7 +303,7 @@ func TestRunSendMessage_ReplyPolicyFlagsAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_BodyFilePreservesShellSensitiveText(t *testing.T) {
+func TestRunSendMessage_QuotedHeredocPreservesShellSensitiveText(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -247,65 +312,35 @@ func TestRunSendMessage_BodyFilePreservesShellSensitiveText(t *testing.T) {
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	body := shellSensitiveBodyForSendTest()
-	bodyPath := filepath.Join(tmpDir, "body.md")
-	if err := os.WriteFile(bodyPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("WriteFile body: %v", err)
-	}
 
-	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
-			"--config", configPath,
-			"--context-id", "ctx-body-file",
-			"--to", "worker",
-			"--body-file", bodyPath,
-		})
+	stdout, _, err := captureSendHeredocWithBody(t, body, []string{
+		"--config", configPath,
+		"--context-id", "ctx-quoted-heredoc",
+		"--to", "worker",
 	})
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
 	payload := decodeSendOutputForTest(t, stdout)
-	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-body-file", "test-session", "post", payload.Sent))
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-quoted-heredoc", "test-session", "post", payload.Sent))
 	if err != nil {
 		t.Fatalf("ReadFile post: %v", err)
 	}
 	if !strings.Contains(string(content), body) {
-		t.Fatalf("post content did not preserve body-file text:\n%s", string(content))
+		t.Fatalf("post content did not preserve quoted heredoc text:\n%s", string(content))
 	}
 }
 
-func TestRunSendMessage_BodyStdinPreservesShellSensitiveText(t *testing.T) {
+func TestRunSendMessage_BodyStdinFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	configPath := writeSendBodySourceConfig(t, tmpDir)
-	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+	t.Setenv("POSTMAN_HOME", tmpDir)
 
-	body := shellSensitiveBodyForSendTest()
-	previousStdin := sendBodyStdin
-	sendBodyStdin = strings.NewReader(body)
-	t.Cleanup(func() {
-		sendBodyStdin = previousStdin
-	})
-
-	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
-			"--config", configPath,
-			"--context-id", "ctx-body-stdin",
-			"--to", "worker",
-			"--body-stdin",
-		})
-	})
-	if err != nil {
-		t.Fatalf("RunSendMessage: %v", err)
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--body-stdin"})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want undefined --body-stdin flag")
 	}
-	payload := decodeSendOutputForTest(t, stdout)
-	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-body-stdin", "test-session", "post", payload.Sent))
-	if err != nil {
-		t.Fatalf("ReadFile post: %v", err)
-	}
-	if !strings.Contains(string(content), body) {
-		t.Fatalf("post content did not preserve stdin text:\n%s", string(content))
+	if !strings.Contains(err.Error(), "flag provided but not defined: -body-stdin") {
+		t.Fatalf("RunSendMessage() error = %v, want undefined --body-stdin flag", err)
 	}
 }
 
@@ -328,7 +363,7 @@ func TestRunSendMessage_DefaultStdinPreservesShellSensitiveText(t *testing.T) {
 	})
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return RunSendHeredoc([]string{
 			"--config", configPath,
 			"--context-id", "ctx-default-stdin",
 			"--to", "worker",
@@ -347,39 +382,16 @@ func TestRunSendMessage_DefaultStdinPreservesShellSensitiveText(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_StdinAliasPreservesShellSensitiveText(t *testing.T) {
+func TestRunSendMessage_StdinAliasFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	configPath := writeSendBodySourceConfig(t, tmpDir)
-	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+	t.Setenv("POSTMAN_HOME", tmpDir)
 
-	body := shellSensitiveBodyForSendTest()
-	previousStdin := sendBodyStdin
-	sendBodyStdin = strings.NewReader(body)
-	t.Cleanup(func() {
-		sendBodyStdin = previousStdin
-	})
-
-	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
-			"--config", configPath,
-			"--context-id", "ctx-stdin-alias",
-			"--to", "worker",
-			"--stdin",
-		})
-	})
-	if err != nil {
-		t.Fatalf("RunSendMessage: %v", err)
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--stdin"})
+	if err == nil {
+		t.Fatal("RunSendMessage() error = nil, want undefined --stdin flag")
 	}
-	payload := decodeSendOutputForTest(t, stdout)
-	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-stdin-alias", "test-session", "post", payload.Sent))
-	if err != nil {
-		t.Fatalf("ReadFile post: %v", err)
-	}
-	if !strings.Contains(string(content), body) {
-		t.Fatalf("post content did not preserve --stdin text:\n%s", string(content))
+	if !strings.Contains(err.Error(), "flag provided but not defined: -stdin") {
+		t.Fatalf("RunSendMessage() error = %v, want undefined --stdin flag", err)
 	}
 }
 
@@ -393,56 +405,66 @@ func TestRunSendMessage_DefaultStdinRejectsInteractiveTerminal(t *testing.T) {
 		sendBodyStdinIsTerminal = previousIsTerminal
 	})
 
-	err := RunSendMessage([]string{"--to", "worker"})
+	err := RunSendHeredoc([]string{"--to", "worker"})
 	if err == nil {
 		t.Fatal("RunSendMessage() error = nil, want body-source guidance")
 	}
 	if !strings.Contains(err.Error(), "quoted heredoc") {
 		t.Fatalf("RunSendMessage() error = %v, want quoted heredoc guidance", err)
 	}
-}
-
-func TestRunSendMessage_LegacyBodyRejectsShellSensitiveText(t *testing.T) {
-	for _, body := range []string{
-		"literal $(printf SHOULD_NOT_RUN)",
-		"literal `date`",
-		"literal $HOME",
-		"line one\nline two",
-		strings.Repeat("x", maxLegacyInlineBodyLen+1),
-	} {
-		t.Run(body, func(t *testing.T) {
-			err := RunSendMessage([]string{"--to", "worker", "--body", body})
-			if err == nil {
-				t.Fatal("RunSendMessage() error = nil, want legacy --body validation error")
-			}
-			if !strings.Contains(err.Error(), "legacy --body") {
-				t.Fatalf("RunSendMessage() error = %v, want legacy --body guidance", err)
-			}
-		})
+	if !strings.Contains(err.Error(), "send-heredoc") || !strings.Contains(err.Error(), "shell-expansion") {
+		t.Fatalf("RunSendMessage() error = %v, want send-heredoc shell-expansion guidance", err)
 	}
 }
 
-func TestRunSendMessage_BodySourcesAreMutuallyExclusive(t *testing.T) {
+func TestRunSendMessage_BodyFileFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	bodyPath := filepath.Join(tmpDir, "body.md")
 	if err := os.WriteFile(bodyPath, []byte("from file"), 0o600); err != nil {
 		t.Fatalf("WriteFile body: %v", err)
 	}
 
-	err := RunSendMessage([]string{
-		"--to", "worker",
-		"--body", "from flag",
-		"--body-file", bodyPath,
-	})
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--body-file", bodyPath})
 	if err == nil {
-		t.Fatal("RunSendMessage() error = nil, want mutually exclusive body source error")
+		t.Fatal("RunSendMessage() error = nil, want undefined --body-file flag")
 	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf("RunSendMessage() error = %v, want mutually exclusive", err)
+	if !strings.Contains(err.Error(), "flag provided but not defined: -body-file") {
+		t.Fatalf("RunSendMessage() error = %v, want undefined --body-file flag", err)
 	}
 }
 
-func TestRunSendMessage_BodyDashRemainsLiteralBody(t *testing.T) {
+func TestRunSendMessage_RegularFileStdinRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	bodyPath := filepath.Join(tmpDir, "body.md")
+	if err := os.WriteFile(bodyPath, []byte("from file"), 0o600); err != nil {
+		t.Fatalf("WriteFile body: %v", err)
+	}
+	bodyFile, err := os.Open(bodyPath)
+	if err != nil {
+		t.Fatalf("Open body: %v", err)
+	}
+	defer bodyFile.Close()
+	previousStdin := sendBodyStdin
+	previousIsTerminal := sendBodyStdinIsTerminal
+	sendBodyStdin = bodyFile
+	sendBodyStdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() {
+		sendBodyStdin = previousStdin
+		sendBodyStdinIsTerminal = previousIsTerminal
+	})
+
+	err = RunSendHeredoc([]string{"--to", "worker"})
+	if err == nil {
+		t.Fatal("RunSendHeredoc() error = nil, want regular file stdin rejection")
+	}
+	for _, want := range []string{"quoted heredoc", "send-heredoc", "shell-expansion"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("RunSendHeredoc() error = %v, want substring %q", err, want)
+		}
+	}
+}
+
+func TestRunSendMessage_QuotedHeredocDashRemainsLiteralBody(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -451,11 +473,10 @@ func TestRunSendMessage_BodyDashRemainsLiteralBody(t *testing.T) {
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "-", []string{
 			"--config", configPath,
 			"--context-id", "ctx-body-dash",
 			"--to", "worker",
-			"--body", "-",
 		})
 	})
 	if err != nil {
@@ -467,7 +488,7 @@ func TestRunSendMessage_BodyDashRemainsLiteralBody(t *testing.T) {
 		t.Fatalf("ReadFile post: %v", err)
 	}
 	if !strings.Contains(string(content), "\n-\n\n---") {
-		t.Fatalf("--body - was not preserved as literal body:\n%s", string(content))
+		t.Fatalf("quoted heredoc dash content was not preserved as literal body:\n%s", string(content))
 	}
 }
 
@@ -476,11 +497,10 @@ func TestRunSendMessage_InvalidAutoDetectedPaneTitle(t *testing.T) {
 	configPath := writeMinimalNodeConfig(t, tmpDir)
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger_alt")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-invalid-pane",
 		"--to", "worker",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected invalid auto-detected pane title error, got nil")
@@ -515,11 +535,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-missing-sender",
 		"--to", "worker",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected missing sender error, got nil")
@@ -557,11 +576,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-missing-receiver",
 		"--to", "worker",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected missing receiver error, got nil")
@@ -599,11 +617,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-invalid-edge",
 		"--to", "worker",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected edge violation error, got nil")
@@ -638,11 +655,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-prefixed-graph",
 		"--to", "review-session:worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -689,11 +705,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-mixed-sender-graph",
 		"--to", "review-session:worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -734,11 +749,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	err := RunSendMessage([]string{
+	err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-prefixed-recipient-needs-explicit-edge",
 		"--to", "review-session:worker",
-		"--body", "hello",
 	})
 	if err == nil {
 		t.Fatal("expected missing receiver error, got nil")
@@ -770,11 +784,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-full-same-session-graph",
 		"--to", "worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -812,11 +825,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-send-bare-graph-same-session-prefixed-recipient",
 		"--to", "test-session:worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -854,7 +866,7 @@ func TestResolveInboxPath_InvalidAutoDetectedPaneTitle(t *testing.T) {
 func TestRunSendMessage_IdempotencyKeyFlagRejected(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
-	err := RunSendMessage([]string{"--to", "worker", "--body", "hello", "--idempotency-key", "key-abc-123"})
+	err := runSendHeredocWithBody(t, "hello", []string{"--to", "worker", "--idempotency-key", "key-abc-123"})
 	if err == nil {
 		t.Fatal("expected unknown-flag error for --idempotency-key, got nil")
 	}
@@ -867,7 +879,7 @@ func TestRunSendMessage_DraftTemplateExpandsReplyCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-reply_command = "send --to <recipient>"
+reply_command = "send-heredoc --to <recipient>"
 draft_template = "{reply_command}"
 message_footer = ""
 edges = ["orchestrator --- worker"]
@@ -883,11 +895,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-draft-reply",
 		"--to", "worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -906,7 +917,7 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("ReadFile draft: %v", err)
 	}
-	if !strings.Contains(string(draftContent), "send --to worker") {
+	if !strings.Contains(string(draftContent), "send-heredoc --to worker") {
 		t.Fatalf("draft content missing reply command: %q", string(draftContent))
 	}
 }
@@ -916,9 +927,9 @@ func TestRunSendMessage_DraftTemplatePreservesMultilineReplyCommand(t *testing.T
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
 reply_command = """
-tmux-a2a-postman send
-  --to <recipient>
-  --body "<your message>"
+tmux-a2a-postman send-heredoc --to <recipient> <<'POSTMAN_BODY'
+<your message>
+POSTMAN_BODY
 """
 draft_template = "{reply_command}"
 message_footer = ""
@@ -935,11 +946,10 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-draft-multiline",
 		"--to", "worker",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -958,7 +968,7 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("ReadFile draft: %v", err)
 	}
-	want := "tmux-a2a-postman send\n  --to worker\n  --body \"<your message>\""
+	want := "tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY"
 	if !strings.Contains(string(draftContent), want) {
 		t.Fatalf("draft content missing preserved multiline reply command:\n%s", string(draftContent))
 	}
@@ -971,7 +981,7 @@ func TestRunSendMessage_MessageFooterUsesRecipientReachability(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
+reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 draft_template = "# Content\n\n"
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
@@ -992,11 +1002,10 @@ role = "boss"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-footer-recipient",
 		"--to", "orchestrator",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -1022,10 +1031,10 @@ role = "boss"
 	if strings.Contains(content, "You can talk to: orchestrator") {
 		t.Fatalf("footer still contains sender reachability:\n%s", content)
 	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --to messenger") {
+	if !strings.Contains(content, "Reply: tmux-a2a-postman send-heredoc --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)
 	}
-	if strings.Contains(content, "Reply: tmux-a2a-postman send --to orchestrator") {
+	if strings.Contains(content, "Reply: tmux-a2a-postman send-heredoc --to orchestrator") {
 		t.Fatalf("footer still contains sender-scoped reply command:\n%s", content)
 	}
 }
@@ -1037,7 +1046,7 @@ func TestRunSendMessage_MessageFooterUsesSessionPrefixedRecipientReachability(t 
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
 	configContent := `[postman]
-reply_command = "tmux-a2a-postman send --to <recipient> --body \"<your message>\""
+reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 draft_template = "# Content\n\n"
 message_footer = """You can talk to: {can_talk_to}
 Reply: {reply_command}
@@ -1058,11 +1067,10 @@ role = "boss"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-footer-prefixed-recipient",
 		"--to", "review-session:orchestrator",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -1091,7 +1099,7 @@ role = "boss"
 	if strings.Contains(content, "You can talk to: review-session:orchestrator") {
 		t.Fatalf("footer unexpectedly used recipient key instead of neighbor list:\n%s", content)
 	}
-	if !strings.Contains(content, "Reply: tmux-a2a-postman send --to messenger") {
+	if !strings.Contains(content, "Reply: tmux-a2a-postman send-heredoc --to messenger") {
 		t.Fatalf("footer missing recipient-scoped reply command:\n%s", content)
 	}
 }
@@ -1118,11 +1126,10 @@ role = "orchestrator"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	if err := RunSendMessage([]string{
+	if err := runSendHeredocWithBody(t, "hello", []string{
 		"--config", configPath,
 		"--context-id", "ctx-default-footer-reply",
 		"--to", "orchestrator",
-		"--body", "hello",
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
@@ -1146,7 +1153,7 @@ role = "orchestrator"
 		!strings.Contains(content, " <<'POSTMAN_BODY'") {
 		t.Fatalf("default footer missing configured reply command:\n%s", content)
 	}
-	if strings.Contains(content, "Reply: tmux-a2a-postman send --to <receiver>") {
+	if strings.Contains(content, "Reply: tmux-a2a-postman send-heredoc --to <receiver>") {
 		t.Fatalf("default footer still contains hard-coded placeholder reply command:\n%s", content)
 	}
 }
@@ -1172,12 +1179,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "please do this", []string{
 			"--config", configPath,
 			"--context-id", "ctx-reply-policy",
-			"--to", "worker",
-			"--body", "please do this",
-			"--reply-required",
+			"--to", "worker", "--reply-required",
 		})
 	})
 	if err != nil {
@@ -1202,9 +1207,8 @@ role = "worker"
 		"messageId: " + payload.Sent,
 		"replyPolicy: required",
 		"reply_slot_id: " + payload.ReplySlotID,
-		"Reply with quoted heredoc:\ntmux-a2a-postman send --to messenger --fills-reply-slot-id " + payload.ReplySlotID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
+		"Reply with quoted heredoc:\ntmux-a2a-postman send-heredoc --to messenger --fills-reply-slot-id " + payload.ReplySlotID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
 		"<your message>\nPOSTMAN_BODY",
-		"For generated files, use --body-file <path>.",
 		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {
@@ -1240,12 +1244,10 @@ role = "worker"
 
 	const replySlotID = "rslot_exact_123"
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "DONE", []string{
 			"--config", configPath,
 			"--context-id", "ctx-exact-reply",
-			"--to", "messenger",
-			"--body", "DONE",
-			"--reply-to", "20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
+			"--to", "messenger", "--reply-to", "20260503-090000-sabcd-r1234-from-messenger-to-worker.md",
 			"--fills-reply-slot-id", replySlotID,
 		})
 	})
@@ -1302,11 +1304,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "plain update", []string{
 			"--config", configPath,
 			"--context-id", "ctx-default-reply-policy",
 			"--to", "worker",
-			"--body", "plain update",
 		})
 	})
 	if err != nil {
@@ -1351,11 +1352,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "current status?", []string{
 			"--config", configPath,
 			"--context-id", "ctx-message-type-policy",
 			"--to", "worker",
-			"--body", "current status?",
 		})
 	})
 	if err != nil {
@@ -1418,11 +1418,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "current status?", []string{
 			"--config", configPath,
 			"--context-id", "ctx-message-type-placeholder-policy",
 			"--to", "worker",
-			"--body", "current status?",
 		})
 	})
 	if err != nil {
@@ -1485,11 +1484,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "current status?", []string{
 			"--config", configPath,
 			"--context-id", "ctx-message-type-spaced-placeholder-policy",
 			"--to", "worker",
-			"--body", "current status?",
 		})
 	})
 	if err != nil {
@@ -1536,11 +1534,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "current status?", []string{
 			"--config", configPath,
 			"--context-id", "ctx-explicit-no-reply-body-placeholder",
 			"--to", "worker",
-			"--body", "current status?",
 		})
 	})
 	if err != nil {
@@ -1587,11 +1584,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "please reply", []string{
 			"--config", configPath,
 			"--context-id", "ctx-explicit-policy-placeholder-alias",
 			"--to", "worker",
-			"--body", "please reply",
 		})
 	})
 	if err != nil {
@@ -1651,11 +1647,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "status-only", []string{
 			"--config", configPath,
 			"--context-id", "ctx-explicit-no-reply-placeholder-alias",
 			"--to", "worker",
-			"--body", "status-only",
 		})
 	})
 	if err != nil {
@@ -1715,11 +1710,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "please reply", []string{
 			"--config", configPath,
 			"--context-id", "ctx-shell-expanded-reply-policy",
 			"--to", "worker",
-			"--body", "please reply",
 		})
 	})
 	if err != nil {
@@ -1775,11 +1769,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "status only", []string{
 			"--config", configPath,
 			"--context-id", "ctx-shell-generated-reply-policy-line",
 			"--to", "worker",
-			"--body", "status only",
 		})
 	})
 	if err != nil {
@@ -1836,11 +1829,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "please reply", []string{
 			"--config", configPath,
 			"--context-id", "ctx-shell-added-reply-policy-fields",
 			"--to", "worker",
-			"--body", "please reply",
 		})
 	})
 	if err != nil {
@@ -1919,11 +1911,10 @@ role = "worker"
 				"--config", configPath,
 				"--context-id", tt.wantContext,
 				"--to", "worker",
-				"--body", "flag-controlled policy",
 			}
 			args = append(args, tt.args...)
 			stdout, _, err := captureCommandOutput(t, func() error {
-				return RunSendMessage(args)
+				return runSendHeredocWithBody(t, "flag-controlled policy", args)
 			})
 			if err != nil {
 				t.Fatalf("RunSendMessage: %v", err)
@@ -1965,12 +1956,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "status-only update", []string{
 			"--config", configPath,
 			"--context-id", "ctx-no-reply-policy",
-			"--to", "worker",
-			"--body", "status-only update",
-			"--no-reply",
+			"--to", "worker", "--no-reply",
 			"--reply-to", "20260503-090000-sabcd-r1234-from-worker-to-messenger.md",
 		})
 	})
@@ -2020,11 +2009,10 @@ role = "worker"
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello queued json", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-queued-json",
 			"--to", "worker",
-			"--body", "hello queued json",
 		})
 	})
 	if err != nil {
@@ -2111,11 +2099,10 @@ role = "worker"
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello processed json", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-direct-processed",
 			"--to", "worker",
-			"--body", "hello processed json",
 		})
 	})
 	if err != nil {
@@ -2191,11 +2178,10 @@ role = "worker"
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello dead letter", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-direct-dead-letter",
 			"--to", "worker",
-			"--body", "hello dead letter",
 		})
 	})
 	if err == nil {
@@ -2279,11 +2265,10 @@ role = "worker"
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello through submit", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-submit",
 			"--to", "worker",
-			"--body", "hello through submit",
 		})
 	})
 	if err != nil {
@@ -2422,11 +2407,10 @@ role = "worker"
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello through submit in legacy mode", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-submit-legacy",
 			"--to", "worker",
-			"--body", "hello through submit in legacy mode",
 		})
 	})
 	if err != nil {
@@ -2529,12 +2513,10 @@ role = "worker"
 
 	replyTo := "20260503-090000-sabcd-r1234-from-worker-to-messenger.md"
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "hello through submit json", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-submit-json",
-			"--to", "worker",
-			"--body", "hello through submit json",
-			"--reply-required",
+			"--to", "worker", "--reply-required",
 			"--reply-to", replyTo,
 		})
 	})
@@ -2677,11 +2659,10 @@ role = "worker"
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return RunSendMessage([]string{
+		return runSendHeredocWithBody(t, "current status?", []string{
 			"--config", configPath,
 			"--context-id", "ctx-send-submit-marker-resolution",
 			"--to", "worker",
-			"--body", "current status?",
 		})
 	})
 	if err != nil {

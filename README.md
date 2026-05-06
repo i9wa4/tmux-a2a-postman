@@ -153,28 +153,19 @@ finish before the notification is pasted.
 
 Agents then run commands from their own tmux panes. The pane title identifies
 the sending role/node, independent of whether the pane is Claude Code, Codex
-CLI, or another AI coding agent. For agent-safe non-interactive messages, pass
-the body on stdin with a quoted heredoc delimiter:
+CLI, or another AI coding agent. For agent-safe non-interactive messages, use
+the heredoc-explicit command with a quoted delimiter:
 
 ```sh
-tmux-a2a-postman send --to worker <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
 implement X
 POSTMAN_BODY
 ```
 
 The single quotes around `POSTMAN_BODY` matter. They keep shell-sensitive text
 inside the body literal, including command substitutions, backticks, variables,
-mixed quotes, and multiline shell examples.
-
-For generated message files or reviewed handoffs, use a file:
-
-```sh
-tmux-a2a-postman send --to worker --body-file request.md
-```
-
-`--body-stdin` remains available for explicit stdin or pipe workflows. Direct
-`--body` is a legacy convenience for short, single-line literal text only; do
-not use it for agent-to-agent Markdown.
+mixed quotes, code fences, and multiline shell examples. Do not pass message
+text as a CLI argument, file-body shortcut, or generic pipe-oriented body.
 
 The daemon discovers panes by title and routes messages through
 filesystem-backed inboxes. A recipient agent usually runs `pop` after the pane
@@ -197,7 +188,9 @@ include `--fills-reply-slot-id <reply-slot-id>`. The default footer also keeps
 `--reply-to <message-id>` as traceability and fallback message-link closure.
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
 Agents should prefer `get-health` for
-structured session JSON and `get-health-oneline` for compact coordination.
+structured session JSON, `inspect-reply --id <message_id-or-reply_slot_id>` to
+identify a specific open reply-required item without popping inbox mail, and
+`get-health-oneline` for compact coordination.
 `get-health` uses `schema_version: 3`; the legacy `visible_state` and
 `compact` fields remain stable, and contextual fields are additive. The
 additive severity fields include `severity`, `severity_source`,
@@ -205,7 +198,10 @@ additive severity fields include `severity`, `severity_source`,
 `nodes[*].flow`, and `nodes[*].queues`. Severity distinguishes expected waits
 from actionable conditions such as `needs_action`, `blocked`,
 `delivery_stuck`, and `delivery_failure`. Pending post delivery is considered
-stuck after 180 seconds.
+stuck after 180 seconds. Open reply-required work appears under
+`nodes[*].flow.reply_slots.action_required` and `waiting_on_reply` with
+`direction`, `message_id`, `reply_slot_id`, `sender`, `recipient`,
+`reply_policy`, and available open/read timestamps.
 `get-health-oneline` keeps compact visible-state marks by default; add
 `--severity` for ASCII `compact_severity` tokens. A `?` suffix marks inferred
 evidence, for example an exact first-line `BLOCKED:` report without structured

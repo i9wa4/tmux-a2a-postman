@@ -3,20 +3,24 @@ Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start
 
 Default operator surface
 
-send
-  Compose and deliver a message atomically in a single command.
+send-heredoc
+  Compose and deliver a message atomically with an explicit quoted heredoc.
   Output: JSON
+  Usage:
+    tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
+    literal $(not executed), `backticks`, and $HOME
+    POSTMAN_BODY
   Flags:
     --to <node>          Recipient node name (required)
-    --body <text>        Legacy short literal body text
-    --body-file <path>   Read message body from file
-    --body-stdin         Read message body from standard input
-    --stdin              Deprecated alias for --body-stdin
     --no-reply           Mark this message as not requiring a reply
     --reply-required     Mark this message as requiring a reply
     --reply-to <message> Message id for fallback closure or traceability
     --fills-reply-slot-id <id>
                          Exact reply slot id this message fills
+
+send
+  Legacy command name. Message body sending is disabled here.
+  Use send-heredoc so the command surface makes quoted heredoc safety explicit.
 
 pop
   Read and archive the oldest unread inbox message.
@@ -32,6 +36,12 @@ get-health-oneline
   Print compact all-session health for quick agent coordination.
   Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
+
+inspect-reply
+  Inspect open reply-required work by message_id or reply_slot_id.
+  Output: JSON
+  Usage:
+    tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>
 
 version
   Print the build version JSON.
@@ -53,4 +63,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send, pop, get-health, get-health-oneline, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-health, get-health-oneline, inspect-reply, version, help

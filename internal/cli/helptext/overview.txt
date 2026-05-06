@@ -1,13 +1,13 @@
 tmux-a2a-postman — A2A message routing daemon for tmux panes
 
 AI agents send and receive messages. Each message is routed to the recipient
-by the daemon. Use send to send and pop to read.
+by the daemon. Use send-heredoc to send and pop to read.
 Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.
 
 Quick Start:
   1. Start daemon:    tmux-a2a-postman start
   2. Send a message:
-     tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'
+     tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
      message text
      POSTMAN_BODY
   3. Read next msg:   tmux-a2a-postman pop
@@ -24,10 +24,11 @@ Key Concepts:
                ---
 
 Default operator surface:
-  send                       Send a message in one step (--to plus stdin, file, or legacy literal body)
+  send-heredoc               Send a message with an explicit quoted heredoc
   pop                        Read and archive the oldest unread inbox message
   get-health                 Print canonical session health JSON
   get-health-oneline         Print compact all-session health
+  inspect-reply              Inspect open reply-required work by id
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -36,13 +37,12 @@ Lifecycle and recovery:
   Legacy and diagnostic helpers are internal, not CLI commands.
 
 Messaging Protocol:
-  send --to <node> <<'POSTMAN_BODY'       Send a message from quoted heredoc stdin
-  send --to <node> --body-file body.md    Send generated or reviewed file content
-  send --to <node> --body-stdin < body.md Send body from explicit standard input
-  pop                                      Read and archive oldest message
-  get-health                              Inspect agent-readable session health
-  get-health-oneline                      Inspect compact all-session health
-  version                                 Print the build version JSON
+  send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin
+  pop                                        Read and archive oldest message
+  get-health                                Inspect agent-readable session health
+  get-health-oneline                        Inspect compact all-session health
+  inspect-reply --id <id>                   Inspect an open reply slot by id
+  version                                   Print the build version JSON
 
 Topics:
   commands             tmux-a2a-postman help commands
@@ -51,10 +51,12 @@ Topics:
   messaging            tmux-a2a-postman help messaging
   start                tmux-a2a-postman help start
   stop                 tmux-a2a-postman help stop
+  send-heredoc         tmux-a2a-postman help send-heredoc
   send                 tmux-a2a-postman help send
   pop                  tmux-a2a-postman help pop
   get-health           tmux-a2a-postman help get-health
   get-health-oneline   tmux-a2a-postman help get-health-oneline
+  inspect-reply        tmux-a2a-postman help inspect-reply
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

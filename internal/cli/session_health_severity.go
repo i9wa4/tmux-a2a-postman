@@ -221,6 +221,8 @@ func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.Bl
 			ActionRequiredCount: node.ActionRequiredCount,
 			WaitingOnReplyCount: node.WaitingOnReplyCount,
 			InfoUnreadCount:     node.InfoUnreadCount,
+			ActionRequired:      node.ActionRequired,
+			WaitingOnReply:      node.WaitingOnReply,
 		},
 		Blocked: status.BlockedState{
 			State:     "clear",

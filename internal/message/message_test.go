@@ -312,16 +312,18 @@ func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
 		"--resend-oldest",
 		`tmux-a2a-postman send --to <node> --body "<message>"`,
 		"tmux-a2a-postman send --to <node> --body-stdin < corrected-message.md",
+		"tmux-a2a-postman send --to <node> --body-file corrected-message.md",
+		"tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'",
+		"tmux-a2a-postman send --to <node> --message-file corrected-message.md",
 	} {
 		if strings.Contains(content, stale) {
 			t.Fatalf("dead-letter notification still contains stale recovery surface %q: %s", stale, content)
 		}
 	}
 	for _, want := range []string{
-		"tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'",
+		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
 		"<corrected message>",
 		"POSTMAN_BODY",
-		"tmux-a2a-postman send --to <node> --body-file corrected-message.md",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("dead-letter notification missing safe send recovery command %q: %s", want, content)
@@ -1201,7 +1203,7 @@ func TestDeliverMessage_RoutingDeniedWarningIncludesReplyCommand(t *testing.T) {
 	cfg := &config.Config{
 		EnterDelay:                   0.1,
 		TmuxTimeout:                  1.0,
-		ReplyCommand:                 "send --to <recipient>",
+		ReplyCommand:                 "send-heredoc --to <recipient>",
 		EdgeViolationWarningTemplate: "Reply: {reply_command}",
 	}
 
@@ -1222,7 +1224,7 @@ func TestDeliverMessage_RoutingDeniedWarningIncludesReplyCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile warning failed: %v", err)
 	}
-	if !strings.Contains(string(warningBody), "send --to <recipient>") {
+	if !strings.Contains(string(warningBody), "send-heredoc --to <recipient>") {
 		t.Fatalf("warning missing reply command: %q", string(warningBody))
 	}
 }

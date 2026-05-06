@@ -45,7 +45,7 @@ func assertContainsAllNormalized(t *testing.T, got string, wants ...string) {
 
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
-	sendHelp := readRepoFile(t, "internal/cli/helptext/send.txt")
+	sendHelp := readRepoFile(t, "internal/cli/helptext/send-heredoc.txt")
 	popHelp := readRepoFile(t, "internal/cli/helptext/pop.txt")
 	healthHelp := readRepoFile(t, "internal/cli/helptext/get-health.txt")
 	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-health-oneline.txt")
@@ -58,7 +58,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}`)
 	assertContainsNormalized(t, popHelp, `{"status":"message","id":"filename.md","message_id":"filename.md","from":"...","to":"...","timestamp":"...","body":"...","content":"...","unread_before":1,"remaining":0}`)
 	assertContainsNormalized(t, popHelp, "pop — read the next inbox message")
-	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send --help")
+	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
 	assertContainsNormalized(t, healthHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
 	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + healthHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
@@ -158,11 +158,10 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"help [topic]",
 	)
 	assertContainsAllNormalized(t, sendSkill,
-		"tmux-a2a-postman send --to <node> <<'POSTMAN_BODY'",
-		"tmux-a2a-postman send --to <node> --body-file path/to/body.md",
-		"`--body-stdin` is available for explicit stdin or pipe workflows.",
+		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
+		"Do not pass message text as a CLI argument, file-body shortcut, or generic pipe-oriented body.",
 		"The sender is auto-detected from the current tmux pane title.",
-		"tmux-a2a-postman help send",
+		"tmux-a2a-postman help send-heredoc",
 	)
 	assertContainsAllNormalized(t, configAuditorSkill,
 		"postman-config-auditor",

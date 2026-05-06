@@ -46,15 +46,15 @@ func TestDispatch_StartCallsStartHandler(t *testing.T) {
 	}
 }
 
-func TestDispatch_SendUsesCanonicalNameOnly(t *testing.T) {
+func TestDispatch_SendHeredocUsesCanonicalNameOnly(t *testing.T) {
 	var gotArgs []string
 
 	result := Dispatch(
-		"send",
-		[]string{"--to", "worker", "--body", "hello"},
+		"send-heredoc",
+		[]string{"--to", "worker"},
 		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 		Handlers{
-			SendMessage: func(args []string) error {
+			SendHeredoc: func(args []string) error {
 				gotArgs = append([]string(nil), args...)
 				return nil
 			},
@@ -64,12 +64,12 @@ func TestDispatch_SendUsesCanonicalNameOnly(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("Dispatch returned error: %v", result.Err)
 	}
-	if result.Label != "postman send" {
-		t.Fatalf("label = %q, want %q", result.Label, "postman send")
+	if result.Label != "postman send-heredoc" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman send-heredoc")
 	}
-	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker", "--body", "hello"}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--to", "worker"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("send args = %#v, want %#v", gotArgs, wantArgs)
+		t.Fatalf("send-heredoc args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
 
@@ -154,6 +154,33 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 			t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
 		}
 	})
+}
+
+func TestDispatch_InspectReplyPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"inspect-reply",
+		[]string{"--id", "rslot_123"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			InspectReply: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman inspect-reply" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman inspect-reply")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--id", "rslot_123"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("inspect-reply args = %#v, want %#v", gotArgs, wantArgs)
+	}
 }
 
 func TestDispatch_StopPrependsConfigOnly(t *testing.T) {

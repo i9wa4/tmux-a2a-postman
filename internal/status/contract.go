@@ -16,6 +16,8 @@ type NodeHealth struct {
 	ActionRequiredCount int                     `json:"action_required_count,omitempty"`
 	WaitingOnReplyCount int                     `json:"waiting_on_reply_count,omitempty"`
 	InfoUnreadCount     int                     `json:"info_unread_count,omitempty"`
+	ActionRequired      []ReplySlotDetail       `json:"-"`
+	WaitingOnReply      []ReplySlotDetail       `json:"-"`
 	CurrentCommand      string                  `json:"current_command,omitempty"`
 	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
 	NodeLocal           *NodeLocalHealth        `json:"node_local,omitempty"`
@@ -52,9 +54,23 @@ type NodeQueues struct {
 }
 
 type ReplySlotSummary struct {
-	ActionRequiredCount int `json:"action_required_count"`
-	WaitingOnReplyCount int `json:"waiting_on_reply_count"`
-	InfoUnreadCount     int `json:"info_unread_count"`
+	ActionRequiredCount int               `json:"action_required_count"`
+	WaitingOnReplyCount int               `json:"waiting_on_reply_count"`
+	InfoUnreadCount     int               `json:"info_unread_count"`
+	ActionRequired      []ReplySlotDetail `json:"action_required,omitempty"`
+	WaitingOnReply      []ReplySlotDetail `json:"waiting_on_reply,omitempty"`
+}
+
+type ReplySlotDetail struct {
+	Direction      string `json:"direction"`
+	MessageID      string `json:"message_id"`
+	ReplySlotID    string `json:"reply_slot_id,omitempty"`
+	Sender         string `json:"sender"`
+	Recipient      string `json:"recipient"`
+	ReplyPolicy    string `json:"reply_policy,omitempty"`
+	OpenedAt       string `json:"opened_at,omitempty"`
+	OpenedAtSource string `json:"opened_at_source,omitempty"`
+	ReadAt         string `json:"read_at,omitempty"`
 }
 
 type BlockedState struct {

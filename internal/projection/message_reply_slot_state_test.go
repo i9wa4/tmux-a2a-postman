@@ -74,6 +74,32 @@ func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.
 	if got.WaitingOnReplyCounts["orchestrator"] != 1 {
 		t.Fatalf("orchestrator waiting after send = %d, want 1", got.WaitingOnReplyCounts["orchestrator"])
 	}
+	if len(got.ActionRequired) != 1 {
+		t.Fatalf("action required details = %#v, want one detail", got.ActionRequired)
+	}
+	action := got.ActionRequired[0]
+	if action.Direction != "inbound" || action.MessageID != "m1.md" || action.Sender != "orchestrator" || action.Recipient != "worker" || action.ReplyPolicy != "required" {
+		t.Fatalf("action detail = %#v, want inbound m1 orchestrator->worker required", action)
+	}
+	if action.OpenedAt != now.Add(2*time.Second).Format(time.RFC3339Nano) || action.OpenedAtSource != MailboxProjectionDeliveredEventType {
+		t.Fatalf("action opened evidence = %#v, want delivered timestamp/source", action)
+	}
+	if action.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("action read_at = %q, want read timestamp", action.ReadAt)
+	}
+	if len(got.WaitingOnReply) != 1 {
+		t.Fatalf("waiting details = %#v, want one detail", got.WaitingOnReply)
+	}
+	waiting := got.WaitingOnReply[0]
+	if waiting.Direction != "outbound" || waiting.MessageID != "m1.md" || waiting.Sender != "orchestrator" || waiting.Recipient != "worker" || waiting.ReplyPolicy != "required" {
+		t.Fatalf("waiting detail = %#v, want outbound m1 orchestrator->worker required", waiting)
+	}
+	if waiting.OpenedAt != now.Add(time.Second).Format(time.RFC3339Nano) || waiting.OpenedAtSource != MailboxProjectionPostConsumedEventType {
+		t.Fatalf("waiting opened evidence = %#v, want post-consumed timestamp/source", waiting)
+	}
+	if waiting.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("waiting read_at = %q, want recipient read timestamp", waiting.ReadAt)
+	}
 
 	reply := replySlotContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")
 	appendReplySlotMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
@@ -94,6 +120,9 @@ func TestProjectMessageReplySlotState_RepliesResolveRequiredMessages(t *testing.
 	}
 	if got.InfoUnreadCounts["orchestrator"] != 1 {
 		t.Fatalf("orchestrator info unread = %d, want 1", got.InfoUnreadCounts["orchestrator"])
+	}
+	if len(got.ActionRequired) != 0 || len(got.WaitingOnReply) != 0 {
+		t.Fatalf("reply slot details after reply = action:%#v waiting:%#v, want empty", got.ActionRequired, got.WaitingOnReply)
 	}
 }
 

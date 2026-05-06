@@ -664,7 +664,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					mode = "compact"
 				}
 				if mode == "verbose" {
-					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - For generated files, use --body-file <path>.",
+					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send-heredoc --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - Use the quoted heredoc delimiter so shell snippets stay literal.",
 						neighborsStr,
 					)
 					warnContent += replyInstructions
@@ -931,7 +931,7 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
 
 	content := fmt.Sprintf(
-		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above, then send a corrected message with quoted heredoc stdin:\ntmux-a2a-postman send --to <node> <<'POSTMAN_BODY'\n<corrected message>\nPOSTMAN_BODY\n\nFor generated files, use:\ntmux-a2a-postman send --to <node> --body-file corrected-message.md\n",
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was not delivered.\nReason: %s\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above, then send a corrected message with the heredoc-explicit command and quoted delimiter:\ntmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'\n<corrected message>\nPOSTMAN_BODY\n",
 		contextID,
 		senderSimpleName,
 		now.Format(time.RFC3339),

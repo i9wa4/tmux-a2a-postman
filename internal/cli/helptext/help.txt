@@ -12,9 +12,11 @@ Topics:
   messaging
   start
   stop
+  send-heredoc
   send
   pop
   get-health
   get-health-oneline
+  inspect-reply
   version
   help

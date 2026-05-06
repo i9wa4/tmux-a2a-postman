@@ -1,0 +1,28 @@
+inspect-reply — inspect an open reply-required obligation by id
+
+Usage:
+  tmux-a2a-postman inspect-reply --id <message_id-or-reply_slot_id>
+  tmux-a2a-postman inspect-reply --session <tmux-session> --id <id>
+  tmux-a2a-postman inspect-reply --help
+
+Output:
+  JSON status object.
+  status is "found" when an open action_required or waiting_on_reply slot
+  matches the id, otherwise "not_found".
+
+Matching:
+  --id matches current open reply_slot_id values first, then message_id.
+  Satisfied reply slots, wrong ids, and no-reply traffic return not_found.
+
+Fields:
+  matches[*].node
+  matches[*].matched_by
+  matches[*].reply_slot.direction
+  matches[*].reply_slot.message_id
+  matches[*].reply_slot.reply_slot_id
+  matches[*].reply_slot.sender
+  matches[*].reply_slot.recipient
+  matches[*].reply_slot.reply_policy
+  matches[*].reply_slot.opened_at
+  matches[*].reply_slot.opened_at_source
+  matches[*].reply_slot.read_at

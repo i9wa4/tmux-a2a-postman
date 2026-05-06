@@ -164,18 +164,18 @@ func TestBuildEnvelope_SentTimestamp(t *testing.T) {
 func TestBuildEnvelope_DoesNotInjectContextIDForBareReplySendCommands(t *testing.T) {
 	cfg := &config.Config{
 		TmuxTimeout:  5.0,
-		ReplyCommand: "send --to orchestrator",
+		ReplyCommand: "send-heredoc --to orchestrator",
 	}
 
 	result := BuildEnvelope(cfg, "{reply_command}", "worker", "postman", "ctx-456", "/session/post/file.md", nil, map[string][]string{}, map[string]discovery.NodeInfo{}, "", map[string]bool{})
 
-	if result != "send --to orchestrator" {
+	if result != "send-heredoc --to orchestrator" {
 		t.Fatalf("reply_command = %q, want canonical bare send unchanged", result)
 	}
 }
 
 func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
-	replyCommand := "tmux-a2a-postman send\n  --to <recipient>\n  --body \"<your message>\""
+	replyCommand := "tmux-a2a-postman send-heredoc --to <recipient> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY"
 
 	got := RenderReplyCommand(replyCommand, "ctx-789", "worker")
 
@@ -190,7 +190,7 @@ func TestRenderReplyCommand_PreservesMultilineFormatting(t *testing.T) {
 func TestBuildDaemonEnvelope_DoesNotExpandRecipientPlaceholder(t *testing.T) {
 	cfg := &config.Config{
 		TmuxTimeout:  5.0,
-		ReplyCommand: "tmux-a2a-postman send --to <recipient> --body \"<your message>\"",
+		ReplyCommand: "tmux-a2a-postman send-heredoc --to <recipient>",
 	}
 
 	result := BuildDaemonEnvelope(
