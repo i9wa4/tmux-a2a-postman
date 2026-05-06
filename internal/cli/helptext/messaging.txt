@@ -5,7 +5,7 @@ Quick workflow (agents):
     tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
     message text
     POSTMAN_BODY
-  Read:  tmux-a2a-postman pop
+  Claim/open: tmux-a2a-postman pop
 
 Safe body input:
   Use send-heredoc with a quoted heredoc delimiter for frequent agent-to-agent
@@ -60,4 +60,6 @@ Envelope format (YAML frontmatter):
   ---
 
 Sender is auto-detected from the tmux pane title (no --from flag).
-`send-heredoc` and `pop` print JSON by default.
+`send-heredoc` and `pop` print JSON by default. `pop` claims the next inbox
+message and returns metadata plus an archived body reference; it does not print
+the full body inline.

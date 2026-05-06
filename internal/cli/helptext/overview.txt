@@ -1,7 +1,7 @@
 tmux-a2a-postman — A2A message routing daemon for tmux panes
 
 AI agents send and receive messages. Each message is routed to the recipient
-by the daemon. Use send-heredoc to send and pop to read.
+by the daemon. Use send-heredoc to send and pop to claim/open.
 Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.
 
 Quick Start:
@@ -10,7 +10,7 @@ Quick Start:
      tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
      message text
      POSTMAN_BODY
-  3. Read next msg:   tmux-a2a-postman pop
+  3. Claim/open msg:  tmux-a2a-postman pop
 
 Key Concepts:
   Node       An AI agent identified by its tmux pane title.
@@ -25,7 +25,7 @@ Key Concepts:
 
 Default operator surface:
   send-heredoc               Send a message with an explicit quoted heredoc
-  pop                        Read and archive the oldest unread inbox message
+  pop                        Claim and archive the oldest unread inbox message
   get-status                 Print canonical session health JSON
   get-status-oneline         Print compact all-session health
   inspect-input              Inspect open reply-required work by id
@@ -39,7 +39,7 @@ Lifecycle and recovery:
 
 Messaging Protocol:
   send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin
-  pop                                        Read and archive oldest message
+  pop                                        Claim and archive oldest message
   get-status                                Inspect agent-readable session health
   get-status-oneline                        Inspect compact all-session health
   inspect-input --id <id>                   Inspect an open input request by id

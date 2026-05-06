@@ -265,6 +265,57 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	if payload.MarkdownPath == "" {
 		t.Fatal("payload.MarkdownPath is empty")
 	}
+	if !payload.BodyAvailable {
+		t.Fatal("payload.BodyAvailable = false, want true")
+	}
+	if payload.BodyReference != "markdown_path" {
+		t.Fatalf("payload.BodyReference = %q, want markdown_path", payload.BodyReference)
+	}
+	if payload.BodyBytes != len([]byte("JSON payload")) {
+		t.Fatalf("payload.BodyBytes = %d, want %d", payload.BodyBytes, len([]byte("JSON payload")))
+	}
+	if payload.BodyOmittedReason != "externalized_to_markdown_path" {
+		t.Fatalf("payload.BodyOmittedReason = %q, want externalized_to_markdown_path", payload.BodyOmittedReason)
+	}
+}
+
+func TestRunPop_TildeShortensHomeMarkdownPathAndKeepsAbsolutePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	baseDir := filepath.Join(homeDir, ".local", "state", "tmux-a2a-postman")
+	t.Setenv("HOME", homeDir)
+	installFakeTmuxForCLI(t, baseDir, "test-session", "worker")
+
+	contextID := "ctx-pop-home-path"
+	messageFile := "20260415-010104-from-orchestrator-to-worker.md"
+	inboxDir := filepath.Join(baseDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	content := messageFixture("orchestrator", "worker", "Home path payload")
+	if err := os.WriteFile(filepath.Join(inboxDir, messageFile), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout)
+	wantDisplayPath := filepath.Join("~", ".local", "state", "tmux-a2a-postman", contextID, "test-session", "read", messageFile)
+	if payload.MarkdownPath != wantDisplayPath {
+		t.Fatalf("payload.MarkdownPath = %q, want %q", payload.MarkdownPath, wantDisplayPath)
+	}
+	wantAbsolutePath := filepath.Join(baseDir, contextID, "test-session", "read", messageFile)
+	if payload.MarkdownAbsolutePath != wantAbsolutePath {
+		t.Fatalf("payload.MarkdownAbsolutePath = %q, want %q", payload.MarkdownAbsolutePath, wantAbsolutePath)
+	}
+	if payload.BodyReference != "markdown_absolute_path" {
+		t.Fatalf("payload.BodyReference = %q, want markdown_absolute_path", payload.BodyReference)
+	}
+	assertPopPayloadArchive(t, payload, content)
 }
 
 func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
@@ -472,12 +523,16 @@ func assertPopPayloadArchive(t *testing.T, payload popMessageOutput, want string
 
 func readPopArchiveForTest(t *testing.T, payload popMessageOutput) string {
 	t.Helper()
-	if payload.MarkdownPath == "" {
-		t.Fatal("payload.MarkdownPath is empty")
+	path := payload.MarkdownPath
+	if payload.MarkdownAbsolutePath != "" {
+		path = payload.MarkdownAbsolutePath
 	}
-	data, err := os.ReadFile(payload.MarkdownPath)
+	if path == "" {
+		t.Fatal("payload.MarkdownPath and payload.MarkdownAbsolutePath are empty")
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("ReadFile markdown_path: %v", err)
+		t.Fatalf("ReadFile pop archive path: %v", err)
 	}
 	return string(data)
 }

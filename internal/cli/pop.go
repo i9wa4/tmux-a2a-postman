@@ -122,22 +122,27 @@ type popEmptyOutput struct {
 }
 
 type popMessageOutput struct {
-	Status              string         `json:"status"`
-	MessageID           string         `json:"message_id,omitempty"`
-	MarkdownPath        string         `json:"markdown_path,omitempty"`
-	Frontmatter         map[string]any `json:"frontmatter,omitempty"`
-	From                string         `json:"from"`
-	To                  string         `json:"to"`
-	ReplyPolicy         string         `json:"reply_policy,omitempty"`
-	ReplyTo             string         `json:"reply_to,omitempty"`
-	InputRequestID      string         `json:"input_request_id,omitempty"`
-	FillsInputRequestID string         `json:"fills_input_request_id,omitempty"`
-	InputRequestSetID   string         `json:"input_request_set_id,omitempty"`
-	BranchID            string         `json:"branch_id,omitempty"`
-	CompletionRule      string         `json:"completion_rule,omitempty"`
-	Timestamp           string         `json:"timestamp"`
-	UnreadBefore        *int           `json:"unread_before,omitempty"`
-	Remaining           *int           `json:"remaining,omitempty"`
+	Status               string         `json:"status"`
+	MessageID            string         `json:"message_id,omitempty"`
+	MarkdownPath         string         `json:"markdown_path,omitempty"`
+	MarkdownAbsolutePath string         `json:"markdown_absolute_path,omitempty"`
+	BodyAvailable        bool           `json:"body_available"`
+	BodyReference        string         `json:"body_reference,omitempty"`
+	BodyBytes            int            `json:"body_bytes,omitempty"`
+	BodyOmittedReason    string         `json:"body_omitted_reason,omitempty"`
+	Frontmatter          map[string]any `json:"frontmatter,omitempty"`
+	From                 string         `json:"from"`
+	To                   string         `json:"to"`
+	ReplyPolicy          string         `json:"reply_policy,omitempty"`
+	ReplyTo              string         `json:"reply_to,omitempty"`
+	InputRequestID       string         `json:"input_request_id,omitempty"`
+	FillsInputRequestID  string         `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID    string         `json:"input_request_set_id,omitempty"`
+	BranchID             string         `json:"branch_id,omitempty"`
+	CompletionRule       string         `json:"completion_rule,omitempty"`
+	Timestamp            string         `json:"timestamp"`
+	UnreadBefore         *int           `json:"unread_before,omitempty"`
+	Remaining            *int           `json:"remaining,omitempty"`
 }
 
 func writeEmptyPopOutput() error {
@@ -146,7 +151,17 @@ func writeEmptyPopOutput() error {
 
 func writePopMessageOutput(content, filename, markdownPath string, unreadBefore, remaining *int) error {
 	output := parseMessageContent(content, filename)
-	output.MarkdownPath = markdownPath
+	output.MarkdownPath = displayMarkdownPath(markdownPath)
+	if output.MarkdownPath != markdownPath {
+		output.MarkdownAbsolutePath = markdownPath
+	}
+	if output.BodyAvailable {
+		output.BodyReference = "markdown_path"
+		if output.MarkdownAbsolutePath != "" {
+			output.BodyReference = "markdown_absolute_path"
+		}
+		output.BodyOmittedReason = "externalized_to_markdown_path"
+	}
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
 	return json.NewEncoder(os.Stdout).Encode(output)
@@ -158,9 +173,15 @@ func intPtr(value int) *int {
 
 func parseMessageContent(content, filename string) popMessageOutput {
 	result := popMessageOutput{
-		Status:      "message",
-		MessageID:   filename,
-		Frontmatter: frontmatterFromContent(content),
+		Status:        "message",
+		MessageID:     filename,
+		Frontmatter:   frontmatterFromContent(content),
+		BodyAvailable: false,
+	}
+	body := envelope.BodyFromContent(content)
+	if body != "" {
+		result.BodyAvailable = true
+		result.BodyBytes = len([]byte(body))
 	}
 	metadata, err := envelope.ParseMetadata(content)
 	if err != nil {
@@ -181,6 +202,24 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	result.CompletionRule = metadata.CompletionRule
 	result.Timestamp = metadata.Timestamp
 	return result
+}
+
+func displayMarkdownPath(markdownPath string) string {
+	if markdownPath == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return markdownPath
+	}
+	rel, err := filepath.Rel(home, markdownPath)
+	if rel == "." {
+		return "~"
+	}
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return markdownPath
+	}
+	return filepath.Join("~", rel)
 }
 
 func frontmatterFromContent(content string) map[string]any {

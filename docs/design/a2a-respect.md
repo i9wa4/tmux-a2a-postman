@@ -202,7 +202,7 @@ Current postman input-request fields are operationally accurate:
 | `waiting_on_input`             | Sender-side open wait for required reply                      | Postman-specific perspective.                          |
 | `inspect-input --id`           | Finds open input requests by `input_request_id` or message ID  | Useful operator API.                                   |
 | `nodes[*].flow.input_requests` | Health JSON projection of open required-input requests         | Correct home for detailed input-request state.         |
-| `pop` JSON fields              | Read message envelope path and structured frontmatter metadata | Expose archive truth without embedding full body.      |
+| `pop` JSON fields              | Claimed message envelope path and structured frontmatter metadata | Expose archive truth without embedding full body.    |
 
 Counterpart names if the project later models richer request closure:
 
@@ -314,6 +314,13 @@ frontmatter needed by agents.
 That direction fits A2A respect well. A2A `Message.parts` can become a future
 body projection, while frontmatter remains metadata.
 
+Path and body-reference display follows
+[Path Display Policy](path-display-policy.md): user-facing home paths can be
+`~`-shortened, while absolute file paths need an explicit machine-readable
+field when agents must open the file directly. `pop` remains the receiver-owned
+state transition: daemon notifications hint that mail exists, and the receiver
+calls `pop` to claim the inbox item and obtain the archived body reference.
+
 Example future `pop` JSON shape:
 
 ```json
@@ -324,7 +331,12 @@ Example future `pop` JSON shape:
   "to": "worker",
   "reply_policy": "required",
   "input_request_id": "ireq_example",
-  "markdown_path": "$XDG_STATE_HOME/tmux-a2a-postman/read/worker/20260506-120000-sfb93-example.md",
+  "markdown_path": "~/.local/state/tmux-a2a-postman/read/worker/20260506-120000-sfb93-example.md",
+  "markdown_absolute_path": "/absolute/path/to/read/worker/20260506-120000-sfb93-example.md",
+  "body_available": true,
+  "body_reference": "markdown_absolute_path",
+  "body_bytes": 42,
+  "body_omitted_reason": "externalized_to_markdown_path",
   "params": {
     "contextId": "20260506-001721-c1d9",
     "messageId": "20260506-120000-sfb93-example.md"
@@ -356,9 +368,14 @@ Example optional future body projection:
 ```
 
 The default #396 JSON should not include full `body` or `content`; it should
-link to `markdown_path` for human reading. If the project adds `parts`, make it
-an explicit opt-in or a compact body-only mode so the default remains
-machine-friendly.
+make body availability explicit and link to `markdown_path` for human or
+programmatic reading. If the project adds `parts`, make it an explicit opt-in
+or a compact body-only mode so the default remains machine-friendly.
+
+No separate user-facing alias is introduced for now. The command name `pop`
+continues to carry the mailbox state-machine meaning, while pane notifications
+and help text describe the user-visible action as claiming/opening the message
+and obtaining its archived body path/reference.
 
 ## AgentCard Alignment
 

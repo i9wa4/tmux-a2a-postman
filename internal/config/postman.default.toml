@@ -108,7 +108,7 @@ allow_shell_templates = false
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}!
 You've got mail: {filename}
-Run `tmux-a2a-postman pop` to read it. """
+Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
 # Message footer (appended to outgoing messages by `send-heredoc` after the bounded sender message section)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes

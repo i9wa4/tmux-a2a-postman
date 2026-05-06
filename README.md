@@ -171,7 +171,8 @@ text as a CLI argument, file-body shortcut, or generic pipe-oriented body.
 
 The daemon discovers panes by title and routes messages through
 filesystem-backed inboxes. A recipient agent usually runs `pop` after the pane
-notification or message footer tells it mail is waiting.
+notification or message footer tells it mail is waiting; `pop` is the receiver
+claim/open step and returns metadata plus an archived body path.
 
 Use explicit subcommands; bare `tmux-a2a-postman` prints usage and does not
 start the daemon. The exact CLI reference is built into the binary:
