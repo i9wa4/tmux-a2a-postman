@@ -1156,6 +1156,9 @@ role = "orchestrator"
 	if strings.Contains(content, "Reply: tmux-a2a-postman send-heredoc --to <receiver>") {
 		t.Fatalf("default footer still contains hard-coded placeholder reply command:\n%s", content)
 	}
+	if strings.Contains(content, "Required-reply completion gate:") {
+		t.Fatalf("default footer included required-reply gate for no-reply message:\n%s", content)
+	}
 }
 
 func TestRunSendMessage_DefaultEnvelopeBoundsSenderMarkdownHeadings(t *testing.T) {
@@ -1276,6 +1279,10 @@ role = "worker"
 		"input_request_id: " + payload.InputRequestID,
 		"Reply with quoted heredoc:\ntmux-a2a-postman send-heredoc --to messenger --fills-input-request-id " + payload.InputRequestID + " --reply-to " + payload.Sent + " <<'POSTMAN_BODY'",
 		"<your message>\nPOSTMAN_BODY",
+		"Required-reply completion gate:",
+		"Filling this input request closes transport, not task acceptance.",
+		"DONE requires original checklist verification plus: Task artifact, Original checklist: PASS, Evidence, Remaining blockers: none.",
+		"Use BLOCKED with Original checklist: FAIL when any requested item is unresolved or unverified.",
 		"Add --reply-required only when your reply needs a response.",
 	} {
 		if !strings.Contains(string(content), want) {

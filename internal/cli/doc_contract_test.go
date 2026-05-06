@@ -218,6 +218,42 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	}
 }
 
+func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
+	defaultConfig := readRepoFile(t, "internal/config/postman.default.toml")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+
+	assertContainsAllNormalized(t, defaultConfig,
+		"required_reply_completion_gate",
+		"completion proof guidance for reply-required messages; empty otherwise",
+	)
+	assertContainsAllNormalized(t, messagingHelp,
+		"Filling an input request closes transport, not task acceptance.",
+		"Task artifact: <artifact-reference>",
+		"Original checklist: PASS",
+		"Evidence: <commands, issue/PR links, tests, or verification output>",
+		"Remaining blockers: none",
+		"Use BLOCKED with Original checklist: FAIL",
+		"Receivers should verify checklist status, durable references, evidence, and blockers before relaying, approving, or closing work.",
+	)
+	assertContainsAllNormalized(t, readme,
+		"Filling an input request closes transport, not task acceptance.",
+		"Task artifact",
+		"Original checklist: PASS",
+		"Remaining blockers: none",
+		"Receivers verify the checklist status, durable references, evidence, and blockers before relaying, approving, or closing work.",
+	)
+	assertContainsAllNormalized(t, operatorSkill,
+		"Filling an input request closes transport, not task acceptance.",
+		"Task artifact: <artifact-reference>",
+		"Original checklist: PASS",
+		"Remaining blockers: none",
+		"Use `BLOCKED` with `Original checklist: FAIL`",
+		"verify checklist status, durable references, evidence, and blockers before relaying, approving, or closing work",
+	)
+}
+
 func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testing.T) {
 	contributing := readRepoFile(t, "CONTRIBUTING.md")
 	assertContainsNormalized(t, contributing, "nix run '.#skill-check'")

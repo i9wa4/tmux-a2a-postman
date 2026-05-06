@@ -101,6 +101,22 @@ action. Only a later message with `--fills-input-request-id <input-request-id>`
 clears an exact input request. `--reply-to <message-id>` remains useful for
 fallback message-link closure and human traceability.
 
+Filling an input request closes transport, not task acceptance. Before `DONE`,
+compare the original requirements/checklist against actual evidence. Use this
+compact proof shape when work is complete:
+
+```text
+DONE: Requirements satisfied.
+Task artifact: <artifact-reference>
+Original checklist: PASS
+Evidence: <commands, issue/PR links, tests, or verification output>
+Remaining blockers: none
+```
+
+Use `BLOCKED` with `Original checklist: FAIL` when any requested item is
+unresolved or unverified. Receivers should verify checklist status, durable
+references, evidence, and blockers before relaying, approving, or closing work.
+
 Use `--reply-required` for work requests, approval requests, status requests,
 or any message where the sender needs a later resolving answer. Use
 `--no-reply` for terminal or informational mail that should not create a new
@@ -202,16 +218,17 @@ progress evidence matters.
    `input_request_id`; keep `--reply-to <message_id>` for traceability when the
    footer provides it. Otherwise use `--reply-to <message_id>` as fallback
    closure.
-6. If your node is `waiting` or `expected_wait`, do not clear it by reading
+6. Do not send `DONE` until the completion gate passes. If evidence is missing,
+   send `BLOCKED` with the failing original requirement instead.
+7. If your node is `waiting` or `expected_wait`, do not clear it by reading
    mail. Wait for an exact reply or send a bounded follow-up if the workflow
    timeout requires it.
-7. If a node is `blocked`, inspect the blocked report and resolve the named
+8. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
-8. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
+9. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
    session, and daemon before resending work.
-9. If messages are in dead-letter, audit topology and recipient names before
-   retrying.
-10. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
+10. Audit topology and recipient names before retrying messages in dead-letter.
+11. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
 ## 9. Escalation Boundaries
 

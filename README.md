@@ -187,6 +187,13 @@ an answer; reply-required messages carry `input_request_id`, and exact replies
 should include `--fills-input-request-id <input-request-id>`. The default
 footer also keeps `--reply-to <message-id>` as traceability and fallback
 message-link closure.
+Filling an input request closes transport, not task acceptance. For required
+work, send `DONE` only after checking the original requirements against
+evidence, and include a compact proof shape: `Task artifact`,
+`Original checklist: PASS`, `Evidence`, and `Remaining blockers: none`. Send
+`BLOCKED` with `Original checklist: FAIL` when any requested item is unresolved
+or unverified. Receivers verify the checklist status, durable references,
+evidence, and blockers before relaying, approving, or closing work.
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
 Agents should prefer `get-status` for
 structured session JSON, `inspect-input --id <message_id-or-input_request_id>`

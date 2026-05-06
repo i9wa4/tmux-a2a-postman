@@ -283,23 +283,24 @@ func RunSendHeredoc(args []string) error {
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
 	vars := map[string]string{
-		"context_id":             resolvedContextID,
-		"sender":                 sender,
-		"recipient":              *to,
-		"timestamp":              now.Format(time.RFC3339),
-		"can_talk_to":            canTalkTo,
-		"session_dir":            filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":          strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
-		"message_id":             filename,
-		"reply_policy":           generatedReplyPolicyMarker,
-		"reply_to":               *replyTo,
-		"input_request_id":       inputRequestIDMarker,
-		"fills_input_request_id": *fillsInputRequestID,
-		"input_request_set_id":   "",
-		"reply_arguments":        "",
-		"template":               envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
-		"session_name":           sessionName,
-		"sender_pane_id":         config.GetTmuxPaneID(),
+		"context_id":                     resolvedContextID,
+		"sender":                         sender,
+		"recipient":                      *to,
+		"timestamp":                      now.Format(time.RFC3339),
+		"can_talk_to":                    canTalkTo,
+		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
+		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"message_id":                     filename,
+		"reply_policy":                   generatedReplyPolicyMarker,
+		"reply_to":                       *replyTo,
+		"input_request_id":               inputRequestIDMarker,
+		"fills_input_request_id":         *fillsInputRequestID,
+		"input_request_set_id":           "",
+		"reply_arguments":                "",
+		"required_reply_completion_gate": "",
+		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
+		"session_name":                   sessionName,
+		"sender_pane_id":                 config.GetTmuxPaneID(),
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -333,6 +334,7 @@ func RunSendHeredoc(args []string) error {
 	vars["input_request_id"] = inputRequestID
 	vars["fills_input_request_id"] = *fillsInputRequestID
 	vars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
+	vars["required_reply_completion_gate"] = requiredReplyCompletionGateForPolicy(replyPolicy)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
 		"messageId":              filename,
 		"replyPolicy":            replyPolicy,
@@ -498,6 +500,16 @@ func replyArgumentsForMessage(messageID, inputRequestID string) string {
 		return " --fills-input-request-id " + inputRequestID + " --reply-to " + messageID
 	}
 	return " --reply-to " + messageID
+}
+
+func requiredReplyCompletionGateForPolicy(replyPolicy string) string {
+	if replyPolicy != "required" {
+		return ""
+	}
+	return "Required-reply completion gate:\n" +
+		"Filling this input request closes transport, not task acceptance.\n" +
+		"DONE requires original checklist verification plus: Task artifact, Original checklist: PASS, Evidence, Remaining blockers: none.\n" +
+		"Use BLOCKED with Original checklist: FAIL when any requested item is unresolved or unverified.\n"
 }
 
 func validateReplyToMessageID(replyTo string) error {
