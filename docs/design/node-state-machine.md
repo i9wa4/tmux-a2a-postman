@@ -179,7 +179,7 @@ completion rules are implemented.
 
 ## 7. Health Projection
 
-The canonical contract is shared by `get-health`, `get-health-oneline`, and the
+The canonical contract is shared by `get-status`, `get-status-oneline`, and the
 default TUI. Per-node state is exposed as `nodes[*].visible_state`.
 Session-level state is the worst visible state across nodes, ranked as:
 
@@ -214,7 +214,7 @@ recipient. A node that is waiting for an approval or other required reply is
 `expected_wait`, not blocked. It becomes `blocked` only when an open blocked
 report exists.
 
-`get-health` exposes the evidence as:
+`get-status` exposes the evidence as:
 
 | Field                  | Meaning                                      |
 | ---------------------- | -------------------------------------------- |
@@ -227,7 +227,7 @@ report exists.
 | `nodes[*].flow`        | Input-request and blocked-report workflow state |
 | `nodes[*].queues`      | Node-local queue counts                      |
 
-`get-health-oneline` prints compact visible-state marks by default. The opt-in
+`get-status-oneline` prints compact visible-state marks by default. The opt-in
 `--severity` flag prints `compact_severity` instead. A `?` suffix marks
 inferred evidence, such as `blocked?:node=worker`.
 

@@ -24,7 +24,7 @@ func isShellCommand(cmd string) bool {
 // RunGetSessionStatusOneline formats the compact all-session health view in one line.
 // Output format: [0]🔷🟡:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
-	fs := flag.NewFlagSet("get-health-oneline", flag.ContinueOnError)
+	fs := flag.NewFlagSet("get-status-oneline", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from session)")
 	configPath := fs.String("config", "", "Config file path")

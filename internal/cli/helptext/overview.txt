@@ -26,8 +26,8 @@ Key Concepts:
 Default operator surface:
   send-heredoc               Send a message with an explicit quoted heredoc
   pop                        Read and archive the oldest unread inbox message
-  get-health                 Print canonical session health JSON
-  get-health-oneline         Print compact all-session health
+  get-status                 Print canonical session health JSON
+  get-status-oneline         Print compact all-session health
   inspect-input              Inspect open reply-required work by id
   version                    Print the build version JSON
 
@@ -39,8 +39,8 @@ Lifecycle and recovery:
 Messaging Protocol:
   send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin
   pop                                        Read and archive oldest message
-  get-health                                Inspect agent-readable session health
-  get-health-oneline                        Inspect compact all-session health
+  get-status                                Inspect agent-readable session health
+  get-status-oneline                        Inspect compact all-session health
   inspect-input --id <id>                   Inspect an open input request by id
   version                                   Print the build version JSON
 
@@ -54,8 +54,8 @@ Topics:
   send-heredoc         tmux-a2a-postman help send-heredoc
   send                 tmux-a2a-postman help send
   pop                  tmux-a2a-postman help pop
-  get-health           tmux-a2a-postman help get-health
-  get-health-oneline   tmux-a2a-postman help get-health-oneline
+  get-status           tmux-a2a-postman help get-status
+  get-status-oneline   tmux-a2a-postman help get-status-oneline
   inspect-input        tmux-a2a-postman help inspect-input
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help

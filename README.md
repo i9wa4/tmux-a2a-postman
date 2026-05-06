@@ -9,8 +9,8 @@ durable workspaces for human-directed handoffs, delegation, and review.
 
 It runs one daemon per local user account, treats tmux pane titles as role/node
 names, and delivers `send-heredoc` messages to filesystem-backed inboxes.
-Agents read mail with `pop` and inspect shared health with `get-health` or
-`get-health-oneline`.
+Agents read mail with `pop` and inspect shared health with `get-status` or
+`get-status-oneline`.
 
 ## 1. Concept
 
@@ -181,18 +181,18 @@ tmux-a2a-postman help config
 tmux-a2a-postman help directories
 ```
 
-`get-health`, `get-health-oneline`, and the default TUI are views over the
+`get-status`, `get-status-oneline`, and the default TUI are views over the
 same reply-aware contract. Use `--reply-required` only for messages that need
 an answer; reply-required messages carry `input_request_id`, and exact replies
 should include `--fills-input-request-id <input-request-id>`. The default
 footer also keeps `--reply-to <message-id>` as traceability and fallback
 message-link closure.
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
-Agents should prefer `get-health` for
+Agents should prefer `get-status` for
 structured session JSON, `inspect-input --id <message_id-or-input_request_id>`
 to identify a specific open reply-required item without popping inbox mail,
-and `get-health-oneline` for compact coordination.
-`get-health` uses `schema_version: 3`; `visible_state` and `compact` are
+and `get-status-oneline` for compact coordination.
+`get-status` uses `schema_version: 3`; `visible_state` and `compact` are
 compact operator fields, while detailed contextual fields carry the semantic
 explanation. The severity fields include `severity`, `severity_source`,
 `severity_reason`, `compact_severity`, `delivery`, `nodes[*].node_local`,
@@ -203,10 +203,10 @@ stuck after 180 seconds. Open reply-required work appears under
 `nodes[*].flow.input_requests.input_required` and `waiting_on_input` with
 `direction`, `message_id`, `input_request_id`, `sender`, `recipient`,
 `reply_policy`, and available open/read timestamps.
-`get-health-oneline` keeps compact visible-state marks by default; add
+`get-status-oneline` keeps compact visible-state marks by default; add
 `--severity` for ASCII `compact_severity` tokens. A `?` suffix marks inferred
 evidence, for example an exact first-line `BLOCKED:` report without structured
-blocked-report metadata. `get-health` also includes
+blocked-report metadata. `get-status` also includes
 `nodes[*].screen_progress` with non-content evidence such as last capture time,
 last screen-change time, and an opaque screen fingerprint; raw pane text is
 not exposed. The default oneline view stays compact and omits those details.

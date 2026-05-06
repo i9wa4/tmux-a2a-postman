@@ -28,11 +28,11 @@ pop
   Empty inbox: {"status":"empty"}
   Node is auto-detected from tmux pane title.
 
-get-health
+get-status
   Print canonical session health JSON for agents and scripts.
   Uses the current tmux session.
 
-get-health-oneline
+get-status-oneline
   Print compact all-session health for quick agent coordination.
   Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
@@ -63,4 +63,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-health, get-health-oneline, inspect-input, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, inspect-input, version, help

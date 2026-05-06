@@ -1,9 +1,9 @@
-get-health-oneline — print compact all-session health
+get-status-oneline — print compact all-session health
 
 Usage:
-  tmux-a2a-postman get-health-oneline
-  tmux-a2a-postman get-health-oneline --severity
-  tmux-a2a-postman get-health-oneline --help
+  tmux-a2a-postman get-status-oneline
+  tmux-a2a-postman get-status-oneline --severity
+  tmux-a2a-postman get-status-oneline --help
 
 Output:
   [0]🔷🟡:🟢 [1]🔴
@@ -21,5 +21,5 @@ Marks:
   🟡 waiting   outbound reply-required message is open
   🟢 ready     pane is live with no open action or wait
 
-Screen progress fingerprints stay out of this compact view; use get-health
+Screen progress fingerprints stay out of this compact view; use get-status
 for nodes[*].screen_progress JSON evidence.

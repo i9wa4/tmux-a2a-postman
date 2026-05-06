@@ -120,7 +120,7 @@ Important merge rules:
   escalation rules when the workflow needs a response.
 - Confirm intentionally quiet nodes say that explicitly.
 - Confirm templates use `tmux-a2a-postman send-heredoc`, `pop`, and
-  `get-health` instead of raw runtime filesystem manipulation.
+  `get-status` instead of raw runtime filesystem manipulation.
 - Confirm templates do not duplicate context injected by system templates:
   `message_footer`, `draft_template`, `daemon_message_template`,
   `notification_template`, or dead-letter notification text.
@@ -159,7 +159,7 @@ choose a skill:
 - topology, node names, and routing expectations
 - reply-required versus no-reply behavior, completion words, and escalation
   rules
-- state-machine semantics that affect `get-health` or `get-health-oneline`
+- state-machine semantics that affect `get-status` or `get-status-oneline`
 - role-specific authority boundaries, such as who may approve or implement
 - compact reminders that prevent prompt deadlocks or broken message flow
 - the `skill_path` declaration and a short rule to read listed `SKILL.md` files
@@ -179,7 +179,7 @@ they can be selected by skill:
 
 | Product-spec content                                  | Preferred skill            |
 | ----------------------------------------------------- | -------------------------- |
-| `pop`, `send-heredoc`, `get-health`, reply semantics  | `postman-session-operator` |
+| `pop`, `send-heredoc`, `get-status`, reply semantics  | `postman-session-operator` |
 | `pending`, `waiting`, `stale`, queues                 | `postman-session-operator` |
 | dead-letter diagnosis and safe retry flow             | `postman-session-operator` |
 | `postman.md` syntax, edges, merge order               | `postman-config-auditor`   |
@@ -217,8 +217,8 @@ of:
 
 ### 3.5. Runtime Symptoms
 
-- Use `tmux-a2a-postman get-health` for structured state and
-  `tmux-a2a-postman get-health-oneline` for compact coordination.
+- Use `tmux-a2a-postman get-status` for structured state and
+  `tmux-a2a-postman get-status-oneline` for compact coordination.
 - Treat `pending` as inbound reply-required action.
 - Treat `waiting` as outbound reply-required mail waiting for a response.
 - Treat `stale` as missing, unavailable, or unknown pane/session state before

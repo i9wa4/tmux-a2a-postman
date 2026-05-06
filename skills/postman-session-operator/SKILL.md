@@ -4,7 +4,7 @@ license: MIT
 description: |
   Operate and diagnose live tmux-a2a-postman sessions.
   Use when:
-  - Interpreting get-health or get-health-oneline output
+  - Interpreting get-status or get-status-oneline output
   - Deciding whether to pop, reply, resend, wait, follow up, or restart
   - Handling reply-required, no-reply, reply-to, exact input-request replies, or
     status request behavior
@@ -22,10 +22,10 @@ safe operator action.
 
 ## 1. First Commands
 
-Use `tmux-a2a-postman get-health` when making a session decision. It returns
+Use `tmux-a2a-postman get-status` when making a session decision. It returns
 the canonical JSON health contract.
 
-Use `tmux-a2a-postman get-health-oneline` for a compact scan across sessions.
+Use `tmux-a2a-postman get-status-oneline` for a compact scan across sessions.
 Add `--severity` when you need the opt-in contextual severity token instead of
 the default compact visible-state marks.
 
@@ -75,7 +75,7 @@ instructions, message metadata, health output, and observed send results.
 A reply-required message opens action for the recipient and waiting state for
 the sender.
 
-`get-health` exposes concrete open input-request details at
+`get-status` exposes concrete open input-request details at
 `nodes[*].flow.input_requests.input_required` and `waiting_on_input`. Each
 detail includes `direction`, `message_id`, `input_request_id`, `sender`,
 `recipient`, `reply_policy`, and available open/read timestamps. Use
@@ -127,7 +127,7 @@ If dead letters exist, treat routing or configuration as suspect and use
 
 ## 6. Contextual Severity
 
-`get-health` schema version 3 exposes `visible_state`, `compact`, and
+`get-status` schema version 3 exposes `visible_state`, `compact`, and
 contextual severity fields. Use these fields to decide
 whether a state is an expected wait, live work, a blocked report, stale local
 evidence, or delivery trouble.
@@ -148,7 +148,7 @@ Severity ranks from least to most urgent:
 | `severity`            | Worst contextual severity for the session/node   |
 | `severity_source`     | Surface that produced that severity              |
 | `severity_reason`     | Short reason for the chosen severity             |
-| `compact_severity`    | ASCII token used by `get-health-oneline --severity` |
+| `compact_severity`    | ASCII token used by `get-status-oneline --severity` |
 | `delivery`            | Post queue and dead-letter delivery health       |
 | `nodes[*].node_local` | Pane-local activity/staleness evidence           |
 | `nodes[*].flow`       | Input-request and blocked-report workflow evidence |
@@ -181,12 +181,12 @@ text in health output.
 | `screen_progress.last_screen_change_at` | Last detected screen-change timestamp when available |
 | `screen_progress.screen_fingerprint`    | Opaque screen fingerprint, not transcript content    |
 
-`get-health-oneline` omits this detail to stay compact; use `get-health` when
+`get-status-oneline` omits this detail to stay compact; use `get-status` when
 progress evidence matters.
 
 ## 8. Safe Operator Flow
 
-1. Run `tmux-a2a-postman get-health`.
+1. Run `tmux-a2a-postman get-status`.
 2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
    and topology before creating more messages.
 3. If your node is `pending` or `needs_action`, inspect

@@ -31,11 +31,11 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery:") {
 		t.Fatalf("stdout missing lifecycle split: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-health                 Print canonical session health JSON") {
-		t.Fatalf("stdout missing get-health overview line: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "get-status                 Print canonical session health JSON") {
+		t.Fatalf("stdout missing get-status overview line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-health-oneline         Print compact all-session health") {
-		t.Fatalf("stdout missing get-health-oneline overview line: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "get-status-oneline         Print compact all-session health") {
+		t.Fatalf("stdout missing get-status-oneline overview line: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
 		t.Fatalf("stdout missing version overview line: %q", stdout.String())
@@ -63,11 +63,11 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("stdout missing explicit-command guidance: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-health") {
-		t.Fatalf("stdout missing get-health command: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "get-status") {
+		t.Fatalf("stdout missing get-status command: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-health-oneline") {
-		t.Fatalf("stdout missing get-health-oneline command: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "get-status-oneline") {
+		t.Fatalf("stdout missing get-status-oneline command: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "version") {
 		t.Fatalf("stdout missing version command: %q", stdout.String())
@@ -103,7 +103,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"Runtime state model:",
 		"Core visible states: ready, waiting, pending, stale",
 		"Quick reading guide:",
-		"visible_state in get-health JSON answers what the node looks like now",
+		"visible_state in get-status JSON answers what the node looks like now",
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
@@ -118,7 +118,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
 		"retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)",
 		"pane_capture_tail_lines          Recent lines scanned for compaction markers",
-		"get-health, get-health-oneline, and the default TUI read the same canonical health contract.",
+		"get-status, get-status-oneline, and the default TUI read the same canonical health contract.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout missing %q: %q", want, got)

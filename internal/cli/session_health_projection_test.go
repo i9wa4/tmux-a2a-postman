@@ -31,7 +31,7 @@ type sessionHealthProjectionFixture struct {
 	cfg         *config.Config
 }
 
-func TestGetHealthProjectionParity(t *testing.T) {
+func TestSessionHealthProjectionParity(t *testing.T) {
 	tests := []struct {
 		name         string
 		paneStates   map[string]string
@@ -88,7 +88,7 @@ func TestGetHealthProjectionParity(t *testing.T) {
 	}
 }
 
-func TestGetHealthOnelineProjectionParity(t *testing.T) {
+func TestGetStatusOnelineProjectionParity(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -130,10 +130,10 @@ func TestNoActivePostmanUnavailableContract(t *testing.T) {
 	installFakeTmuxForCLI(t, tmpDir, "review", "worker")
 
 	stdout, _, err := captureCommandOutput(t, func() error {
-		return RunGetSessionHealth(nil)
+		return RunGetSessionStatus(nil)
 	})
 	if err != nil {
-		t.Fatalf("RunGetSessionHealth() error = %v", err)
+		t.Fatalf("RunGetSessionStatus() error = %v", err)
 	}
 
 	var payload status.SessionHealth
@@ -195,7 +195,7 @@ func TestTUIProjectionParity(t *testing.T) {
 	assertSessionHealthParity(t, legacy, got)
 }
 
-func TestGetHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
+func TestSessionHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -224,7 +224,7 @@ func TestGetHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	}
 }
 
-func TestGetHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T) {
+func TestSessionHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -281,7 +281,7 @@ func TestGetHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T)
 	}
 }
 
-func TestGetHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
+func TestSessionHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "stale"},
@@ -332,7 +332,7 @@ func TestGetHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
 	}
 }
 
-func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
+func TestSessionHealthUsesReplyObligationProjection(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -370,7 +370,7 @@ func TestGetHealthUsesReplyObligationProjection(t *testing.T) {
 	}
 }
 
-func TestGetHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
+func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -496,7 +496,7 @@ func TestCollectSessionDeliveryClassifiesQueuedStuckAndFailure(t *testing.T) {
 	}
 }
 
-func TestGetHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
+func TestSessionHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -545,7 +545,7 @@ func TestGetHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
 	}
 }
 
-func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
+func TestSessionHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -591,7 +591,7 @@ func TestGetHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	}
 }
 
-func TestGetHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
+func TestSessionHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
@@ -633,7 +633,7 @@ func TestGetHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
 	}
 }
 
-func TestGetHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
+func TestSessionHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "idle"},
@@ -704,7 +704,7 @@ func appendSessionHealthObligationEvent(t *testing.T, writer *journal.Writer, ev
 	}
 }
 
-func TestGetHealthOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {
+func TestGetStatusOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {
 	fixture := writeSessionHealthProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},

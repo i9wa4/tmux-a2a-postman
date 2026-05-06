@@ -100,16 +100,16 @@ func TestDispatch_PopPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
-func TestDispatch_HealthCommandsArePublic(t *testing.T) {
-	t.Run("get-health", func(t *testing.T) {
+func TestDispatch_StatusCommandsArePublic(t *testing.T) {
+	t.Run("get-status", func(t *testing.T) {
 		var gotArgs []string
 
 		result := Dispatch(
-			"get-health",
+			"get-status",
 			nil,
 			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 			Handlers{
-				GetSessionHealth: func(args []string) error {
+				GetSessionStatus: func(args []string) error {
 					gotArgs = append([]string(nil), args...)
 					return nil
 				},
@@ -119,20 +119,20 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 		if result.Err != nil {
 			t.Fatalf("Dispatch returned error: %v", result.Err)
 		}
-		if result.Label != "postman get-health" {
-			t.Fatalf("label = %q, want %q", result.Label, "postman get-health")
+		if result.Label != "postman get-status" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-status")
 		}
 		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
 		if !reflect.DeepEqual(gotArgs, wantArgs) {
-			t.Fatalf("get-health args = %#v, want %#v", gotArgs, wantArgs)
+			t.Fatalf("get-status args = %#v, want %#v", gotArgs, wantArgs)
 		}
 	})
 
-	t.Run("get-health-oneline", func(t *testing.T) {
+	t.Run("get-status-oneline", func(t *testing.T) {
 		var gotArgs []string
 
 		result := Dispatch(
-			"get-health-oneline",
+			"get-status-oneline",
 			nil,
 			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
 			Handlers{
@@ -146,12 +146,12 @@ func TestDispatch_HealthCommandsArePublic(t *testing.T) {
 		if result.Err != nil {
 			t.Fatalf("Dispatch returned error: %v", result.Err)
 		}
-		if result.Label != "postman get-health-oneline" {
-			t.Fatalf("label = %q, want %q", result.Label, "postman get-health-oneline")
+		if result.Label != "postman get-status-oneline" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman get-status-oneline")
 		}
 		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
 		if !reflect.DeepEqual(gotArgs, wantArgs) {
-			t.Fatalf("get-health-oneline args = %#v, want %#v", gotArgs, wantArgs)
+			t.Fatalf("get-status-oneline args = %#v, want %#v", gotArgs, wantArgs)
 		}
 	})
 }
@@ -355,6 +355,8 @@ func TestDispatch_RetiredCommandsReturnUsageError(t *testing.T) {
 	for _, command := range []string{
 		"status",
 		"read",
+		"get-health",
+		"get-health-oneline",
 		"get-session-health",
 		"get-session-status-oneline",
 		"timeline",

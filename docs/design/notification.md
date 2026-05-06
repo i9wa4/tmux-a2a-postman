@@ -13,8 +13,8 @@ layer for operator escalation.
 | ----------- | ------------------------------------ | ------------------- |
 | Inbox file  | Routed `send-heredoc` or daemon PING | `inbox/{node}/`     |
 | Pane hint   | Successful inbox delivery            | Recipient tmux pane |
-| Health JSON | `get-health`                         | stdout              |
-| Health line | `get-health-oneline`                 | stdout              |
+| Health JSON | `get-status`                         | stdout              |
+| Health line | `get-status-oneline`                 | stdout              |
 | Default TUI | Daemon runtime health snapshots      | daemon pane         |
 
 ## 2. Delivery Path
@@ -30,7 +30,7 @@ manual recovery guidance and is separate from normal pane hints.
 
 ## 3. Health Model
 
-get-health, get-health-oneline, and the default TUI are three views over the
+get-status, get-status-oneline, and the default TUI are three views over the
 same canonical contract.
 
 | State     | Meaning                                             | Compact mark |
@@ -68,7 +68,7 @@ without changing the visible-state fields.
 | `delivery_stuck`     | Pending post delivery is at least 180 seconds old |
 | `delivery_failure`   | Dead-letter delivery failure exists               |
 
-`get-health-oneline` keeps compact visible-state marks by default. Use its
+`get-status-oneline` keeps compact visible-state marks by default. Use its
 `--severity` flag when the operator needs an ASCII severity token. Tokens with
 `?` are inferred, for example a `BLOCKED:` first line without structured
 blocked-report metadata.

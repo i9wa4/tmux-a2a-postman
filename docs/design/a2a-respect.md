@@ -39,7 +39,7 @@ Postman should avoid A2A claims that are not implemented:
 
 - No statement that the daemon is an A2A-compliant server.
 - No statement that `send-heredoc` is A2A `SendMessage`.
-- No statement that `get-health` is A2A `GetTask`.
+- No statement that `get-status` is A2A `GetTask`.
 - No generated `task_id` unless the daemon owns actual task lifecycle state.
 - No use of A2A terminal states for local tmux or delivery failures unless
   there is an explicit task abstraction to terminate.
@@ -159,9 +159,9 @@ Recommended public wording:
 - Future A2A alignment fields can be additive, for example
   `a2a_alignment.task_state_hint: "input-required"`.
 
-## Detailed `get-health` JSON Criteria
+## Detailed `get-status` JSON Criteria
 
-Detailed `get-health` JSON should be understandable to A2A-aware users with
+Detailed `get-status` JSON should be understandable to A2A-aware users with
 low conceptual friction. It is the right surface for clear semantic names and
 explanatory hierarchy. Compact and one-line health views should stay compact,
 but detailed JSON does not need terse internal abbreviations when a clearer
@@ -176,7 +176,7 @@ Design rules:
 - Document postman-specific differences and their reasons directly in detailed
   JSON docs. Delivery health, tmux pane liveness, and input-request closure are
   local runtime facts, not A2A protocol objects.
-- Avoid false equivalence. Do not label `get-health` as `GetTask`, do not call
+- Avoid false equivalence. Do not label `get-status` as `GetTask`, do not call
   node visibility a `TaskState`, and do not imply an A2A task exists before the
   daemon owns a task lifecycle.
 - Prefer explicit semantic keys over terse internal abbreviations in detailed
@@ -276,7 +276,7 @@ local schema/version contract that is independent of the A2A reference.
 | Build metadata              | Optional                                        | Useful for `version` output, but does not make archives self-describing. |
 | `postman.toml` / `postman.md` | Plausible default source                       | Lets a session declare alignment policy once.                  |
 | Message frontmatter         | Recommended only if #396 accepts metadata noise | Makes each archived message self-describing and visible in pop JSON. |
-| `get-health` JSON           | Optional additive field                         | Useful for operators, but health is runtime state, not archive truth. |
+| `get-status` JSON           | Optional additive field                         | Useful for operators, but health is runtime state, not archive truth. |
 | CLI help text               | Mention sparingly                               | Help should not become a protocol essay.                       |
 
 If the reference is written into every message, use the minimal shape above and

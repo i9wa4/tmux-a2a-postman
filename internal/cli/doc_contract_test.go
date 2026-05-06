@@ -47,11 +47,11 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendHelp := readRepoFile(t, "internal/cli/helptext/send-heredoc.txt")
 	popHelp := readRepoFile(t, "internal/cli/helptext/pop.txt")
-	healthHelp := readRepoFile(t, "internal/cli/helptext/get-health.txt")
-	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-health-oneline.txt")
+	statusHelp := readRepoFile(t, "internal/cli/helptext/get-status.txt")
+	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-status-oneline.txt")
 	assertContainsNormalized(t, commandsHelp, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
-	assertContainsNormalized(t, commandsHelp, "get-health Print canonical session health JSON for agents and scripts.")
-	assertContainsNormalized(t, commandsHelp, "get-health-oneline Print compact all-session health for quick agent coordination.")
+	assertContainsNormalized(t, commandsHelp, "get-status Print canonical session health JSON for agents and scripts.")
+	assertContainsNormalized(t, commandsHelp, "get-status-oneline Print compact all-session health for quick agent coordination.")
 	assertContainsNormalized(t, commandsHelp, "version Print the build version JSON.")
 	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
 	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]🔴")
@@ -59,8 +59,8 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}`)
 	assertContainsNormalized(t, popHelp, "pop — read the next inbox message")
 	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
-	assertContainsNormalized(t, healthHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
-	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + healthHelp + "\n" + onelineHelp
+	assertContainsNormalized(t, statusHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
+	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
 		"`read`",
 		"`todo`",
@@ -111,7 +111,7 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
-	assertContainsNormalized(t, notificationDoc, "get-health, get-health-oneline, and the default TUI are three views over the same canonical contract.")
+	assertContainsNormalized(t, notificationDoc, "get-status, get-status-oneline, and the default TUI are three views over the same canonical contract.")
 	assertContainsNormalized(t, notificationDoc, "Surface")
 	assertContainsNormalized(t, notificationDoc, "Delivery")
 
@@ -140,8 +140,8 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"filesystem-backed inboxes",
 		"send",
 		"pop",
-		"get-health",
-		"get-health-oneline",
+		"get-status",
+		"get-status-oneline",
 		"Mermaid",
 		"edges",
 		"message footer",
@@ -155,8 +155,8 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	assertContainsAllNormalized(t, commandsHelp,
 		"send",
 		"pop",
-		"get-health",
-		"get-health-oneline",
+		"get-status",
+		"get-status-oneline",
 		"version",
 		"help [topic]",
 	)
@@ -170,7 +170,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"postman-config-auditor",
 		"postman.md",
 		"postman.toml",
-		"get-health",
+		"get-status",
 		"references/postman-md.md",
 	)
 	assertContainsAllNormalized(t, postmanMDReference,

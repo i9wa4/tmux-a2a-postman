@@ -31,7 +31,7 @@ session daemon automatically.
 Inspect open reply-required work without popping inbox mail:
   tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
 
-get-health also exposes open input-request detail arrays under
+get-status also exposes open input-request detail arrays under
 nodes[*].flow.input_requests.input_required and waiting_on_input.
 
 Envelope format (YAML frontmatter):

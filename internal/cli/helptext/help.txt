@@ -15,8 +15,8 @@ Topics:
   send-heredoc
   send
   pop
-  get-health
-  get-health-oneline
+  get-status
+  get-status-oneline
   inspect-input
   version
   help

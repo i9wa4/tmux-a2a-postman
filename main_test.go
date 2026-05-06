@@ -119,11 +119,11 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
 	}
-	if !strings.Contains(got, "get-health                 Print canonical session health JSON") {
-		t.Fatalf("usage missing get-health command: %q", got)
+	if !strings.Contains(got, "get-status                 Print canonical session health JSON") {
+		t.Fatalf("usage missing get-status command: %q", got)
 	}
-	if !strings.Contains(got, "get-health-oneline         Print compact all-session health") {
-		t.Fatalf("usage missing get-health-oneline command: %q", got)
+	if !strings.Contains(got, "get-status-oneline         Print compact all-session health") {
+		t.Fatalf("usage missing get-status-oneline command: %q", got)
 	}
 	if !strings.Contains(got, "version                    Print the build version JSON") {
 		t.Fatalf("usage missing version command: %q", got)

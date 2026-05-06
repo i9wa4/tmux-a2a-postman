@@ -12,7 +12,7 @@ type Config struct {
 type Handlers struct {
 	Start                   func(contextID, configPath, logFilePath string, noTUI bool) error
 	Pop                     func(args []string) error
-	GetSessionHealth        func(args []string) error
+	GetSessionStatus        func(args []string) error
 	GetSessionStatusOneline func(args []string) error
 	InspectInput            func(args []string) error
 	SendMessage             func(args []string) error
@@ -51,14 +51,14 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman pop",
 			Err:   handlers.Pop(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "get-health":
+	case "get-status":
 		return Result{
-			Label: "postman get-health",
-			Err:   handlers.GetSessionHealth(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+			Label: "postman get-status",
+			Err:   handlers.GetSessionStatus(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
-	case "get-health-oneline":
+	case "get-status-oneline":
 		return Result{
-			Label: "postman get-health-oneline",
+			Label: "postman get-status-oneline",
 			Err:   handlers.GetSessionStatusOneline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "inspect-input":

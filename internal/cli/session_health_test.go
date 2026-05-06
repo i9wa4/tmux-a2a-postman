@@ -12,7 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func TestRunGetSessionHealth_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T) {
+func TestRunGetSessionStatus_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("POSTMAN_HOME", tmpDir)
 
@@ -30,10 +30,10 @@ func TestRunGetSessionHealth_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunGetSessionHealth(nil)
+	err := RunGetSessionStatus(nil)
 	if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
 		strings.Contains(err.Error(), "session name required")) {
-		t.Fatalf("RunGetSessionHealth should use tmux session fallback, got: %v", err)
+		t.Fatalf("RunGetSessionStatus should use tmux session fallback, got: %v", err)
 	}
 }
 
@@ -51,12 +51,12 @@ func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 		os.Stdout = oldStdout
 	}()
 
-	runErr := RunGetSessionHealth(nil)
+	runErr := RunGetSessionStatus(nil)
 	if err := writer.Close(); err != nil {
 		t.Fatalf("writer.Close: %v", err)
 	}
 	if runErr != nil {
-		t.Fatalf("RunGetSessionHealth: %v", runErr)
+		t.Fatalf("RunGetSessionStatus: %v", runErr)
 	}
 
 	out, err := io.ReadAll(reader)
@@ -92,7 +92,7 @@ func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 	}
 }
 
-func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
+func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260404-ctx"
 	sessionName := "review"
@@ -182,7 +182,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 		os.Stdout = oldStdout
 	}()
 
-	runErr := RunGetSessionHealth([]string{
+	runErr := RunGetSessionStatus([]string{
 		"--config", configPath,
 		"--context-id", contextID,
 	})
@@ -190,7 +190,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 		t.Fatalf("writer.Close: %v", err)
 	}
 	if runErr != nil {
-		t.Fatalf("RunGetSessionHealth: %v", runErr)
+		t.Fatalf("RunGetSessionStatus: %v", runErr)
 	}
 
 	out, err := io.ReadAll(reader)
@@ -238,7 +238,7 @@ func TestRunGetSessionHealth_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 }
 
-func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t *testing.T) {
+func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	sessionName := "review"
@@ -323,7 +323,7 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 		os.Stdout = oldStdout
 	}()
 
-	runErr := RunGetSessionHealth([]string{
+	runErr := RunGetSessionStatus([]string{
 		"--config", configPath,
 		"--context-id", contextID,
 	})
@@ -331,7 +331,7 @@ func TestRunGetSessionHealth_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 		t.Fatalf("writer.Close: %v", err)
 	}
 	if runErr != nil {
-		t.Fatalf("RunGetSessionHealth: %v", runErr)
+		t.Fatalf("RunGetSessionStatus: %v", runErr)
 	}
 
 	out, err := io.ReadAll(reader)

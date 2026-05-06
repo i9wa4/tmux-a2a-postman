@@ -40,9 +40,9 @@ func emptyAllSessionHealth() status.AllSessionHealth {
 	}
 }
 
-// RunGetSessionHealth prints the canonical session-health JSON payload (#220).
-func RunGetSessionHealth(args []string) error {
-	fs := flag.NewFlagSet("get-health", flag.ExitOnError)
+// RunGetSessionStatus prints the canonical session-health JSON payload (#220).
+func RunGetSessionStatus(args []string) error {
+	fs := flag.NewFlagSet("get-status", flag.ExitOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
