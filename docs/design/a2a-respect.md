@@ -109,9 +109,9 @@ plus node health projection.
 
 | A2A term                     | Postman term or surface                                               | Current recommendation                                          |
 | ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `contextId`                  | Stored frontmatter `params.contextId`; health JSON `context_id`       | Keep both until a deliberate casing migration exists.           |
+| `contextId`                  | Stored frontmatter `params.contextId`; health JSON `context_id`       | Prefer A2A-natural `contextId` in future generated detail views; expose stored keys unchanged only as archive truth. |
 | `taskId` / `task_id`         | External issue, plan, mkmd task, or future daemon-owned task          | Do not generate daemon `task_id` until postman owns tasks.      |
-| `Message.messageId`          | Stored frontmatter `messageId`; public JSON `message_id`; file name   | Keep `message_id` as public JSON; preserve `messageId` support. |
+| `Message.messageId`          | Stored frontmatter `messageId`; public JSON `message_id`; file name   | Prefer an A2A-aware `message.messageId` projection in future detail JSON; keep raw stored keys only where they report archive metadata. |
 | `Message.role`               | `from`, `to`, pane title, node name                                   | Keep local peer routing names; A2A user/agent roles do not fit. |
 | `Message.parts`              | Markdown body; possible future body projection from #396              | Treat body as one `text/markdown` part only if #396 adds parts. |
 | `Message.metadata`           | YAML frontmatter fields under `params` and other top-level sections   | Project structured frontmatter in `pop` JSON after #396.        |
@@ -150,12 +150,43 @@ should not be stored as direct replacements.
 Recommended public wording:
 
 - `visible_state` stays postman-native: `ready`, `waiting`, `pending`,
-  `stale`, with session `unavailable`.
+  `stale`, with session `unavailable`, because it reports node observability,
+  not an A2A task lifecycle.
 - `severity` stays postman-native: `ok`, `working`, `expected_wait`,
   `needs_action`, `blocked`, `attention_stale`, `delivery_stuck`,
-  `delivery_failure`.
+  `delivery_failure`, because it reports operator urgency and transport
+  health.
 - Future A2A alignment fields can be additive, for example
   `a2a_alignment.task_state_hint: "input-required"`.
+
+## Detailed `get-health` JSON Criteria
+
+Detailed `get-health` JSON should be understandable to A2A-aware users with
+low conceptual friction. It is the right surface for clear semantic names and
+explanatory hierarchy. Compact and one-line health views should stay compact,
+but detailed JSON does not need terse internal abbreviations when a clearer
+A2A-compatible shape is accurate.
+
+Design rules:
+
+- Prefer A2A-compatible terminology and hierarchy where the local concept
+  really matches A2A. For example, recipient-side required input can be
+  explained with `input-required` alignment, while sender-side
+  `waiting_on_reply` needs a postman-specific explanation.
+- Document postman-specific differences and their reasons directly in detailed
+  JSON docs. Delivery health, tmux pane liveness, and reply-slot closure are
+  local runtime facts, not A2A protocol objects.
+- Avoid false equivalence. Do not label `get-health` as `GetTask`, do not call
+  node visibility a `TaskState`, and do not imply an A2A task exists before the
+  daemon owns a task lifecycle.
+- Prefer explicit semantic keys over terse internal abbreviations in detailed
+  JSON. A longer key is acceptable when it reduces ambiguity for A2A-aware
+  operators.
+- Keep compact and one-line views compact. Those surfaces may keep terse
+  status tokens as long as the detailed JSON exposes the clearer explanation.
+- Do not retain an awkward shape only because an older output used it. Cleaner
+  A2A-natural detailed shapes should win unless a concrete safety reason, such
+  as exact reply-slot closure or archive truth, is named.
 
 ## ID and Field Alignment
 
@@ -175,17 +206,20 @@ Current postman reply fields are operationally accurate:
 
 ### Should `reply_slot_id` become `input_request_id`?
 
-Recommendation: do not rename the primary field immediately. Keep
-`reply_slot_id` and add any A2A-aligned name as an alias or additive projection
-after #396 settles the frontmatter and pop JSON contract.
+Recommendation: do not rename the command/closure field until postman has an
+input-request projection that preserves exact reply-slot closure. Use
+`input_request_id` only where the surface is explicitly projecting an A2A-like
+required-input request, and keep `reply_slot_id` where the runtime must close a
+specific reply slot.
 
-Reasons to keep `reply_slot_id` now:
+Safety reasons to keep `reply_slot_id` on closure surfaces now:
 
 - It accurately says what the runtime closes: a required reply slot.
 - A2A v1.0 has `input-required` as a task state, but no normative
   `inputRequestId` object.
-- A rename would affect footers, `send-heredoc`, `inspect-reply`, health JSON,
-  journal projection, tests, docs, and old archives.
+- A rename must migrate footers, `send-heredoc`, `inspect-reply`, health JSON,
+  journal projection, tests, and docs together or exact slot closure becomes
+  harder to audit.
 - `reply_slot_id` avoids implying A2A compliance.
 
 Reasons to consider `input_request_id` later:
@@ -205,13 +239,16 @@ Counterpart names if the project adds an alias:
 | `input_response_to`               | Rejected      | Less consistent with existing `reply_to` and `fills_*` naming.           |
 | `input_request_id` only           | Insufficient  | Needs a counterpart field for exact closure.                              |
 
-Migration-safe path:
+Forward path:
 
-1. Keep `reply_slot_id` and `fills_reply_slot_id` authoritative.
-2. Add optional aliases in #396-era frontmatter/pop JSON only if the user wants
-   stronger A2A alignment.
-3. Prefer `input_request_id` plus `fills_input_request_id` for aliases.
-4. Keep old names until a major output-contract change.
+1. Keep `reply_slot_id` and `fills_reply_slot_id` authoritative for exact
+   closure until a task/input-request layer exists.
+2. In #396-era detailed JSON, add A2A-natural projections only where the
+   projected concept is accurate.
+3. Prefer `input_request_id` plus `fills_input_request_id` for an A2A-like
+   projection.
+4. Do not add aliases only for backward compatibility. Add them when they make
+   the generated detailed shape clearer without obscuring closure semantics.
 
 ## Frontmatter Metadata
 
@@ -252,7 +289,7 @@ an A2A binding.
 
 Avoid adding `postman_schema_version` as part of A2A respect. Schema versioning
 is a separate product need. Add it only if the archive or JSON output needs a
-local compatibility contract that is independent of the A2A reference.
+local schema/version contract that is independent of the A2A reference.
 
 ## Where to Store A2A Reference Metadata
 
@@ -402,44 +439,51 @@ postman_schema_version: "1"
 That may be useful later, but it solves local schema migration, not A2A
 respect.
 
-Migration handling:
+Archive and migration handling:
 
-1. Treat missing `protocol.respects.a2a_protocol` as legacy/no declaration.
+1. Treat missing `protocol.respects.a2a_protocol` as no declaration, not as
+   weaker compliance.
 2. Do not rewrite historical archives automatically.
 3. Let `pop` JSON expose the marker when present.
-4. Keep casing aliases (`contextId` and `context_id`, `messageId` and
-   `message_id`) until a major archive/output migration.
+4. Preserve exact stored frontmatter keys when reporting raw archive metadata.
+   For newly generated detailed JSON, choose the cleaner A2A-natural shape
+   unless a concrete safety reason is named.
 5. Document the current A2A source version in docs even if per-message
    frontmatter stays absent.
-6. Treat legacy `postman.a2a_version` entries as ignored compatibility noise,
-   not as an active configuration contract.
+6. Treat historical `postman.a2a_version` entries as inert input, not as an
+   active configuration contract or design constraint.
 
 ## Concrete Recommendations
 
 1. Add this docs page as the canonical A2A respect explanation.
-2. Keep postman-native runtime fields authoritative for now:
+2. Do not use backward compatibility as the reason for A2A alignment choices.
+   Cleaner A2A-natural detailed shapes win unless a concrete safety or
+   archive-truth reason is named.
+3. Keep postman-native runtime fields authoritative where they name concrete
+   local mechanics:
    `reply_slot_id`, `fills_reply_slot_id`, `action_required`,
    `waiting_on_reply`, `visible_state`, and `severity`.
-3. Use `protocol.respects.a2a_protocol: "1.0"` as the favored future
+4. Use `protocol.respects.a2a_protocol: "1.0"` as the favored future
    frontmatter/config marker.
-4. Defer per-message metadata until #396 removes default body/content JSON and
+5. Defer per-message metadata until #396 removes default body/content JSON and
    exposes structured frontmatter plus `markdown_path`.
-5. Do not introduce `postman_schema_version` as part of this A2A alignment.
-6. Do not expose `a2a_version` as user-configurable TOML; keep A2A versioning
+6. Do not introduce `postman_schema_version` as part of this A2A alignment.
+7. Do not expose `a2a_version` as user-configurable TOML; keep A2A versioning
    in docs or future generated metadata.
-7. If adding A2A-aligned aliases, prefer `input_request_id` and
-   `fills_input_request_id` while keeping existing names.
-8. Keep `task_id` external until the daemon owns task lifecycle creation,
+8. If adding A2A-aligned detailed JSON fields, prefer `input_request_id` and
+   `fills_input_request_id` for an accurate input-request projection. Keep
+   exact reply-slot fields only on surfaces that close or audit reply slots.
+9. Keep `task_id` external until the daemon owns task lifecycle creation,
    state transitions, and terminal states.
-9. Treat `reply_set_id` as grouped reply-slot aggregation, not
-   `referenceTaskIds`.
+10. Treat `reply_set_id` as grouped reply-slot aggregation, not
+    `referenceTaskIds`.
 
 ## Rejected Alternatives
 
 | Alternative                            | Reason rejected                                                       |
 | -------------------------------------- | --------------------------------------------------------------------- |
 | Claim full A2A compliance              | Postman does not implement A2A discovery, operations, or bindings.     |
-| Rename `reply_slot_id` immediately     | Too much public churn before #396 and before an actual task layer.     |
+| Rename `reply_slot_id` immediately     | Without a task/input-request layer, the rename would obscure exact slot closure and risk false equivalence. |
 | Replace `visible_state` with TaskState | Node health and task lifecycle are different models.                   |
 | Add `postman_schema_version` now       | A2A reference metadata does not require local archive schema versioning. |
 | Keep `postman.a2a_version` in TOML     | It looks user-configurable but changes no runtime behavior.             |

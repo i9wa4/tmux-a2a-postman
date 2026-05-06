@@ -191,9 +191,9 @@ Agents should prefer `get-health` for
 structured session JSON, `inspect-reply --id <message_id-or-reply_slot_id>` to
 identify a specific open reply-required item without popping inbox mail, and
 `get-health-oneline` for compact coordination.
-`get-health` uses `schema_version: 3`; the legacy `visible_state` and
-`compact` fields remain stable, and contextual fields are additive. The
-additive severity fields include `severity`, `severity_source`,
+`get-health` uses `schema_version: 3`; `visible_state` and `compact` are
+compact operator fields, while detailed contextual fields carry the semantic
+explanation. The severity fields include `severity`, `severity_source`,
 `severity_reason`, `compact_severity`, `delivery`, `nodes[*].node_local`,
 `nodes[*].flow`, and `nodes[*].queues`. Severity distinguishes expected waits
 from actionable conditions such as `needs_action`, `blocked`,
@@ -280,7 +280,7 @@ inlining full skill bodies, add frontmatter to `postman.md`:
 ```markdown
 ---
 skill_path:
-  - path: ~/ghq/github.com/i9wa4/dotfiles/skills
+  - path: skills
     skills:
       - repo-local
       - bash

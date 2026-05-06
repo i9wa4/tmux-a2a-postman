@@ -41,7 +41,7 @@ Rules:
 - A `skill_path` list item may be a scalar path or a mapping with `path` and
   `skills`.
 - `skills` may be `all` or a YAML list of explicit skill directory names.
-- Omitted `skills` means `all`, preserving legacy `skill_path: path` behavior.
+- Omitted `skills` means `all`.
 - Glob patterns such as `postman-*` are unsupported; list skill names
   explicitly.
 - An unclosed frontmatter block is an error.
@@ -52,7 +52,7 @@ Example:
 ---
 reply_command: tmux-a2a-postman send-heredoc --to {from_node}
 skill_path:
-  - path: ~/ghq/github.com/i9wa4/dotfiles/skills
+  - path: skills
     skills:
       - repo-local
       - bash
