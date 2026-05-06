@@ -294,10 +294,9 @@ the docs page and task artifacts are enough.
 
 ## #396 Pop JSON and Frontmatter Implications
 
-## 396 proposes that `pop` stays JSON by default, stops embedding the full
-
-Markdown body, returns a stable `markdown_path`, and exposes all structured
-YAML frontmatter needed by agents.
+Issue #396 proposes that `pop` stays JSON by default, stops embedding the full
+Markdown body, returns a stable `markdown_path`, and exposes all structured YAML
+frontmatter needed by agents.
 
 That direction fits A2A respect well. A2A `Message.parts` can become a future
 body projection, while frontmatter remains metadata.
