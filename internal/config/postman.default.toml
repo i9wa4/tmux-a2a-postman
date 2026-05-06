@@ -54,9 +54,6 @@
 # =============================================================================
 
 [postman]
-# A2A protocol version
-a2a_version = "1.0"
-
 # Timing settings
 scan_interval_seconds = 1.0          # Pane rescan interval
 session_scan_interval_seconds = 0.25 # Lightweight tmux session-list rescan interval

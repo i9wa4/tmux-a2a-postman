@@ -25,9 +25,6 @@ var defaultConfigBytes []byte
 // Config holds postman configuration loaded from TOML file.
 // Python format: [postman] section contains all settings.
 type Config struct {
-	// Version
-	A2AVersion string `toml:"a2a_version"`
-
 	// Timing settings
 	ScanInterval        float64 `toml:"scan_interval_seconds"`
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
@@ -666,9 +663,6 @@ func (cfg *Config) hasProjectLocalExplicitZeroNode(name, field string) bool {
 // Issue #121: Used to apply project-local config on top of XDG/embedded config.
 func mergeConfig(base, override *Config) {
 	// String fields
-	if override.A2AVersion != "" {
-		base.A2AVersion = override.A2AVersion
-	}
 	if override.BaseDir != "" {
 		base.BaseDir = override.BaseDir
 	}

@@ -381,8 +381,11 @@ protocol:
     a2a_protocol: "1.0"
 ```
 
-Use `protocol.respects.a2a_protocol` for archive/config metadata. Use longer
-names only when the surface needs to be clearer:
+Use `protocol.respects.a2a_protocol` for archive metadata, future generated
+frontmatter, or explicit internal alignment metadata. Do not expose
+`postman.a2a_version` in `postman.toml`; A2A version is a reference marker, not
+a runtime behavior knob. Use longer names only when the surface needs to be
+clearer:
 
 - `a2a_protocol_reference`: good for docs or prose when avoiding compliance
   implications.
@@ -408,6 +411,8 @@ Migration handling:
    `message_id`) until a major archive/output migration.
 5. Document the current A2A source version in docs even if per-message
    frontmatter stays absent.
+6. Treat legacy `postman.a2a_version` entries as ignored compatibility noise,
+   not as an active configuration contract.
 
 ## Concrete Recommendations
 
@@ -420,11 +425,13 @@ Migration handling:
 4. Defer per-message metadata until #396 removes default body/content JSON and
    exposes structured frontmatter plus `markdown_path`.
 5. Do not introduce `postman_schema_version` as part of this A2A alignment.
-6. If adding A2A-aligned aliases, prefer `input_request_id` and
+6. Do not expose `a2a_version` as user-configurable TOML; keep A2A versioning
+   in docs or future generated metadata.
+7. If adding A2A-aligned aliases, prefer `input_request_id` and
    `fills_input_request_id` while keeping existing names.
-7. Keep `task_id` external until the daemon owns task lifecycle creation,
+8. Keep `task_id` external until the daemon owns task lifecycle creation,
    state transitions, and terminal states.
-8. Treat `reply_set_id` as grouped reply-slot aggregation, not
+9. Treat `reply_set_id` as grouped reply-slot aggregation, not
    `referenceTaskIds`.
 
 ## Rejected Alternatives
@@ -435,6 +442,7 @@ Migration handling:
 | Rename `reply_slot_id` immediately     | Too much public churn before #396 and before an actual task layer.     |
 | Replace `visible_state` with TaskState | Node health and task lifecycle are different models.                   |
 | Add `postman_schema_version` now       | A2A reference metadata does not require local archive schema versioning. |
+| Keep `postman.a2a_version` in TOML     | It looks user-configurable but changes no runtime behavior.             |
 | Put A2A reference only in build output  | Archived messages would not be self-describing.                       |
 | Put full A2A AgentCard in docs now     | Would imply a discovery surface that does not exist.                   |
 

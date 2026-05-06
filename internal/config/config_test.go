@@ -129,7 +129,6 @@ func TestLoadConfig(t *testing.T) {
 
 	content := `
 [postman]
-a2a_version = "1.0"
 scan_interval_seconds = 2.0
 session_scan_interval_seconds = 0.25
 enter_delay_seconds = 1.0
@@ -202,6 +201,35 @@ role = "observer"
 	}
 	if cfg.Nodes["orchestrator"].Role != "coordinator" {
 		t.Errorf("Node orchestrator role: got %q, want %q", cfg.Nodes["orchestrator"].Role, "coordinator")
+	}
+}
+
+func TestLoadConfig_LegacyA2AVersionIsIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	content := `
+[postman]
+a2a_version = "9.9"
+edges = ["orchestrator --- worker"]
+
+[orchestrator]
+
+[worker]
+	`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig with legacy a2a_version failed: %v", err)
+	}
+	if cfg.ScanInterval != 1.0 {
+		t.Errorf("ScanInterval: got %v, want embedded default 1.0", cfg.ScanInterval)
 	}
 }
 
@@ -1274,14 +1302,12 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base.SessionScanInterval = 1.0
 	base.EnterDelay = 0.5
 	base.BaseDir = ""
-	base.A2AVersion = "0.9"
 
 	override := &Config{
 		Nodes:               make(map[string]NodeConfig),
 		ScanInterval:        5.0,
 		SessionScanInterval: 0.5,
 		BaseDir:             "/project/base",
-		A2AVersion:          "1.0",
 	}
 
 	mergeConfig(base, override)
@@ -1294,9 +1320,6 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	}
 	if base.BaseDir != "/project/base" {
 		t.Errorf("BaseDir: got %q, want %q", base.BaseDir, "/project/base")
-	}
-	if base.A2AVersion != "1.0" {
-		t.Errorf("A2AVersion: got %q, want %q", base.A2AVersion, "1.0")
 	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {
