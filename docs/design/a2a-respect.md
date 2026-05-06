@@ -333,10 +333,6 @@ Example future `pop` JSON shape:
   "input_request_id": "ireq_example",
   "markdown_path": "~/.local/state/tmux-a2a-postman/read/worker/20260506-120000-sfb93-example.md",
   "markdown_absolute_path": "/absolute/path/to/read/worker/20260506-120000-sfb93-example.md",
-  "body_available": true,
-  "body_reference": "markdown_absolute_path",
-  "body_bytes": 42,
-  "body_omitted_reason": "externalized_to_markdown_path",
   "params": {
     "contextId": "20260506-001721-c1d9",
     "messageId": "20260506-120000-sfb93-example.md"
@@ -368,9 +364,10 @@ Example optional future body projection:
 ```
 
 The default #396 JSON should not include full `body` or `content`; it should
-make body availability explicit and link to `markdown_path` for human or
-programmatic reading. If the project adds `parts`, make it an explicit opt-in
-or a compact body-only mode so the default remains machine-friendly.
+always link to `markdown_path` for human reading and `markdown_absolute_path`
+when a machine-readable absolute path is needed. If the project adds `parts`,
+make it an explicit opt-in or a compact body-only mode so the default remains
+machine-friendly.
 
 No separate user-facing alias is introduced for now. The command name `pop`
 continues to carry the mailbox state-machine meaning, while pane notifications

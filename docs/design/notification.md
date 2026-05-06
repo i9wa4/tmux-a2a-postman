@@ -24,8 +24,8 @@ layer for operator escalation.
 3. Valid mail is moved into `inbox/{node}/`.
 4. The recipient pane receives `notification_template`.
 5. The recipient claims and archives the message with `pop`; `pop` returns
-   metadata plus body path/reference fields instead of pushing the full body
-   into the pane hint.
+   metadata plus the archived message/body path instead of pushing the full
+   body into the pane hint.
 
 Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
 manual recovery guidance and is separate from normal pane hints.
@@ -104,7 +104,7 @@ inbox item and open the referenced body.
 
 No separate claim/open alias exists today. The command name `pop` remains the
 canonical state-machine operation; the user-facing wording and `pop` JSON
-fields carry the clearer claim/open/body-reference semantics.
+fields carry the clearer claim/open/message-file semantics.
 
 `ui_node` is not a general escalation channel. It is normally set by marking a
 node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline

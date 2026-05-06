@@ -126,10 +126,6 @@ type popMessageOutput struct {
 	MessageID            string         `json:"message_id,omitempty"`
 	MarkdownPath         string         `json:"markdown_path,omitempty"`
 	MarkdownAbsolutePath string         `json:"markdown_absolute_path,omitempty"`
-	BodyAvailable        bool           `json:"body_available"`
-	BodyReference        string         `json:"body_reference,omitempty"`
-	BodyBytes            int            `json:"body_bytes,omitempty"`
-	BodyOmittedReason    string         `json:"body_omitted_reason,omitempty"`
 	Frontmatter          map[string]any `json:"frontmatter,omitempty"`
 	From                 string         `json:"from"`
 	To                   string         `json:"to"`
@@ -155,13 +151,6 @@ func writePopMessageOutput(content, filename, markdownPath string, unreadBefore,
 	if output.MarkdownPath != markdownPath {
 		output.MarkdownAbsolutePath = markdownPath
 	}
-	if output.BodyAvailable {
-		output.BodyReference = "markdown_path"
-		if output.MarkdownAbsolutePath != "" {
-			output.BodyReference = "markdown_absolute_path"
-		}
-		output.BodyOmittedReason = "externalized_to_markdown_path"
-	}
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
 	return json.NewEncoder(os.Stdout).Encode(output)
@@ -173,15 +162,9 @@ func intPtr(value int) *int {
 
 func parseMessageContent(content, filename string) popMessageOutput {
 	result := popMessageOutput{
-		Status:        "message",
-		MessageID:     filename,
-		Frontmatter:   frontmatterFromContent(content),
-		BodyAvailable: false,
-	}
-	body := envelope.BodyFromContent(content)
-	if body != "" {
-		result.BodyAvailable = true
-		result.BodyBytes = len([]byte(body))
+		Status:      "message",
+		MessageID:   filename,
+		Frontmatter: frontmatterFromContent(content),
 	}
 	metadata, err := envelope.ParseMetadata(content)
 	if err != nil {

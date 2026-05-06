@@ -7,16 +7,12 @@ Usage:
 Output:
   Always JSON.
   {"status":"empty"}
-  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","body_available":true,"body_reference":"markdown_absolute_path","body_bytes":123,"body_omitted_reason":"externalized_to_markdown_path","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}
+  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}
 
 Fields:
   message_id              Stable message identity
-  markdown_path           Display-friendly archived Markdown path; home paths use ~
+  markdown_path           Display-friendly archived Markdown message/body path; home paths use ~
   markdown_absolute_path  Machine-readable absolute path when markdown_path is shortened
-  body_available          Whether sender-authored body text is present
-  body_reference          Field containing the archived body reference
-  body_bytes              UTF-8 byte count for sender-authored body text
-  body_omitted_reason     Why body text is not embedded inline in pop JSON
   frontmatter             Structured YAML frontmatter from the archived message
   input_request_id        Exact input request id opened by reply-required mail
   fills_input_request_id  Exact input request id filled by this message
@@ -26,6 +22,6 @@ Fields:
 
 Path policy:
   User-facing path output shortens paths under the user's home directory with ~.
-  Use markdown_absolute_path when present for programmatic file reads.
-  pop claims and archives the message; it does not push full body text inline.
+  Use markdown_absolute_path when present for programmatic file/body reads.
+  pop claims and archives the message; it never embeds full body text inline.
   See docs/design/path-display-policy.md.

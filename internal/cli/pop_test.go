@@ -265,18 +265,6 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	if payload.MarkdownPath == "" {
 		t.Fatal("payload.MarkdownPath is empty")
 	}
-	if !payload.BodyAvailable {
-		t.Fatal("payload.BodyAvailable = false, want true")
-	}
-	if payload.BodyReference != "markdown_path" {
-		t.Fatalf("payload.BodyReference = %q, want markdown_path", payload.BodyReference)
-	}
-	if payload.BodyBytes != len([]byte("JSON payload")) {
-		t.Fatalf("payload.BodyBytes = %d, want %d", payload.BodyBytes, len([]byte("JSON payload")))
-	}
-	if payload.BodyOmittedReason != "externalized_to_markdown_path" {
-		t.Fatalf("payload.BodyOmittedReason = %q, want externalized_to_markdown_path", payload.BodyOmittedReason)
-	}
 }
 
 func TestRunPop_TildeShortensHomeMarkdownPathAndKeepsAbsolutePath(t *testing.T) {
@@ -311,9 +299,6 @@ func TestRunPop_TildeShortensHomeMarkdownPathAndKeepsAbsolutePath(t *testing.T) 
 	wantAbsolutePath := filepath.Join(baseDir, contextID, "test-session", "read", messageFile)
 	if payload.MarkdownAbsolutePath != wantAbsolutePath {
 		t.Fatalf("payload.MarkdownAbsolutePath = %q, want %q", payload.MarkdownAbsolutePath, wantAbsolutePath)
-	}
-	if payload.BodyReference != "markdown_absolute_path" {
-		t.Fatalf("payload.BodyReference = %q, want markdown_absolute_path", payload.BodyReference)
 	}
 	assertPopPayloadArchive(t, payload, content)
 }
@@ -507,7 +492,7 @@ func assertPopPayloadOmitsInlineMarkdown(t *testing.T, stdout string) {
 	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
 	}
-	for _, removed := range []string{"id", "body", "content"} {
+	for _, removed := range []string{"id", "body", "content", "body_available", "body_reference", "body_bytes", "body_omitted_reason"} {
 		if _, ok := raw[removed]; ok {
 			t.Fatalf("pop output still includes %q: %s", removed, stdout)
 		}

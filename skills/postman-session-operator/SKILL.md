@@ -56,11 +56,10 @@ it for diagnostics where archiving would be wrong. Never move runtime `post/`,
 `inbox/`, `read/`, or dead-letter files manually. The JSON output identifies
 the archived Markdown with `markdown_path` and exposes structured
 `frontmatter`; `markdown_path` may be display-shortened with `~`, so use
-`markdown_absolute_path` when present for programmatic reads. `body_available`,
-`body_reference`, `body_bytes`, and `body_omitted_reason` explain whether the
-sender-authored body exists and why it is referenced instead of embedded. When
-sender-authored content is needed, read the archived path after `pop` instead
-of expecting inline body/content in the JSON.
+`markdown_absolute_path` when present for programmatic reads. `pop` never
+embeds sender-authored body text inline; when sender-authored content is
+needed, read the archived path after `pop` instead of expecting inline
+body/content in the JSON.
 
 Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body

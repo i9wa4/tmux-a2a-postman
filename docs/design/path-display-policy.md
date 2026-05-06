@@ -19,13 +19,11 @@ When a command exposes both forms, use separate fields:
 - machine path field: an explicit absolute-path field such as
   `markdown_absolute_path`
 
-For `pop`, `markdown_path` is the display-friendly archived message path. When
-that value is shortened with `~`, `markdown_absolute_path` carries the absolute
-file path for programmatic reads. `body_reference` names the field to use for
-the archived body, preferring `markdown_absolute_path` when present. The
-`body_available`, `body_reference`, `body_bytes`, and
-`body_omitted_reason` fields make the body contract explicit without embedding
-the full sender-authored body in the default JSON output.
+For `pop`, `markdown_path` is the display-friendly archived message and body
+path. When that value is shortened with `~`, `markdown_absolute_path` carries
+the absolute file path for programmatic reads. `pop` never embeds
+sender-authored body text inline; agents read `markdown_absolute_path` when it
+is present, otherwise `markdown_path`.
 
 Public and permanent GitHub surfaces still follow the stricter path hygiene
 rule: use repo-relative paths or stable web URLs for project files, and do not
