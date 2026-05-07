@@ -455,8 +455,9 @@ func stripFrontmatter(content string) string {
 // Returns a zero-value Config with only explicitly-set fields populated.
 // Global frontmatter keys: ui_node → Config.UINode override,
 // reply_command → Config.ReplyCommand,
-// skill_path → generated skill catalog appended to Config.CommonTemplate.
-// compaction_skill_path → generated skill catalogs appended only to compaction-triggered PING role content.
+// skill_path → generated skill catalog appended to Config.CommonTemplate, or
+// to compaction-triggered PING role content when an entry uses inject: ping.
+// compaction_skill_path → compatibility form for compaction-triggered PING catalogs.
 // Mermaid edges may mark the UI node with the ui_node class when frontmatter
 // does not override it.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;

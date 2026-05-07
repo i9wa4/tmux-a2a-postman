@@ -28,14 +28,20 @@ Core config:
   message_footer                   Footer appended to stored send-heredoc mail
   draft_template                   Structured envelope for stored send-heredoc Markdown
   daemon_message_template          Structured envelope for daemon-originated PING mail
-  skill_path                       Always-injected postman.md skill catalog sources
-  compaction_skill_path            Compaction-only postman.md runtime skill catalogs
+  skill_path                       postman.md skill catalogs; use inject: ping for compaction PINGs
+  compaction_skill_path            Compatibility form for compaction-only skill catalogs
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.25)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
   notification_template            Pane hint rendered when mail arrives
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
   pane_capture_tail_lines          Recent lines scanned for compaction markers (default: 100; 0 = visible pane only)
+
+Skill catalogs:
+  context skill_path relative paths resolve from the declaring postman.md directory
+  inject: ping and compaction_skill_path paths must be ~/... or absolute
+  inject: ping may use runtime: claude or runtime: codex for compaction-triggered PING catalogs
+  duplicate rendered skill names are deduped; later entries win, runtime entries override shared entries
 
 Edge syntax:
   edges = [

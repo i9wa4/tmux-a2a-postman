@@ -20,6 +20,7 @@ type skillCatalogSpec struct {
 	All     bool
 	Names   []string
 	Runtime string
+	Inject  string
 }
 
 var skillCatalogUserHomeDir = os.UserHomeDir
@@ -91,8 +92,8 @@ func renderCompactionSkillCatalogs(markdownPath string, specs []skillCatalogSpec
 
 func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string, error) {
 	entriesByName := make(map[string]skillCatalogEntry)
-	var orderedEntries []skillCatalogEntry
 	var sourceDisplays []string
+	sourceDisplaysSeen := make(map[string]struct{})
 	for _, spec := range specs {
 		if strings.TrimSpace(spec.Path) == "" {
 			continue
@@ -104,17 +105,24 @@ func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string,
 		if len(entries) == 0 {
 			continue
 		}
-		sourceDisplays = append(sourceDisplays, skillPathDisplay(spec.Path, resolvedPath))
+		sourceDisplay := skillPathDisplay(spec.Path, resolvedPath)
+		if _, ok := sourceDisplaysSeen[sourceDisplay]; !ok {
+			sourceDisplaysSeen[sourceDisplay] = struct{}{}
+			sourceDisplays = append(sourceDisplays, sourceDisplay)
+		}
 		for _, entry := range entries {
-			if _, ok := entriesByName[entry.Name]; ok {
-				continue
-			}
+			// Later specs are more specific in practice: runtime catalogs append
+			// matching-runtime specs after shared specs, so one rendered skill
+			// body wins deterministically without duplicates.
 			entriesByName[entry.Name] = entry
-			orderedEntries = append(orderedEntries, entry)
 		}
 	}
-	if len(orderedEntries) == 0 {
+	if len(entriesByName) == 0 {
 		return "", nil
+	}
+	orderedEntries := make([]skillCatalogEntry, 0, len(entriesByName))
+	for _, entry := range entriesByName {
+		orderedEntries = append(orderedEntries, entry)
 	}
 	sort.SliceStable(orderedEntries, func(i, j int) bool {
 		return orderedEntries[i].Name < orderedEntries[j].Name

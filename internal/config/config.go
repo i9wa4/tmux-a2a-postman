@@ -57,7 +57,7 @@ type Config struct {
 	DaemonMessageTemplate        string            `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
 	DraftTemplate                string            `toml:"draft_template"`                  // Draft body used by send
 	CommonTemplate               string            `toml:"common_template"`                 // Issue #49: Shared template for all nodes
-	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md compaction_skill_path catalogs by runtime
+	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md skill_path inject: ping catalogs by runtime
 	EdgeViolationWarningTemplate string            `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode     string            `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content

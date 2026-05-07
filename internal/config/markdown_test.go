@@ -21,6 +21,17 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func setSkillCatalogHome(t *testing.T, home string) {
+	t.Helper()
+	old := skillCatalogUserHomeDir
+	skillCatalogUserHomeDir = func() (string, error) {
+		return home, nil
+	}
+	t.Cleanup(func() {
+		skillCatalogUserHomeDir = old
+	})
+}
+
 func assertContains(t *testing.T, content, want string) {
 	t.Helper()
 	if !strings.Contains(content, want) {
@@ -809,7 +820,66 @@ skill_path:
 	assertNotContains(t, cfg.CommonTemplate, "Unselected skill.")
 }
 
-func TestLoadMarkdownConfig_SkillPathYAMLListAll(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathOmittedSkillsSelectsEverySkill(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills", "markdown", "SKILL.md"), `---
+name: markdown
+description: Markdown rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash rules.")
+	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathExplicitAllSkillName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "all", "SKILL.md"), `---
+name: all
+description: A real skill named all.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+    skills: [all]
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "- `all`: A real skill named all.")
+	assertNotContains(t, cfg.CommonTemplate, "- `bash`: Bash rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathLegacyScalarAllSelectsEverySkill(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
 name: bash
@@ -839,31 +909,227 @@ skill_path:
 	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
 }
 
-func TestLoadMarkdownConfig_CompactionSkillPathBuildsRuntimeCatalogs(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathDuplicateNamesUseLaterEntryOnce(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "shared-skills", "repo-local", "SKILL.md"), `---
-name: repo-local
-description: Shared repo rules.
+	writeFile(t, filepath.Join(dir, "skills-a", "bash", "SKILL.md"), `---
+name: bash
+description: Earlier bash rules.
 ---
 `)
-	writeFile(t, filepath.Join(dir, "claude-skills", "agent-harness-engineering", "SKILL.md"), `---
+	writeFile(t, filepath.Join(dir, "skills-a", "markdown", "SKILL.md"), `---
+name: markdown
+description: Markdown rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills-b", "bash", "SKILL.md"), `---
+name: bash
+description: Later bash rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills-a
+  - path: skills-b
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "Skill files live under `skills-a`, `skills-b`.")
+	assertNotContains(t, cfg.CommonTemplate, "Earlier bash rules.")
+	assertContains(t, cfg.CommonTemplate, "- `bash`: Later bash rules.")
+	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
+	if got := strings.Count(cfg.CommonTemplate, "- `bash`:"); got != 1 {
+		t.Fatalf("duplicate bash catalog entries: got %d in:\n%s", got, cfg.CommonTemplate)
+	}
+}
+
+func TestLoadMarkdownConfig_SkillPathInjectPingBuildsRuntimeCatalogs(t *testing.T) {
+	dir := t.TempDir()
+	setSkillCatalogHome(t, dir)
+	writeFile(t, filepath.Join(dir, "context-skills", "repo-local", "SKILL.md"), `---
+name: repo-local
+description: Normal repo rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-session-operator", "SKILL.md"), `---
+name: postman-session-operator
+description: Shared ping rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "agent-harness-engineering", "SKILL.md"), `---
 name: agent-harness-engineering
 description: Claude harness rules.
 ---
 `)
-	writeFile(t, filepath.Join(dir, "codex-skills", "bash", "SKILL.md"), `---
+	writeFile(t, filepath.Join(dir, ".codex", "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Codex shell rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: context-skills
+    inject: context
+  - path: ~/.config/tmux-a2a-postman/skills
+    inject: ping
+  - path: ~/.claude/skills
+    inject: ping
+    runtime: claude
+  - path: ~/.codex/skills
+    inject: ping
+    runtime: codex
+---
+
+## ` + "`common_template`" + `
+
+Compact shared instructions.
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "Compact shared instructions.")
+	assertContains(t, cfg.CommonTemplate, "- `repo-local`: Normal repo rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Shared ping rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Claude harness rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Codex shell rules.")
+
+	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
+	assertContains(t, claudeCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, claudeCatalog, "- `agent-harness-engineering`: Claude harness rules.")
+	assertNotContains(t, claudeCatalog, "Codex shell rules.")
+
+	codexCatalog := cfg.CompactionSkillCatalogForRuntime("codex")
+	assertContains(t, codexCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, codexCatalog, "- `bash`: Codex shell rules.")
+	assertNotContains(t, codexCatalog, "Claude harness rules.")
+
+	unknownCatalog := cfg.CompactionSkillCatalogForRuntime("node")
+	assertContains(t, unknownCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertNotContains(t, unknownCatalog, "Claude harness rules.")
+	assertNotContains(t, unknownCatalog, "Codex shell rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathInjectPingRuntimeDuplicateOverridesShared(t *testing.T) {
+	dir := t.TempDir()
+	setSkillCatalogHome(t, dir)
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Shared bash rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "repo-local", "SKILL.md"), `---
+name: repo-local
+description: Shared repo rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Claude-specific bash rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: ~/.config/tmux-a2a-postman/skills
+    inject: ping
+  - path: ~/.claude/skills
+    inject: ping
+    runtime: claude
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
+	assertContains(t, claudeCatalog, "Skill files live under `~/.config/tmux-a2a-postman/skills`, `~/.claude/skills`.")
+	assertNotContains(t, claudeCatalog, "Shared bash rules.")
+	assertContains(t, claudeCatalog, "- `bash`: Claude-specific bash rules.")
+	assertContains(t, claudeCatalog, "- `repo-local`: Shared repo rules.")
+	if got := strings.Count(claudeCatalog, "- `bash`:"); got != 1 {
+		t.Fatalf("duplicate bash catalog entries: got %d in:\n%s", got, claudeCatalog)
+	}
+
+	fallbackCatalog := cfg.CompactionSkillCatalogForRuntime("other")
+	assertContains(t, fallbackCatalog, "- `bash`: Shared bash rules.")
+	assertNotContains(t, fallbackCatalog, "Claude-specific bash rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathInjectPingSamePathOverlapRendersOnce(t *testing.T) {
+	dir := t.TempDir()
+	setSkillCatalogHome(t, dir)
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: ~/.claude/skills
+    inject: ping
+  - path: ~/.claude/skills
+    inject: ping
+    runtime: claude
+    skills: [bash]
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
+	if got := strings.Count(claudeCatalog, "`~/.claude/skills`"); got != 1 {
+		t.Fatalf("duplicate source path displays: got %d in:\n%s", got, claudeCatalog)
+	}
+	if got := strings.Count(claudeCatalog, "- `bash`:"); got != 1 {
+		t.Fatalf("duplicate bash catalog entries: got %d in:\n%s", got, claudeCatalog)
+	}
+}
+
+func TestLoadMarkdownConfig_CompactionSkillPathBuildsRuntimeCatalogs(t *testing.T) {
+	dir := t.TempDir()
+	setSkillCatalogHome(t, dir)
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "repo-local", "SKILL.md"), `---
+name: repo-local
+description: Shared repo rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".claude", "skills", "agent-harness-engineering", "SKILL.md"), `---
+name: agent-harness-engineering
+description: Claude harness rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".codex", "skills", "bash", "SKILL.md"), `---
 name: bash
 description: Codex shell rules.
 ---
 `)
 	content := `---
 compaction_skill_path:
-  - path: shared-skills
+  - path: ~/.config/tmux-a2a-postman/skills
     skills: all
-  - path: claude-skills
+  - path: ~/.claude/skills
     runtime: claude
     skills: all
-  - path: codex-skills
+  - path: ~/.codex/skills
     runtime: codex
     skills: all
 ---
@@ -911,7 +1177,6 @@ description: Bash rules.
 skill_path:
   - path: skills
     runtime: claude
-    skills: all
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -921,7 +1186,87 @@ skill_path:
 	if err == nil {
 		t.Fatal("expected loadMarkdownConfig to fail")
 	}
-	if !strings.Contains(err.Error(), `unsupported skill_path item key "runtime"`) {
+	if !strings.Contains(err.Error(), "skill_path item runtime requires inject: ping") {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
+func TestLoadMarkdownConfig_SkillPathRejectsUnsupportedInject(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+skill_path:
+  - path: skills
+    inject: startup
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported skill_path item inject "startup"`) {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
+func TestLoadMarkdownConfig_SkillPathInjectPingRejectsRepoLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+skill_path:
+  - path: skills
+    inject: ping
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), "skill_path item requires a global/user-level path") {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
+func TestLoadMarkdownConfig_CompactionSkillPathRejectsRepoLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+compaction_skill_path:
+  - path: skills
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), "compaction_skill_path item requires a global/user-level path") {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
+func TestLoadMarkdownConfig_SkillPathRejectsUnsupportedRuntimeSelector(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+skill_path:
+  - path: skills
+    inject: ping
+    runtime: vim
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported skill_path item runtime "vim"; supported runtimes are claude, codex`) {
 		t.Fatalf("error mismatch: %v", err)
 	}
 }
@@ -962,7 +1307,7 @@ skill_path:
 	if err == nil {
 		t.Fatal("expected loadMarkdownConfig to fail")
 	}
-	if !strings.Contains(err.Error(), "skills must be all or a YAML list") {
+	if !strings.Contains(err.Error(), "skills must be omitted, all, or a YAML list") {
 		t.Fatalf("error mismatch: %v", err)
 	}
 }

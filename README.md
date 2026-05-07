@@ -227,10 +227,10 @@ not exposed. The default oneline view stays compact and omits those details.
 Pane capture also scans recent scrollback for Claude/Codex context-compaction
 markers so recovery PINGs are not limited to the visible screen. Configure the
 depth with `pane_capture_tail_lines` in `postman.toml`; the embedded default is
-`100`, and `0` restores visible-pane-only scanning. When configured with
-`compaction_skill_path`, those recovery PINGs can include a full skill catalog
-for the detected runtime without adding that catalog to normal messages,
-startup PINGs, or manual PINGs.
+`100`, and `0` restores visible-pane-only scanning. When `postman.md`
+frontmatter has `skill_path` entries with `inject: ping`, those recovery PINGs
+can include a full skill catalog for the detected runtime without adding that
+catalog to normal messages, startup PINGs, or manual PINGs.
 
 ## 5. Configuration
 
@@ -303,38 +303,52 @@ skill_path:
       - bash
       - github
       - markdown
-compaction_skill_path:
   - path: ~/.claude/skills
+    inject: ping
     runtime: claude
-    skills: all
   - path: ~/.codex/skills
+    inject: ping
     runtime: codex
-    skills:
-      - postman-config-auditor
-      - postman-session-operator
 ---
 ```
 
 Frontmatter `ui_node` is still supported as an explicit override, but the
-Mermaid `ui_node` class keeps the normal case in the topology diagram. Relative
-`skill_path` and `compaction_skill_path` values are resolved from the
+Mermaid `ui_node` class keeps the normal case in the topology diagram. For
+normal context catalogs, relative `skill_path` values are resolved from the
 `postman.md` directory, `~/...` expands to the current user's home directory,
 and symlinked skill directories are followed. Each catalog is generated as a
-compact Markdown list from selected `SKILL.md` frontmatter `name` and
-`description` values. Use `skills: all` to include every skill under a source
-path. Glob patterns are not supported; list skill names explicitly.
-`skill_path` appends to normal role context, so reserve it for compact catalogs
-that are safe to inject on every turn. It intentionally does not accept
-`runtime`. `compaction_skill_path` is the backwards-compatible stable key for
-larger and runtime-specific catalogs: it is held separately and appended only
-to compaction-triggered daemon PING role content. Its optional
-`runtime` selector currently targets Claude Code (`runtime: claude`) and Codex
+compact Markdown list from
+selected `SKILL.md` frontmatter `name` and `description` values. Omit `skills`
+to include every skill under a source path. When `skills` is present, it must
+be a YAML list of explicit skill directory names, so a real skill named `all`
+is selected with `skills: [all]`. The scalar `skills: all` remains accepted as
+a legacy shorthand for existing configs, but new examples should omit
+`skills` for all-skills catalogs. Glob patterns are not supported; list skill
+names explicitly.
+
+`skill_path` entries with omitted `inject` or `inject: context` append to
+normal role context, so reserve them for compact catalogs that are safe to
+inject on every turn. Entries with `inject: ping` are held separately and
+appended only to compaction-triggered daemon PING role content; use this for
+larger and runtime-specific catalogs. Runtime selectors are allowed only with
+`inject: ping` and currently target Claude Code (`runtime: claude`) and Codex
 CLI (`runtime: codex`), matching the pane compaction markers postman detects
 today. Entries without `runtime` are shared catalogs included in every
 runtime-specific catalog and in the fallback catalog used when no exact
-runtime-specific catalog matches. In Nix-managed setups that materialize
-runtime skill trees for this repo, use `$HOME/.claude/skills` for Claude Code
-and `$HOME/.codex/skills` for Codex CLI when those directories are present.
+runtime-specific catalog matches. Ping-injected catalog paths, including
+compatibility `compaction_skill_path`, must be global/user-level paths:
+`~/...` or absolute. Repo-local relative paths are invalid for ping catalogs
+because compaction PINGs may target panes whose working directory differs from
+the config file. Prefer the conventional home-level paths
+`$HOME/.claude/skills` for Claude Code and `$HOME/.codex/skills` for Codex CLI.
+
+Rendered catalogs contain at most one entry per skill `name`. Later
+`skill_path` entries override earlier entries with the same rendered name; for
+runtime-specific ping catalogs, shared entries are evaluated before the
+matching runtime entries, so runtime-specific entries override shared entries.
+The final catalog is sorted by skill name. Existing `compaction_skill_path`
+frontmatter continues to work as a compatibility form for ping-injected
+catalogs.
 
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax
