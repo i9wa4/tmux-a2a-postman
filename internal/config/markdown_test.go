@@ -1250,6 +1250,26 @@ compaction_skill_path:
 	}
 }
 
+func TestLoadMarkdownConfig_CompactionSkillPathRejectsInjectKey(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+compaction_skill_path:
+  - path: ~/.claude/skills
+    inject: ping
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported compaction_skill_path item key "inject"`) {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
 func TestLoadMarkdownConfig_SkillPathRejectsUnsupportedRuntimeSelector(t *testing.T) {
 	dir := t.TempDir()
 	content := `---

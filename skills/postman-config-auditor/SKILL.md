@@ -84,8 +84,9 @@ Important merge rules:
   override earlier entries with the same rendered name; runtime-specific ping
   entries override shared ping entries with the same name.
 - `postman.md` frontmatter `compaction_skill_path` remains accepted as a
-  compatibility form for ping-injected catalogs. New examples should use
-  `skill_path` with `inject: ping`.
+  compatibility form for ping-injected catalogs. Its mappings are always
+  ping-injected and accept only `path`, `runtime`, and `skills`; they do not
+  accept `inject`. New examples should use `skill_path` with `inject: ping`.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.

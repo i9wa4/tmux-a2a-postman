@@ -44,14 +44,20 @@ Rules:
   Inline `:::ui_node` also works. Frontmatter `ui_node` is still supported as an
   explicit override.
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
-- `skill_path` and `compaction_skill_path` may be a scalar path or a YAML list
-  of path entries.
-- A list item may be a scalar path or a mapping with `path`, `inject`,
-  `runtime`, and `skills`.
-- Omitted `inject` and `inject: context` append the generated catalog to normal
-  role context.
-- `inject: ping` stores the generated catalog for compaction-triggered daemon
-  PING role content and keeps it out of normal role context.
+- `skill_path` may be a scalar path or a YAML list of path entries.
+- `skill_path` list items may be scalar paths or mappings with `path`,
+  `inject`, `runtime`, and `skills`.
+- Only `skill_path` mappings accept `inject`.
+- For `skill_path` mappings, omitted `inject` and `inject: context` append the
+  generated catalog to normal role context.
+- For `skill_path` mappings, `inject: ping` stores the generated catalog for
+  compaction-triggered daemon PING role content and keeps it out of normal role
+  context.
+- `compaction_skill_path` may be a scalar path or a YAML list of path entries.
+- `compaction_skill_path` list items may be scalar paths or mappings with
+  `path`, `runtime`, and `skills`.
+- `compaction_skill_path` entries are always ping-injected compatibility
+  entries and do not accept `inject`.
 - `skill_path` mappings with `inject: ping`, and all `compaction_skill_path`
   mappings, may include `runtime`; the currently supported exact runtime
   selectors are `claude` and `codex`.
