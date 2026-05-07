@@ -190,6 +190,8 @@ func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing
 		"",
 		"Generated guidance before body.",
 		"",
+		"## Sender Message",
+		"",
 		"---",
 		"",
 	}, "\n") + senderBody
@@ -209,6 +211,30 @@ func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing
 	}
 	if stdout != senderBody {
 		t.Fatalf("--body stdout changed sender body:\n got %q\nwant %q", stdout, senderBody)
+	}
+}
+
+func TestRunInspectMessageBodyKeepsOrdinaryMarkdownHorizontalRule(t *testing.T) {
+	fixture := writeInspectMessageFixture(t)
+	filename := "20260506-010107-from-orchestrator-to-worker.md"
+	body := "Intro\n\n---\n\nDetails"
+	content := inspectMessageFixture("orchestrator", "worker", filename, nil, body)
+	readPath := filepath.Join(fixture.sessionDir, "read", filename)
+	writeInspectMessageFile(t, readPath, content)
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunInspectMessage([]string{
+			"--context-id", fixture.contextID,
+			"--session", fixture.sessionName,
+			"--id", filename,
+			"--body",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunInspectMessage(--body) error = %v stderr=%q", err, stderr)
+	}
+	if stdout != body+"\n" {
+		t.Fatalf("--body stdout changed ordinary body:\n got %q\nwant %q", stdout, body+"\n")
 	}
 }
 

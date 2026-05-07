@@ -40,7 +40,7 @@ func SenderBodyFromContent(content string) (string, bool) {
 	if !ok {
 		return strings.TrimSpace(content), false
 	}
-	if senderBody, ok := senderBodyAfterSeparator(body); ok {
+	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body); ok {
 		return senderBody, true
 	}
 	return strings.TrimSpace(body), false
@@ -59,9 +59,8 @@ func rawBodyFromContent(content string) (string, bool) {
 	return rest[second+4:], true
 }
 
-func senderBodyAfterSeparator(body string) (string, bool) {
+func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 	offset := 0
-	separatorEnd := -1
 	for offset <= len(body) {
 		lineEnd := len(body)
 		newlineEnd := len(body)
@@ -70,25 +69,34 @@ func senderBodyAfterSeparator(body string) (string, bool) {
 			newlineEnd = lineEnd + 1
 		}
 		line := strings.TrimRight(body[offset:lineEnd], "\r")
-		if strings.TrimSpace(line) == "---" {
-			separatorEnd = newlineEnd
-			break
+		if strings.TrimSpace(line) == "---" && hasGeneratedSendEnvelopeContext(body[:offset]) {
+			senderBody := body[newlineEnd:]
+			if strings.HasPrefix(senderBody, "\r\n") {
+				senderBody = senderBody[2:]
+			} else if strings.HasPrefix(senderBody, "\n") {
+				senderBody = senderBody[1:]
+			}
+			return senderBody, true
 		}
 		if newlineEnd == len(body) {
 			break
 		}
 		offset = newlineEnd
 	}
-	if separatorEnd < 0 {
-		return "", false
+	return "", false
+}
+
+func hasGeneratedSendEnvelopeContext(prefix string) bool {
+	for _, rawLine := range strings.Split(prefix, "\n") {
+		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
+		if line == "## Sender Message" {
+			return true
+		}
+		if strings.HasPrefix(line, "tmux-a2a-postman send-heredoc ") || line == "tmux-a2a-postman send-heredoc" {
+			return true
+		}
 	}
-	senderBody := body[separatorEnd:]
-	if strings.HasPrefix(senderBody, "\r\n") {
-		senderBody = senderBody[2:]
-	} else if strings.HasPrefix(senderBody, "\n") {
-		senderBody = senderBody[1:]
-	}
-	return senderBody, true
+	return false
 }
 
 func ParseMetadata(content string) (Metadata, error) {
