@@ -1346,6 +1346,54 @@ func TestRecordPendingAutoPing_UsesConfiguredAutoPingDelay(t *testing.T) {
 	}
 }
 
+func TestRecordPendingAutoPing_UsesDefaultAutoPingDelay(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(baseDir, "xdg-config"))
+	t.Setenv("HOME", filepath.Join(baseDir, "home"))
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(): %v", err)
+	}
+
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 20, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg:       cfg,
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%77",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "startup", now)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	pending := state.Nodes["review:worker"]
+	if !pending.Pending {
+		t.Fatal("pending auto-PING was not recorded")
+	}
+	if pending.DelaySeconds != 20 {
+		t.Fatalf("DelaySeconds: got %v, want 20", pending.DelaySeconds)
+	}
+	if got, want := pending.NotBeforeAt, now.Add(20*time.Second).Format(time.RFC3339Nano); got != want {
+		t.Fatalf("NotBeforeAt: got %q, want %q", got, want)
+	}
+}
+
 func installRuntimeSessionOwnerTmux(t *testing.T, owners map[string]string) {
 	t.Helper()
 
