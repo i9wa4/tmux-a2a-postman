@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 )
 
 type skillCatalogEntry struct {
@@ -39,24 +41,28 @@ func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, sp
 func renderCompactionSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
 	byRuntime := make(map[string][]skillCatalogSpec)
 	var runtimes []string
+	var sharedSpecs []skillCatalogSpec
 	for _, spec := range specs {
 		if strings.TrimSpace(spec.Path) == "" {
 			continue
 		}
 		runtime := normalizeSkillCatalogRuntime(spec.Runtime)
+		if runtime == "" {
+			sharedSpecs = append(sharedSpecs, spec)
+			continue
+		}
 		if _, ok := byRuntime[runtime]; !ok {
 			runtimes = append(runtimes, runtime)
 		}
 		byRuntime[runtime] = append(byRuntime[runtime], spec)
 	}
-	if len(byRuntime) == 0 {
+	if len(sharedSpecs) == 0 && len(byRuntime) == 0 {
 		return nil, nil
 	}
 
-	globalSpecs := byRuntime[""]
 	result := make(map[string]string)
-	if len(globalSpecs) > 0 {
-		catalog, err := renderSkillCatalogs(markdownPath, globalSpecs)
+	if len(sharedSpecs) > 0 {
+		catalog, err := renderSkillCatalogs(markdownPath, sharedSpecs)
 		if err != nil {
 			return nil, err
 		}
@@ -67,10 +73,7 @@ func renderCompactionSkillCatalogs(markdownPath string, specs []skillCatalogSpec
 
 	sort.Strings(runtimes)
 	for _, runtime := range runtimes {
-		if runtime == "" {
-			continue
-		}
-		runtimeSpecs := append([]skillCatalogSpec{}, globalSpecs...)
+		runtimeSpecs := append([]skillCatalogSpec{}, sharedSpecs...)
 		runtimeSpecs = append(runtimeSpecs, byRuntime[runtime]...)
 		catalog, err := renderSkillCatalogs(markdownPath, runtimeSpecs)
 		if err != nil {
@@ -120,7 +123,7 @@ func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string,
 }
 
 func normalizeSkillCatalogRuntime(runtime string) string {
-	return strings.ToLower(strings.TrimSpace(runtime))
+	return agentruntime.Normalize(runtime)
 }
 
 func loadSkillCatalogSpec(markdownPath string, spec skillCatalogSpec) ([]skillCatalogEntry, string, error) {

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
@@ -202,10 +203,10 @@ func compactionTrigger(runtime, content string) string {
 }
 
 func compactionTriggerScan(runtime, content string) compactionMarkerScan {
-	switch strings.ToLower(strings.TrimSpace(runtime)) {
-	case "claude":
+	switch agentruntime.Normalize(runtime) {
+	case agentruntime.Claude:
 		return claudeCompactionTriggerScan(content)
-	case "codex":
+	case agentruntime.Codex:
 		return codexCompactionTriggerScan(content)
 	default:
 		return compactionMarkerScan{}
@@ -217,7 +218,7 @@ func claudeCompactionTrigger(content string) string {
 }
 
 func claudeCompactionTriggerScan(content string) compactionMarkerScan {
-	return scanCompactionMarkers(content, "claude:conversation-compaction", isClaudeCompactionLine)
+	return scanCompactionMarkers(content, agentruntime.Claude+":conversation-compaction", isClaudeCompactionLine)
 }
 
 func isClaudeCompactionLine(line string) bool {
@@ -231,7 +232,7 @@ func codexCompactionTrigger(content string) string {
 }
 
 func codexCompactionTriggerScan(content string) compactionMarkerScan {
-	return scanCompactionMarkers(content, "codex:context-compaction", isCodexCompactionLine)
+	return scanCompactionMarkers(content, agentruntime.Codex+":context-compaction", isCodexCompactionLine)
 }
 
 func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) compactionMarkerScan {

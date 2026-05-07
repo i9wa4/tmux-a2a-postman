@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -197,8 +198,9 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 			"worker": {Template: "Worker template."},
 		},
 		CompactionSkillCatalogs: map[string]string{
-			"claude": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
-			"codex":  "### Available Skills\n\n- `bash`: Codex rules.",
+			"":                  "### Available Skills\n\n- `postman-session-operator`: Fallback runtime rules.",
+			agentruntime.Claude: "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
+			agentruntime.Codex:  "### Available Skills\n\n- `bash`: Codex rules.",
 		},
 	}
 
@@ -210,19 +212,26 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 	if strings.Contains(normalBody, "Claude rules.") || strings.Contains(normalBody, "Codex rules.") {
 		t.Fatalf("normal ping included compaction catalog: %q", normalBody)
 	}
-
-	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
-		t.Fatalf("ReadDir inbox: %v", err)
+	if strings.Contains(normalBody, "Fallback runtime rules.") {
+		t.Fatalf("normal ping included fallback compaction catalog: %q", normalBody)
 	}
-	for _, entry := range entries {
-		if err := os.Remove(filepath.Join(inboxDir, entry.Name())); err != nil {
-			t.Fatalf("Remove inbox message: %v", err)
+
+	clearInbox := func() {
+		t.Helper()
+		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+		entries, err := os.ReadDir(inboxDir)
+		if err != nil {
+			t.Fatalf("ReadDir inbox: %v", err)
+		}
+		for _, entry := range entries {
+			if err := os.Remove(filepath.Join(inboxDir, entry.Name())); err != nil {
+				t.Fatalf("Remove inbox message: %v", err)
+			}
 		}
 	}
 
-	options := SendOptions{CompactionTriggered: true, Runtime: "claude"}
+	clearInbox()
+	options := SendOptions{CompactionTriggered: true, Runtime: agentruntime.Claude}
 	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, options); err != nil {
 		t.Fatalf("SendPingToNodeWithOptions compaction error = %v", err)
 	}
@@ -232,6 +241,22 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 	}
 	if strings.Contains(compactionBody, "Codex rules.") {
 		t.Fatalf("compaction ping included wrong runtime catalog: %q", compactionBody)
+	}
+	if strings.Contains(compactionBody, "Fallback runtime rules.") {
+		t.Fatalf("compaction ping included fallback runtime catalog despite exact runtime match: %q", compactionBody)
+	}
+
+	clearInbox()
+	otherOptions := SendOptions{CompactionTriggered: true, Runtime: "zsh"}
+	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, otherOptions); err != nil {
+		t.Fatalf("SendPingToNodeWithOptions other runtime compaction error = %v", err)
+	}
+	_, otherBody := readSingleInboxMessage(t, sessionDir, "worker")
+	if !strings.Contains(otherBody, "Fallback runtime rules.") {
+		t.Fatalf("compaction ping missing fallback runtime catalog: %q", otherBody)
+	}
+	if strings.Contains(otherBody, "Claude rules.") || strings.Contains(otherBody, "Codex rules.") {
+		t.Fatalf("compaction ping included exact runtime catalog for fallback runtime: %q", otherBody)
 	}
 }
 

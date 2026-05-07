@@ -46,11 +46,15 @@ Rules:
 - `skill_path` and `compaction_skill_path` may be a scalar path or a YAML list
   of path entries.
 - A list item may be a scalar path or a mapping with `path` and `skills`.
-- `compaction_skill_path` mappings may also include `runtime`, usually
-  `claude` or `codex`. Omitted `runtime` means the catalog is a fallback used
-  when no runtime-specific catalog matches.
+- `compaction_skill_path` mappings may also include `runtime`; the currently
+  supported exact runtime selectors are `claude` and `codex`.
+- Omitted `runtime` means the catalog is shared: it is included in
+  runtime-specific catalogs and in the fallback catalog used when no exact
+  runtime catalog matches.
 - `skill_path` mappings do not support `runtime`; use
   `compaction_skill_path` for runtime-specific catalogs.
+- `compaction_skill_path` is the stable compaction-only counterpart to
+  `skill_path`.
 - `skills` may be `all` or a YAML list of explicit skill directory names.
 - Omitted `skills` means `all`.
 - Glob patterns such as `postman-*` are unsupported; list skill names
@@ -89,13 +93,18 @@ with a `SKILL.md` file. Relative paths are resolved from the directory
 containing the `postman.md` file, `~/...` expands to the current user's home
 directory, and symlinked skill directories are followed. Generated catalogs read
 `name` and `description` from selected `SKILL.md` frontmatter and render a
-compact Markdown list. `skill_path` appends that list to `common_template`.
-`compaction_skill_path` keeps its list out of `common_template` and appends it
-only to daemon PING role content when pane capture detects a context-compaction
-marker. Runtime-specific `compaction_skill_path` entries are selected from the
-pane's current command, and entries without `runtime` are included in all
-runtime-specific catalogs and used as the fallback catalog. Skill frontmatter
-may use single-line `description`, `description: |`, or `description: >-`.
+compact Markdown list. `skill_path` appends that list to `common_template`,
+which reaches normal role context, so it is for compact runtime-agnostic
+catalogs only. `compaction_skill_path` keeps its list out of `common_template`
+and appends it only to daemon PING role content when pane capture detects a
+context-compaction marker. Runtime-specific `compaction_skill_path` entries are
+selected from the pane's current command. Entries without `runtime` are shared
+catalogs included in all runtime-specific catalogs and in the fallback catalog.
+Exact runtime-specific compaction handling is intentionally limited to Claude
+Code and Codex CLI because those are the runtimes with pane compaction markers
+today.
+Skill frontmatter may use single-line `description`, `description: |`, or
+`description: >-`.
 
 ## 3. H2 Section Parsing
 

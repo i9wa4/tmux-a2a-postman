@@ -323,10 +323,18 @@ and symlinked skill directories are followed. Each catalog is generated as a
 compact Markdown list from selected `SKILL.md` frontmatter `name` and
 `description` values. Use `skills: all` to include every skill under a source
 path. Glob patterns are not supported; list skill names explicitly.
-`skill_path` appends to normal role context. `compaction_skill_path` is held
-separately and appended only to compaction-triggered daemon PING role content;
-its optional `runtime` selector matches detected pane commands such as `claude`
-or `codex`.
+`skill_path` appends to normal role context, so reserve it for compact catalogs
+that are safe to inject on every turn. It intentionally does not accept
+`runtime`. `compaction_skill_path` is the backwards-compatible stable key for
+larger and runtime-specific catalogs: it is held separately and appended only
+to compaction-triggered daemon PING role content. Its optional
+`runtime` selector currently targets Claude Code (`runtime: claude`) and Codex
+CLI (`runtime: codex`), matching the pane compaction markers postman detects
+today. Entries without `runtime` are shared catalogs included in every
+runtime-specific catalog and in the fallback catalog used when no exact
+runtime-specific catalog matches. In Nix-managed setups that materialize
+runtime skill trees for this repo, use `$HOME/.claude/skills` for Claude Code
+and `$HOME/.codex/skills` for Codex CLI when those directories are present.
 
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax

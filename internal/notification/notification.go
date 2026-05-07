@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -146,13 +147,13 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 func ResolveEnterCount(configured int, probeRuntime func() (string, error)) int {
 	if configured == 0 {
 		runtime, err := probeRuntime()
-		if err == nil && runtime == "codex" {
+		if err == nil && agentruntime.Normalize(runtime) == agentruntime.Codex {
 			return 2
 		}
 		return 1
 	} else if configured > 1 {
 		runtime, err := probeRuntime()
-		if err != nil || runtime != "codex" {
+		if err != nil || agentruntime.Normalize(runtime) != agentruntime.Codex {
 			return 1
 		}
 	}

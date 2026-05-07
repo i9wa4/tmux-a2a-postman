@@ -66,13 +66,16 @@ Important merge rules:
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from
   selected `SKILL.md` files and appends them to that Markdown layer's
   `common_template`. `skill_path` accepts YAML list entries with `path` and
-  `skills`; `skills` is either `all` or an explicit YAML list.
+  `skills`; `skills` is either `all` or an explicit YAML list. It is
+  always-injected role context and does not accept `runtime`.
 - `postman.md` frontmatter `compaction_skill_path` generates compact skill
   catalogs from selected `SKILL.md` files but keeps them out of
   `common_template`. Those catalogs are appended only to
   compaction-triggered daemon PING role content. YAML list entries accept
   `path`, `skills`, and optional `runtime` selectors such as `claude` or
-  `codex`; entries without `runtime` are fallback/shared catalogs.
+  `codex`; entries without `runtime` are shared catalogs included in
+  runtime-specific catalogs and in the fallback catalog. This key is the stable
+  compaction-only counterpart to `skill_path`.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.

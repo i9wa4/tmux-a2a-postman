@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -21,7 +22,7 @@ type HandKind string
 const (
 	HandKindTmux HandKind = "tmux"
 
-	BrainRuntimeUnknown = "unknown"
+	BrainRuntimeUnknown = agentruntime.Unknown
 )
 
 type Brain struct {
