@@ -29,6 +29,7 @@ Core config:
   draft_template                   Structured envelope for stored send-heredoc Markdown
   daemon_message_template          Structured envelope for daemon-originated PING mail
   skill_path                       postman.md YAML frontmatter skill catalog sources
+  compaction_skill_path            postman.md YAML frontmatter catalogs for compaction-triggered PINGs
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.25)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
   notification_template            Pane hint rendered when mail arrives

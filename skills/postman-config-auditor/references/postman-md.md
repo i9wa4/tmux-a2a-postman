@@ -25,16 +25,17 @@ Supported files:
 ## 2. Global Frontmatter
 
 Only a leading `---` block is parsed. The main `postman.md` frontmatter is
-YAML. Keep it small: scalar settings plus the `skill_path` list are the
-supported public surface.
+YAML. Keep it small: scalar settings plus `skill_path` and
+`compaction_skill_path` catalog lists are the supported public surface.
 
 Supported global keys in `postman.md`:
 
-| Key             | Effect                                                       |
-| --------------- | ------------------------------------------------------------ |
-| `ui_node`       | Sets `Config.UINode` as a frontmatter override               |
-| `reply_command` | Sets `Config.ReplyCommand` when non-empty                    |
-| `skill_path`    | Appends generated skill catalogs to `Config.CommonTemplate`  |
+| Key                     | Effect                                                                 |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `ui_node`               | Sets `Config.UINode` as a frontmatter override                         |
+| `reply_command`         | Sets `Config.ReplyCommand` when non-empty                              |
+| `skill_path`            | Appends generated skill catalogs to `Config.CommonTemplate`            |
+| `compaction_skill_path` | Stores generated catalogs for compaction-triggered daemon PING content |
 
 Rules:
 
@@ -42,9 +43,14 @@ Rules:
   Inline `:::ui_node` also works. Frontmatter `ui_node` is still supported as an
   explicit override.
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
-- `skill_path` may be a scalar path or a YAML list of path entries.
-- A `skill_path` list item may be a scalar path or a mapping with `path` and
-  `skills`.
+- `skill_path` and `compaction_skill_path` may be a scalar path or a YAML list
+  of path entries.
+- A list item may be a scalar path or a mapping with `path` and `skills`.
+- `compaction_skill_path` mappings may also include `runtime`, usually
+  `claude` or `codex`. Omitted `runtime` means the catalog is a fallback used
+  when no runtime-specific catalog matches.
+- `skill_path` mappings do not support `runtime`; use
+  `compaction_skill_path` for runtime-specific catalogs.
 - `skills` may be `all` or a YAML list of explicit skill directory names.
 - Omitted `skills` means `all`.
 - Glob patterns such as `postman-*` are unsupported; list skill names
@@ -63,7 +69,15 @@ skill_path:
       - bash
       - github
       - markdown
+compaction_skill_path:
+  - path: skills
+    skills:
+      - postman-session-operator
   - path: ~/.claude/skills
+    runtime: claude
+    skills: all
+  - path: ~/.codex/skills
+    runtime: codex
     skills:
       - postman-config-auditor
       - postman-session-operator
@@ -73,10 +87,15 @@ skill_path:
 Each `path` points to a directory containing one subdirectory per skill, each
 with a `SKILL.md` file. Relative paths are resolved from the directory
 containing the `postman.md` file, `~/...` expands to the current user's home
-directory, and symlinked skill directories are followed. The generated catalog
-reads `name` and `description` from selected `SKILL.md` frontmatter and appends
-a compact Markdown list to `common_template`. Skill frontmatter may use
-single-line `description`, `description: |`, or `description: >-`.
+directory, and symlinked skill directories are followed. Generated catalogs read
+`name` and `description` from selected `SKILL.md` frontmatter and render a
+compact Markdown list. `skill_path` appends that list to `common_template`.
+`compaction_skill_path` keeps its list out of `common_template` and appends it
+only to daemon PING role content when pane capture detects a context-compaction
+marker. Runtime-specific `compaction_skill_path` entries are selected from the
+pane's current command, and entries without `runtime` are included in all
+runtime-specific catalogs and used as the fallback catalog. Skill frontmatter
+may use single-line `description`, `description: |`, or `description: >-`.
 
 ## 3. H2 Section Parsing
 
@@ -235,6 +254,9 @@ Important rules:
   footer.
 - `skill_path` is applied within the Markdown layer that declares it; selected
   generated catalogs are appended to that layer's `common_template` content.
+- `compaction_skill_path` is applied within the Markdown layer that declares it
+  but stays separate from `common_template`; selected generated catalogs are
+  appended only to compaction-triggered daemon PING role content.
 - Nodes referenced by valid edges are materialized automatically.
 
 ## 8. Minimal Valid postman.md

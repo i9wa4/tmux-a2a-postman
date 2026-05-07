@@ -352,9 +352,10 @@ func TestLoadConfig_Default(t *testing.T) {
 func TestDefaultConfigOnlyInitializesStructuralFields(t *testing.T) {
 	got := DefaultConfig()
 	want := &Config{
-		Edges:     []string{},
-		Nodes:     map[string]NodeConfig{},
-		NodeOrder: []string{},
+		Edges:                   []string{},
+		Nodes:                   map[string]NodeConfig{},
+		NodeOrder:               []string{},
+		CompactionSkillCatalogs: map[string]string{},
 	}
 
 	if !reflect.DeepEqual(got, want) {

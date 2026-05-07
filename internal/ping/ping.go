@@ -13,6 +13,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
+type SendOptions struct {
+	CompactionTriggered bool
+	Runtime             string
+}
+
 // ExtractSimpleName extracts the simple node name from a session-prefixed name.
 // If the name contains ":", returns the part after ":". Otherwise, returns the name as-is.
 func ExtractSimpleName(fullName string) string {
@@ -31,6 +36,10 @@ func SendPingToNode(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl strin
 }
 
 func SendPingToNodeWithResult(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+	return SendPingToNodeWithOptions(nodeInfo, contextID, nodeName, tmpl, cfg, activeNodes, livenessMap, adjacency, nodes, SendOptions{})
+}
+
+func SendPingToNodeWithOptions(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, options SendOptions) (controlplane.SystemMessageResult, error) {
 	target := controlplane.TargetForNode(nodeName, nodeInfo)
 	simpleName := target.ActorID
 	sourceSessionName := target.SessionName
@@ -48,7 +57,11 @@ func SendPingToNodeWithResult(nodeInfo discovery.NodeInfo, contextID, nodeName, 
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
 	// Pass 2: inject daemon message variables.
-	roleContent := envelope.BuildRoleContent(cfg, simpleName)
+	compactionCatalog := ""
+	if options.CompactionTriggered && cfg != nil {
+		compactionCatalog = cfg.CompactionSkillCatalogForRuntime(options.Runtime)
+	}
+	roleContent := envelope.BuildRoleContentWithAppendix(cfg, simpleName, compactionCatalog)
 	content = template.ExpandVariables(content, map[string]string{
 		"message_type": "ping",
 		"heading":      "Ping",

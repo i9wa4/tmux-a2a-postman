@@ -839,6 +839,93 @@ skill_path:
 	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
 }
 
+func TestLoadMarkdownConfig_CompactionSkillPathBuildsRuntimeCatalogs(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "shared-skills", "repo-local", "SKILL.md"), `---
+name: repo-local
+description: Shared repo rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "claude-skills", "agent-harness-engineering", "SKILL.md"), `---
+name: agent-harness-engineering
+description: Claude harness rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, "codex-skills", "bash", "SKILL.md"), `---
+name: bash
+description: Codex shell rules.
+---
+`)
+	content := `---
+compaction_skill_path:
+  - path: shared-skills
+    skills: all
+  - path: claude-skills
+    runtime: claude
+    skills: all
+  - path: codex-skills
+    runtime: codex
+    skills: all
+---
+
+## ` + "`common_template`" + `
+
+Compact shared instructions.
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "Compact shared instructions.")
+	assertNotContains(t, cfg.CommonTemplate, "Claude harness rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Codex shell rules.")
+
+	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
+	assertContains(t, claudeCatalog, "- `repo-local`: Shared repo rules.")
+	assertContains(t, claudeCatalog, "- `agent-harness-engineering`: Claude harness rules.")
+	assertNotContains(t, claudeCatalog, "Codex shell rules.")
+
+	codexCatalog := cfg.CompactionSkillCatalogForRuntime("codex")
+	assertContains(t, codexCatalog, "- `repo-local`: Shared repo rules.")
+	assertContains(t, codexCatalog, "- `bash`: Codex shell rules.")
+	assertNotContains(t, codexCatalog, "Claude harness rules.")
+
+	unknownCatalog := cfg.CompactionSkillCatalogForRuntime("node")
+	assertContains(t, unknownCatalog, "- `repo-local`: Shared repo rules.")
+	assertNotContains(t, unknownCatalog, "Claude harness rules.")
+	assertNotContains(t, unknownCatalog, "Codex shell rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathRejectsRuntimeSelector(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "bash", "SKILL.md"), `---
+name: bash
+description: Bash rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+    runtime: claude
+    skills: all
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	_, err := loadMarkdownConfig(path)
+	if err == nil {
+		t.Fatal("expected loadMarkdownConfig to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported skill_path item key "runtime"`) {
+		t.Fatalf("error mismatch: %v", err)
+	}
+}
+
 func TestLoadMarkdownConfig_SkillPathRejectsGlobSkillSelector(t *testing.T) {
 	dir := t.TempDir()
 	content := `---

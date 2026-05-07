@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fsnotify/fsnotify"
+	"github.com/gofsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
@@ -100,7 +100,7 @@ func registerWatchedSessionDirs(watcher *fsnotify.Watcher, watchedDirs map[strin
 		if watchedDirs[dirToWatch] {
 			continue
 		}
-		if err := watcher.Add(dirToWatch); err != nil {
+		if err := watcher.Add(dirToWatch, fsnotify.All); err != nil {
 			log.Printf("postman: watcher.Add %s: %v\n", dirToWatch, err)
 			continue
 		}

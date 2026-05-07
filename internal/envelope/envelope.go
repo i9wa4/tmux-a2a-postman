@@ -216,6 +216,14 @@ func RenderReplyCommand(replyCmd, contextID, recipient string) string {
 // Resolution: config template with CommonTemplate prepend.
 // Used by SendPingToNode and message envelope rendering.
 func BuildRoleContent(cfg *config.Config, nodeName string) string {
+	return BuildRoleContentWithAppendix(cfg, nodeName, "")
+}
+
+// BuildRoleContentWithAppendix returns canonical role content with caller-scoped
+// appendix material appended before heading demotion. This keeps normal role
+// rendering compact while allowing special daemon paths, such as compaction
+// recovery pings, to add extra instructions.
+func BuildRoleContentWithAppendix(cfg *config.Config, nodeName string, appendix string) string {
 	nc := cfg.GetNodeConfig(nodeName)
 	nodeTemplate := nc.Template
 	roleContent := ""
@@ -226,6 +234,19 @@ func BuildRoleContent(cfg *config.Config, nodeName string) string {
 	} else {
 		roleContent = nodeTemplate
 	}
+	roleContent = joinSections(roleContent, appendix)
 	roleContent = strings.ReplaceAll(roleContent, "<!-- end of message -->", "<!-- end of msg -->")
 	return MarkdownSectionContent(roleContent)
+}
+
+func joinSections(first, second string) string {
+	first = strings.TrimSpace(first)
+	second = strings.TrimSpace(second)
+	if first == "" {
+		return second
+	}
+	if second == "" {
+		return first
+	}
+	return first + "\n\n" + second
 }

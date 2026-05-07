@@ -456,6 +456,7 @@ func stripFrontmatter(content string) string {
 // Global frontmatter keys: ui_node → Config.UINode override,
 // reply_command → Config.ReplyCommand,
 // skill_path → generated skill catalog appended to Config.CommonTemplate.
+// compaction_skill_path → generated skill catalogs appended only to compaction-triggered PING role content.
 // Mermaid edges may mark the UI node with the ui_node class when frontmatter
 // does not override it.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
@@ -467,10 +468,10 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	content := string(raw)
-	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
+	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}, CompactionSkillCatalogs: make(map[string]string)}
 
 	// Parse global frontmatter.
-	fm, skillCatalogSpecs, err := parsePostmanFrontmatter(content)
+	fm, skillCatalogSpecs, compactionSkillCatalogSpecs, err := parsePostmanFrontmatter(content)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -513,6 +514,13 @@ func loadMarkdownConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		cfg.CommonTemplate = commonTemplate
+	}
+	if len(compactionSkillCatalogSpecs) > 0 {
+		catalogs, err := renderCompactionSkillCatalogs(path, compactionSkillCatalogSpecs)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		cfg.CompactionSkillCatalogs = catalogs
 	}
 
 	// Message footer section

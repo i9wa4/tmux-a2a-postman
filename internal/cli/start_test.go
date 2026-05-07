@@ -511,11 +511,18 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{
-		DaemonMessageTemplate: "{message}",
+		DaemonMessageTemplate: "{message}\n{role_content}",
 		TmuxTimeout:           1.0,
+		CompactionSkillCatalogs: map[string]string{
+			"claude": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
+		},
 	}
 
-	sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []string{"review:worker"})
+	sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
+		NodeKey: "review:worker",
+		Runtime: "claude",
+		Trigger: "claude:conversation-compaction",
+	}})
 
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	entries, err := os.ReadDir(inboxDir)
@@ -532,6 +539,9 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "PING from postman daemon") {
 		t.Fatalf("compaction-triggered PING body = %q, want daemon PING message", string(body))
+	}
+	if !strings.Contains(string(body), "Claude rules.") {
+		t.Fatalf("compaction-triggered PING body = %q, want compaction skill catalog", string(body))
 	}
 }
 

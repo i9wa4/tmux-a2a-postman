@@ -119,6 +119,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"draft_template                   Structured envelope for stored send-heredoc Markdown",
 		"daemon_message_template          Structured envelope for daemon-originated PING mail",
 		"skill_path                       postman.md YAML frontmatter skill catalog sources",
+		"compaction_skill_path            postman.md YAML frontmatter catalogs for compaction-triggered PINGs",
 		"auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes",
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",

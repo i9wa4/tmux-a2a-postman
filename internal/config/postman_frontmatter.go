@@ -7,42 +7,43 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogSpec, error) {
+func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogSpec, []skillCatalogSpec, error) {
 	scalars := make(map[string]string)
 	lines := strings.Split(content, "\n")
 	start, end, ok, err := frontmatterBounds(lines)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if !ok {
-		return scalars, nil, nil
+		return scalars, nil, nil, nil
 	}
 
 	raw := strings.TrimSpace(strings.Join(lines[start+1:end], "\n"))
 	if raw == "" {
-		return scalars, nil, nil
+		return scalars, nil, nil, nil
 	}
 
 	var document yaml.Node
 	yamlInput := strings.Repeat("\n", start+1) + raw
 	if err := yaml.Unmarshal([]byte(yamlInput), &document); err != nil {
-		return nil, nil, fmt.Errorf("parse postman.md frontmatter: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse postman.md frontmatter: %w", err)
 	}
 	if len(document.Content) == 0 || document.Content[0].Kind == yaml.ScalarNode && document.Content[0].Tag == "!!null" {
-		return scalars, nil, nil
+		return scalars, nil, nil, nil
 	}
 
 	root := document.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return nil, nil, frontmatterNodeError(root, "postman.md frontmatter must be a YAML mapping")
+		return nil, nil, nil, frontmatterNodeError(root, "postman.md frontmatter must be a YAML mapping")
 	}
 
 	var skillSpecs []skillCatalogSpec
+	var compactionSkillSpecs []skillCatalogSpec
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		keyNode := root.Content[i]
 		valueNode := root.Content[i+1]
 		if keyNode.Kind != yaml.ScalarNode {
-			return nil, nil, frontmatterNodeError(keyNode, "frontmatter keys must be strings")
+			return nil, nil, nil, frontmatterNodeError(keyNode, "frontmatter keys must be strings")
 		}
 
 		key := strings.ToLower(strings.TrimSpace(keyNode.Value))
@@ -50,27 +51,33 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 		case "ui_node", "reply_command":
 			value, err := parseYAMLScalarString(valueNode)
 			if err != nil {
-				return nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")
+				return nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")
 			}
 			scalars[key] = value
 		case "skill_path":
-			specs, err := parseSkillPathFrontmatterNode(valueNode)
+			specs, err := parseSkillPathFrontmatterNode(valueNode, "skill_path", false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			skillSpecs = append(skillSpecs, specs...)
+		case "compaction_skill_path":
+			specs, err := parseSkillPathFrontmatterNode(valueNode, "compaction_skill_path", true)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			compactionSkillSpecs = append(compactionSkillSpecs, specs...)
 		}
 	}
 
-	return scalars, skillSpecs, nil
+	return scalars, skillSpecs, compactionSkillSpecs, nil
 }
 
-func parseSkillPathFrontmatterNode(node *yaml.Node) ([]skillCatalogSpec, error) {
+func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime bool) ([]skillCatalogSpec, error) {
 	switch node.Kind {
 	case yaml.ScalarNode:
 		path, err := parseYAMLScalarString(node)
 		if err != nil {
-			return nil, frontmatterNodeError(node, "skill_path must be a path string or a list of path entries")
+			return nil, frontmatterNodeError(node, key+" must be a path string or a list of path entries")
 		}
 		if strings.TrimSpace(path) == "" {
 			return nil, nil
@@ -79,7 +86,7 @@ func parseSkillPathFrontmatterNode(node *yaml.Node) ([]skillCatalogSpec, error) 
 	case yaml.SequenceNode:
 		specs := make([]skillCatalogSpec, 0, len(node.Content))
 		for _, item := range node.Content {
-			spec, err := parseSkillPathItemNode(item)
+			spec, err := parseSkillPathItemNode(item, key, allowRuntime)
 			if err != nil {
 				return nil, err
 			}
@@ -89,39 +96,39 @@ func parseSkillPathFrontmatterNode(node *yaml.Node) ([]skillCatalogSpec, error) 
 		}
 		return specs, nil
 	default:
-		return nil, frontmatterNodeError(node, "skill_path must be a path string or a list of path entries")
+		return nil, frontmatterNodeError(node, key+" must be a path string or a list of path entries")
 	}
 }
 
-func parseSkillPathItemNode(node *yaml.Node) (skillCatalogSpec, error) {
+func parseSkillPathItemNode(node *yaml.Node, key string, allowRuntime bool) (skillCatalogSpec, error) {
 	switch node.Kind {
 	case yaml.ScalarNode:
 		path, err := parseYAMLScalarString(node)
 		if err != nil {
-			return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path list item must be a path string or a mapping")
+			return skillCatalogSpec{}, frontmatterNodeError(node, key+" list item must be a path string or a mapping")
 		}
 		return skillCatalogSpec{Path: path, All: true}, nil
 	case yaml.MappingNode:
-		return parseSkillPathMappingNode(node)
+		return parseSkillPathMappingNode(node, key, allowRuntime)
 	default:
-		return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path list item must be a path string or a mapping")
+		return skillCatalogSpec{}, frontmatterNodeError(node, key+" list item must be a path string or a mapping")
 	}
 }
 
-func parseSkillPathMappingNode(node *yaml.Node) (skillCatalogSpec, error) {
+func parseSkillPathMappingNode(node *yaml.Node, key string, allowRuntime bool) (skillCatalogSpec, error) {
 	spec := skillCatalogSpec{All: true}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode := node.Content[i]
 		valueNode := node.Content[i+1]
 		if keyNode.Kind != yaml.ScalarNode {
-			return skillCatalogSpec{}, frontmatterNodeError(keyNode, "skill_path item keys must be strings")
+			return skillCatalogSpec{}, frontmatterNodeError(keyNode, key+" item keys must be strings")
 		}
-		key := strings.ToLower(strings.TrimSpace(keyNode.Value))
-		switch key {
+		itemKey := strings.ToLower(strings.TrimSpace(keyNode.Value))
+		switch itemKey {
 		case "path":
 			path, err := parseYAMLScalarString(valueNode)
 			if err != nil {
-				return skillCatalogSpec{}, frontmatterNodeError(valueNode, "skill_path item path must be a scalar value")
+				return skillCatalogSpec{}, frontmatterNodeError(valueNode, key+" item path must be a scalar value")
 			}
 			spec.Path = path
 		case "skills":
@@ -131,12 +138,21 @@ func parseSkillPathMappingNode(node *yaml.Node) (skillCatalogSpec, error) {
 			}
 			spec.All = all
 			spec.Names = names
+		case "runtime":
+			if !allowRuntime {
+				return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported %s item key %q", key, keyNode.Value))
+			}
+			runtime, err := parseYAMLScalarString(valueNode)
+			if err != nil {
+				return skillCatalogSpec{}, frontmatterNodeError(valueNode, key+" item runtime must be a scalar value")
+			}
+			spec.Runtime = normalizeSkillCatalogRuntime(runtime)
 		default:
-			return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported skill_path item key %q", keyNode.Value))
+			return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported %s item key %q", key, keyNode.Value))
 		}
 	}
 	if strings.TrimSpace(spec.Path) == "" {
-		return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path item requires a non-empty path")
+		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a non-empty path")
 	}
 	return spec, nil
 }

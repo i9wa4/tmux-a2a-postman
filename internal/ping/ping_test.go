@@ -179,6 +179,62 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	}
 }
 
+func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntime(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+	cfg := &config.Config{
+		TmuxTimeout: 5.0,
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Template: "Worker template."},
+		},
+		CompactionSkillCatalogs: map[string]string{
+			"claude": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
+			"codex":  "### Available Skills\n\n- `bash`: Codex rules.",
+		},
+	}
+
+	tmpl := "{role_content}"
+	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{}); err != nil {
+		t.Fatalf("SendPingToNodeWithOptions normal error = %v", err)
+	}
+	_, normalBody := readSingleInboxMessage(t, sessionDir, "worker")
+	if strings.Contains(normalBody, "Claude rules.") || strings.Contains(normalBody, "Codex rules.") {
+		t.Fatalf("normal ping included compaction catalog: %q", normalBody)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(inboxDir, entry.Name())); err != nil {
+			t.Fatalf("Remove inbox message: %v", err)
+		}
+	}
+
+	options := SendOptions{CompactionTriggered: true, Runtime: "claude"}
+	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, options); err != nil {
+		t.Fatalf("SendPingToNodeWithOptions compaction error = %v", err)
+	}
+	_, compactionBody := readSingleInboxMessage(t, sessionDir, "worker")
+	if !strings.Contains(compactionBody, "Claude rules.") {
+		t.Fatalf("compaction ping missing claude catalog: %q", compactionBody)
+	}
+	if strings.Contains(compactionBody, "Codex rules.") {
+		t.Fatalf("compaction ping included wrong runtime catalog: %q", compactionBody)
+	}
+}
+
 func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "review-session")

@@ -5,8 +5,8 @@ defaults.
 
 ## Policy
 
-- `DefaultConfig()` initializes structural containers only: `Edges`, `Nodes`,
-  and `NodeOrder`.
+- `DefaultConfig()` initializes structural and derived containers only:
+  `Edges`, `Nodes`, `NodeOrder`, and `CompactionSkillCatalogs`.
 - Non-zero defaults for public config fields belong in
   `internal/config/postman.default.toml`.
 - `postman.toml` is optional. With no user TOML, embedded defaults are enough
@@ -17,6 +17,9 @@ defaults.
   with the `ui_node` class, keeping topology-facing settings in one diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
+- `postman.md` frontmatter may set `compaction_skill_path` to generate a larger
+  skill catalog that stays out of normal role context and appears only in
+  compaction-triggered daemon PINGs.
 - Explicit XDG and project-local overrides merge on top of embedded defaults.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.

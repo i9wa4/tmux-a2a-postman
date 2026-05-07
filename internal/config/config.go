@@ -53,13 +53,14 @@ type Config struct {
 	// Paths
 	BaseDir string `toml:"base_dir"`
 	// Message templates
-	NotificationTemplate         string `toml:"notification_template"`
-	DaemonMessageTemplate        string `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
-	DraftTemplate                string `toml:"draft_template"`                  // Draft body used by send
-	CommonTemplate               string `toml:"common_template"`                 // Issue #49: Shared template for all nodes
-	EdgeViolationWarningTemplate string `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
-	EdgeViolationWarningMode     string `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
-	MessageFooter                string `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
+	NotificationTemplate         string            `toml:"notification_template"`
+	DaemonMessageTemplate        string            `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
+	DraftTemplate                string            `toml:"draft_template"`                  // Draft body used by send
+	CommonTemplate               string            `toml:"common_template"`                 // Issue #49: Shared template for all nodes
+	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md compaction_skill_path catalogs by runtime
+	EdgeViolationWarningTemplate string            `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
+	EdgeViolationWarningMode     string            `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
+	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
 	Edges                 []string `toml:"edges"`
@@ -110,12 +111,13 @@ func BoolVal(p *bool, defaultVal bool) bool {
 
 // DefaultConfig returns a Config with zero values.
 // All non-zero defaults are defined in postman.default.toml (SSOT).
-// Only structural fields (Nodes map, Edges slice) are initialized here.
+// Only structural/derived containers are initialized here.
 func DefaultConfig() *Config {
 	return &Config{
-		Edges:     []string{},
-		Nodes:     make(map[string]NodeConfig),
-		NodeOrder: []string{},
+		Edges:                   []string{},
+		Nodes:                   make(map[string]NodeConfig),
+		NodeOrder:               []string{},
+		CompactionSkillCatalogs: make(map[string]string),
 	}
 }
 
@@ -260,6 +262,17 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 		return false
 	}
 	return cfg.uiNodeSet
+}
+
+func (cfg *Config) CompactionSkillCatalogForRuntime(runtime string) string {
+	if cfg == nil || len(cfg.CompactionSkillCatalogs) == 0 {
+		return ""
+	}
+	runtime = normalizeSkillCatalogRuntime(runtime)
+	if catalog := cfg.CompactionSkillCatalogs[runtime]; catalog != "" {
+		return catalog
+	}
+	return cfg.CompactionSkillCatalogs[""]
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
@@ -667,6 +680,16 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.CommonTemplate != "" {
 		base.CommonTemplate = override.CommonTemplate
+	}
+	if len(override.CompactionSkillCatalogs) > 0 {
+		if base.CompactionSkillCatalogs == nil {
+			base.CompactionSkillCatalogs = make(map[string]string)
+		}
+		for runtime, catalog := range override.CompactionSkillCatalogs {
+			if catalog != "" {
+				base.CompactionSkillCatalogs[runtime] = catalog
+			}
+		}
 	}
 	if override.EdgeViolationWarningTemplate != "" {
 		base.EdgeViolationWarningTemplate = override.EdgeViolationWarningTemplate

@@ -482,8 +482,14 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeAfterInitialCaptur
 	if len(targets) != 1 {
 		t.Fatalf("checkPaneCapture() returned %d targets, want 1", len(targets))
 	}
-	if targets[0] != "review:worker" {
-		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0], "review:worker")
+	if targets[0].NodeKey != "review:worker" {
+		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0].NodeKey, "review:worker")
+	}
+	if targets[0].Runtime != "claude" {
+		t.Fatalf("checkPaneCapture() runtime = %q, want %q", targets[0].Runtime, "claude")
+	}
+	if targets[0].Trigger != "claude:conversation-compaction" {
+		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "claude:conversation-compaction")
 	}
 
 	tracker.mu.Lock()
@@ -564,8 +570,14 @@ func TestCheckPaneCapture_CompactionTriggerUsesRecentHistory(t *testing.T) {
 	if len(targets) != 1 {
 		t.Fatalf("checkPaneCapture() returned %d targets, want 1", len(targets))
 	}
-	if targets[0] != "review:worker" {
-		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0], "review:worker")
+	if targets[0].NodeKey != "review:worker" {
+		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0].NodeKey, "review:worker")
+	}
+	if targets[0].Runtime != "codex" {
+		t.Fatalf("checkPaneCapture() runtime = %q, want %q", targets[0].Runtime, "codex")
+	}
+	if targets[0].Trigger != "codex:context-compaction" {
+		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "codex:context-compaction")
 	}
 
 	tracker.mu.Lock()
@@ -668,8 +680,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	if len(secondTargets) != 1 {
 		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 for newer compaction marker in retained history", len(secondTargets))
 	}
-	if secondTargets[0] != "review:worker" {
-		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0], "review:worker")
+	if secondTargets[0].NodeKey != "review:worker" {
+		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
 
 	tracker.mu.Lock()
@@ -778,8 +790,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerSingleHistoryMarkerRe
 	if len(secondTargets) != 1 {
 		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 for a newer single compaction marker replacing the old marker", len(secondTargets))
 	}
-	if secondTargets[0] != "review:worker" {
-		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0], "review:worker")
+	if secondTargets[0].NodeKey != "review:worker" {
+		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
 
 	tracker.mu.Lock()
@@ -888,8 +900,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if len(secondTargets) != 1 {
 		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 for a marker-only newer history window replacing the old marker", len(secondTargets))
 	}
-	if secondTargets[0] != "review:worker" {
-		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0], "review:worker")
+	if secondTargets[0].NodeKey != "review:worker" {
+		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
 
 	tracker.mu.Lock()
@@ -925,8 +937,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if len(thirdTargets) != 1 {
 		t.Fatalf("third checkPaneCapture() returned %d targets, want 1 for a newer marker-only history window replacing a stored marker-only prefix", len(thirdTargets))
 	}
-	if thirdTargets[0] != "review:worker" {
-		t.Fatalf("third checkPaneCapture() target = %q, want %q", thirdTargets[0], "review:worker")
+	if thirdTargets[0].NodeKey != "review:worker" {
+		t.Fatalf("third checkPaneCapture() target = %q, want %q", thirdTargets[0].NodeKey, "review:worker")
 	}
 
 	tracker.mu.Lock()

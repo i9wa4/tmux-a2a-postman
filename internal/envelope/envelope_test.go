@@ -111,6 +111,28 @@ func TestBuildRoleContentDemotesTemplateHeadings(t *testing.T) {
 	}
 }
 
+func TestBuildRoleContentWithAppendixDemotesExtraHeadings(t *testing.T) {
+	cfg := &config.Config{
+		CommonTemplate: "# Common",
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Template: "## Worker"},
+		},
+	}
+
+	got := BuildRoleContentWithAppendix(cfg, "worker", "### Available Skills\n\n- `bash`: Bash rules.")
+
+	for _, want := range []string{
+		"### Common",
+		"#### Worker",
+		"#### Available Skills",
+		"- `bash`: Bash rules.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("BuildRoleContentWithAppendix() missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildEnvelope_TalksToLine(t *testing.T) {
 	cfg := &config.Config{
 		TmuxTimeout: 5.0,

@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
+	"github.com/gofsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -809,17 +809,17 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 	nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
 
 	if !rt.watchedDirs[nodePostDir] {
-		if err := rt.watcher.Add(nodePostDir); err == nil {
+		if err := rt.watcher.Add(nodePostDir, fsnotify.All); err == nil {
 			rt.watchedDirs[nodePostDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeInboxDir] {
-		if err := rt.watcher.Add(nodeInboxDir); err == nil {
+		if err := rt.watcher.Add(nodeInboxDir, fsnotify.All); err == nil {
 			rt.watchedDirs[nodeInboxDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeReadDir] {
-		if err := rt.watcher.Add(nodeReadDir); err == nil {
+		if err := rt.watcher.Add(nodeReadDir, fsnotify.All); err == nil {
 			rt.watchedDirs[nodeReadDir] = true
 		}
 	}
@@ -830,7 +830,7 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		return
 	}
 	if !rt.watchedDirs[submitRequestsDir] {
-		if err := rt.watcher.Add(submitRequestsDir); err == nil {
+		if err := rt.watcher.Add(submitRequestsDir, fsnotify.All); err == nil {
 			rt.watchedDirs[submitRequestsDir] = true
 		}
 	}

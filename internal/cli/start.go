@@ -19,7 +19,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/fsnotify/fsnotify"
+	"github.com/gofsnotify/fsnotify"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
@@ -88,8 +88,8 @@ func activePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	return activeNodes
 }
 
-func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targetNodeKeys []string) {
-	if len(targetNodeKeys) == 0 {
+func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targets []idle.CompactionPingTarget) {
+	if len(targets) == 0 {
 		return
 	}
 
@@ -100,16 +100,17 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 		pingAdjacency = map[string][]string{}
 	}
 
-	for _, nodeKey := range targetNodeKeys {
-		nodeInfo, ok := nodes[nodeKey]
+	for _, target := range targets {
+		nodeInfo, ok := nodes[target.NodeKey]
 		if !ok {
 			continue
 		}
-		if err := ping.SendPingToNode(nodeInfo, contextID, nodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes); err != nil {
-			log.Printf("postman: compaction-triggered PING failed for %s: %v\n", nodeKey, err)
+		options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
+		if _, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options); err != nil {
+			log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
 			continue
 		}
-		log.Printf("postman: compaction-triggered PING sent to %s\n", nodeKey)
+		log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
 	}
 }
 
@@ -356,14 +357,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
 
 		if !watchedDirs[nodePostDir] {
-			if err := watcher.Add(nodePostDir); err != nil {
+			if err := watcher.Add(nodePostDir, fsnotify.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s post directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodePostDir] = true
 			}
 		}
 		if !watchedDirs[nodeInboxDir] {
-			if err := watcher.Add(nodeInboxDir); err != nil {
+			if err := watcher.Add(nodeInboxDir, fsnotify.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s inbox directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodeInboxDir] = true
@@ -371,7 +372,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 		nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
 		if !watchedDirs[nodeReadDir] {
-			if err := watcher.Add(nodeReadDir); err != nil {
+			if err := watcher.Add(nodeReadDir, fsnotify.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s read directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodeReadDir] = true
@@ -381,7 +382,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if err := projection.EnsureDaemonSubmitDirs(nodeInfo.SessionDir); err != nil {
 			log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 		} else if !watchedDirs[submitRequestsDir] {
-			if err := watcher.Add(submitRequestsDir); err != nil {
+			if err := watcher.Add(submitRequestsDir, fsnotify.All); err != nil {
 				log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 			} else {
 				watchedDirs[submitRequestsDir] = true
@@ -391,19 +392,19 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Also watch default session directories (for postman's own messages)
 	if !watchedDirs[postDir] {
-		if err := watcher.Add(postDir); err != nil {
+		if err := watcher.Add(postDir, fsnotify.All); err != nil {
 			return fmt.Errorf("watching post directory: %w", err)
 		}
 		watchedDirs[postDir] = true
 	}
 	if !watchedDirs[inboxDir] {
-		if err := watcher.Add(inboxDir); err != nil {
+		if err := watcher.Add(inboxDir, fsnotify.All); err != nil {
 			return fmt.Errorf("watching inbox directory: %w", err)
 		}
 		watchedDirs[inboxDir] = true
 	}
 	if !watchedDirs[readDir] {
-		if err := watcher.Add(readDir); err != nil {
+		if err := watcher.Add(readDir, fsnotify.All); err != nil {
 			log.Printf("⚠️  postman: warning: could not watch read directory: %v\n", err)
 		} else {
 			watchedDirs[readDir] = true
@@ -413,7 +414,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if err := projection.EnsureDaemonSubmitDirs(sessionDir); err != nil {
 		log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 	} else if !watchedDirs[submitRequestsDir] {
-		if err := watcher.Add(submitRequestsDir); err != nil {
+		if err := watcher.Add(submitRequestsDir, fsnotify.All); err != nil {
 			log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 		} else {
 			watchedDirs[submitRequestsDir] = true
@@ -427,7 +428,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	watchedConfigPaths := resolveWatchedConfigPaths(configPath)
 	for _, watchedConfigPath := range watchedConfigPaths {
-		if err := watcher.Add(watchedConfigPath); err != nil {
+		if err := watcher.Add(watchedConfigPath, fsnotify.All); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch config: %v\n", err)
 		}
 	}
@@ -435,7 +436,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Issue #50: Watch nodes/ directory if exists
 	watchedNodesDirs := resolveWatchedNodesDirs(watchedConfigPaths)
 	for _, nodesDir := range watchedNodesDirs {
-		if err := watcher.Add(nodesDir); err != nil {
+		if err := watcher.Add(nodesDir, fsnotify.All); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  postman: warning: could not watch nodes dir: %v\n", err)
 		}
 	}
@@ -461,8 +462,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	idleTracker := idle.NewIdleTracker()
 
 	// Start pane capture check goroutine (hybrid idle detection)
-	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName, func(nodes map[string]discovery.NodeInfo, targetNodeKeys []string) {
-		sendCompactionPings(contextID, cfg, idleTracker, nodes, targetNodeKeys)
+	idleTracker.StartPaneCaptureCheck(ctx, cfg, baseDir, contextID, sessionName, func(nodes map[string]discovery.NodeInfo, targets []idle.CompactionPingTarget) {
+		sendCompactionPings(contextID, cfg, idleTracker, nodes, targets)
 	})
 
 	// Start daemon loop in goroutine

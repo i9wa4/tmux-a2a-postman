@@ -227,7 +227,10 @@ not exposed. The default oneline view stays compact and omits those details.
 Pane capture also scans recent scrollback for Claude/Codex context-compaction
 markers so recovery PINGs are not limited to the visible screen. Configure the
 depth with `pane_capture_tail_lines` in `postman.toml`; the embedded default is
-`100`, and `0` restores visible-pane-only scanning.
+`100`, and `0` restores visible-pane-only scanning. When configured with
+`compaction_skill_path`, those recovery PINGs can include a full skill catalog
+for the detected runtime without adding that catalog to normal messages,
+startup PINGs, or manual PINGs.
 
 ## 5. Configuration
 
@@ -300,7 +303,12 @@ skill_path:
       - bash
       - github
       - markdown
+compaction_skill_path:
   - path: ~/.claude/skills
+    runtime: claude
+    skills: all
+  - path: ~/.codex/skills
+    runtime: codex
     skills:
       - postman-config-auditor
       - postman-session-operator
@@ -309,12 +317,16 @@ skill_path:
 
 Frontmatter `ui_node` is still supported as an explicit override, but the
 Mermaid `ui_node` class keeps the normal case in the topology diagram. Relative
-`skill_path` values are resolved from the `postman.md` directory,
-`~/...` expands to the current user's home directory, and symlinked skill
-directories are followed. The catalog is generated as a compact Markdown list
-from selected `SKILL.md` frontmatter `name` and `description` values. Use
-`skills: all` to include every skill under a source path. Glob patterns are not
-supported; list skill names explicitly.
+`skill_path` and `compaction_skill_path` values are resolved from the
+`postman.md` directory, `~/...` expands to the current user's home directory,
+and symlinked skill directories are followed. Each catalog is generated as a
+compact Markdown list from selected `SKILL.md` frontmatter `name` and
+`description` values. Use `skills: all` to include every skill under a source
+path. Glob patterns are not supported; list skill names explicitly.
+`skill_path` appends to normal role context. `compaction_skill_path` is held
+separately and appended only to compaction-triggered daemon PING role content;
+its optional `runtime` selector matches detected pane commands such as `claude`
+or `codex`.
 
 Place config files under `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or under
 project-local `.tmux-a2a-postman/` for overrides. Detailed `postman.md` syntax

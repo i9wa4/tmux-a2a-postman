@@ -14,9 +14,10 @@ type skillCatalogEntry struct {
 }
 
 type skillCatalogSpec struct {
-	Path  string
-	All   bool
-	Names []string
+	Path    string
+	All     bool
+	Names   []string
+	Runtime string
 }
 
 var skillCatalogUserHomeDir = os.UserHomeDir
@@ -28,6 +29,64 @@ func appendSkillCatalogToCommonTemplate(commonTemplate, markdownPath, skillPath 
 }
 
 func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, specs []skillCatalogSpec) (string, error) {
+	catalog, err := renderSkillCatalogs(markdownPath, specs)
+	if err != nil {
+		return "", err
+	}
+	return joinTemplateSections(commonTemplate, catalog), nil
+}
+
+func renderCompactionSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
+	byRuntime := make(map[string][]skillCatalogSpec)
+	var runtimes []string
+	for _, spec := range specs {
+		if strings.TrimSpace(spec.Path) == "" {
+			continue
+		}
+		runtime := normalizeSkillCatalogRuntime(spec.Runtime)
+		if _, ok := byRuntime[runtime]; !ok {
+			runtimes = append(runtimes, runtime)
+		}
+		byRuntime[runtime] = append(byRuntime[runtime], spec)
+	}
+	if len(byRuntime) == 0 {
+		return nil, nil
+	}
+
+	globalSpecs := byRuntime[""]
+	result := make(map[string]string)
+	if len(globalSpecs) > 0 {
+		catalog, err := renderSkillCatalogs(markdownPath, globalSpecs)
+		if err != nil {
+			return nil, err
+		}
+		if catalog != "" {
+			result[""] = catalog
+		}
+	}
+
+	sort.Strings(runtimes)
+	for _, runtime := range runtimes {
+		if runtime == "" {
+			continue
+		}
+		runtimeSpecs := append([]skillCatalogSpec{}, globalSpecs...)
+		runtimeSpecs = append(runtimeSpecs, byRuntime[runtime]...)
+		catalog, err := renderSkillCatalogs(markdownPath, runtimeSpecs)
+		if err != nil {
+			return nil, err
+		}
+		if catalog != "" {
+			result[runtime] = catalog
+		}
+	}
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
+}
+
+func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string, error) {
 	entriesByName := make(map[string]skillCatalogEntry)
 	var orderedEntries []skillCatalogEntry
 	var sourceDisplays []string
@@ -52,13 +111,16 @@ func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, sp
 		}
 	}
 	if len(orderedEntries) == 0 {
-		return commonTemplate, nil
+		return "", nil
 	}
 	sort.SliceStable(orderedEntries, func(i, j int) bool {
 		return orderedEntries[i].Name < orderedEntries[j].Name
 	})
-	catalog := renderSkillCatalogFromSources(sourceDisplays, orderedEntries)
-	return joinTemplateSections(commonTemplate, catalog), nil
+	return renderSkillCatalogFromSources(sourceDisplays, orderedEntries), nil
+}
+
+func normalizeSkillCatalogRuntime(runtime string) string {
+	return strings.ToLower(strings.TrimSpace(runtime))
 }
 
 func loadSkillCatalogSpec(markdownPath string, spec skillCatalogSpec) ([]skillCatalogEntry, string, error) {

@@ -39,6 +39,12 @@ type PaneActivityExport struct {
 	ScreenFingerprint string    `json:"screenFingerprint,omitempty"`
 }
 
+type CompactionPingTarget struct {
+	NodeKey string
+	Runtime string
+	Trigger string
+}
+
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
 	LastHash              uint32    // CRC32 hash of pane content
@@ -329,7 +335,7 @@ func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerS
 
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
 // Issue #xxx: Hybrid idle detection with screen capture.
-func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) []string {
+func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) []CompactionPingTarget {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) {
 		return nil
 	}
@@ -377,7 +383,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	}
 
 	now := time.Now()
-	compactionTargets := make(map[string]struct{})
+	compactionTargets := make(map[string]CompactionPingTarget)
 
 	for _, paneID := range nodePaneIDs {
 		// Capture pane content
@@ -417,10 +423,15 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
-			if scan := compactionTriggerScan(paneRuntimes[paneID], compactionContent); scan.Trigger != "" {
+			runtime := paneRuntimes[paneID]
+			if scan := compactionTriggerScan(runtime, compactionContent); scan.Trigger != "" {
 				if shouldPingCompaction(state, scan, compactionHash, now) {
 					recordCompactionPing(&state, scan, compactionHash, now)
-					compactionTargets[nodeKey] = struct{}{}
+					compactionTargets[nodeKey] = CompactionPingTarget{
+						NodeKey: nodeKey,
+						Runtime: runtime,
+						Trigger: scan.Trigger,
+					}
 				} else {
 					refreshSameCompactionMarker(&state, scan, compactionHash)
 				}
@@ -485,12 +496,16 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		targetNodeKeys = append(targetNodeKeys, nodeKey)
 	}
 	sort.Strings(targetNodeKeys)
-	return targetNodeKeys
+	targets := make([]CompactionPingTarget, 0, len(targetNodeKeys))
+	for _, nodeKey := range targetNodeKeys {
+		targets = append(targets, compactionTargets[nodeKey])
+	}
+	return targets
 }
 
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
 // Issue #xxx: Hybrid idle detection with screen capture.
-func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string, onCompactionPing func(map[string]discovery.NodeInfo, []string)) {
+func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string, onCompactionPing func(map[string]discovery.NodeInfo, []CompactionPingTarget)) {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) || cfg.PaneCaptureIntervalSeconds <= 0 {
 		return // Pane capture disabled
 	}
