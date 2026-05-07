@@ -1190,7 +1190,7 @@ func TestRunSendMessage_DefaultEnvelopePreservesSenderMarkdownAfterSeparator(t *
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	body := "# User Request\n\n## Details\n\n```sh\n# keep body code literal\n```\n"
+	body := "# User Request\n\n---\n\n## Details\n\n```sh\n# keep body code literal\n```\n"
 	stdout, _, err := captureCommandOutput(t, func() error {
 		return runSendHeredocWithBody(t, body, []string{
 			"--config", configPath,
@@ -1228,10 +1228,89 @@ func TestRunSendMessage_DefaultEnvelopePreservesSenderMarkdownAfterSeparator(t *
 		}
 	}
 	separator := "\n---\n\n"
-	separatorIndex := strings.LastIndex(content, separator)
-	if separatorIndex < 0 {
+	senderMessageIndex := strings.Index(content, "## Sender Message")
+	if senderMessageIndex < 0 {
+		t.Fatalf("content missing sender message section:\n%s", content)
+	}
+	separatorOffset := strings.Index(content[senderMessageIndex:], separator)
+	if separatorOffset < 0 {
 		t.Fatalf("content missing visible body separator:\n%s", content)
 	}
+	separatorIndex := senderMessageIndex + separatorOffset
+	bodyAfterSeparator := content[separatorIndex+len(separator):]
+	if bodyAfterSeparator != body {
+		t.Fatalf("sender body after separator changed:\n got %q\nwant %q\ncontent:\n%s", bodyAfterSeparator, body, content)
+	}
+}
+
+func TestRunSendMessage_CustomTemplatePlaceholderAfterFrontmatterKeepsFooterVisible(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["messenger --- worker"]
+message_footer = """Generated guidance:
+{reply_command}{reply_arguments}
+Can talk to: {can_talk_to}
+"""
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: {reply_policy}
+  timestamp: {timestamp}
+  tmuxSession: {session_name}
+---
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := "# User Request\n\n---\n\n## Details\n\n```sh\n# keep body code literal\n```\n"
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, body, []string{
+			"--config", configPath,
+			"--context-id", "ctx-frontmatter-placeholder",
+			"--to", "worker",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	contentBytes, err := os.ReadFile(filepath.Join(tmpDir, "ctx-frontmatter-placeholder", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	content := string(contentBytes)
+	frontmatterClose := strings.Index(content, "\n---\n")
+	footerIndex := strings.Index(content, "Generated guidance:")
+	if frontmatterClose < 0 || footerIndex < 0 {
+		t.Fatalf("content missing frontmatter close or generated footer:\n%s", content)
+	}
+	if footerIndex < frontmatterClose {
+		t.Fatalf("generated footer was inserted into frontmatter:\n%s", content)
+	}
+	separator := "\n---\n\n"
+	separatorOffset := strings.Index(content[footerIndex:], separator)
+	if separatorOffset < 0 {
+		t.Fatalf("content missing visible body separator after generated footer:\n%s", content)
+	}
+	separatorIndex := footerIndex + separatorOffset
 	bodyAfterSeparator := content[separatorIndex+len(separator):]
 	if bodyAfterSeparator != body {
 		t.Fatalf("sender body after separator changed:\n got %q\nwant %q\ncontent:\n%s", bodyAfterSeparator, body, content)

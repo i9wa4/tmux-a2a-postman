@@ -171,6 +171,47 @@ func TestRunInspectMessageOutputModes(t *testing.T) {
 	}
 }
 
+func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing.T) {
+	fixture := writeInspectMessageFixture(t)
+	filename := "20260506-010106-from-orchestrator-to-worker.md"
+	senderBody := "# User Request\n\n---\n\n## Details\n\n```sh\n# keep literal\n```\n"
+	content := strings.Join([]string{
+		"---",
+		"params:",
+		"  from: orchestrator",
+		"  to: worker",
+		"  messageId: " + filename,
+		"  timestamp: 2026-05-06T01:01:06Z",
+		"---",
+		"",
+		"# Message",
+		"",
+		"## Recipient Instructions",
+		"",
+		"Generated guidance before body.",
+		"",
+		"---",
+		"",
+	}, "\n") + senderBody
+	readPath := filepath.Join(fixture.sessionDir, "read", filename)
+	writeInspectMessageFile(t, readPath, content)
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunInspectMessage([]string{
+			"--context-id", fixture.contextID,
+			"--session", fixture.sessionName,
+			"--id", filename,
+			"--body",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunInspectMessage(--body) error = %v stderr=%q", err, stderr)
+	}
+	if stdout != senderBody {
+		t.Fatalf("--body stdout changed sender body:\n got %q\nwant %q", stdout, senderBody)
+	}
+}
+
 func TestRunInspectMessageReturnsNotFoundAndAmbiguous(t *testing.T) {
 	t.Run("wrong id", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)

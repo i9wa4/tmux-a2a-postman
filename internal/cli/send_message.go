@@ -500,7 +500,44 @@ func trimTrailingBodySeparator(content string) string {
 	if strings.TrimSpace(line) != "---" {
 		return content
 	}
+	if end, ok := leadingFrontmatterEnd(trimmed); ok && strings.TrimSpace(trimmed[end:]) == "" {
+		return content
+	}
+	if !hasVisibleContentAfterFrontmatter(before) {
+		return content
+	}
 	return strings.TrimRight(before, "\n")
+}
+
+func hasVisibleContentAfterFrontmatter(content string) bool {
+	if end, ok := leadingFrontmatterEnd(content); ok {
+		content = content[end:]
+	}
+	return strings.TrimSpace(content) != ""
+}
+
+func leadingFrontmatterEnd(content string) (int, bool) {
+	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
+		return 0, false
+	}
+	offset := 0
+	for offset <= len(content) {
+		lineEnd := len(content)
+		newlineEnd := len(content)
+		if idx := strings.IndexByte(content[offset:], '\n'); idx >= 0 {
+			lineEnd = offset + idx
+			newlineEnd = lineEnd + 1
+		}
+		line := strings.TrimRight(content[offset:lineEnd], "\r")
+		if offset > 0 && strings.TrimSpace(line) == "---" {
+			return newlineEnd, true
+		}
+		if newlineEnd == len(content) {
+			break
+		}
+		offset = newlineEnd
+	}
+	return 0, false
 }
 
 func generatedReplyPolicyPlaceholder(filename string) string {

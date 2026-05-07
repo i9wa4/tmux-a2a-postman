@@ -244,7 +244,12 @@ func writeInspectMessagePlainOutput(output inspectMessageOutput, pathOnly, bodyO
 		if err != nil {
 			return fmt.Errorf("reading message body: %w", err)
 		}
-		fmt.Fprintln(os.Stdout, envelope.BodyFromContent(string(content)))
+		body, exact := envelope.SenderBodyFromContent(string(content))
+		if exact {
+			fmt.Fprint(os.Stdout, body)
+		} else {
+			fmt.Fprintln(os.Stdout, body)
+		}
 		return nil
 	}
 	return nil

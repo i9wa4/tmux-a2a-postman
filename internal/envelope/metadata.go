@@ -28,16 +28,67 @@ type Metadata struct {
 }
 
 func BodyFromContent(content string) string {
+	body, ok := rawBodyFromContent(content)
+	if !ok {
+		return strings.TrimSpace(content)
+	}
+	return strings.TrimSpace(body)
+}
+
+func SenderBodyFromContent(content string) (string, bool) {
+	body, ok := rawBodyFromContent(content)
+	if !ok {
+		return strings.TrimSpace(content), false
+	}
+	if senderBody, ok := senderBodyAfterSeparator(body); ok {
+		return senderBody, true
+	}
+	return strings.TrimSpace(body), false
+}
+
+func rawBodyFromContent(content string) (string, bool) {
 	first := strings.Index(content, "---\n")
 	if first < 0 {
-		return strings.TrimSpace(content)
+		return "", false
 	}
 	rest := content[first+4:]
 	second := strings.Index(rest, "\n---")
 	if second < 0 {
-		return strings.TrimSpace(content)
+		return "", false
 	}
-	return strings.TrimSpace(rest[second+4:])
+	return rest[second+4:], true
+}
+
+func senderBodyAfterSeparator(body string) (string, bool) {
+	offset := 0
+	separatorEnd := -1
+	for offset <= len(body) {
+		lineEnd := len(body)
+		newlineEnd := len(body)
+		if idx := strings.IndexByte(body[offset:], '\n'); idx >= 0 {
+			lineEnd = offset + idx
+			newlineEnd = lineEnd + 1
+		}
+		line := strings.TrimRight(body[offset:lineEnd], "\r")
+		if strings.TrimSpace(line) == "---" {
+			separatorEnd = newlineEnd
+			break
+		}
+		if newlineEnd == len(body) {
+			break
+		}
+		offset = newlineEnd
+	}
+	if separatorEnd < 0 {
+		return "", false
+	}
+	senderBody := body[separatorEnd:]
+	if strings.HasPrefix(senderBody, "\r\n") {
+		senderBody = senderBody[2:]
+	} else if strings.HasPrefix(senderBody, "\n") {
+		senderBody = senderBody[1:]
+	}
+	return senderBody, true
 }
 
 func ParseMetadata(content string) (Metadata, error) {
