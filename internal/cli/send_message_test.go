@@ -487,8 +487,14 @@ func TestRunSendMessage_QuotedHeredocDashRemainsLiteralBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile post: %v", err)
 	}
-	if !strings.Contains(string(content), "\n-\n\n---") {
-		t.Fatalf("quoted heredoc dash content was not preserved as literal body:\n%s", string(content))
+	stored := string(content)
+	separator := "\n---\n\n"
+	separatorIndex := strings.LastIndex(stored, separator)
+	if separatorIndex < 0 {
+		t.Fatalf("stored message missing visible body separator:\n%s", stored)
+	}
+	if bodyAfterSeparator := stored[separatorIndex+len(separator):]; bodyAfterSeparator != "-" {
+		t.Fatalf("quoted heredoc dash content was not preserved as literal body:\n got %q\ncontent:\n%s", bodyAfterSeparator, stored)
 	}
 }
 
@@ -1161,7 +1167,7 @@ role = "orchestrator"
 	}
 }
 
-func TestRunSendMessage_DefaultEnvelopeBoundsSenderMarkdownHeadings(t *testing.T) {
+func TestRunSendMessage_DefaultEnvelopePreservesSenderMarkdownAfterSeparator(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1207,9 +1213,7 @@ func TestRunSendMessage_DefaultEnvelopeBoundsSenderMarkdownHeadings(t *testing.T
 		"#### Checklist",
 		"```sh\n# keep role code literal\n```",
 		"## Sender Message",
-		"---\n\n### User Request",
-		"#### Details",
-		"```sh\n# keep body code literal\n```",
+		"You can talk to: messenger",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("content missing %q:\n%s", want, content)
@@ -1218,13 +1222,19 @@ func TestRunSendMessage_DefaultEnvelopeBoundsSenderMarkdownHeadings(t *testing.T
 	for _, unwanted := range []string{
 		"\n# Worker Role",
 		"\n## Checklist",
-		"\n# User Request",
-		"\n## Details",
-		"```sh\n### keep body code literal",
 	} {
 		if strings.Contains(content, unwanted) {
 			t.Fatalf("content contains unwanted %q:\n%s", unwanted, content)
 		}
+	}
+	separator := "\n---\n\n"
+	separatorIndex := strings.LastIndex(content, separator)
+	if separatorIndex < 0 {
+		t.Fatalf("content missing visible body separator:\n%s", content)
+	}
+	bodyAfterSeparator := content[separatorIndex+len(separator):]
+	if bodyAfterSeparator != body {
+		t.Fatalf("sender body after separator changed:\n got %q\nwant %q\ncontent:\n%s", bodyAfterSeparator, body, content)
 	}
 }
 

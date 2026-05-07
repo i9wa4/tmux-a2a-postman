@@ -82,19 +82,22 @@ The remaining notification-related public settings are:
 | Field                      | Purpose                                                   |
 | -------------------------- | --------------------------------------------------------- |
 | `notification_template`    | Pane hint rendered when mail arrives; not full message body |
-| `message_footer`           | Reply guidance appended after the sender message section  |
+| `message_footer`           | Reply guidance rendered before the sender body separator  |
 | `draft_template`           | Structured envelope for stored `send-heredoc` Markdown    |
 | `daemon_message_template`  | Structured envelope for daemon-originated startup PING    |
 | `ui_node`                  | Optional target filter for startup auto-PING              |
 | `auto_enable_new_sessions` | Auto-enable sessions with configured node panes           |
 
 Stored message Markdown is an envelope. The default `send-heredoc` template
-keeps recipient instructions and sender-authored content in separate sections:
-`Recipient Instructions` and `Sender Message`. Sender body headings are demoted
-before insertion so a body that starts with `#` or `##` stays visually inside
-the sender message section instead of becoming a top-level transport section.
-Daemon PING mail uses the same pattern with `Recipient Instructions` and
-`Daemon Message`.
+keeps recipient instructions, reply guidance, and sender-authored content
+separate. Generated transport/header content appears first under
+`Recipient Instructions` and `Sender Message`; then a visible `---` separator
+introduces the original sender body. Sender body Markdown is inserted verbatim
+after that separator, so headings such as `#` and `##` are not demoted or
+rewritten. Recipient role instructions are still demoted when inserted into the
+generated envelope so they stay visually inside `Recipient Instructions`.
+Daemon PING mail uses the same generated-envelope pattern with
+`Recipient Instructions` and `Daemon Message`.
 
 Pane notifications are intentionally not a body delivery surface. The default
 notification says to run `tmux-a2a-postman pop` to claim the message and get the

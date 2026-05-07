@@ -110,7 +110,7 @@ notification_template = """Hello, {node}!
 You've got mail: {filename}
 Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
-# Message footer (appended to outgoing messages by `send-heredoc` after the bounded sender message section)
+# Message footer (rendered into the generated header before the sender body separator)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
@@ -163,14 +163,16 @@ POSTMAN_BODY
 {message}
 """
 
-# Draft message template (user-initiated messages via send)
+# Draft message template (user-initiated messages via send-heredoc)
 # Variables: {context_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {reply_command},
 #   {message_id}, {reply_policy}, {reply_to}, {input_request_id},
 #   {fills_input_request_id}
-# The <!-- write here --> placeholder is replaced with sender-authored Markdown.
-# ATX headings in {template}, {role_content}, and sender-authored Markdown are
-# demoted when inserted so they remain inside the surrounding envelope section.
+# The <!-- write here --> placeholder is replaced with sender-authored Markdown
+# exactly after a visible --- separator. Generated footer guidance is kept
+# before that separator. ATX headings in {template} and {role_content} are
+# demoted when inserted so generated instructions remain inside the surrounding
+# envelope section; sender-authored Markdown is not demoted.
 draft_template = """---
 params:
   contextId: {context_id}

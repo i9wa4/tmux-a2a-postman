@@ -108,7 +108,7 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
 	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
 	assertContainsNormalized(t, notificationDoc, "Sender Message")
-	assertContainsNormalized(t, notificationDoc, "sender message section instead of becoming a top-level transport section")
+	assertContainsNormalized(t, notificationDoc, "Sender body Markdown is inserted verbatim after that separator")
 }
 
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {

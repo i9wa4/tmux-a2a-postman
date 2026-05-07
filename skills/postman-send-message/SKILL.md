@@ -25,5 +25,9 @@ command substitutions, backticks, `$HOME` variables, quotes, code fences, or
 shell examples. Do not pass message text as a CLI argument, file-body shortcut,
 or generic pipe-oriented body.
 
+Stored message Markdown keeps generated transport/header guidance before a
+visible `---` separator, then preserves the heredoc body verbatim after that
+separator. Do not pre-demote Markdown headings before sending.
+
 The sender is auto-detected from the current tmux pane title. Use
 `tmux-a2a-postman help send-heredoc` for details.

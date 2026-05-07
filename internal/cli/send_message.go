@@ -29,6 +29,7 @@ const (
 	sendStatusProcessed         sendStatus = "processed"
 	sendStatusQueued            sendStatus = "queued"
 	sendOutcomeObservationDelay            = 250 * time.Millisecond
+	sendBodyPlaceholder                    = "<!-- write here -->"
 )
 
 type cliNotifyStatus string
@@ -278,7 +279,7 @@ func RunSendHeredoc(args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n<!-- write here -->\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 
@@ -310,7 +311,6 @@ func RunSendHeredoc(args []string) error {
 	if err != nil {
 		return fmt.Errorf("message body contains invalid UTF-8: %w", err)
 	}
-	content = strings.ReplaceAll(content, "<!-- write here -->", envelope.MarkdownSectionContent(stripped))
 	if !*noReply && !*replyRequired {
 		if metadata, err := envelope.ParseMetadata(content); err == nil {
 			if explicitReplyPolicy, ok := envelope.ExplicitParamsReplyPolicyIgnoringGenerated(content, generatedReplyPolicyMarker); ok {
@@ -343,6 +343,7 @@ func RunSendHeredoc(args []string) error {
 		"fills_input_request_id": *fillsInputRequestID,
 	})
 
+	footer := ""
 	if cfg.MessageFooter != "" {
 		footerVars := make(map[string]string, len(vars))
 		for k, v := range vars {
@@ -367,9 +368,9 @@ func RunSendHeredoc(args []string) error {
 		footerVars["input_request_id"] = inputRequestID
 		footerVars["fills_input_request_id"] = *fillsInputRequestID
 		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
-		footer := template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
-		content = strings.TrimRight(content, "\n") + "\n\n---\n\n" + footer + "\n"
+		footer = template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 	}
+	content = renderSendBody(content, stripped, footer)
 
 	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
@@ -457,6 +458,49 @@ func RunSendHeredoc(args []string) error {
 		SubmitPath:          projection.SubmitPathPost,
 		Notify:              notifyOutputValue(notifyStatus),
 	})
+}
+
+func renderSendBody(content, body, footer string) string {
+	idx := strings.Index(content, sendBodyPlaceholder)
+	if idx < 0 {
+		if footer == "" {
+			return content
+		}
+		return strings.TrimRight(content, "\n") + "\n\n---\n\n" + strings.TrimRight(footer, "\n") + "\n"
+	}
+
+	prefix := trimTrailingBodySeparator(content[:idx])
+	suffix := content[idx+len(sendBodyPlaceholder):]
+	if strings.TrimSpace(suffix) == "" {
+		suffix = ""
+	}
+	header := strings.TrimRight(prefix, "\n")
+	footer = strings.TrimRight(footer, "\n")
+	if footer != "" {
+		if header != "" {
+			header += "\n\n"
+		}
+		header += footer
+	}
+	if header == "" {
+		return "---\n\n" + body + suffix
+	}
+	return header + "\n\n---\n\n" + body + suffix
+}
+
+func trimTrailingBodySeparator(content string) string {
+	trimmed := strings.TrimRight(content, " \t\r\n")
+	lineStart := strings.LastIndex(trimmed, "\n")
+	line := trimmed
+	before := ""
+	if lineStart >= 0 {
+		before = trimmed[:lineStart]
+		line = trimmed[lineStart+1:]
+	}
+	if strings.TrimSpace(line) != "---" {
+		return content
+	}
+	return strings.TrimRight(before, "\n")
 }
 
 func generatedReplyPolicyPlaceholder(filename string) string {

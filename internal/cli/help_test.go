@@ -115,7 +115,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"edges                            Bidirectional routes between nodes",
 		"ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node",
 		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
-		"message_footer                   Footer appended to stored send-heredoc mail",
+		"message_footer                   Header guidance before the sender body separator",
 		"draft_template                   Structured envelope for stored send-heredoc Markdown",
 		"daemon_message_template          Structured envelope for daemon-originated PING mail",
 		"skill_path                       postman.md skill catalogs; use inject: ping for compaction PINGs",
