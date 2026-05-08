@@ -371,6 +371,9 @@ func (ds *DaemonState) reserveDeliveryRoute(route string, gap time.Duration, now
 
 	if reservedAt, reserved := ds.reservedDeliveryByRoute[route]; reserved {
 		remaining := gap - now.Sub(reservedAt)
+		if remaining <= 0 {
+			remaining = gap
+		}
 		if remaining < 10*time.Millisecond {
 			remaining = 10 * time.Millisecond
 		}
