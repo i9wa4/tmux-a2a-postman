@@ -106,6 +106,78 @@ func TestForwardTUIEvent_KeepsLatestSessionSnapshotWhenChannelIsFull(t *testing.
 	}
 }
 
+func TestRelayDaemonEventsToTUI_ForwardsSessionSnapshotWhileHealthRefreshIsBlocked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	healthStarted := make(chan struct{})
+	releaseHealth := make(chan struct{})
+	healthStartedClosed := false
+	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+		if !healthStartedClosed {
+			close(healthStarted)
+			healthStartedClosed = true
+		}
+		<-releaseHealth
+		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+	}
+	defer func() {
+		select {
+		case <-releaseHealth:
+		default:
+			close(releaseHealth)
+		}
+	}()
+
+	rawEvents := make(chan tui.DaemonEvent, 2)
+	tuiEvents := make(chan tui.DaemonEvent, 4)
+	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+
+	rawEvents <- tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: "old", Enabled: true}},
+		},
+	}
+
+	first := <-tuiEvents
+	firstSessions, ok := first.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("first sessions detail type = %T, want []tui.SessionInfo", first.Details["sessions"])
+	}
+	if len(firstSessions) != 1 || firstSessions[0].Name != "old" {
+		t.Fatalf("first sessions = %#v, want old", firstSessions)
+	}
+
+	select {
+	case <-healthStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("health refresh did not start")
+	}
+
+	rawEvents <- tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: "new", Enabled: true}},
+		},
+	}
+
+	select {
+	case second := <-tuiEvents:
+		secondSessions, ok := second.Details["sessions"].([]tui.SessionInfo)
+		if !ok {
+			t.Fatalf("second sessions detail type = %T, want []tui.SessionInfo", second.Details["sessions"])
+		}
+		if len(secondSessions) != 1 || secondSessions[0].Name != "new" {
+			t.Fatalf("second sessions = %#v, want new", secondSessions)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("session snapshot was blocked behind session health refresh")
+	}
+
+	close(releaseHealth)
+}
+
 func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260405-ctx"

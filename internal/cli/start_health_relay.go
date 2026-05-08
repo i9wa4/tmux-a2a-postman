@@ -4,17 +4,43 @@ import (
 	"context"
 	"log"
 	"sort"
+	"sync"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
+type sessionHealthRefresher func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error)
+
 func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEvent, tuiEvents chan tui.DaemonEvent, baseDir, contextID string, cfg *config.Config) {
+	relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, baseDir, contextID, cfg, refreshProjectedSessionHealth)
+}
+
+func relayDaemonEventsToTUIWithHealthRefresher(
+	ctx context.Context,
+	rawEvents <-chan tui.DaemonEvent,
+	tuiEvents chan tui.DaemonEvent,
+	baseDir, contextID string,
+	cfg *config.Config,
+	refreshHealth sessionHealthRefresher,
+) {
 	if tuiEvents != nil {
 		defer close(tuiEvents)
 	}
 
 	knownSessions := make(map[string]struct{})
+	healthRequests := make(chan []string, 1)
+	var healthWG sync.WaitGroup
+	healthWG.Add(1)
+	go func() {
+		defer healthWG.Done()
+		relaySessionHealthUpdates(ctx, healthRequests, tuiEvents, baseDir, contextID, cfg, refreshHealth)
+	}()
+	defer func() {
+		close(healthRequests)
+		healthWG.Wait()
+	}()
 
 	for {
 		select {
@@ -33,8 +59,62 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 				continue
 			}
 
-			for _, sessionName := range sortedSessionNames(knownSessions) {
-				health, err := refreshProjectedSessionHealth(baseDir, contextID, sessionName, cfg)
+			if !requestSessionHealthRefresh(ctx, healthRequests, sortedSessionNames(knownSessions)) {
+				return
+			}
+		}
+	}
+}
+
+func requestSessionHealthRefresh(ctx context.Context, healthRequests chan []string, sessionNames []string) bool {
+	select {
+	case healthRequests <- sessionNames:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	select {
+	case <-healthRequests:
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	select {
+	case healthRequests <- sessionNames:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+func relaySessionHealthUpdates(
+	ctx context.Context,
+	healthRequests <-chan []string,
+	tuiEvents chan tui.DaemonEvent,
+	baseDir, contextID string,
+	cfg *config.Config,
+	refreshHealth sessionHealthRefresher,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sessionNames, ok := <-healthRequests:
+			if !ok {
+				return
+			}
+			for _, sessionName := range sessionNames {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				health, err := refreshHealth(baseDir, contextID, sessionName, cfg)
 				if err != nil {
 					log.Printf("postman: session health relay skipped %s: %v\n", sessionName, err)
 					continue
