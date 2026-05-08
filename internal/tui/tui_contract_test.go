@@ -289,6 +289,42 @@ func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
 	}
 }
 
+func TestTUI_Update_StatusUpdate_ReflectsSessionLifecycleSnapshots(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	updates := []struct {
+		name string
+		in   []SessionInfo
+		want []string
+	}{
+		{name: "initial", in: []SessionInfo{{Name: "main", Enabled: true}}, want: []string{"main"}},
+		{name: "rename", in: []SessionInfo{{Name: "review", Enabled: true}}, want: []string{"review"}},
+		{name: "create", in: []SessionInfo{{Name: "review", Enabled: true}, {Name: "scratch", Enabled: true}}, want: []string{"review", "scratch"}},
+		{name: "delete", in: []SessionInfo{{Name: "scratch", Enabled: true}}, want: []string{"scratch"}},
+	}
+
+	for _, update := range updates {
+		event := DaemonEventMsg{
+			Type: "status_update",
+			Details: map[string]interface{}{
+				"sessions": update.in,
+			},
+		}
+		newModel, _ := m.Update(event)
+		m = newModel.(Model)
+
+		got := make([]string, 0, len(m.sessions))
+		for _, session := range m.sessions {
+			got = append(got, session.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(update.want, ",") {
+			t.Fatalf("%s sessions = %#v, want %#v", update.name, got, update.want)
+		}
+	}
+}
+
 func TestTUI_View_DefaultSurfaceRowsUseSettledShape(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)

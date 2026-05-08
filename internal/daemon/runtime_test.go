@@ -104,9 +104,9 @@ func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t
 func TestSessionScanIntervalUsesPublicConfigAndFallback(t *testing.T) {
 	cfg := &config.Config{
 		ScanInterval:        1.0,
-		SessionScanInterval: 0.25,
+		SessionScanInterval: 0.1,
 	}
-	if got, want := sessionScanInterval(cfg), 250*time.Millisecond; got != want {
+	if got, want := sessionScanInterval(cfg), 100*time.Millisecond; got != want {
 		t.Fatalf("sessionScanInterval() = %s, want %s", got, want)
 	}
 
@@ -167,6 +167,46 @@ func TestHandleSessionScanTick_EmitsNewSessionWithoutPaneScan(t *testing.T) {
 	}
 	if strings.Contains(logText, "list-panes") {
 		t.Fatalf("session scan should not run pane discovery; tmux log: %q", logText)
+	}
+}
+
+func TestHandleSessionScanTick_EmitsRenameAndDeleteSnapshots(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeSessionScanTmux(t, tmpDir, []string{"review"})
+	events := make(chan tui.DaemonEvent, 2)
+
+	rt := &daemonRuntime{
+		events:           events,
+		daemonState:      NewDaemonState(0, "ctx-session-lifecycle"),
+		prevNodeCount:    0,
+		prevSessionNames: []string{"main"},
+		prevSessionNodes: map[string][]string{},
+	}
+
+	rt.handleSessionScanTick()
+
+	renameEvent := <-events
+	sessions, ok := renameEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("rename sessions detail type = %T, want []tui.SessionInfo", renameEvent.Details["sessions"])
+	}
+	if sessionInfoExists(sessions, "main", 0) {
+		t.Fatalf("rename sessions = %#v, did not expect old session name", sessions)
+	}
+	if !sessionInfoExists(sessions, "review", 0) {
+		t.Fatalf("rename sessions = %#v, want review session", sessions)
+	}
+
+	installRuntimeSessionScanTmux(t, tmpDir, nil)
+	rt.handleSessionScanTick()
+
+	deleteEvent := <-events
+	sessions, ok = deleteEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("delete sessions detail type = %T, want []tui.SessionInfo", deleteEvent.Details["sessions"])
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("delete sessions = %#v, want empty session list", sessions)
 	}
 }
 

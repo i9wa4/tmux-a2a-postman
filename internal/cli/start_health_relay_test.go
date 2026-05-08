@@ -50,7 +50,7 @@ func TestRelayDaemonEventsToTUI_DoesNotBlockWhenTUIChannelIsFull(t *testing.T) {
 	send(tui.DaemonEvent{Type: "message_received", Message: "second"})
 }
 
-func TestForwardTUIEvent_DropsWhenChannelIsFull(t *testing.T) {
+func TestForwardTUIEvent_DropsNonSessionEventWhenChannelIsFull(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -67,6 +67,42 @@ func TestForwardTUIEvent_DropsWhenChannelIsFull(t *testing.T) {
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("forwardTUIEvent blocked on a full TUI channel")
+	}
+}
+
+func TestForwardTUIEvent_KeepsLatestSessionSnapshotWhenChannelIsFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tuiEvents := make(chan tui.DaemonEvent, 1)
+	tuiEvents <- tui.DaemonEvent{Type: "message_received", Message: "older"}
+
+	ok := forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: "review", Enabled: true}},
+		},
+	})
+	if !ok {
+		t.Fatal("forwardTUIEvent returned false for an active context")
+	}
+
+	got := <-tuiEvents
+	if got.Type != "status_update" {
+		t.Fatalf("forwarded event type = %q, want status_update", got.Type)
+	}
+	sessions, ok := got.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", got.Details["sessions"])
+	}
+	if len(sessions) != 1 || sessions[0].Name != "review" {
+		t.Fatalf("sessions = %#v, want review snapshot", sessions)
+	}
+
+	select {
+	case event := <-tuiEvents:
+		t.Fatalf("unexpected extra event in TUI channel: %#v", event)
+	default:
 	}
 }
 

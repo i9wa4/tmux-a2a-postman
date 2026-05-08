@@ -9,7 +9,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEvent, tuiEvents chan<- tui.DaemonEvent, baseDir, contextID string, cfg *config.Config) {
+func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEvent, tuiEvents chan tui.DaemonEvent, baseDir, contextID string, cfg *config.Config) {
 	if tuiEvents != nil {
 		defer close(tuiEvents)
 	}
@@ -52,7 +52,7 @@ func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEven
 	}
 }
 
-func forwardTUIEvent(ctx context.Context, tuiEvents chan<- tui.DaemonEvent, event tui.DaemonEvent) bool {
+func forwardTUIEvent(ctx context.Context, tuiEvents chan tui.DaemonEvent, event tui.DaemonEvent) bool {
 	if tuiEvents == nil {
 		return true
 	}
@@ -62,8 +62,37 @@ func forwardTUIEvent(ctx context.Context, tuiEvents chan<- tui.DaemonEvent, even
 	case <-ctx.Done():
 		return false
 	default:
+		if !isSessionSnapshotEvent(event) || cap(tuiEvents) == 0 {
+			return true
+		}
+	}
+
+	select {
+	case <-tuiEvents:
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	select {
+	case tuiEvents <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
 		return true
 	}
+}
+
+func isSessionSnapshotEvent(event tui.DaemonEvent) bool {
+	if event.Type != "status_update" && event.Type != "config_update" {
+		return false
+	}
+	if event.Details == nil {
+		return false
+	}
+	_, ok := event.Details["sessions"].([]tui.SessionInfo)
+	return ok
 }
 
 func refreshKnownSessions(knownSessions map[string]struct{}, event tui.DaemonEvent) {
