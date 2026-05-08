@@ -6,7 +6,7 @@ description: |
   Use when:
   - The user asks to send a message to another agent node
   - An agent needs to make initial contact and may not know the command exists
-  Do not use for daemon management or reading inbox messages.
+  Do not use for session operation, infrastructure management, or reading inbox messages.
 ---
 
 # postman-send-message

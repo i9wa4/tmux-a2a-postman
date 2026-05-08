@@ -2,23 +2,24 @@
 name: postman-session-operator
 license: MIT
 description: |
-  Operate and diagnose live tmux-a2a-postman sessions.
+  Operate live tmux-a2a-postman message workflows.
   Use when:
   - Interpreting get-status or get-status-oneline output
-  - Deciding whether to pop, reply, resend, wait, follow up, or restart
+  - Deciding whether to pop, reply, resend, wait, or follow up
   - Handling reply-required, no-reply, reply-to, exact input-request replies, or
     status request behavior
   - Diagnosing pending, waiting, blocked, stale, unread, post queue,
-    dead-letter, auto-ping, pane discovery, daemon restart, or slow delivery
-    state
+    dead-letter, pane discovery, or slow delivery state
   Do not use for topology or postman.md syntax audits; use postman-config-auditor.
   Do not use only to send the first message; use postman-send-message.
+  Do not use for infrastructure management or low-level checks.
 ---
 
 # postman-session-operator
 
-Use this skill to read live tmux-a2a-postman session state and choose the next
-safe operator action.
+Use this skill to read live tmux-a2a-postman message state and choose the next
+safe agent action. This skill does not authorize inspecting or managing postman
+infrastructure.
 
 ## 1. First Commands
 
@@ -73,7 +74,7 @@ instructions, message metadata, health output, and observed send results.
 | `pending`     | Inbound reply-required message is open        | `pop`, handle the message, send an exact reply      |
 | `waiting`     | Outbound reply-required message is unresolved | Wait, or follow up only when timeout policy says so |
 | `stale`       | Pane or session is missing or unknown         | Verify pane/session before blaming workflow         |
-| `unavailable` | Daemon cannot provide canonical health        | Check daemon and session ownership                  |
+| `unavailable` | Status is unavailable                         | Report infrastructure unavailable to the operator   |
 
 `pending` beats `waiting` because the node has something it can do now.
 `stale` beats both because live state is not trustworthy.
@@ -235,8 +236,9 @@ progress evidence matters.
    timeout requires it.
 8. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
-9. If a node is `stale` or `attention_stale`, verify the tmux pane, tmux
-   session, and daemon before resending work.
+9. If a node is `stale` or `attention_stale`, verify the tmux pane and session
+   before resending work. If status remains unavailable, report the
+   infrastructure problem instead of attempting repair or low-level checks.
 10. Audit topology and recipient names before retrying messages in dead-letter.
 11. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 
@@ -245,5 +247,6 @@ progress evidence matters.
 Use `postman-config-auditor` when the problem looks like a missing edge, wrong
 node name, stale `postman.md`, or dead-letter route.
 
-Use normal daemon operations only after health suggests the daemon cannot
-observe the session or delivery is stuck despite valid topology.
+This skill does not include infrastructure repair or low-level procedures. If
+status remains unavailable or delivery stays stuck after routing checks, report
+`BLOCKED` to the operator or an operator-only admin workflow.
