@@ -42,6 +42,18 @@ func waitForInboxEntries(t *testing.T, sessionDir, nodeName string, want int) {
 	}
 }
 
+func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRuntimeResult {
+	t.Helper()
+	rt.ensureDaemonSubmitRuntime()
+	select {
+	case result := <-rt.daemonSubmitResults:
+		return result
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for daemon-submit worker result")
+		return daemonSubmitRuntimeResult{}
+	}
+}
+
 func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -167,6 +179,83 @@ func TestHandleSessionScanTick_EmitsNewSessionWithoutPaneScan(t *testing.T) {
 	}
 	if strings.Contains(logText, "list-panes") {
 		t.Fatalf("session scan should not run pane discovery; tmux log: %q", logText)
+	}
+}
+
+func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeSessionScanTmux(t, tmpDir, []string{"main", "review"})
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-worker"
+	sessionDir := filepath.Join(baseDir, contextID, "main")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-blocking",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	workerStarted := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	events := make(chan tui.DaemonEvent, 2)
+	rt := &daemonRuntime{
+		nodes: map[string]discovery.NodeInfo{
+			"main:worker": {SessionName: "main"},
+		},
+		events:           events,
+		daemonState:      NewDaemonState(0, contextID),
+		prevNodeCount:    1,
+		prevSessionNames: []string{"main"},
+		prevSessionNodes: map[string][]string{
+			"main": {"worker"},
+		},
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			close(workerStarted)
+			<-releaseWorker
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(releaseWorker)
+
+	done := make(chan struct{})
+	go func() {
+		rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("daemon-submit watcher event blocked on request processing")
+	}
+	select {
+	case <-workerStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("daemon-submit worker did not start")
+	}
+
+	rt.handleSessionScanTick()
+	select {
+	case event := <-events:
+		if event.Type != "status_update" {
+			t.Fatalf("event.Type = %q, want status_update", event.Type)
+		}
+		sessions, ok := event.Details["sessions"].([]tui.SessionInfo)
+		if !ok {
+			t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", event.Details["sessions"])
+		}
+		if !sessionInfoExists(sessions, "review", 0) {
+			t.Fatalf("sessions = %#v, want review session with zero nodes", sessions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for status_update while daemon-submit worker was blocked")
 	}
 }
 
@@ -354,6 +443,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 	}
 
 	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
 	deadline := time.Now().Add(time.Second)
@@ -419,6 +509,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
 		t.Fatalf("request file still present or wrong error: %v", err)
@@ -482,6 +573,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
 		t.Fatalf("cross-session request file still present or wrong error: %v", err)

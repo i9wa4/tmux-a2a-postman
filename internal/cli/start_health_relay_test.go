@@ -178,6 +178,136 @@ func TestRelayDaemonEventsToTUI_ForwardsSessionSnapshotWhileHealthRefreshIsBlock
 	close(releaseHealth)
 }
 
+func TestRelayDaemonEventsToTUI_RefreshesSessionHealthConcurrentlyWithinBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	slowStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
+	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+		if sessionName == "aaa-slow" {
+			close(slowStarted)
+			<-releaseSlow
+		}
+		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+	}
+	defer func() {
+		select {
+		case <-releaseSlow:
+		default:
+			close(releaseSlow)
+		}
+	}()
+
+	rawEvents := make(chan tui.DaemonEvent, 1)
+	tuiEvents := make(chan tui.DaemonEvent, 4)
+	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+
+	rawEvents <- tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{
+				{Name: "aaa-slow", Enabled: true},
+				{Name: "zzz-fast", Enabled: true},
+			},
+		},
+	}
+
+	if event := <-tuiEvents; event.Type != "status_update" {
+		t.Fatalf("first event type = %q, want status_update", event.Type)
+	}
+	select {
+	case <-slowStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("slow health refresh did not start")
+	}
+
+	select {
+	case event := <-tuiEvents:
+		if event.Type != "session_health_update" {
+			t.Fatalf("event.Type = %q, want session_health_update", event.Type)
+		}
+		health, ok := event.Details["health"].(status.SessionHealth)
+		if !ok {
+			t.Fatalf("health payload type = %T, want status.SessionHealth", event.Details["health"])
+		}
+		if health.SessionName != "zzz-fast" {
+			t.Fatalf("health.SessionName = %q, want zzz-fast", health.SessionName)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("fast health refresh was blocked behind slow session in same batch")
+	}
+}
+
+func TestRelayDaemonEventsToTUI_DropsStaleSessionHealthGeneration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	oldStarted := make(chan struct{})
+	releaseOld := make(chan struct{})
+	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+		if sessionName == "old" {
+			close(oldStarted)
+			<-releaseOld
+		}
+		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+	}
+	defer func() {
+		select {
+		case <-releaseOld:
+		default:
+			close(releaseOld)
+		}
+	}()
+
+	rawEvents := make(chan tui.DaemonEvent, 2)
+	tuiEvents := make(chan tui.DaemonEvent, 8)
+	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+
+	rawEvents <- tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: "old", Enabled: true}},
+		},
+	}
+	if event := <-tuiEvents; event.Type != "status_update" {
+		t.Fatalf("first event type = %q, want status_update", event.Type)
+	}
+	select {
+	case <-oldStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("old health refresh did not start")
+	}
+
+	rawEvents <- tui.DaemonEvent{
+		Type: "status_update",
+		Details: map[string]interface{}{
+			"sessions": []tui.SessionInfo{{Name: "new", Enabled: true}},
+		},
+	}
+	if event := <-tuiEvents; event.Type != "status_update" {
+		t.Fatalf("second event type = %q, want status_update", event.Type)
+	}
+
+	close(releaseOld)
+
+	select {
+	case event := <-tuiEvents:
+		if event.Type != "session_health_update" {
+			t.Fatalf("event.Type = %q, want session_health_update", event.Type)
+		}
+		health, ok := event.Details["health"].(status.SessionHealth)
+		if !ok {
+			t.Fatalf("health payload type = %T, want status.SessionHealth", event.Details["health"])
+		}
+		if health.SessionName != "new" {
+			t.Fatalf("health.SessionName = %q, want stale old health to be dropped and new health emitted", health.SessionName)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for latest session health update")
+	}
+}
+
 func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260405-ctx"

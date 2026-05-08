@@ -486,6 +486,8 @@ func RunDaemonLoop(
 				return
 			}
 			runtime.handleWatcherError(err)
+		case workerResult := <-runtime.daemonSubmitResults:
+			runtime.handleDaemonSubmitResult(workerResult)
 		case <-scanTicker.C:
 			runtime.handleScanTick()
 		case <-sessionScanTicker.C:
