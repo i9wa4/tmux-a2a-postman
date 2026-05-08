@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestMain(m *testing.M) {
+	restoreDurableWrites := journal.SetDurableWritesForTesting(false)
 	configHome, err := os.MkdirTemp("", "tmux-a2a-postman-cli-test-config-*")
 	if err != nil {
 		panic(err)
@@ -28,6 +30,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	code := m.Run()
+	restoreDurableWrites()
 	_ = os.RemoveAll(configHome)
 	_ = os.RemoveAll(home)
 	os.Exit(code)

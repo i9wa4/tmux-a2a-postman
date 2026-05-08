@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -103,7 +104,20 @@ var processManager struct {
 	manager *Manager
 }
 
-var appendEventBeforeWriteHook func() error
+var (
+	appendEventBeforeWriteHook func() error
+	skipAtomicWriteSync        atomic.Bool
+)
+
+// SetDurableWritesForTesting toggles fsync calls in atomic JSON writes and
+// returns a restore function. Production code keeps durable writes enabled.
+func SetDurableWritesForTesting(enabled bool) func() {
+	previous := !skipAtomicWriteSync.Load()
+	skipAtomicWriteSync.Store(!enabled)
+	return func() {
+		skipAtomicWriteSync.Store(!previous)
+	}
+}
 
 func NewManager(contextID string, holderPID int) *Manager {
 	return &Manager{
@@ -664,10 +678,12 @@ func writeJSONAtomically(path string, value interface{}) error {
 		_ = os.Remove(tempPath)
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		_ = os.Remove(tempPath)
-		return err
+	if !skipAtomicWriteSync.Load() {
+		if err := file.Sync(); err != nil {
+			_ = file.Close()
+			_ = os.Remove(tempPath)
+			return err
+		}
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(tempPath)
