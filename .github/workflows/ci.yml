@@ -30,7 +30,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            timeout_minutes: 5
+            timeout_minutes: 15
           - os: macos-latest
             timeout_minutes: 15
     runs-on: ${{ matrix.os }}
@@ -73,7 +73,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
 
@@ -101,7 +101,7 @@ jobs:
   security-report:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     continue-on-error: true
     permissions:
       actions: read

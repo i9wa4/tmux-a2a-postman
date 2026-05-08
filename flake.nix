@@ -51,9 +51,17 @@
         }:
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
+          go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
+            version = "1.26.3";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go${version}.src.tar.gz";
+              hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
+            };
+          });
+          buildGo126Module = pkgs.buildGoModule.override { go = go126; };
           commonDevPackages = with pkgs; [
             gh
-            go_1_26
+            go126
           ];
           goDevPackages = with pkgs; [
             gopls
@@ -129,7 +137,7 @@
           };
 
           # nix build
-          packages.default = pkgs.buildGo126Module {
+          packages.default = buildGo126Module {
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
@@ -271,7 +279,7 @@
               # Go
               govet = {
                 enable = true;
-                entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${pkgs.go_1_26}/bin/go vet ./...'";
+                entry = "${pkgs.bash}/bin/bash -c 'test -n \"$NIX_BUILD_TOP\" || ${go126}/bin/go vet ./...'";
                 pass_filenames = false;
                 types = [ "go" ];
               };
