@@ -45,6 +45,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check Go major.minor alignment
+        run: |
+          set -euo pipefail
+          mod_go="$(awk '/^go / { print $2; exit }' go.mod | cut -d. -f1-2)"
+          nix_go="$(grep -oE 'go_[0-9]+_[0-9]+' flake.nix | head -n 1 | sed 's/^go_//' | tr '_' '.')"
+          echo "go.mod: $mod_go"
+          echo "flake.nix: $nix_go"
+          test -n "$mod_go"
+          test -n "$nix_go"
+          if [[ "$mod_go" != "$nix_go" ]]; then
+            echo "Go major.minor mismatch: go.mod=$mod_go, flake.nix=$nix_go" >&2
+            exit 1
+          fi
+
       - name: Install Nix
         uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f # v31.10.5
         with:
