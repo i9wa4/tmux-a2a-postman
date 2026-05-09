@@ -55,7 +55,7 @@ jobs:
               | tr '_' '.'
           )"
           override_go="$(
-            perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/'
+            perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/' flake.nix
           )"
           echo "go.mod: $mod_go"
           echo "flake.nix: $nix_go"
