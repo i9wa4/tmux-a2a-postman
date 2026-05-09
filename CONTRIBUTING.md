@@ -15,8 +15,10 @@ Go version policy:
 
 - Keep `go.mod` at major.minor (for example `go 1.26`)
 - Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
-- Patch updates should come from `nix flake update` (`flake.lock`) instead of
-  manually pinning a Go patch release in `flake.nix`
+- Keep the `flake.nix` Go override on the latest required patch release until
+  nixpkgs catches up
+- Update the override with `nix run .#update-go-toolchain`, then run the checks
+  below
 
 When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 `vendorHash`:

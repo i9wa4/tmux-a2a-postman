@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check Go major.minor alignment
+      - name: Check Go toolchain alignment
         run: |
           set -euo pipefail
           mod_go="$(awk '/^go / { print $2; exit }' go.mod | cut -d. -f1-2)"
@@ -54,12 +54,21 @@ jobs:
               | head -n 1 \
               | tr '_' '.'
           )"
+          override_go="$(
+            perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/'
+          )"
           echo "go.mod: $mod_go"
           echo "flake.nix: $nix_go"
+          echo "Go override: $override_go"
           test -n "$mod_go" || { echo "Failed to extract Go version from go.mod" >&2; exit 1; }
           test -n "$nix_go" || { echo "Failed to extract Go version from flake.nix" >&2; exit 1; }
+          test -n "$override_go" || { echo "Failed to extract Go override patch version from flake.nix" >&2; exit 1; }
           if [[ "$mod_go" != "$nix_go" ]]; then
             echo "Go major.minor mismatch: go.mod=$mod_go, flake.nix=$nix_go" >&2
+            exit 1
+          fi
+          if [[ "$override_go" != "$mod_go".* ]]; then
+            echo "Go override mismatch: go.mod=$mod_go, override=$override_go" >&2
             exit 1
           fi
 
