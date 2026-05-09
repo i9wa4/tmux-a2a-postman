@@ -26,7 +26,9 @@ type InputRequestDetail struct {
 	ReplyPolicy    string
 	OpenedAt       string
 	OpenedAtSource string
+	OpenedEventID  string
 	ReadAt         string
+	ReadEventID    string
 }
 
 func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInputRequestState, bool, error) {
@@ -91,14 +93,14 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 		case MailboxProjectionPostConsumedEventType:
 			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type)
+				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID)
 				projected.WaitingOnInputCounts[meta.From]++
 			}
 		case MailboxProjectionDeliveredEventType:
 			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type)
+				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID)
 				projected.InputRequiredCounts[meta.To]++
 			} else {
 				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
@@ -106,8 +108,8 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 			}
 		case MailboxProjectionReadEventType:
 			decrementCount(projected.UnreadCounts, meta.To)
-			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt)
-			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt)
+			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt, event.EventID)
+			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt, event.EventID)
 			if inputRequest, ok := infoUnread[inputRequestKey(meta.MessageID, meta.To)]; ok {
 				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
@@ -155,7 +157,7 @@ func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelo
 	return meta
 }
 
-func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource string) {
+func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string) {
 	inputRequest := InputRequestDetail{
 		Direction:      direction,
 		MessageID:      meta.MessageID,
@@ -165,6 +167,7 @@ func openInputRequest(openExact, openFallback map[string]InputRequestDetail, met
 		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
 		OpenedAt:       openedAt,
 		OpenedAtSource: openedAtSource,
+		OpenedEventID:  openedEventID,
 	}
 	if meta.InputRequestID != "" {
 		openExact[meta.InputRequestID] = inputRequest
@@ -215,13 +218,14 @@ func resolveOutboundInputRequest(state MessageInputRequestState, openExact, open
 	delete(openFallback, key)
 }
 
-func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, readAt string) {
+func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, readAt, readEventID string) {
 	if readAt == "" {
 		return
 	}
 	if meta.InputRequestID != "" {
 		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
 			inputRequest.ReadAt = readAt
+			inputRequest.ReadEventID = readEventID
 			openExact[meta.InputRequestID] = inputRequest
 			return
 		}
@@ -229,6 +233,7 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 	for key, inputRequest := range openExact {
 		if inputRequest.MessageID == meta.MessageID && inputRequest.Recipient == meta.To {
 			inputRequest.ReadAt = readAt
+			inputRequest.ReadEventID = readEventID
 			openExact[key] = inputRequest
 			return
 		}
@@ -236,6 +241,7 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 	key := inputRequestKey(meta.MessageID, meta.To)
 	if inputRequest, ok := openFallback[key]; ok {
 		inputRequest.ReadAt = readAt
+		inputRequest.ReadEventID = readEventID
 		openFallback[key] = inputRequest
 	}
 }

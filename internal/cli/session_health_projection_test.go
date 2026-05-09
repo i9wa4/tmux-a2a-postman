@@ -432,8 +432,14 @@ func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 		if detail.OpenedAt != now.Add(2*time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionDeliveredEventType {
 			t.Fatalf("worker input_required opened evidence = %#v, want delivered timestamp/source", detail)
 		}
+		if detail.OpenedEventID == "" {
+			t.Fatalf("worker input_required opened_event_id is empty, want durable journal event id")
+		}
 		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
 			t.Fatalf("worker input_required read_at = %q, want recipient read timestamp", detail.ReadAt)
+		}
+		if detail.ReadEventID == "" {
+			t.Fatalf("worker input_required read_event_id is empty, want durable journal event id")
 		}
 	}
 	if got := nodeByName["critic"].Flow.State; got != "expected_wait" {
@@ -449,8 +455,14 @@ func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 		if detail.OpenedAt != now.Add(time.Second).Format(time.RFC3339Nano) || detail.OpenedAtSource != projection.MailboxProjectionPostConsumedEventType {
 			t.Fatalf("critic waiting_on_input opened evidence = %#v, want post-consumed timestamp/source", detail)
 		}
+		if detail.OpenedEventID == "" {
+			t.Fatalf("critic waiting_on_input opened_event_id is empty, want durable journal event id")
+		}
 		if detail.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
 			t.Fatalf("critic waiting_on_input read_at = %q, want recipient read timestamp", detail.ReadAt)
+		}
+		if detail.ReadEventID == "" {
+			t.Fatalf("critic waiting_on_input read_event_id is empty, want durable journal event id")
 		}
 	}
 }
