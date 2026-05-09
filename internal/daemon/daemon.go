@@ -371,6 +371,9 @@ func (ds *DaemonState) reserveDeliveryRoute(route string, gap time.Duration, now
 
 	if reservedAt, reserved := ds.reservedDeliveryByRoute[route]; reserved {
 		remaining := gap - now.Sub(reservedAt)
+		if remaining <= 0 {
+			remaining = gap
+		}
 		if remaining < 10*time.Millisecond {
 			remaining = 10 * time.Millisecond
 		}
@@ -483,6 +486,8 @@ func RunDaemonLoop(
 				return
 			}
 			runtime.handleWatcherError(err)
+		case workerResult := <-runtime.daemonSubmitResults:
+			runtime.handleDaemonSubmitResult(workerResult)
 		case <-scanTicker.C:
 			runtime.handleScanTick()
 		case <-sessionScanTicker.C:
@@ -673,6 +678,13 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	log.Printf("postman: session state change: session=%s enabled=true source=auto-enable ts=%s\n",
 		sessionName, time.Now().UTC().Format(time.RFC3339Nano))
 	ds.persistSessionEnabledMarker(sessionName, true)
+}
+
+func (ds *DaemonState) hasConfiguredSession(sessionName string) bool {
+	ds.enabledSessionsMu.RLock()
+	_, exists := ds.enabledSessions[sessionName]
+	ds.enabledSessionsMu.RUnlock()
+	return exists
 }
 
 // IsSessionEnabled checks if a session is enabled (Issue #71).

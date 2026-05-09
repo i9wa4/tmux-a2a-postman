@@ -118,6 +118,53 @@ func TestHasNodeSentSince(t *testing.T) {
 	}
 }
 
+func TestReserveDeliveryRoute_BackoffWhenInFlightReservationOutlivesGap(t *testing.T) {
+	ds := NewDaemonState(0, "test-context")
+	route := "orchestrator:critic"
+	gap := time.Second
+	now := time.Unix(1_800_000_000, 0)
+
+	remaining, reservedAt, ok := ds.reserveDeliveryRoute(route, gap, now)
+	if !ok {
+		t.Fatalf("first reserveDeliveryRoute() ok = false, want true")
+	}
+	if remaining != 0 {
+		t.Fatalf("first reserveDeliveryRoute() remaining = %s, want 0", remaining)
+	}
+	if !reservedAt.Equal(now) {
+		t.Fatalf("first reserveDeliveryRoute() reservedAt = %s, want %s", reservedAt, now)
+	}
+
+	remaining, _, ok = ds.reserveDeliveryRoute(route, gap, now.Add(2*gap))
+	if ok {
+		t.Fatalf("second reserveDeliveryRoute() ok = true while route is still in flight")
+	}
+	if remaining != gap {
+		t.Fatalf("second reserveDeliveryRoute() remaining = %s, want %s", remaining, gap)
+	}
+}
+
+func TestReserveDeliveryRoute_UsesRemainingGapForFreshReservation(t *testing.T) {
+	ds := NewDaemonState(0, "test-context")
+	route := "orchestrator:critic"
+	gap := time.Second
+	now := time.Unix(1_800_000_000, 0)
+
+	_, _, ok := ds.reserveDeliveryRoute(route, gap, now)
+	if !ok {
+		t.Fatalf("first reserveDeliveryRoute() ok = false, want true")
+	}
+
+	remaining, _, ok := ds.reserveDeliveryRoute(route, gap, now.Add(250*time.Millisecond))
+	if ok {
+		t.Fatalf("second reserveDeliveryRoute() ok = true while route is still in flight")
+	}
+	want := 750 * time.Millisecond
+	if remaining != want {
+		t.Fatalf("second reserveDeliveryRoute() remaining = %s, want %s", remaining, want)
+	}
+}
+
 func TestMessageEventSuppressesNormalDelivery(t *testing.T) {
 	tests := []struct {
 		name  string

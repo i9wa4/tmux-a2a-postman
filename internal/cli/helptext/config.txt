@@ -30,7 +30,7 @@ Core config:
   daemon_message_template          Structured envelope for daemon-originated PING mail
   skill_path                       postman.md skill catalogs; use inject: ping for compaction PINGs
   compaction_skill_path            Compatibility form for compaction-only skill catalogs
-  session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.25)
+  session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.10)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
   notification_template            Pane hint rendered when mail arrives
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control

@@ -42,6 +42,18 @@ func waitForInboxEntries(t *testing.T, sessionDir, nodeName string, want int) {
 	}
 }
 
+func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRuntimeResult {
+	t.Helper()
+	rt.ensureDaemonSubmitRuntime()
+	select {
+	case result := <-rt.daemonSubmitResults:
+		return result
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for daemon-submit worker result")
+		return daemonSubmitRuntimeResult{}
+	}
+}
+
 func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -104,9 +116,9 @@ func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t
 func TestSessionScanIntervalUsesPublicConfigAndFallback(t *testing.T) {
 	cfg := &config.Config{
 		ScanInterval:        1.0,
-		SessionScanInterval: 0.25,
+		SessionScanInterval: 0.1,
 	}
-	if got, want := sessionScanInterval(cfg), 250*time.Millisecond; got != want {
+	if got, want := sessionScanInterval(cfg), 100*time.Millisecond; got != want {
 		t.Fatalf("sessionScanInterval() = %s, want %s", got, want)
 	}
 
@@ -167,6 +179,274 @@ func TestHandleSessionScanTick_EmitsNewSessionWithoutPaneScan(t *testing.T) {
 	}
 	if strings.Contains(logText, "list-panes") {
 		t.Fatalf("session scan should not run pane discovery; tmux log: %q", logText)
+	}
+}
+
+func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-fast-session"
+	selfSession := "main"
+	targetSession := "review"
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+
+	logPath := installRuntimeSessionScanActivationTmux(t, tmpDir, []string{selfSession, targetSession})
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+	events := make(chan tui.DaemonEvent, 4)
+
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		sessionDir:   filepath.Join(contextDir, selfSession),
+		contextID:    contextID,
+		selfSession:  selfSession,
+		cfg:          config.DefaultConfig(),
+		watcher:      watcher,
+		knownNodes:   map[string]bool{},
+		watchedDirs:  map[string]bool{},
+		claimedPanes: map[string]bool{},
+		daemonState:  NewDaemonState(0, contextID),
+		events:       events,
+	}
+	rt.cfg.Edges = []string{"messenger --- orchestrator"}
+
+	rt.handleSessionScanTick()
+
+	if !rt.daemonState.GetConfiguredSessionEnabled(targetSession) {
+		t.Fatalf("target session was not auto-enabled")
+	}
+	for _, subdir := range []string{"post", "inbox", "read"} {
+		if _, err := os.Stat(filepath.Join(contextDir, targetSession, subdir)); err != nil {
+			t.Fatalf("target session %s dir missing: %v", subdir, err)
+		}
+	}
+	if _, ok := rt.nodes[targetSession+":messenger"]; !ok {
+		t.Fatalf("rt.nodes missing activated messenger: %#v", rt.nodes)
+	}
+	if _, ok := rt.nodes[targetSession+":orchestrator"]; !ok {
+		t.Fatalf("rt.nodes missing activated orchestrator: %#v", rt.nodes)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(tmux log): %v", err)
+	}
+	logText := string(logBytes)
+	for _, want := range []string{
+		"set-option -p -t %201 @a2a_context_id ctx-fast-session",
+		"set-option -p -t %202 @a2a_context_id ctx-fast-session",
+		"set-option -g @a2a_session_on_review ctx-fast-session:",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("tmux log missing %q: %q", want, logText)
+		}
+	}
+}
+
+func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPanes(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-fast-session"
+	selfSession := "main"
+	targetSession := "review"
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+
+	logPath := installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker", "critic", "unrelated"})
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+	events := make(chan tui.DaemonEvent, 4)
+
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		sessionDir:   filepath.Join(contextDir, selfSession),
+		contextID:    contextID,
+		selfSession:  selfSession,
+		cfg:          config.DefaultConfig(),
+		watcher:      watcher,
+		knownNodes:   map[string]bool{},
+		watchedDirs:  map[string]bool{},
+		claimedPanes: map[string]bool{},
+		daemonState:  NewDaemonState(0, contextID),
+		events:       events,
+	}
+	rt.cfg.Edges = nil
+	rt.cfg.NodeOrder = []string{"worker", "critic"}
+	rt.cfg.Nodes = map[string]config.NodeConfig{
+		"worker": {},
+		"critic": {},
+	}
+
+	rt.handleSessionScanTick()
+
+	if !rt.daemonState.GetConfiguredSessionEnabled(targetSession) {
+		t.Fatalf("target session was not auto-enabled")
+	}
+	if _, ok := rt.nodes[targetSession+":worker"]; !ok {
+		t.Fatalf("rt.nodes missing activated worker: %#v", rt.nodes)
+	}
+	if _, ok := rt.nodes[targetSession+":critic"]; !ok {
+		t.Fatalf("rt.nodes missing activated critic: %#v", rt.nodes)
+	}
+	if _, ok := rt.nodes[targetSession+":unrelated"]; ok {
+		t.Fatalf("rt.nodes contains unrelated pane: %#v", rt.nodes)
+	}
+	for _, subdir := range []string{"post", "inbox", "read"} {
+		watchDir := filepath.Join(contextDir, targetSession, subdir)
+		if !rt.watchedDirs[watchDir] {
+			t.Fatalf("target session %s watch missing", subdir)
+		}
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(tmux log): %v", err)
+	}
+	logText := string(logBytes)
+	for _, want := range []string{
+		"set-option -p -t %201 @a2a_context_id ctx-fast-session",
+		"set-option -p -t %202 @a2a_context_id ctx-fast-session",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("tmux log missing %q: %q", want, logText)
+		}
+	}
+	if strings.Contains(logText, "set-option -p -t %203 @a2a_context_id ctx-fast-session") {
+		t.Fatalf("tmux log claimed unrelated pane: %q", logText)
+	}
+}
+
+func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeSessionScanTmux(t, tmpDir, []string{"main", "review"})
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-worker"
+	sessionDir := filepath.Join(baseDir, contextID, "main")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-blocking",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	workerStarted := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	events := make(chan tui.DaemonEvent, 2)
+	rt := &daemonRuntime{
+		nodes: map[string]discovery.NodeInfo{
+			"main:worker": {SessionName: "main"},
+		},
+		events:           events,
+		daemonState:      NewDaemonState(0, contextID),
+		prevNodeCount:    1,
+		prevSessionNames: []string{"main"},
+		prevSessionNodes: map[string][]string{
+			"main": {"worker"},
+		},
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			close(workerStarted)
+			<-releaseWorker
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(releaseWorker)
+
+	done := make(chan struct{})
+	go func() {
+		rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("daemon-submit watcher event blocked on request processing")
+	}
+	select {
+	case <-workerStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("daemon-submit worker did not start")
+	}
+
+	rt.handleSessionScanTick()
+	select {
+	case event := <-events:
+		if event.Type != "status_update" {
+			t.Fatalf("event.Type = %q, want status_update", event.Type)
+		}
+		sessions, ok := event.Details["sessions"].([]tui.SessionInfo)
+		if !ok {
+			t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", event.Details["sessions"])
+		}
+		if !sessionInfoExists(sessions, "review", 0) {
+			t.Fatalf("sessions = %#v, want review session with zero nodes", sessions)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for status_update while daemon-submit worker was blocked")
+	}
+}
+
+func TestHandleSessionScanTick_EmitsRenameAndDeleteSnapshots(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeSessionScanTmux(t, tmpDir, []string{"review"})
+	events := make(chan tui.DaemonEvent, 2)
+
+	rt := &daemonRuntime{
+		events:           events,
+		daemonState:      NewDaemonState(0, "ctx-session-lifecycle"),
+		prevNodeCount:    0,
+		prevSessionNames: []string{"main"},
+		prevSessionNodes: map[string][]string{},
+	}
+
+	rt.handleSessionScanTick()
+
+	renameEvent := <-events
+	sessions, ok := renameEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("rename sessions detail type = %T, want []tui.SessionInfo", renameEvent.Details["sessions"])
+	}
+	if sessionInfoExists(sessions, "main", 0) {
+		t.Fatalf("rename sessions = %#v, did not expect old session name", sessions)
+	}
+	if !sessionInfoExists(sessions, "review", 0) {
+		t.Fatalf("rename sessions = %#v, want review session", sessions)
+	}
+
+	installRuntimeSessionScanTmux(t, tmpDir, nil)
+	rt.handleSessionScanTick()
+
+	deleteEvent := <-events
+	sessions, ok = deleteEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("delete sessions detail type = %T, want []tui.SessionInfo", deleteEvent.Details["sessions"])
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("delete sessions = %#v, want empty session list", sessions)
 	}
 }
 
@@ -314,6 +594,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 	}
 
 	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
 	deadline := time.Now().Add(time.Second)
@@ -379,6 +660,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
 		t.Fatalf("request file still present or wrong error: %v", err)
@@ -442,6 +724,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
 		t.Fatalf("cross-session request file still present or wrong error: %v", err)
@@ -711,6 +994,60 @@ func installRuntimeSessionScanTmux(t *testing.T, tmpDir string, sessions []strin
 		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
 	}
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = 'list-sessions' ]; then\n%s  exit 0\nfi\nif [ \"$1\" = 'list-panes' ]; then\n  echo 'unexpected list-panes' >&2\n  exit 42\nfi\nexit 0\n", logPath, sessionOutput.String())
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func installRuntimeSessionScanActivationTmux(t *testing.T, tmpDir string, sessions []string) string {
+	return installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, sessions, []string{"messenger", "orchestrator", "unrelated"})
+}
+
+func installRuntimeSessionScanActivationTmuxWithPanes(t *testing.T, tmpDir string, sessions, paneTitles []string) string {
+	t.Helper()
+	fakeBin := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("MkdirAll(fakeBin): %v", err)
+	}
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	var sessionOutput strings.Builder
+	for i, sessionName := range sessions {
+		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
+	}
+	var sessionPaneOutput strings.Builder
+	var allPaneOutput strings.Builder
+	for i, paneTitle := range paneTitles {
+		paneID := fmt.Sprintf("%%%d", 201+i)
+		sessionPaneOutput.WriteString(fmt.Sprintf("  printf '%%s\\n' '%s %s'\n", paneID, paneTitle))
+		contextForPane := "ctx-fast-session"
+		if paneTitle == "unrelated" {
+			contextForPane = ""
+		}
+		allPaneOutput.WriteString(fmt.Sprintf("  printf '%%s\\n' '%s\t%s\treview\t%s'\n", paneID, contextForPane, paneTitle))
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1" = 'list-sessions' ]; then
+%s  exit 0
+fi
+if [ "$1" = 'list-panes' ] && [ "$2" = '-s' ] && [ "$3" = '-t' ] && [ "$4" = 'review' ]; then
+%s
+  exit 0
+fi
+if [ "$1" = 'list-panes' ] && [ "$2" = '-a' ]; then
+%s
+  exit 0
+fi
+if [ "$1" = 'show-options' ] && [ "$2" = '-gqv' ]; then
+  exit 0
+fi
+if [ "$1" = 'set-option' ]; then
+  exit 0
+fi
+exit 0
+`, logPath, sessionOutput.String(), sessionPaneOutput.String(), allPaneOutput.String())
 	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}

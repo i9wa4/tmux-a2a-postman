@@ -311,8 +311,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.ScanInterval != 1.0 {
 		t.Errorf("default ScanInterval: got %v, want 1.0", cfg.ScanInterval)
 	}
-	if cfg.SessionScanInterval != 0.25 {
-		t.Errorf("default SessionScanInterval: got %v, want 0.25", cfg.SessionScanInterval)
+	if cfg.SessionScanInterval != 0.1 {
+		t.Errorf("default SessionScanInterval: got %v, want 0.1", cfg.SessionScanInterval)
 	}
 	if cfg.PaneCaptureIntervalSeconds != 5.0 {
 		t.Errorf("default PaneCaptureIntervalSeconds: got %v, want 5.0", cfg.PaneCaptureIntervalSeconds)

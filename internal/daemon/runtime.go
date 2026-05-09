@@ -62,6 +62,22 @@ type daemonRuntime struct {
 	sendAutoPing     autoPingSender
 	autoPingEventsMu sync.Mutex
 	activeAutoPings  map[string]bool
+
+	processDaemonSubmit        daemonSubmitProcessor
+	daemonSubmitSem            chan struct{}
+	daemonSubmitResults        chan daemonSubmitRuntimeResult
+	activeDaemonSubmitSessions map[string]bool
+}
+
+const daemonSubmitWorkerLimit = 4
+
+type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
+
+type daemonSubmitRuntimeResult struct {
+	requestPath string
+	sessionKey  string
+	result      daemonSubmitProcessResult
+	err         error
 }
 
 type runtimeStatusSnapshot struct {
@@ -99,27 +115,31 @@ func newDaemonRuntime(
 	selfSession string,
 ) *daemonRuntime {
 	return &daemonRuntime{
-		baseDir:          baseDir,
-		sessionDir:       sessionDir,
-		contextID:        contextID,
-		configPath:       configPath,
-		selfSession:      selfSession,
-		cfg:              cfg,
-		watcher:          watcher,
-		adjacency:        adjacency,
-		nodes:            nodes,
-		knownNodes:       knownNodes,
-		events:           events,
-		configPaths:      configPaths,
-		nodesDirs:        nodesDirs,
-		daemonState:      daemonState,
-		idleTracker:      idleTracker,
-		sharedNodes:      sharedNodes,
-		watchedDirs:      make(map[string]bool),
-		claimedPanes:     make(map[string]bool),
-		prevSessionNodes: make(map[string][]string),
-		activePostEvents: make(map[string]bool),
-		activeAutoPings:  make(map[string]bool),
+		baseDir:                    baseDir,
+		sessionDir:                 sessionDir,
+		contextID:                  contextID,
+		configPath:                 configPath,
+		selfSession:                selfSession,
+		cfg:                        cfg,
+		watcher:                    watcher,
+		adjacency:                  adjacency,
+		nodes:                      nodes,
+		knownNodes:                 knownNodes,
+		events:                     events,
+		configPaths:                configPaths,
+		nodesDirs:                  nodesDirs,
+		daemonState:                daemonState,
+		idleTracker:                idleTracker,
+		sharedNodes:                sharedNodes,
+		watchedDirs:                make(map[string]bool),
+		claimedPanes:               make(map[string]bool),
+		prevSessionNodes:           make(map[string][]string),
+		activePostEvents:           make(map[string]bool),
+		activeAutoPings:            make(map[string]bool),
+		processDaemonSubmit:        processDaemonSubmitRequest,
+		daemonSubmitSem:            make(chan struct{}, daemonSubmitWorkerLimit),
+		daemonSubmitResults:        make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
+		activeDaemonSubmitSessions: make(map[string]bool),
 	}
 }
 
@@ -302,18 +322,102 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 }
 
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
-	submitResult, err := processDaemonSubmitRequest(requestPath)
-	if err != nil {
+	status := rt.dispatchDaemonSubmitRequest(requestPath)
+	if status == daemonSubmitDispatchSaturated {
+		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
+	}
+}
+
+type daemonSubmitDispatchStatus int
+
+const (
+	daemonSubmitDispatched daemonSubmitDispatchStatus = iota
+	daemonSubmitDispatchDeferred
+	daemonSubmitDispatchSaturated
+)
+
+func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonSubmitDispatchStatus {
+	rt.ensureDaemonSubmitRuntime()
+	sessionKey := daemonSubmitSessionKey(requestPath)
+	if rt.activeDaemonSubmitSessions[sessionKey] {
+		return daemonSubmitDispatchDeferred
+	}
+	select {
+	case rt.daemonSubmitSem <- struct{}{}:
+	default:
+		return daemonSubmitDispatchSaturated
+	}
+	rt.activeDaemonSubmitSessions[sessionKey] = true
+	processor := rt.processDaemonSubmit
+
+	go func() {
+		workerResult := daemonSubmitRuntimeResult{
+			requestPath: requestPath,
+			sessionKey:  sessionKey,
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				workerResult.err = fmt.Errorf("panic processing %s: %v", filepath.Base(requestPath), r)
+			}
+			rt.daemonSubmitResults <- workerResult
+			<-rt.daemonSubmitSem
+		}()
+		workerResult.result, workerResult.err = processor(requestPath)
+	}()
+
+	return daemonSubmitDispatched
+}
+
+func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
+	if rt.processDaemonSubmit == nil {
+		rt.processDaemonSubmit = processDaemonSubmitRequest
+	}
+	if rt.daemonSubmitSem == nil {
+		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimit)
+	}
+	if rt.daemonSubmitResults == nil {
+		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit)
+	}
+	if rt.activeDaemonSubmitSessions == nil {
+		rt.activeDaemonSubmitSessions = make(map[string]bool)
+	}
+}
+
+func daemonSubmitSessionKey(requestPath string) string {
+	if sessionDir, ok := daemonSubmitSessionDir(requestPath); ok {
+		return sessionDir
+	}
+	return filepath.Dir(requestPath)
+}
+
+func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
+	rt.ensureDaemonSubmitRuntime()
+	delete(rt.activeDaemonSubmitSessions, workerResult.sessionKey)
+	if workerResult.err != nil {
 		rt.events <- tui.DaemonEvent{
 			Type:    "error",
-			Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(requestPath), err),
+			Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(workerResult.requestPath), workerResult.err),
 		}
 		return
 	}
-	if submitResult.hasPostDispatch() {
+	if workerResult.result.hasPostDispatch() {
 		log.Printf("postman: component=%s event=send_reconcile submit_path=%s session=%s file=%s\n",
-			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(submitResult.SessionDir), submitResult.Filename)
-		rt.wakePostReconciler(submitResult.PostPath)
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(workerResult.result.SessionDir), workerResult.result.Filename)
+		rt.wakePostReconciler(workerResult.result.PostPath)
+	}
+	rt.dispatchPendingDaemonSubmitRequests()
+}
+
+func (rt *daemonRuntime) handleDaemonSubmitResults() {
+	rt.ensureDaemonSubmitRuntime()
+	for {
+		select {
+		case workerResult := <-rt.daemonSubmitResults:
+			rt.handleDaemonSubmitResult(workerResult)
+		default:
+			return
+		}
 	}
 }
 
@@ -337,7 +441,10 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			rt.handleDaemonSubmitRequest(filepath.Join(requestsDir, name))
+			status := rt.dispatchDaemonSubmitRequest(filepath.Join(requestsDir, name))
+			if status == daemonSubmitDispatchSaturated {
+				return
+			}
 		}
 	}
 }
@@ -624,7 +731,7 @@ func (rt *daemonRuntime) handleConfigReload() {
 	if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(rt.baseDir, rt.contextID, rt.selfSession); discErr != nil {
 		log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
 	} else {
-		filterNodesByEdges(freshNodes, rt.cfg.Edges)
+		filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 		rt.nodes = freshNodes
 	}
 	rt.storeSharedNodes()
@@ -742,6 +849,131 @@ func (rt *daemonRuntime) handleSessionScanTick() {
 		}
 		return
 	}
+	if rt.activateNewSessionsFromScan(allSessions) {
+		rt.refreshNodesAfterSessionActivation(allSessions)
+	}
+	rt.emitStatusUpdateIfChanged(allSessions)
+}
+
+func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool {
+	if rt == nil || rt.cfg == nil || rt.daemonState == nil {
+		return false
+	}
+	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, true) {
+		return false
+	}
+
+	contextDir := filepath.Dir(rt.sessionDir)
+	candidateNodes := runtimeActivationNodeNames(rt.cfg)
+	activated := false
+	for _, targetSession := range allSessions {
+		if targetSession == "" || targetSession == rt.selfSession {
+			continue
+		}
+		if rt.daemonState.hasConfiguredSession(targetSession) {
+			continue
+		}
+		if owner := config.FindSessionOwner(rt.baseDir, targetSession, rt.contextID); owner != "" {
+			continue
+		}
+
+		preClaimed := preclaimRuntimeSessionCandidatePanes(targetSession, rt.contextID, candidateNodes)
+		if preClaimed == 0 {
+			continue
+		}
+		if err := config.CreateMultiSessionDirs(contextDir, targetSession); err != nil {
+			log.Printf("postman: WARNING: failed to create auto-enabled session dirs for %s: %v\n", targetSession, err)
+			continue
+		}
+		rt.daemonState.AutoEnableSessionIfNew(targetSession)
+		log.Printf("postman: session-scan activated session %s (%d panes)\n", targetSession, preClaimed)
+		activated = true
+	}
+	return activated
+}
+
+func runtimeActivationNodeNames(cfg *config.Config) map[string]bool {
+	if cfg == nil {
+		return map[string]bool{}
+	}
+	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
+	if candidateNodes == nil {
+		candidateNodes = make(map[string]bool)
+	}
+	for _, nodeName := range cfg.OrderedNodeNames() {
+		if nodeName == "" {
+			continue
+		}
+		candidateNodes[nodeName] = true
+	}
+	return candidateNodes
+}
+
+func filterNodesByRuntimeConfig(nodes map[string]discovery.NodeInfo, cfg *config.Config) {
+	filterNodesByRuntimeCandidates(nodes, runtimeActivationNodeNames(cfg))
+}
+
+func filterNodesByRuntimeCandidates(nodes map[string]discovery.NodeInfo, candidateNodes map[string]bool) {
+	for nodeName := range nodes {
+		if !config.EdgeNodeAllowed(candidateNodes, nodeName) {
+			delete(nodes, nodeName)
+		}
+	}
+}
+
+func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
+	out, err := exec.Command("tmux", "list-panes", "-s", "-t", sessionName, "-F", "#{pane_id} #{pane_title}").Output()
+	if err != nil {
+		log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", sessionName, err)
+		return 0
+	}
+
+	preClaimed := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		nodeName := parts[1]
+		nodeKey := sessionName + ":" + nodeName
+		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
+			continue
+		}
+		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+			log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
+			continue
+		}
+		preClaimed++
+	}
+	return preClaimed
+}
+
+func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string) {
+	freshNodes, scanCollisions, err := rt.discoverNodes()
+	if err != nil {
+		log.Printf("postman: WARNING: session-scan node discovery failed after activation: %v\n", err)
+		return
+	}
+
+	rt.pruneClaimedPanes(freshNodes)
+	rt.claimNewPanes(freshNodes)
+	for _, collision := range scanCollisions {
+		rt.events <- tui.DaemonEvent{
+			Type:    "pane_collision",
+			Message: fmt.Sprintf("[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID),
+			Details: map[string]interface{}{
+				"node":           collision.NodeKey,
+				"winner_pane_id": collision.WinnerPaneID,
+				"loser_pane_id":  collision.LoserPaneID,
+			},
+		}
+	}
+	rt.pruneKnownNodes(freshNodes)
+	newNodes := rt.detectNewNodes(freshNodes)
+	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+	rt.nodes = freshNodes
+	rt.storeSharedNodes()
+	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), time.Now())
 	rt.emitStatusUpdateIfChanged(allSessions)
 }
 
@@ -783,7 +1015,7 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	if err != nil {
 		return nil, nil, err
 	}
-	filterNodesByEdges(freshNodes, rt.cfg.Edges)
+	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	return freshNodes, collisions, nil
 }
 

@@ -47,3 +47,7 @@ constraint between daemon and agent nodes while keeping the default operator
 story simple: run one daemon for your Unix user and let it observe the sessions
 you enable. The daemon is still a routing process that reads tmux state; it has
 no topological dependency on the session it observes.
+
+For the current inventory of daemon-side tmux command execution and polling
+cadence, see
+[Daemon tmux Command Inventory](./daemon-tmux-command-inventory.md).
