@@ -680,6 +680,13 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	ds.persistSessionEnabledMarker(sessionName, true)
 }
 
+func (ds *DaemonState) hasConfiguredSession(sessionName string) bool {
+	ds.enabledSessionsMu.RLock()
+	_, exists := ds.enabledSessions[sessionName]
+	ds.enabledSessionsMu.RUnlock()
+	return exists
+}
+
 // IsSessionEnabled checks if a session is enabled (Issue #71).
 // During the startup drain window, returns true for all sessions to prevent
 // the race where messages are rejected before sessions are registered (#217).
