@@ -11,7 +11,16 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
-When changing Go dependencies, `go.mod`, `go.sum`, Go versions, or
+Go version policy:
+
+- Keep `go.mod` at major.minor (for example `go 1.26`)
+- Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
+- Keep the `flake.nix` Go override on the latest required patch release until
+  nixpkgs catches up
+- Update the override with `nix run .#update-go-toolchain`, then run the checks
+  below
+
+When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 `vendorHash`:
 
 - Run `go mod tidy`

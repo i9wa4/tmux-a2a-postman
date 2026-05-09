@@ -1,6 +1,6 @@
 module github.com/i9wa4/tmux-a2a-postman
 
-go 1.26.0
+go 1.26
 
 require (
 	charm.land/bubbletea/v2 v2.0.6

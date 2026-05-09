@@ -1,0 +1,114 @@
+name: update-go-toolchain
+run-name: ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * *"
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f # v31.10.5
+        with:
+          github_access_token: ${{ github.token }}
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+
+      - name: Update Go toolchain override
+        id: update
+        run: |
+          set -euo pipefail
+          nix run .#update-go-toolchain
+          nix develop .#ci --command go mod tidy
+
+          if git diff --quiet -- flake.nix go.mod go.sum; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Go toolchain override is already up to date."
+            exit 0
+          fi
+
+          go_version="$(
+            perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/' flake.nix
+          )"
+          test -n "$go_version" || { echo "Failed to extract updated Go override version" >&2; exit 1; }
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "go_version=$go_version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify update
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          nix build --option substitute false --print-build-logs
+          nix flake check --print-build-logs
+          nix build --print-build-logs
+
+      - name: Create update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GO_VERSION: ${{ steps.update.outputs.go_version }}
+        run: |
+          set -euo pipefail
+          branch="chore/update-go-toolchain"
+          title="chore: update Go toolchain to ${GO_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
+          git switch -c "$branch"
+          git add flake.nix go.mod go.sum
+          git commit -m "$title"
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git push --force-with-lease origin "HEAD:$branch"
+
+          body="$(mktemp)"
+          cat > "$body" <<EOF
+          Updates the pinned Go toolchain override to ${GO_VERSION}.
+
+          Verification run by this workflow:
+
+          - \`go mod tidy\`
+          - \`nix build --option substitute false --print-build-logs\`
+          - \`nix flake check --print-build-logs\`
+          - \`nix build --print-build-logs\`
+          EOF
+
+          if gh pr view "$branch" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh pr edit "$branch" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head "$branch" \
+              --title "$title" \
+              --body-file "$body"
+          fi
