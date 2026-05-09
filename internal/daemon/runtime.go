@@ -731,7 +731,7 @@ func (rt *daemonRuntime) handleConfigReload() {
 	if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(rt.baseDir, rt.contextID, rt.selfSession); discErr != nil {
 		log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
 	} else {
-		filterNodesByEdges(freshNodes, rt.cfg.Edges)
+		filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 		rt.nodes = freshNodes
 	}
 	rt.storeSharedNodes()
@@ -893,6 +893,9 @@ func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool 
 }
 
 func runtimeActivationNodeNames(cfg *config.Config) map[string]bool {
+	if cfg == nil {
+		return map[string]bool{}
+	}
 	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
 	if candidateNodes == nil {
 		candidateNodes = make(map[string]bool)
@@ -904,6 +907,18 @@ func runtimeActivationNodeNames(cfg *config.Config) map[string]bool {
 		candidateNodes[nodeName] = true
 	}
 	return candidateNodes
+}
+
+func filterNodesByRuntimeConfig(nodes map[string]discovery.NodeInfo, cfg *config.Config) {
+	filterNodesByRuntimeCandidates(nodes, runtimeActivationNodeNames(cfg))
+}
+
+func filterNodesByRuntimeCandidates(nodes map[string]discovery.NodeInfo, candidateNodes map[string]bool) {
+	for nodeName := range nodes {
+		if !config.EdgeNodeAllowed(candidateNodes, nodeName) {
+			delete(nodes, nodeName)
+		}
+	}
 }
 
 func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
@@ -1000,7 +1015,7 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	if err != nil {
 		return nil, nil, err
 	}
-	filterNodesByEdges(freshNodes, rt.cfg.Edges)
+	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	return freshNodes, collisions, nil
 }
 
