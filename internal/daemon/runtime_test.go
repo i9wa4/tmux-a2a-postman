@@ -182,6 +182,76 @@ func TestHandleSessionScanTick_EmitsNewSessionWithoutPaneScan(t *testing.T) {
 	}
 }
 
+func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-fast-session"
+	selfSession := "main"
+	targetSession := "review"
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+
+	logPath := installRuntimeSessionScanActivationTmux(t, tmpDir, []string{selfSession, targetSession})
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
+	}
+	defer func() { _ = watcher.Close() }()
+	events := make(chan tui.DaemonEvent, 4)
+
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		sessionDir:   filepath.Join(contextDir, selfSession),
+		contextID:    contextID,
+		selfSession:  selfSession,
+		cfg:          config.DefaultConfig(),
+		watcher:      watcher,
+		knownNodes:   map[string]bool{},
+		watchedDirs:  map[string]bool{},
+		claimedPanes: map[string]bool{},
+		daemonState:  NewDaemonState(0, contextID),
+		events:       events,
+	}
+	rt.cfg.Edges = []string{"messenger --- orchestrator"}
+
+	rt.handleSessionScanTick()
+
+	if !rt.daemonState.GetConfiguredSessionEnabled(targetSession) {
+		t.Fatalf("target session was not auto-enabled")
+	}
+	for _, subdir := range []string{"post", "inbox", "read"} {
+		if _, err := os.Stat(filepath.Join(contextDir, targetSession, subdir)); err != nil {
+			t.Fatalf("target session %s dir missing: %v", subdir, err)
+		}
+	}
+	if _, ok := rt.nodes[targetSession+":messenger"]; !ok {
+		t.Fatalf("rt.nodes missing activated messenger: %#v", rt.nodes)
+	}
+	if _, ok := rt.nodes[targetSession+":orchestrator"]; !ok {
+		t.Fatalf("rt.nodes missing activated orchestrator: %#v", rt.nodes)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(tmux log): %v", err)
+	}
+	logText := string(logBytes)
+	for _, want := range []string{
+		"set-option -p -t %201 @a2a_context_id ctx-fast-session",
+		"set-option -p -t %202 @a2a_context_id ctx-fast-session",
+		"set-option -g @a2a_session_on_review ctx-fast-session:",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("tmux log missing %q: %q", want, logText)
+		}
+	}
+}
+
 func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeSessionScanTmux(t, tmpDir, []string{"main", "review"})
@@ -843,6 +913,45 @@ func installRuntimeSessionScanTmux(t *testing.T, tmpDir string, sessions []strin
 		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
 	}
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = 'list-sessions' ]; then\n%s  exit 0\nfi\nif [ \"$1\" = 'list-panes' ]; then\n  echo 'unexpected list-panes' >&2\n  exit 42\nfi\nexit 0\n", logPath, sessionOutput.String())
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func installRuntimeSessionScanActivationTmux(t *testing.T, tmpDir string, sessions []string) string {
+	t.Helper()
+	fakeBin := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
+		t.Fatalf("MkdirAll(fakeBin): %v", err)
+	}
+	logPath := filepath.Join(tmpDir, "tmux.log")
+	var sessionOutput strings.Builder
+	for i, sessionName := range sessions {
+		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1" = 'list-sessions' ]; then
+%s  exit 0
+fi
+if [ "$1" = 'list-panes' ] && [ "$2" = '-s' ] && [ "$3" = '-t' ] && [ "$4" = 'review' ]; then
+  printf '%%s\n' '%%201 messenger' '%%202 orchestrator' '%%203 unrelated'
+  exit 0
+fi
+if [ "$1" = 'list-panes' ] && [ "$2" = '-a' ]; then
+  printf '%%s\n' '%%201	ctx-fast-session	review	messenger' '%%202	ctx-fast-session	review	orchestrator' '%%203		review	unrelated'
+  exit 0
+fi
+if [ "$1" = 'show-options' ] && [ "$2" = '-gqv' ]; then
+  exit 0
+fi
+if [ "$1" = 'set-option' ]; then
+  exit 0
+fi
+exit 0
+`, logPath, sessionOutput.String())
 	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(fake tmux): %v", err)
 	}

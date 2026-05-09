@@ -849,6 +849,116 @@ func (rt *daemonRuntime) handleSessionScanTick() {
 		}
 		return
 	}
+	if rt.activateNewSessionsFromScan(allSessions) {
+		rt.refreshNodesAfterSessionActivation(allSessions)
+	}
+	rt.emitStatusUpdateIfChanged(allSessions)
+}
+
+func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool {
+	if rt == nil || rt.cfg == nil || rt.daemonState == nil {
+		return false
+	}
+	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, true) {
+		return false
+	}
+
+	contextDir := filepath.Dir(rt.sessionDir)
+	candidateNodes := runtimeActivationNodeNames(rt.cfg)
+	activated := false
+	for _, targetSession := range allSessions {
+		if targetSession == "" || targetSession == rt.selfSession {
+			continue
+		}
+		if rt.daemonState.hasConfiguredSession(targetSession) {
+			continue
+		}
+		if owner := config.FindSessionOwner(rt.baseDir, targetSession, rt.contextID); owner != "" {
+			continue
+		}
+
+		preClaimed := preclaimRuntimeSessionCandidatePanes(targetSession, rt.contextID, candidateNodes)
+		if preClaimed == 0 {
+			continue
+		}
+		if err := config.CreateMultiSessionDirs(contextDir, targetSession); err != nil {
+			log.Printf("postman: WARNING: failed to create auto-enabled session dirs for %s: %v\n", targetSession, err)
+			continue
+		}
+		rt.daemonState.AutoEnableSessionIfNew(targetSession)
+		log.Printf("postman: session-scan activated session %s (%d panes)\n", targetSession, preClaimed)
+		activated = true
+	}
+	return activated
+}
+
+func runtimeActivationNodeNames(cfg *config.Config) map[string]bool {
+	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
+	if candidateNodes == nil {
+		candidateNodes = make(map[string]bool)
+	}
+	for _, nodeName := range cfg.OrderedNodeNames() {
+		if nodeName == "" {
+			continue
+		}
+		candidateNodes[nodeName] = true
+	}
+	return candidateNodes
+}
+
+func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
+	out, err := exec.Command("tmux", "list-panes", "-s", "-t", sessionName, "-F", "#{pane_id} #{pane_title}").Output()
+	if err != nil {
+		log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", sessionName, err)
+		return 0
+	}
+
+	preClaimed := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		nodeName := parts[1]
+		nodeKey := sessionName + ":" + nodeName
+		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
+			continue
+		}
+		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+			log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
+			continue
+		}
+		preClaimed++
+	}
+	return preClaimed
+}
+
+func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string) {
+	freshNodes, scanCollisions, err := rt.discoverNodes()
+	if err != nil {
+		log.Printf("postman: WARNING: session-scan node discovery failed after activation: %v\n", err)
+		return
+	}
+
+	rt.pruneClaimedPanes(freshNodes)
+	rt.claimNewPanes(freshNodes)
+	for _, collision := range scanCollisions {
+		rt.events <- tui.DaemonEvent{
+			Type:    "pane_collision",
+			Message: fmt.Sprintf("[COLLISION] %s: %s displaced by %s", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID),
+			Details: map[string]interface{}{
+				"node":           collision.NodeKey,
+				"winner_pane_id": collision.WinnerPaneID,
+				"loser_pane_id":  collision.LoserPaneID,
+			},
+		}
+	}
+	rt.pruneKnownNodes(freshNodes)
+	newNodes := rt.detectNewNodes(freshNodes)
+	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+	rt.nodes = freshNodes
+	rt.storeSharedNodes()
+	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), time.Now())
 	rt.emitStatusUpdateIfChanged(allSessions)
 }
 
