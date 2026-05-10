@@ -84,8 +84,14 @@ func TestProjectMessageInputRequestState_RepliesResolveRequiredMessages(t *testi
 	if action.OpenedAt != now.Add(2*time.Second).Format(time.RFC3339Nano) || action.OpenedAtSource != MailboxProjectionDeliveredEventType {
 		t.Fatalf("action opened evidence = %#v, want delivered timestamp/source", action)
 	}
+	if action.OpenedEventID == "" {
+		t.Fatalf("action opened_event_id is empty, want durable journal event id")
+	}
 	if action.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
 		t.Fatalf("action read_at = %q, want read timestamp", action.ReadAt)
+	}
+	if action.ReadEventID == "" {
+		t.Fatalf("action read_event_id is empty, want durable journal event id")
 	}
 	if len(got.WaitingOnInput) != 1 {
 		t.Fatalf("waiting details = %#v, want one detail", got.WaitingOnInput)
@@ -97,8 +103,20 @@ func TestProjectMessageInputRequestState_RepliesResolveRequiredMessages(t *testi
 	if waiting.OpenedAt != now.Add(time.Second).Format(time.RFC3339Nano) || waiting.OpenedAtSource != MailboxProjectionPostConsumedEventType {
 		t.Fatalf("waiting opened evidence = %#v, want post-consumed timestamp/source", waiting)
 	}
+	if waiting.OpenedEventID == "" {
+		t.Fatalf("waiting opened_event_id is empty, want durable journal event id")
+	}
 	if waiting.ReadAt != now.Add(3*time.Second).Format(time.RFC3339Nano) {
 		t.Fatalf("waiting read_at = %q, want recipient read timestamp", waiting.ReadAt)
+	}
+	if waiting.ReadEventID == "" {
+		t.Fatalf("waiting read_event_id is empty, want durable journal event id")
+	}
+	if action.OpenedEventID == waiting.OpenedEventID {
+		t.Fatalf("opened event ids should point to distinct delivered/post-consumed events, got %q", action.OpenedEventID)
+	}
+	if action.ReadEventID != waiting.ReadEventID {
+		t.Fatalf("read event ids should point to the same read event: action=%q waiting=%q", action.ReadEventID, waiting.ReadEventID)
 	}
 
 	reply := inputRequestContent("worker", "orchestrator", "m2.md", "none", "m1.md", "DONE")

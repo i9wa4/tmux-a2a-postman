@@ -128,20 +128,7 @@ func buildEnvelope(
 		talksToLine = fmt.Sprintf("Can talk to: %s", strings.Join(activeTalksTo, ", "))
 	}
 
-	// contacts_section: adjacent nodes with role descriptions (liveness-filtered, or all-adjacent when nil).
-	contactLines := []string{}
-	for _, node := range activeTalksTo {
-		nodeConfig := cfg.GetNodeConfig(nodeaddr.Simple(node))
-		if nodeConfig.Role != "" {
-			contactLines = append(contactLines, fmt.Sprintf("- %s: %s", node, nodeConfig.Role))
-		} else {
-			contactLines = append(contactLines, fmt.Sprintf("- %s", node))
-		}
-	}
-	contactsSection := strings.Join(contactLines, "\n")
-	if contactsSection == "" {
-		contactsSection = "- none"
-	}
+	contactsSection := ContactSection(cfg, activeTalksTo)
 
 	replyCmd := RenderReplyCommand(cfg.ReplyCommand, contextID, recipientSimple)
 	if expandRecipientPlaceholder {
@@ -202,6 +189,62 @@ func buildEnvelope(
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
 	return template.ExpandTemplate(tmpl, vars, timeout, allowShell)
+}
+
+// ContactSection renders adjacent node names with concise role summaries.
+// It is intended for generated contact hints, not for full role/template dumps.
+func ContactSection(cfg *config.Config, nodes []string) string {
+	contactLines := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node == "" {
+			continue
+		}
+		role := ""
+		if cfg != nil {
+			nodeConfig := cfg.GetNodeConfig(node)
+			if nodeConfig.Role == "" {
+				nodeConfig = cfg.GetNodeConfig(nodeaddr.Simple(node))
+			}
+			role = summarizeContactRole(nodeConfig.Role)
+		}
+		if role != "" {
+			contactLines = append(contactLines, fmt.Sprintf("- %s: %s", node, role))
+		} else {
+			contactLines = append(contactLines, fmt.Sprintf("- %s", node))
+		}
+	}
+	if len(contactLines) == 0 {
+		return "- none"
+	}
+	return strings.Join(contactLines, "\n")
+}
+
+func summarizeContactRole(role string) string {
+	role = strings.ReplaceAll(role, "\r\n", "\n")
+	for _, line := range strings.Split(role, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = strings.TrimLeft(line, "-* ")
+		line = strings.Join(strings.Fields(line), " ")
+		return truncateRoleSummary(line, 120)
+	}
+	return ""
+}
+
+func truncateRoleSummary(summary string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(summary)
+	if len(runes) <= maxRunes {
+		return summary
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return strings.TrimRight(string(runes[:maxRunes-3]), " \t") + "..."
 }
 
 // RenderReplyCommand normalizes the configured reply command and expands the

@@ -1669,7 +1669,7 @@ role = "worker"
 	if !cfg.AllowShellTemplates {
 		t.Fatal("AllowShellTemplates = false, want true from trusted base")
 	}
-	if !strings.Contains(cfg.MessageFooter, "You can talk to: {can_talk_to}") {
+	if !strings.Contains(cfg.MessageFooter, "You can talk to:\n{contacts_section}") {
 		t.Fatalf("MessageFooter missing default footer content: %q", cfg.MessageFooter)
 	}
 	if !strings.Contains(cfg.MessageFooter, "Project footer $(printf project-local-markdown-footer)") {

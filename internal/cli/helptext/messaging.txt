@@ -47,6 +47,8 @@ Inspect open reply-required work without popping inbox mail:
 
 get-status also exposes open input-request detail arrays under
 nodes[*].flow.input_requests.input_required and waiting_on_input.
+When known, those details include opened_event_id and read_event_id pointers
+to the journal events that created the visible state.
 
 Envelope format (YAML frontmatter):
   ---

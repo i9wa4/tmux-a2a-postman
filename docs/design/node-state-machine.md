@@ -78,6 +78,10 @@ daemon cannot provide canonical health for that tmux session.
 `compact`. Consumers that only need the compact operator view can read those
 fields.
 
+The remaining health-named machine contract surfaces are intentional. See
+[Schema and Event Terminology Migration](schema-event-terminology.md) before
+renaming JSON contracts, projection event names, or replay-facing identifiers.
+
 ## 3. Visible Node States
 
 | State     | Meaning                                             | Source fact                            |
@@ -226,6 +230,10 @@ report exists.
 | `nodes[*].node_local`  | Pane-local activity/staleness health         |
 | `nodes[*].flow`        | Input-request and blocked-report workflow state |
 | `nodes[*].queues`      | Node-local queue counts                      |
+
+Open input-request details include `opened_event_id` and `read_event_id` when
+the corresponding journal events are known. These IDs are traceability
+pointers for replay and inspection. They do not change completion semantics.
 
 `get-status-oneline` prints compact visible-state marks by default. The opt-in
 `--severity` flag prints `compact_severity` instead. A `?` suffix marks

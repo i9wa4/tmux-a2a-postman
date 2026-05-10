@@ -25,4 +25,6 @@ Fields:
   matches[*].input_request.reply_policy
   matches[*].input_request.opened_at
   matches[*].input_request.opened_at_source
+  matches[*].input_request.opened_event_id
   matches[*].input_request.read_at
+  matches[*].input_request.read_event_id

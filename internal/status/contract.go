@@ -70,7 +70,9 @@ type InputRequestDetail struct {
 	ReplyPolicy    string `json:"reply_policy,omitempty"`
 	OpenedAt       string `json:"opened_at,omitempty"`
 	OpenedAtSource string `json:"opened_at_source,omitempty"`
+	OpenedEventID  string `json:"opened_event_id,omitempty"`
 	ReadAt         string `json:"read_at,omitempty"`
+	ReadEventID    string `json:"read_event_id,omitempty"`
 }
 
 type BlockedState struct {
