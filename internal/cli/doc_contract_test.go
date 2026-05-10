@@ -312,7 +312,7 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"do not duplicate the long-term runtime comparison here",
 		"Only `skill_path` mappings accept `inject`.",
 		"`compaction_skill_path` list items may be scalar paths or mappings with `path`, `runtime`, and `skills`.",
-		"`compaction_skill_path` entries are always ping-injected compatibility entries and do not accept `inject`.",
+		"`compaction_skill_path` entries are always compaction-ping compatibility entries and do not accept `inject`.",
 	)
 
 	publicDocs := map[string]string{

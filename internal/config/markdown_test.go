@@ -949,7 +949,7 @@ skill_path:
 	}
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectPingBuildsRuntimeCatalogs(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectCompactionPingBuildsRuntimeCatalogs(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
 	writeFile(t, filepath.Join(dir, "context-skills", "repo-local", "SKILL.md"), `---
@@ -975,14 +975,14 @@ description: Codex shell rules.
 	content := `---
 skill_path:
   - path: context-skills
-    inject: context
+    inject: role
   - path: ~/.config/tmux-a2a-postman/skills
-    inject: ping
+    inject: compaction_ping
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
     runtime: claude
   - path: ~/.codex/skills
-    inject: ping
+    inject: compaction_ping
     runtime: codex
 ---
 
@@ -1020,7 +1020,41 @@ Compact shared instructions.
 	assertNotContains(t, unknownCatalog, "Codex shell rules.")
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectPingRuntimeDuplicateOverridesShared(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectAliasesRemainCompatible(t *testing.T) {
+	dir := t.TempDir()
+	setSkillCatalogHome(t, dir)
+	writeFile(t, filepath.Join(dir, "role-skills", "repo-local", "SKILL.md"), `---
+name: repo-local
+description: Role rules.
+---
+`)
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-session-operator", "SKILL.md"), `---
+name: postman-session-operator
+description: Compaction ping rules.
+---
+`)
+	content := `---
+skill_path:
+  - path: role-skills
+    inject: context
+  - path: ~/.config/tmux-a2a-postman/skills
+    inject: ping
+---
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+
+	assertContains(t, cfg.CommonTemplate, "- `repo-local`: Role rules.")
+	assertNotContains(t, cfg.CommonTemplate, "Compaction ping rules.")
+	assertContains(t, cfg.CompactionSkillCatalogForRuntime("codex"), "- `postman-session-operator`: Compaction ping rules.")
+}
+
+func TestLoadMarkdownConfig_SkillPathInjectCompactionPingRuntimeDuplicateOverridesShared(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
 	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "bash", "SKILL.md"), `---
@@ -1041,9 +1075,9 @@ description: Claude-specific bash rules.
 	content := `---
 skill_path:
   - path: ~/.config/tmux-a2a-postman/skills
-    inject: ping
+    inject: compaction_ping
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
     runtime: claude
 ---
 `
@@ -1069,7 +1103,7 @@ skill_path:
 	assertNotContains(t, fallbackCatalog, "Claude-specific bash rules.")
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectPingSamePathOverlapRendersOnce(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectCompactionPingSamePathOverlapRendersOnce(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "bash", "SKILL.md"), `---
@@ -1080,9 +1114,9 @@ description: Bash rules.
 	content := `---
 skill_path:
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
     runtime: claude
     skills: [bash]
 ---
@@ -1186,7 +1220,7 @@ skill_path:
 	if err == nil {
 		t.Fatal("expected loadMarkdownConfig to fail")
 	}
-	if !strings.Contains(err.Error(), "skill_path item runtime requires inject: ping") {
+	if !strings.Contains(err.Error(), "skill_path item runtime requires inject: compaction_ping") {
 		t.Fatalf("error mismatch: %v", err)
 	}
 }
@@ -1211,12 +1245,12 @@ skill_path:
 	}
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectPingRejectsRepoLocalPath(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectCompactionPingRejectsRepoLocalPath(t *testing.T) {
 	dir := t.TempDir()
 	content := `---
 skill_path:
   - path: skills
-    inject: ping
+    inject: compaction_ping
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -1255,7 +1289,7 @@ func TestLoadMarkdownConfig_CompactionSkillPathRejectsInjectKey(t *testing.T) {
 	content := `---
 compaction_skill_path:
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -1275,7 +1309,7 @@ func TestLoadMarkdownConfig_SkillPathRejectsUnsupportedRuntimeSelector(t *testin
 	content := `---
 skill_path:
   - path: skills
-    inject: ping
+    inject: compaction_ping
     runtime: vim
 ---
 `

@@ -17,25 +17,26 @@ defaults.
   with the `ui_node` class, keeping topology-facing settings in one diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
-  Entries with omitted `inject` or `inject: context` are appended to normal
+  Entries with omitted `inject` or `inject: role` are appended to normal
   role context and remain runtime-agnostic.
-- `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
-  larger catalogs that stay out of normal role context and appear only in
-  compaction-triggered daemon PINGs. Runtime selectors for these catalogs live
-  in `postman.md`; exact runtime support is currently Claude Code and Codex
-  CLI, and an omitted `runtime` is shared plus fallback.
-- Ping-injected catalog paths, including runtime-specific entries and the
+- `postman.md` frontmatter `skill_path` entries with
+  `inject: compaction_ping` generate larger catalogs that stay out of normal
+  role context and appear only in compaction-triggered daemon PINGs. Runtime
+  selectors for these catalogs live in `postman.md`; exact runtime support is
+  currently Claude Code and Codex CLI, and an omitted `runtime` is shared plus
+  fallback.
+- Compaction PING catalog paths, including runtime-specific entries and the
   compatibility `compaction_skill_path` form, must be global/user-level:
   `~/...` or absolute. Repo-local relative paths remain supported only for
-  non-ping context catalogs and are invalid for ping catalogs.
+  non-compaction role catalogs and are invalid for compaction PING catalogs.
 - Rendered skill catalogs dedupe by frontmatter `name`. Later path entries
-  override earlier entries with the same rendered name. Runtime-specific ping
-  catalogs evaluate shared entries first and the matching runtime entries
-  second, so runtime entries override shared entries without injecting duplicate
-  skill bodies.
+  override earlier entries with the same rendered name. Runtime-specific
+  compaction PING catalogs evaluate shared entries first and the matching
+  runtime entries second, so runtime entries override shared entries without
+  injecting duplicate skill bodies.
 - `compaction_skill_path` remains accepted as a compatibility form for
-  ping-injected catalogs. New examples should use `skill_path` with
-  `inject: ping`.
+  compaction PING catalogs. New examples should use `skill_path` with
+  `inject: compaction_ping`.
 - Omitted `skills` means all skills under that path. A present `skills` value
   should be a YAML list of explicit skill directory names; `skills: [all]`
   selects a real skill named `all`. The scalar `skills: all` remains accepted
