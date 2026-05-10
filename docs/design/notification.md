@@ -59,6 +59,11 @@ The schema version 3 payload also exposes additive contextual severity:
 These fields distinguish expected waits from actionable or broken conditions
 without changing the visible-state fields.
 
+The public command is named `get-status`, but schema v3 and replay-facing event
+names still contain health terminology by design. The compatibility policy is
+defined in
+[Schema and Event Terminology Migration](schema-event-terminology.md).
+
 | Severity             | Meaning                                           |
 | -------------------- | ------------------------------------------------- |
 | `ok`                 | No open action, wait, local work, or delivery bug |
