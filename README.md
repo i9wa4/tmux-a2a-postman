@@ -16,32 +16,52 @@ state with `get-status` or `get-status-oneline`.
 ## Concept
 
 ```mermaid
-flowchart LR
-    human["Human operator"]
-    config["postman.md\nroles and edges"]
-    daemon["postman daemon\nroutes local mail"]
-    mailbox[("filesystem mailboxes\ninbox / read / dead-letter")]
+graph TD
+    operator((human\noperator))
+    config["postman.md / postman.toml\nroles, edges, templates"]
+    daemon["postman daemon\nroutes mail\nnotifies panes"]
+    mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
-    subgraph tmux["tmux session"]
-        messenger["messenger\nui_node"]
-        orchestrator["orchestrator"]
-        worker["worker"]
-        reviewer["reviewer"]
+    subgraph project_a["tmux session: project A"]
+        a_messenger["messenger\nui_node"]
+        a_orchestrator["orchestrator"]
+        a_worker["worker"]
+        a_reviewer["reviewer"]
+
+        a_messenger <--> |brief / status| a_orchestrator
+        a_orchestrator <--> |delegate / report| a_worker
+        a_orchestrator <--> |review request| a_reviewer
     end
 
-    human <--> messenger
+    subgraph project_b["tmux session: project B"]
+        b_messenger["messenger\nui_node"]
+        b_orchestrator["orchestrator"]
+        b_worker["worker"]
+        b_reviewer["reviewer"]
+
+        b_messenger <--> |brief / status| b_orchestrator
+        b_orchestrator <--> |delegate / report| b_worker
+        b_orchestrator <--> |review request| b_reviewer
+    end
+
+    operator --> |starts| daemon
+    operator <--> |talks with| a_messenger
+    operator <--> |talks with| b_messenger
     config --> daemon
     daemon <--> mailbox
-    messenger --- orchestrator
-    orchestrator --- worker
-    orchestrator --- reviewer
-    daemon -.->|deliver + notify| tmux
-    tmux -.->|pop + archive| mailbox
+    daemon -.->|deliver + notify| project_a
+    daemon -.->|deliver + notify| project_b
+    mailbox -.->|pop + inspect| project_a
+    mailbox -.->|pop + inspect| project_b
 ```
 
 `postman.md` names the agent roles and the allowed conversation edges. The
 daemon discovers tmux panes by title, routes messages through local files, and
 keeps an archive that agents can inspect later.
+
+Each tmux session is a separate project workspace. `ui_node` marks the role
+the human talks to first, while the daemon keeps routing, delivery, and
+archived mail outside the agent panes.
 
 ## Why It Is Predictable
 
