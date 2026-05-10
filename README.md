@@ -111,15 +111,32 @@ graph LR
     classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 
-Use this as a complete, copyable `postman.md`. The frontmatter header can stay
-empty for a minimal setup. Markdown under `common_template` and node sections
-is free-form role guidance, so short sections can cover identity, boundaries,
+Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
+stays in the same frontmatter header; uncomment only paths that exist after
+installing skills. Markdown under `common_template` and node sections is
+free-form role guidance, so short sections can cover identity, boundaries,
 local conventions, escalation rules, or checklists. Only the backtick-wrapped
 H2 section names and Mermaid edges are structural; `### role` sets the short
 role summary, and other H3 headings are ordinary Markdown:
 
 ````markdown
 ---
+# Optional: after installing packaged skills, uncomment only paths that exist.
+# skill_path:
+#   - path: ~/.codex/skills
+#     inject: ping
+#     runtime: codex
+#     skills:
+#       - postman-send-message
+#       - postman-session-operator
+#       - postman-config-auditor
+#   - path: ~/.claude/skills
+#     inject: ping
+#     runtime: claude
+#     skills:
+#       - postman-send-message
+#       - postman-session-operator
+#       - postman-config-auditor
 ---
 
 ## `edges`
