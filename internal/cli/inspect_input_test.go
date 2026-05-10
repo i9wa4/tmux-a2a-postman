@@ -37,6 +37,9 @@ func TestRunInspectInputFindsOpenInboundAndOutboundByID(t *testing.T) {
 				if match.InputRequest.MessageID != "m1.md" || match.InputRequest.InputRequestID != "ireq_123" || match.InputRequest.Sender != "critic" || match.InputRequest.Recipient != "worker" || match.InputRequest.ReplyPolicy != "required" {
 					t.Fatalf("input request detail = %#v, want public identifiers", match.InputRequest)
 				}
+				if match.InputRequest.OpenedEventID == "" {
+					t.Fatalf("input request detail = %#v, want opened_event_id", match.InputRequest)
+				}
 			}
 			if matchesByNode["worker"].InputRequest.Direction != "inbound" {
 				t.Fatalf("worker match = %#v, want inbound action", matchesByNode["worker"])

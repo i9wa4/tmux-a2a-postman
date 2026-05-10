@@ -211,7 +211,9 @@ func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, no
 			ReplyPolicy:    inputRequest.ReplyPolicy,
 			OpenedAt:       inputRequest.OpenedAt,
 			OpenedAtSource: inputRequest.OpenedAtSource,
+			OpenedEventID:  inputRequest.OpenedEventID,
 			ReadAt:         inputRequest.ReadAt,
+			ReadEventID:    inputRequest.ReadEventID,
 		})
 	}
 	return result

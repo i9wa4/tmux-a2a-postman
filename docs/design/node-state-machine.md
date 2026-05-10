@@ -231,6 +231,10 @@ report exists.
 | `nodes[*].flow`        | Input-request and blocked-report workflow state |
 | `nodes[*].queues`      | Node-local queue counts                      |
 
+Open input-request details include `opened_event_id` and `read_event_id` when
+the corresponding journal events are known. These IDs are traceability
+pointers for replay and inspection. They do not change completion semantics.
+
 `get-status-oneline` prints compact visible-state marks by default. The opt-in
 `--severity` flag prints `compact_severity` instead. A `?` suffix marks
 inferred evidence, such as `blocked?:node=worker`.

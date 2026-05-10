@@ -87,7 +87,8 @@ the sender.
 `get-status` exposes concrete open input-request details at
 `nodes[*].flow.input_requests.input_required` and `waiting_on_input`. Each
 detail includes `direction`, `message_id`, `input_request_id`, `sender`,
-`recipient`, `reply_policy`, and available open/read timestamps. Use
+`recipient`, `reply_policy`, available open/read timestamps, and durable
+journal event IDs when known. Use
 `inspect-input --id` for a focused lookup by `message_id` or
 `input_request_id`.
 
