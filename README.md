@@ -111,9 +111,15 @@ graph LR
     classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 
-Use this as a copyable `postman.md`:
+Use this as a complete, copyable `postman.md`. The frontmatter header can stay
+empty for a minimal setup. Markdown under `common_template` and node sections
+is free-form role guidance, so short sections can cover identity, boundaries,
+local conventions, escalation rules, or checklists:
 
 ````markdown
+---
+---
+
 ## `edges`
 
 ```mermaid
@@ -168,6 +174,11 @@ Primary implementation role.
 Execute tasks from `orchestrator`. Report DONE with evidence, or BLOCKED with
 the missing requirement or external blocker.
 
+### Boundaries
+
+Keep edits scoped to the request. Report BLOCKED before changing unrelated
+files or expanding scope.
+
 ## `reviewer`
 
 ### `role`
@@ -180,10 +191,8 @@ Review work requested by `orchestrator`. Report APPROVED when the change is
 ready, or BLOCKED with concrete findings.
 ````
 
-Save the file globally at `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
-per project at `.tmux-a2a-postman/postman.md`. Project-local config is still
-supported and overlays global config when discovered from the current
-directory.
+Save the file at `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or the
+`~/.config/tmux-a2a-postman/postman.md` fallback.
 
 Start the daemon after writing `postman.md`:
 
@@ -269,11 +278,10 @@ and blockers before relaying, approving, or closing work.
 `postman.toml` is optional. Embedded defaults from
 `internal/config/postman.default.toml` are enough for the daemon to run.
 
-Place config files in either location:
+Place user-maintained config files under the global config directory:
 
-- global: `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or the `~/.config` fallback
-- project-local: `.tmux-a2a-postman/` in the current project or an ancestor,
-  loaded on top of global config
+- `$XDG_CONFIG_HOME/tmux-a2a-postman/`
+- `~/.config/tmux-a2a-postman/` fallback when `XDG_CONFIG_HOME` is unset
 
 `postman.md` is the file humans maintain as panes, roles, and operating rules
 change. It defines three things:
@@ -293,24 +301,11 @@ heading, using short sections such as `role`, `Workflow`, and
 Keep task-specific direction in messages; keep durable routing, role, and
 coordination rules in `postman.md`.
 
-Optional `skill_path` frontmatter injects compact skill catalogs into role
-context:
-
-```markdown
----
-skill_path:
-  - path: skills
-    skills:
-      - github
-      - markdown
-  - path: ~/.claude/skills
-    inject: ping
-    runtime: claude
-  - path: ~/.codex/skills
-    inject: ping
-    runtime: codex
----
-```
+Optional `skill_path` frontmatter adds compact skill catalogs later. Most
+configs omit `inject`; omitted `inject` and `inject: context` add catalogs to
+normal role context. `inject: ping` is for compaction-triggered PING catalogs;
+the compatibility `compaction_skill_path` form is covered in the syntax
+reference.
 
 Detailed configuration references:
 
