@@ -13,6 +13,36 @@ It treats tmux pane titles as role names, routes messages according to your
 send messages with `send-heredoc`, read them with `pop`, and inspect shared
 state with `get-status` or `get-status-oneline`.
 
+## Concept
+
+```mermaid
+flowchart LR
+    human["Human operator"]
+    config["postman.md\nroles and edges"]
+    daemon["postman daemon\nroutes local mail"]
+    mailbox[("filesystem mailboxes\ninbox / read / dead-letter")]
+
+    subgraph tmux["tmux session"]
+        messenger["messenger\nui_node"]
+        orchestrator["orchestrator"]
+        worker["worker"]
+        reviewer["reviewer"]
+    end
+
+    human <--> messenger
+    config --> daemon
+    daemon <--> mailbox
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- reviewer
+    daemon -.->|deliver + notify| tmux
+    tmux -.->|pop + archive| mailbox
+```
+
+`postman.md` names the agent roles and the allowed conversation edges. The
+daemon discovers tmux panes by title, routes messages through local files, and
+keeps an archive that agents can inspect later.
+
 ## Install
 
 Prerequisites:
@@ -34,7 +64,18 @@ nix run github:i9wa4/tmux-a2a-postman
 
 ## Quick Start
 
-Create a `postman.md` that defines which roles may talk:
+Start with a small conversation topology:
+
+```mermaid
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- reviewer
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+```
+
+Write those edges in `postman.md`:
 
 ````markdown
 ## `edges`
