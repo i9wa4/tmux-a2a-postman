@@ -94,11 +94,26 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	if payload.MessageID == "" {
 		payload.MessageID = metadata.MessageID
 	}
+	if payload.ContextID == "" {
+		payload.ContextID = metadata.ContextID
+	}
 	if payload.From == "" {
 		payload.From = metadata.From
 	}
 	if payload.To == "" {
 		payload.To = metadata.To
+	}
+	if payload.ReplyPolicy == "" {
+		payload.ReplyPolicy = envelope.ResolveReplyPolicyFromMetadata(metadata)
+	}
+	if payload.ReplyTo == "" {
+		payload.ReplyTo = metadata.ReplyTo
+	}
+	if payload.MessageType == "" {
+		payload.MessageType = metadata.MessageType
+	}
+	if payload.Timestamp == "" {
+		payload.Timestamp = metadata.Timestamp
 	}
 	if payload.ThreadID == "" {
 		payload.ThreadID = metadata.ThreadID

@@ -6,9 +6,14 @@ import "time"
 // mailbox projection files from replay.
 type MailboxEventPayload struct {
 	Directory           string `json:"directory,omitempty"`
+	ContextID           string `json:"context_id,omitempty"`
 	MessageID           string `json:"message_id,omitempty"`
 	From                string `json:"from,omitempty"`
 	To                  string `json:"to,omitempty"`
+	ReplyPolicy         string `json:"reply_policy,omitempty"`
+	ReplyTo             string `json:"reply_to,omitempty"`
+	MessageType         string `json:"message_type,omitempty"`
+	Timestamp           string `json:"timestamp,omitempty"`
 	ThreadID            string `json:"thread_id,omitempty"`
 	InputRequestID      string `json:"input_request_id,omitempty"`
 	FillsInputRequestID string `json:"fills_input_request_id,omitempty"`

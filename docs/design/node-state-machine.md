@@ -153,15 +153,18 @@ the message ID plus participant as the fallback key.
 
 | Fact                       | Meaning                                                       |
 | -------------------------- | ------------------------------------------------------------- |
+| `context_id`               | Durable context namespace for correlating files and events    |
 | `message_id`               | Stable message identifier used by inbox, read, and reply data |
+| `timestamp`                | Sender timestamp preserved from message frontmatter           |
+| `message_type`             | Optional semantic class such as ping or task                  |
 | `thread_id`                | Optional workflow strand for related messages and events      |
 | `reply_policy`             | `required` or `none`, resolved when the message is created    |
-| `input_request_id`        | Exact required-input request opened by a required message        |
-| `fills_input_request_id`  | Exact input request ID this message fills                        |
-| `input_request_set_id`    | Optional aggregate of input requests                             |
+| `input_request_id`         | Exact required-input request opened by a required message     |
+| `fills_input_request_id`   | Exact input request ID this message fills                     |
+| `input_request_set_id`     | Optional aggregate of input requests                          |
 | `reply_to`                 | Optional message ID this message references                   |
 | `unread_count`             | All unread inbox mail, including no-reply notices             |
-| `input_required_count`    | Inbound reply-required messages not yet resolved by a reply    |
+| `input_required_count`     | Inbound reply-required messages not yet resolved by a reply   |
 | `waiting_on_input_count`   | Outbound reply-required messages not yet resolved by a reply  |
 | `info_unread_count`        | Unread no-reply mail that does not require action             |
 
