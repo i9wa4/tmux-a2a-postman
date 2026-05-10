@@ -65,18 +65,15 @@ archived mail outside the agent panes.
 
 ## Why Use It
 
-- Keep coordination local: agents talk through tmux panes and Markdown
-  mailboxes on your machine, not a hosted broker.
-- Control the handoff: `postman.md` edges are the routing table; the daemon
-  delivers mail and does not run a hidden workflow engine.
-- Inspect what happened: mail moves through `post/`, `inbox/`, `read/`, and
-  `dead-letter/`; `get-status`, `inspect-message`, and `inspect-input` show
-  live and archived state.
-- Make agent work auditable: reply-required tasks use explicit IDs and close
-  with DONE/BLOCKED evidence.
-- Verify the same way locally: CI runs `nix flake check`, `nix build`, skill
-  validation, and vulnerability scanning; local changes can run those checks
-  plus targeted Go tests.
+- Shape agent work in Markdown: `postman.md` is a soft harness for roles,
+  conversation edges, local instructions, escalation rules, and checklists.
+- Keep the hard dependency small: if an AI coding agent can run in a tmux pane
+  and execute commands, it can participate in principle.
+- Trust explicit local state: the daemon tracks delivery, unread/read archives,
+  dead letters, and reply-required slots through files and status commands
+  instead of a hidden workflow engine.
+- Avoid missed handoffs: pending replies, status views, and archived Markdown
+  messages help operators and agents catch unresolved tasks before they drift.
 
 ## Install
 
