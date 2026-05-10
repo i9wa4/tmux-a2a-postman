@@ -96,6 +96,12 @@ introduces the original sender body. Sender body Markdown is inserted verbatim
 after that separator, so headings such as `#` and `##` are not demoted or
 rewritten. Recipient role instructions are still demoted when inserted into the
 generated envelope so they stay visually inside `Recipient Instructions`.
+The default message footer and daemon PING template render `You can talk to:`
+as a concise bullet list of adjacent nodes. When a node has `postman.md` or
+TOML `role` text, only the first non-empty role line is shown as the summary;
+full node templates are not dumped into the contact list. Custom footers can
+keep using `{can_talk_to}` for the legacy comma-separated node list or
+`{contacts_section}` for the role-aware Markdown list.
 Daemon PING mail uses the same generated-envelope pattern with
 `Recipient Instructions` and `Daemon Message`.
 

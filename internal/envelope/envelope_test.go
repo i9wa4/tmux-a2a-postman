@@ -275,6 +275,54 @@ func TestRenderReplyCommand_ExpandsConfiguredPlaceholders(t *testing.T) {
 	}
 }
 
+func TestContactSectionRendersConciseRoleSummaries(t *testing.T) {
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
+			"messenger":                   {Role: "Human-facing relay.\n\nDo not include this second paragraph."},
+			"worker":                      {Role: "- Executes delegated tasks and reports DONE or BLOCKED."},
+			"review-session:orchestrator": {Role: "Session-specific planner."},
+			"boss":                        {},
+		},
+	}
+
+	got := ContactSection(cfg, []string{"messenger", "worker", "review-session:orchestrator", "boss"})
+
+	for _, want := range []string{
+		"- messenger: Human-facing relay.",
+		"- worker: Executes delegated tasks and reports DONE or BLOCKED.",
+		"- review-session:orchestrator: Session-specific planner.",
+		"- boss",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ContactSection() missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "second paragraph") {
+		t.Fatalf("ContactSection() leaked multiline role body:\n%s", got)
+	}
+}
+
+func TestContactSectionTruncatesLongRoleSummary(t *testing.T) {
+	longRole := strings.Repeat("a", 140)
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{
+			"worker": {Role: longRole},
+		},
+	}
+
+	got := ContactSection(cfg, []string{"worker"})
+
+	if !strings.HasPrefix(got, "- worker: "+strings.Repeat("a", 117)) {
+		t.Fatalf("ContactSection() did not preserve prefix before truncation:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("ContactSection() missing truncation marker:\n%s", got)
+	}
+	if strings.Contains(got, strings.Repeat("a", 130)) {
+		t.Fatalf("ContactSection() did not truncate long role:\n%s", got)
+	}
+}
+
 func TestMarkdownSectionContentDemotesATXHeadingsOutsideFences(t *testing.T) {
 	input := "# Top\n\n## Child\n\n```sh\n# keep shell comment\n```\n\n###### Deep\n"
 

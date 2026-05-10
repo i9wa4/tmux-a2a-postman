@@ -26,6 +26,7 @@
 #   {recipient}      - Recipient node name
 #   {timestamp}      - ISO format timestamp
 #   {can_talk_to}    - Formatted list of nodes this sender can communicate with
+#   {contacts_section} - Markdown bullet list of reachable nodes with concise role summaries
 #   {session_dir}    - Session directory path
 #   {reply_command}  - Command to create draft reply
 #   {message_id}     - Current message id
@@ -112,13 +113,15 @@ Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
 # Message footer (rendered into the generated header before the sender body separator)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
+#            {contacts_section} - Markdown bullet list of reachable nodes with concise role summaries
 #            {reply_command} - reply command for the current recipient
 #            {message_id} - current message id, usable with --reply-to
 #            {reply_arguments} - exact reply args for required mail, reply-to args otherwise
 #            {input_request_id} - exact input request id when reply is required
 #            {fills_input_request_id} - exact input request id this message fills
 #            {required_reply_completion_gate} - completion proof guidance for reply-required messages; empty otherwise
-message_footer = """You can talk to: {can_talk_to}
+message_footer = """You can talk to:
+{contacts_section}
 Reply with quoted heredoc:
 {reply_command}{reply_arguments} <<'POSTMAN_BODY'
 <your message>
@@ -128,7 +131,8 @@ No reply needed for: DONE, ACK, PING, HEARTBEAT_OK, status updates, alerts, or p
 
 # Daemon message template (shared envelope for daemon-originated PING)
 # Pass 1 variables (BuildEnvelope): {context_id}, {from_node}, {node},
-#   {iso_timestamp}, {talks_to_line}, {reply_command}, {session_name}, {session_dir}
+#   {iso_timestamp}, {talks_to_line}, {contacts_section}, {reply_command},
+#   {session_name}, {session_dir}
 # Pass 2 variables (caller-injected): {message_type}, {heading}, {message},
 #   {role_content}
 # For compaction-triggered daemon PINGs, {role_content} may include catalogs
@@ -152,7 +156,8 @@ How to reply with quoted heredoc:
 <your message>
 POSTMAN_BODY
 
-{talks_to_line}
+You can talk to:
+{contacts_section}
 
 ## Recipient Instructions
 
@@ -165,7 +170,7 @@ POSTMAN_BODY
 
 # Draft message template (user-initiated messages via send-heredoc)
 # Variables: {context_id}, {sender}, {recipient}, {timestamp},
-#   {session_name}, {template}, {can_talk_to}, {reply_command},
+#   {session_name}, {template}, {can_talk_to}, {contacts_section}, {reply_command},
 #   {message_id}, {reply_policy}, {reply_to}, {input_request_id},
 #   {fills_input_request_id}
 # The <!-- write here --> placeholder is replaced with sender-authored Markdown

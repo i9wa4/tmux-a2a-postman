@@ -180,6 +180,63 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_DefaultDaemonTemplateShowsContactRoles(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	sessionDir := filepath.Join(tmpDir, "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+	orchestratorInfo := discovery.NodeInfo{
+		PaneID:      "%101",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:worker":       nodeInfo,
+		"test-session:orchestrator": orchestratorInfo,
+	}
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cfg.Edges = []string{"worker --- orchestrator"}
+	cfg.Nodes = map[string]config.NodeConfig{
+		"worker":       {Role: "Task executor."},
+		"orchestrator": {Role: "Delegates work and manages review."},
+	}
+
+	err = SendPingToNode(
+		nodeInfo,
+		"ctx-ping",
+		"test-session:worker",
+		cfg.DaemonMessageTemplate,
+		cfg,
+		[]string{"worker", "orchestrator"},
+		map[string]bool{"test-session:orchestrator": true},
+		map[string][]string{"worker": {"orchestrator"}, "orchestrator": {"worker"}},
+		nodes,
+	)
+	if err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	_, body := readSingleInboxMessage(t, sessionDir, "worker")
+	if !strings.Contains(body, "You can talk to:\n- orchestrator: Delegates work and manages review.") {
+		t.Fatalf("default ping missing role-aware contacts section:\n%s", body)
+	}
+	if strings.Contains(body, "{talks_to_line}") || strings.Contains(body, "{contacts_section}") {
+		t.Fatalf("default ping left contact placeholder literal:\n%s", body)
+	}
+}
+
 func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntime(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
