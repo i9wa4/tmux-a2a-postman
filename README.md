@@ -63,21 +63,20 @@ Each tmux session is a separate project workspace. `ui_node` marks the role
 the human talks to first, while the daemon keeps routing, delivery, and
 archived mail outside the agent panes.
 
-## Why It Is Predictable
+## Why Use It
 
-- Local-first: normal operation uses tmux panes and filesystem mailboxes, not a
-  hosted service or remote broker.
-- Simple routing: `postman.md` edges decide who can talk. The daemon delivers
-  messages; it is not a hidden workflow engine.
-- Inspectable traces: mail is stored as Markdown and moves through `post/`,
-  `inbox/`, `read/`, and `dead-letter/`; use `inspect-message`,
-  `inspect-input`, and `get-status` to see what happened.
-- Explicit automation: reply-required work, status checks, dead-letter
-  handling, stop/start, and skills are visible operator surfaces. Reminders or
-  escalation rules should be designed explicitly, not assumed.
-- Reproducible checks: CI runs `nix flake check`, `nix build`, skill
-  validation, and vulnerability scanning. Local changes can run the same Nix
-  checks plus targeted Go tests.
+- Keep coordination local: agents talk through tmux panes and Markdown
+  mailboxes on your machine, not a hosted broker.
+- Control the handoff: `postman.md` edges are the routing table; the daemon
+  delivers mail and does not run a hidden workflow engine.
+- Inspect what happened: mail moves through `post/`, `inbox/`, `read/`, and
+  `dead-letter/`; `get-status`, `inspect-message`, and `inspect-input` show
+  live and archived state.
+- Make agent work auditable: reply-required tasks use explicit IDs and close
+  with DONE/BLOCKED evidence.
+- Verify the same way locally: CI runs `nix flake check`, `nix build`, skill
+  validation, and vulnerability scanning; local changes can run those checks
+  plus targeted Go tests.
 
 ## Install
 
