@@ -111,7 +111,7 @@ graph LR
     classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 
-Write those edges in `postman.md`:
+Use this as a copyable `postman.md`:
 
 ````markdown
 ## `edges`
@@ -124,21 +124,66 @@ graph LR
     class messenger ui_node
     classDef ui_node fill:#e0f2fe
 ```
-````
 
-Add only the role guidance agents need to act on messages:
+## `common_template`
 
-````markdown
+You are one role in this local tmux-a2a-postman session.
+
+- Read inbox mail with `tmux-a2a-postman pop`.
+- Send role-to-role mail with `tmux-a2a-postman send-heredoc --to <node>`.
+- Use `DONE` only when assigned work is complete. Use `BLOCKED` when it is not.
+
+## `messenger`
+
+### `role`
+
+Human-facing intake and status relay.
+
+### Workflow
+
+Receive the human request, send implementation work to `orchestrator`, and
+relay final DONE or BLOCKED status back to the human. Do not implement code
+locally.
+
+## `orchestrator`
+
+### `role`
+
+Task coordinator for this session.
+
+### Workflow
+
+Break work into clear requests, delegate implementation to `worker`, request
+review from `reviewer` when useful, and report final DONE or BLOCKED status to
+`messenger`.
+
 ## `worker`
 
 ### `role`
 
-Primary task executor.
+Primary implementation role.
 
 ### Workflow
 
-Execute tasks from orchestrator. Report DONE or BLOCKED.
+Execute tasks from `orchestrator`. Report DONE with evidence, or BLOCKED with
+the missing requirement or external blocker.
+
+## `reviewer`
+
+### `role`
+
+Implementation reviewer.
+
+### Workflow
+
+Review work requested by `orchestrator`. Report APPROVED when the change is
+ready, or BLOCKED with concrete findings.
 ````
+
+Save the file globally at `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
+per project at `.tmux-a2a-postman/postman.md`. Project-local config is still
+supported and overlays global config when discovered from the current
+directory.
 
 Start the daemon after writing `postman.md`:
 
@@ -226,8 +271,9 @@ and blockers before relaying, approving, or closing work.
 
 Place config files in either location:
 
-- `$XDG_CONFIG_HOME/tmux-a2a-postman/`
-- project-local `.tmux-a2a-postman/`
+- global: `$XDG_CONFIG_HOME/tmux-a2a-postman/`, or the `~/.config` fallback
+- project-local: `.tmux-a2a-postman/` in the current project or an ancestor,
+  loaded on top of global config
 
 `postman.md` is the file humans maintain as panes, roles, and operating rules
 change. It defines three things:
