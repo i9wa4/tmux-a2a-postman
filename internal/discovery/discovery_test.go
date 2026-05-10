@@ -3,20 +3,105 @@ package discovery
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestDiscoverNodes_WithChildProcess(t *testing.T) {
-	// NOTE: This test requires actual tmux panes with child processes
-	// Deferred to integration testing
-	t.Skip("Requires tmux environment - deferred to integration testing")
+	requireTmuxIntegration(t)
+
+	baseDir := t.TempDir()
+	sessionName := fmt.Sprintf("postman-it-%d-child", os.Getpid())
+	contextID := sessionName
+	nodeName := "worker"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, sessionName, "inbox"))
+
+	killTmuxSession(sessionName)
+	t.Cleanup(func() { killTmuxSession(sessionName) })
+
+	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "sleep 120")
+	tmuxCmd(t, "select-pane", "-t", sessionName+":0.0", "-T", nodeName)
+
+	nodes, err := DiscoverNodes(baseDir, contextID, sessionName)
+	if err != nil {
+		t.Fatalf("DiscoverNodes: %v", err)
+	}
+
+	key := sessionName + ":" + nodeName
+	info, ok := nodes[key]
+	if !ok {
+		t.Fatalf("missing discovered node %q; got keys %v", key, nodeKeys(nodes))
+	}
+	if info.SessionName != sessionName {
+		t.Fatalf("SessionName = %q, want %q", info.SessionName, sessionName)
+	}
+	wantSessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if info.SessionDir != wantSessionDir {
+		t.Fatalf("SessionDir = %q, want %q", info.SessionDir, wantSessionDir)
+	}
+
+	currentCommand := strings.TrimSpace(string(tmuxCmd(t, "display-message", "-t", info.PaneID, "-p", "#{pane_current_command}")))
+	if currentCommand != "sleep" {
+		t.Fatalf("pane_current_command = %q, want sleep", currentCommand)
+	}
 }
 
 func TestDiscoverNodes_WithPaneTitle(t *testing.T) {
-	// NOTE: This test requires spawning tmux panes with named titles
-	// Deferred to integration testing
-	t.Skip("Requires tmux environment with named panes - deferred to integration testing")
+	requireTmuxIntegration(t)
+
+	baseDir := t.TempDir()
+	sessionName := fmt.Sprintf("postman-it-%d-title", os.Getpid())
+	contextID := sessionName
+	nodeName := "reviewer"
+	mustMkdirAll(t, filepath.Join(baseDir, contextID, sessionName, "inbox"))
+
+	killTmuxSession(sessionName)
+	t.Cleanup(func() { killTmuxSession(sessionName) })
+
+	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "sleep 120")
+	tmuxCmd(t, "select-pane", "-t", sessionName+":0.0", "-T", nodeName)
+
+	nodes, collisions, err := DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+	if err != nil {
+		t.Fatalf("DiscoverNodesWithCollisions: %v", err)
+	}
+	if len(collisions) != 0 {
+		t.Fatalf("collisions = %#v, want none", collisions)
+	}
+
+	key := sessionName + ":" + nodeName
+	info, ok := nodes[key]
+	if !ok {
+		t.Fatalf("missing discovered node %q; got keys %v", key, nodeKeys(nodes))
+	}
+	if info.PaneID == "" {
+		t.Fatalf("PaneID is empty for discovered node %q", key)
+	}
+}
+
+func requireTmuxIntegration(t *testing.T) {
+	t.Helper()
+	if os.Getenv("TMUX_A2A_POSTMAN_TMUX_INTEGRATION") != "1" {
+		t.Skip("set TMUX_A2A_POSTMAN_TMUX_INTEGRATION=1 to run tmux-backed discovery integration tests")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatalf("tmux not found in PATH: %v", err)
+	}
+}
+
+func tmuxCmd(t *testing.T, args ...string) []byte {
+	t.Helper()
+	out, err := exec.Command("tmux", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tmux %s: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return out
+}
+
+func killTmuxSession(sessionName string) {
+	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
 }
 
 // TestResolveNodeName_AlreadyPrefixed verifies that an already-prefixed name is returned as-is
