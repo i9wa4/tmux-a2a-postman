@@ -1629,6 +1629,7 @@ delivery_idle_timeout_seconds = 300
 // TestLoadConfig_ThreeWayConflict: postman.md > nodes/worker.md > nodes/worker.toml
 // for the same node.
 func TestLoadConfig_ThreeWayConflict(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	xdgDir, fakeHome := setupXDGAndHome(t, tmpDir)
 
@@ -1679,6 +1680,7 @@ delivery_idle_timeout_seconds = 42
 }
 
 func TestLoadConfig_ProjectLocalMarkdownMessageFooterShellExpansionBlocked(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	xdgDir, fakeHome := setupXDGAndHome(t, tmpDir)
 
@@ -1717,6 +1719,7 @@ role = "worker"
 }
 
 func TestLoadConfig_ProjectLocalMarkdown_EmptyUINodeOverridesEmbeddedDefault(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	_, fakeHome := setupXDGAndHome(t, tmpDir)
 

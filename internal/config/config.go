@@ -835,26 +835,16 @@ func appendMessageFooter(baseFooter, localFooter string) string {
 
 // LoadConfig loads configuration from a TOML file (Python format).
 // Python format requires [postman] section and [nodename] sections.
-// If path is empty, tries XDG config fallback chain, then project-local config
-// (.tmux-a2a-postman/postman.toml walked up from CWD, stopping before home dir).
+// If path is empty, tries the XDG config fallback chain.
 // Issue #81: If no file found, loads embedded default configuration.
-// Issue #121: Project-local config is merged on top of XDG/embedded config.
 func LoadConfig(path string) (*Config, error) {
 	configPath := path
-	localPath := ""
-	localMarkdownPath := ""
 
 	xdgPath := ResolveConfigPath()
 	xdgMarkdownPath := resolveXDGMarkdownPath() // Issue #324
-	// Issue #274: Resolve project-local config unconditionally so that an explicit
-	// --config flag does not bypass the project-local nodes/ overlay.
-	if cwd, err := os.Getwd(); err == nil {
-		localPath, _ = resolveProjectLocalConfig(cwd, xdgPath)
-		localMarkdownPath, _ = resolveProjectLocalMarkdown(cwd, xdgMarkdownPath) // Issue #324
-	}
 
 	if configPath == "" {
-		if xdgPath == "" && localPath == "" && xdgMarkdownPath == "" && localMarkdownPath == "" {
+		if xdgPath == "" && xdgMarkdownPath == "" {
 			// No user config anywhere: use embedded default
 			return loadEmbeddedConfig()
 		}
@@ -864,7 +854,6 @@ func LoadConfig(path string) (*Config, error) {
 	// Load base config.
 	var cfg *Config
 	if configPath == "" {
-		// No XDG config but project-local exists: start from embedded defaults.
 		var err error
 		cfg, err = loadEmbeddedConfig()
 		if err != nil {
@@ -1001,95 +990,6 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	cfg.initDirectTemplateRootTrust()
-
-	// Issue #121: Apply project-local config on top if found.
-	if localPath != "" {
-		localCfg, err := loadConfigFile(localPath)
-		if err != nil {
-			return nil, err
-		}
-		cfg.markDirectTemplateRootsUntrusted(localCfg)
-		// Snapshot AllowShellTemplates from XDG config before applying project-local
-		// overlay. Project-local config must NOT be able to self-elevate this flag.
-		xdgAllowShell := cfg.AllowShellTemplates
-		mergeConfig(cfg, localCfg)
-		applyProjectLocalExplicitZero(cfg, localCfg)
-		// Issue #274: Apply project-local nodes/ directory on top of merged config.
-		localNodesDir := filepath.Join(filepath.Dir(localPath), "nodes")
-		if info, err := os.Stat(localNodesDir); err == nil && info.IsDir() {
-			nodeFiles, _ := filepath.Glob(filepath.Join(localNodesDir, "*.toml"))
-			sort.Strings(nodeFiles) // deterministic alphabetical order
-			for _, nodeFile := range nodeFiles {
-				nodeBytes, err := os.ReadFile(nodeFile)
-				if err != nil {
-					log.Printf("warning: skipping %s (read error): %v", nodeFile, err)
-					continue
-				}
-				warnDeprecatedKeys(nodeBytes, nodeFile)
-				var sections map[string]toml.Primitive
-				md2, err := toml.Decode(string(nodeBytes), &sections)
-				if err != nil {
-					log.Printf("warning: skipping %s: %v", nodeFile, err)
-					continue
-				}
-				for _, name := range orderedTOMLNodeNames(md2) {
-					prim := sections[name]
-					var node NodeConfig
-					if err := md2.PrimitiveDecode(prim, &node); err != nil {
-						log.Printf("warning: skipping [%s] in %s: %v", name, nodeFile, err)
-						continue
-					}
-					cfg.Nodes[name] = node // override if exists in XDG or postman.toml
-					cfg.recordNodeNames(name)
-				}
-			}
-		}
-		// Restore: only XDG config is authoritative for shell privilege.
-		cfg.AllowShellTemplates = xdgAllowShell
-	}
-
-	// Issue #324: Project-local Markdown overlay — independent of localPath (M1/I4).
-	// nodes/*.md then postman.md; same load order as XDG level.
-	localConfigDir := ""
-	if localMarkdownPath != "" {
-		localConfigDir = filepath.Dir(localMarkdownPath)
-	} else if localPath != "" {
-		localConfigDir = filepath.Dir(localPath)
-	}
-	if localConfigDir != "" {
-		localMDNodesDir := filepath.Join(localConfigDir, "nodes")
-		if info, err := os.Stat(localMDNodesDir); err == nil && info.IsDir() {
-			mdFiles, _ := filepath.Glob(filepath.Join(localMDNodesDir, "*.md"))
-			sort.Strings(mdFiles)
-			for _, mdFile := range mdFiles {
-				nodeName, nc, err := loadNodeMarkdownFile(mdFile)
-				if err != nil {
-					log.Printf("warning: skipping %s: %v", mdFile, err)
-					continue
-				}
-				node := cfg.Nodes[nodeName]
-				if nc.Template != "" {
-					node.Template = nc.Template
-				}
-				if nc.Role != "" {
-					node.Role = nc.Role
-				}
-				cfg.Nodes[nodeName] = node
-				cfg.recordNodeNames(nodeName)
-			}
-		}
-	}
-	if localMarkdownPath != "" {
-		if mdCfg, err := loadMarkdownConfig(localMarkdownPath); err == nil {
-			cfg.markDirectTemplateRootsUntrusted(mdCfg)
-			localFooter := mdCfg.MessageFooter
-			mdCfg.MessageFooter = ""
-			mergeConfig(cfg, mdCfg)
-			cfg.MessageFooter = appendMessageFooter(cfg.MessageFooter, localFooter)
-		} else {
-			log.Printf("warning: skipping %s: %v", localMarkdownPath, err)
-		}
-	}
 
 	cfg.ensureNodesForEdges()
 
@@ -1268,10 +1168,10 @@ func ResolveNodesDir(configPath string) string {
 	return ""
 }
 
-// ResolveLocalConfigPath is the exported wrapper for resolveProjectLocalConfig.
-// Returns the project-local config path walked upward from cwd, or "" if not found.
+// ResolveLocalConfigPath is kept for compatibility. Project-local implicit
+// overlays are retired, so it always returns empty.
 func ResolveLocalConfigPath(cwd, xdgPath string) (string, error) {
-	return resolveProjectLocalConfig(cwd, xdgPath)
+	return "", nil
 }
 
 // ResolveContextID returns the context ID from the explicit --context-id flag.
