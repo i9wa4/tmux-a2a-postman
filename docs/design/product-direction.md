@@ -2,6 +2,9 @@
 
 tmux-a2a-postman is becoming a simple session runtime for agent teams in tmux.
 
+For project-wide decision rules, see
+[Project Design Philosophy](project-design-philosophy.md).
+
 The message lane remains the center:
 
 - `send-heredoc`
