@@ -1100,7 +1100,7 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	}
 }
 
-func TestDeliverMessage_ProjectLocalEdgeViolationWarningTemplateShellExpansionBlocked(t *testing.T) {
+func TestDeliverMessage_ProjectLocalEdgeViolationWarningTemplateIgnored(t *testing.T) {
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	projectDir := filepath.Join(fakeHome, "project")
@@ -1178,8 +1178,8 @@ edge_violation_warning_template = "Routing denied $(printf project-local-edge-wa
 	if err != nil {
 		t.Fatalf("ReadFile warning failed: %v", err)
 	}
-	if !strings.Contains(string(warningBody), "$(printf project-local-edge-warning)") {
-		t.Fatalf("project-local edge violation warning unexpectedly executed shell command: %q", string(warningBody))
+	if strings.Contains(string(warningBody), "project-local-edge-warning") {
+		t.Fatalf("project-local edge violation warning template was applied: %q", string(warningBody))
 	}
 }
 
