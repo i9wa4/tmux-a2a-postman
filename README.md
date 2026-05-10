@@ -107,6 +107,13 @@ graph LR
     classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 
+For repeatable agent teams, use
+[vde-layout](https://github.com/yuki-yano/vde-layout) presets to recreate the
+tmux pane and window layout after starting tmux. Keep vde-layout YAML
+responsible for panes and commands; keep `postman.md` responsible for role
+names, conversation edges, and local instructions. vde-layout is setup tooling;
+tmux remains the hard runtime dependency.
+
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
 stays in the same frontmatter header; run the `gh skill install` commands under
 Agent Skills first, then uncomment only paths that exist. Markdown under
