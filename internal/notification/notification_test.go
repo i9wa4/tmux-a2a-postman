@@ -217,7 +217,7 @@ template = "orchestrator template"
 		}
 	})
 
-	t.Run("project-local override stays literal", func(t *testing.T) {
+	t.Run("project-local override is ignored", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
 		projectDir := filepath.Join(tmpDir, "project")
@@ -256,8 +256,8 @@ notification_template = "local $(printf project-local-notification-template)"
 		if !cfg.AllowShellTemplates {
 			t.Fatalf("AllowShellTemplates = false, want true")
 		}
-		if cfg.AllowShellForNotificationTemplate() {
-			t.Fatalf("AllowShellForNotificationTemplate() = true, want false after project-local override")
+		if !cfg.AllowShellForNotificationTemplate() {
+			t.Fatalf("AllowShellForNotificationTemplate() = false, want trusted XDG template")
 		}
 
 		notification := BuildNotification(
@@ -272,11 +272,11 @@ notification_template = "local $(printf project-local-notification-template)"
 			nil,
 		)
 
-		if strings.Contains(notification, "local project-local-notification-template") {
-			t.Fatalf("notification template unexpectedly executed shell command: %q", notification)
+		if !strings.Contains(notification, "trusted xdg-notification-template") {
+			t.Fatalf("notification template did not use trusted XDG shell fragment: %q", notification)
 		}
-		if !strings.Contains(notification, "$(printf project-local-notification-template)") {
-			t.Fatalf("notification template missing literal untrusted shell fragment: %q", notification)
+		if strings.Contains(notification, "project-local-notification-template") {
+			t.Fatalf("notification template used ignored project-local config: %q", notification)
 		}
 	})
 }

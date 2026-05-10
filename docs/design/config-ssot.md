@@ -42,7 +42,9 @@ defaults.
   as a legacy shorthand for existing configs.
 - Runtime IDs, product names, and conventional skill-directory metadata are
   centralized in `internal/agentruntime`.
-- Explicit XDG and project-local overrides merge on top of embedded defaults.
+- XDG/global config and explicit `--config` files merge on top of embedded
+  defaults. Implicit project-local `.tmux-a2a-postman/` overlays are not part
+  of the runtime config surface.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.
 
@@ -66,8 +68,8 @@ follow-up issue explicitly changes the public config surface.
   structural containers.
 - `internal/config/config_test.go` asserts each non-zero embedded default loaded
   into public TOML-tagged fields is declared in `postman.default.toml`.
-- Project-local zero-value overlay tests assert explicit zero overrides still
-  survive the embedded defaults layer.
+- Config tests assert CWD-local `.tmux-a2a-postman/` files do not override XDG
+  or explicit config.
 
 ## Minimal Topology
 
