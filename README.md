@@ -99,6 +99,8 @@ nix run github:i9wa4/tmux-a2a-postman
 After installing the binary, optionally install the packaged agent skills so
 assistants can discover postman commands while working:
 
+For Codex CLI:
+
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-send-message \
   --agent codex --scope user
@@ -108,9 +110,19 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
   --agent codex --scope user
 ```
 
-Replace `--agent codex` with `--agent claude-code` for Claude Code. The daemon
-works without these skills; they only help assistants send first messages,
-inspect live session state, and audit config.
+For Claude Code:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-send-message \
+  --agent claude-code --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+  --agent claude-code --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
+  --agent claude-code --scope user
+```
+
+The daemon works without these skills; they only help assistants send first
+messages, inspect live session state, and audit config.
 
 Create tmux panes for a small conversation topology:
 
