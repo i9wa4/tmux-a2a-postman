@@ -21,7 +21,7 @@ func TestDiscoverNodes_WithChildProcess(t *testing.T) {
 	killTmuxSession(sessionName)
 	t.Cleanup(func() { killTmuxSession(sessionName) })
 
-	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "sleep 120")
+	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "exec sleep 120")
 	tmuxCmd(t, "select-pane", "-t", sessionName+":0.0", "-T", nodeName)
 
 	nodes, err := DiscoverNodes(baseDir, contextID, sessionName)
@@ -60,7 +60,7 @@ func TestDiscoverNodes_WithPaneTitle(t *testing.T) {
 	killTmuxSession(sessionName)
 	t.Cleanup(func() { killTmuxSession(sessionName) })
 
-	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "sleep 120")
+	tmuxCmd(t, "new-session", "-d", "-s", sessionName, "exec sleep 120")
 	tmuxCmd(t, "select-pane", "-t", sessionName+":0.0", "-T", nodeName)
 
 	nodes, collisions, err := DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
