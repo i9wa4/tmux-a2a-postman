@@ -17,10 +17,13 @@ Markdown configuration language.
 
 Supported files:
 
-| File type            | XDG path                                            | Project-local path                  |
-| -------------------- | --------------------------------------------------- | ----------------------------------- |
-| Main Markdown config | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`      | `.tmux-a2a-postman/postman.md`      |
-| Split node Markdown  | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md` | `.tmux-a2a-postman/nodes/{node}.md` |
+| File type            | XDG path                                            |
+| -------------------- | --------------------------------------------------- |
+| Main Markdown config | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`      |
+| Split node Markdown  | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md` |
+
+Implicit project-local `.tmux-a2a-postman/` overlays are retired. Keep
+workspace-specific alternatives explicit by passing `--config`.
 
 ## 2. Global Frontmatter
 
@@ -271,10 +274,6 @@ Effective configuration is loaded from low to high priority:
 3. XDG `nodes/*.toml`
 4. XDG `nodes/*.md`
 5. XDG `postman.md`
-6. Project-local `postman.toml`
-7. Project-local `nodes/*.toml`
-8. Project-local `nodes/*.md`
-9. Project-local `postman.md`
 
 Important rules:
 
@@ -287,8 +286,6 @@ Important rules:
   frontmatter does not set it. Frontmatter `ui_node` wins within the same
   Markdown file.
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
-- Project-local `postman.md` `message_footer` appends to the effective base
-  footer.
 - `skill_path` is applied within the Markdown layer that declares it. Entries
   with omitted `inject` or `inject: context` append generated catalogs to that
   layer's `common_template` content; entries with `inject: ping` stay separate
