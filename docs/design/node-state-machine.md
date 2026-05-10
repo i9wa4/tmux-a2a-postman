@@ -78,6 +78,10 @@ daemon cannot provide canonical health for that tmux session.
 `compact`. Consumers that only need the compact operator view can read those
 fields.
 
+The remaining health-named machine contract surfaces are intentional. See
+[Schema and Event Terminology Migration](schema-event-terminology.md) before
+renaming JSON contracts, projection event names, or replay-facing identifiers.
+
 ## 3. Visible Node States
 
 | State     | Meaning                                             | Source fact                            |
