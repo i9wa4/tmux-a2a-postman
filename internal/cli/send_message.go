@@ -289,6 +289,7 @@ func RunSendHeredoc(args []string) error {
 		"recipient":                      *to,
 		"timestamp":                      now.Format(time.RFC3339),
 		"can_talk_to":                    canTalkTo,
+		"contacts_section":               envelope.ContactSection(cfg, talksToList),
 		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
 		"message_id":                     filename,
@@ -349,14 +350,9 @@ func RunSendHeredoc(args []string) error {
 		for k, v := range vars {
 			footerVars[k] = v
 		}
-		footerTalksToList := config.GetTalksTo(adjacency, *to)
-		if len(footerTalksToList) == 0 {
-			recipientSimpleName := nodeaddr.Simple(*to)
-			if recipientSimpleName != *to {
-				footerTalksToList = config.GetTalksTo(adjacency, recipientSimpleName)
-			}
-		}
+		footerTalksToList := talksToListForFooter(adjacency, *to)
 		footerVars["can_talk_to"] = strings.Join(footerTalksToList, ", ")
+		footerVars["contacts_section"] = envelope.ContactSection(cfg, footerTalksToList)
 		footerVars["reply_command"] = strings.ReplaceAll(
 			envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, sender),
 			"<recipient>",
@@ -458,6 +454,18 @@ func RunSendHeredoc(args []string) error {
 		SubmitPath:          projection.SubmitPathPost,
 		Notify:              notifyOutputValue(notifyStatus),
 	})
+}
+
+func talksToListForFooter(adjacency map[string][]string, nodeName string) []string {
+	talksToList := config.GetTalksTo(adjacency, nodeName)
+	if len(talksToList) != 0 {
+		return talksToList
+	}
+	nodeSimpleName := nodeaddr.Simple(nodeName)
+	if nodeSimpleName == nodeName {
+		return talksToList
+	}
+	return config.GetTalksTo(adjacency, nodeSimpleName)
 }
 
 func renderSendBody(content, body, footer string) string {

@@ -1213,7 +1213,7 @@ func TestRunSendMessage_DefaultEnvelopePreservesSenderMarkdownAfterSeparator(t *
 		"#### Checklist",
 		"```sh\n# keep role code literal\n```",
 		"## Sender Message",
-		"You can talk to: messenger",
+		"You can talk to:\n- messenger: messenger",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("content missing %q:\n%s", want, content)

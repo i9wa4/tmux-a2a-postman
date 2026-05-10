@@ -332,6 +332,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.BaseDir != "" {
 		t.Errorf("default BaseDir: got %q, want empty", cfg.BaseDir)
 	}
+	if !strings.Contains(cfg.DaemonMessageTemplate, "You can talk to:\n{contacts_section}") {
+		t.Errorf("default DaemonMessageTemplate missing role-aware contacts section: %q", cfg.DaemonMessageTemplate)
+	}
 	if !strings.HasPrefix(cfg.DraftTemplate, "---\n") {
 		t.Errorf("default DraftTemplate: got %q, want YAML frontmatter prefix", cfg.DraftTemplate)
 	}
