@@ -90,9 +90,31 @@ graph LR
 ```
 ````
 
-Start the daemon:
+Add only the role guidance agents need to act on messages:
+
+````markdown
+## `worker`
+
+### `role`
+
+Primary task executor.
+
+### Workflow
+
+Execute tasks from orchestrator. Report DONE or BLOCKED.
+````
+
+Start the daemon after writing `postman.md`:
 
 ```sh
+tmux-a2a-postman start
+```
+
+After changing `postman.md` later, restart the daemon so topology, role
+templates, and skill catalogs are reloaded:
+
+```sh
+tmux-a2a-postman stop
 tmux-a2a-postman start
 ```
 
@@ -171,24 +193,23 @@ Place config files in either location:
 - `$XDG_CONFIG_HOME/tmux-a2a-postman/`
 - project-local `.tmux-a2a-postman/`
 
-`postman.md` defines topology and optional role templates. Every node named in
-the Mermaid `edges` graph is materialized automatically. Mark the human-facing
-role with the Mermaid `ui_node` class so startup PINGs route to the operator's
-entry point.
+`postman.md` is the file humans maintain as panes, roles, and operating rules
+change. It defines three things:
 
-Example role template:
+- conversation edges in the Mermaid `edges` graph
+- role instructions under role headings, such as the `worker` example above
+- optional `skill_path` catalogs for assistant-specific skills
 
-````markdown
-## `worker`
+Every node named in the Mermaid graph is materialized automatically. Write
+`a --- b` when two roles can exchange mail, and mark the human-facing role with
+the Mermaid `ui_node` class so startup PINGs route to the operator's entry
+point.
 
-### `role`
-
-Primary task executor.
-
-### Workflow
-
-Execute tasks from orchestrator. Report DONE or BLOCKED.
-````
+Grow role sections by adding concise recipient instructions under the role
+heading, using short sections such as `role`, `Workflow`, and
+`Operating rules`.
+Keep task-specific direction in messages; keep durable routing, role, and
+coordination rules in `postman.md`.
 
 Optional `skill_path` frontmatter injects compact skill catalogs into role
 context:
@@ -233,6 +254,16 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 ```
 
 Replace `--agent codex` with `--agent claude-code` for Claude Code.
+
+Use the skills as a maintenance loop:
+
+- run `postman-config-auditor` after editing `postman.md` to check topology,
+  role templates, skill catalogs, and deprecated references
+- restart the daemon after config changes so the running session reflects the
+  updated topology and templates
+- use `postman-session-operator` to inspect pending replies, inbox state, and
+  archived messages while work is live
+- use `postman-send-message` when starting a new role-to-role conversation
 
 Claude Code and Codex CLI have different runtime surfaces outside postman; see
 [docs/agent-runtime-feature-differences.md](docs/agent-runtime-feature-differences.md).
