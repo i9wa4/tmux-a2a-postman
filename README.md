@@ -114,7 +114,9 @@ graph LR
 Use this as a complete, copyable `postman.md`. The frontmatter header can stay
 empty for a minimal setup. Markdown under `common_template` and node sections
 is free-form role guidance, so short sections can cover identity, boundaries,
-local conventions, escalation rules, or checklists:
+local conventions, escalation rules, or checklists. Only the backtick-wrapped
+H2 section names and Mermaid edges are structural; `### role` sets the short
+role summary, and other H3 headings are ordinary Markdown:
 
 ````markdown
 ---
@@ -145,7 +147,7 @@ You are one role in this local tmux-a2a-postman session.
 
 Human-facing intake and status relay.
 
-### Workflow
+### Intake
 
 Receive the human request, send implementation work to `orchestrator`, and
 relay final DONE or BLOCKED status back to the human. Do not implement code
@@ -157,7 +159,7 @@ locally.
 
 Task coordinator for this session.
 
-### Workflow
+### Responsibilities
 
 Break work into clear requests, delegate implementation to `worker`, request
 review from `reviewer` when useful, and report final DONE or BLOCKED status to
@@ -169,7 +171,7 @@ review from `reviewer` when useful, and report final DONE or BLOCKED status to
 
 Primary implementation role.
 
-### Workflow
+### Reply Contract
 
 Execute tasks from `orchestrator`. Report DONE with evidence, or BLOCKED with
 the missing requirement or external blocker.
@@ -185,7 +187,7 @@ files or expanding scope.
 
 Implementation reviewer.
 
-### Workflow
+### Quality Bar
 
 Review work requested by `orchestrator`. Report APPROVED when the change is
 ready, or BLOCKED with concrete findings.
