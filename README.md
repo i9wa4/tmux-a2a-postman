@@ -2,16 +2,16 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/i9wa4/tmux-a2a-postman)
 
-`tmux-a2a-postman` is a local message delivery daemon for AI coding agents
-running in tmux panes.
+`tmux-a2a-postman` turns tmux panes into a coordinated agent team.
 
-Any AI coding agent can occupy a configured role. The postman daemon keeps the
-handoff surface local, durable, and visible to the human operator.
+Reliable handoffs for AI coding agents, configured in Markdown.
 
-It treats tmux pane titles as role names, routes messages according to your
-`postman.md` topology, and stores mail in filesystem-backed inboxes. Agents
-send messages with `send-heredoc`, read them with `pop`, and inspect shared
-state with `get-status` or `get-status-oneline`.
+Define roles and handoff edges in `postman.md`; the daemon routes local mail
+between matching tmux pane titles and keeps inbox/read state visible with CLI
+commands.
+
+Any AI coding agent that can run commands in a tmux pane can participate;
+postman keeps handoffs local with filesystem-backed inboxes.
 
 ## Concept
 
@@ -96,7 +96,23 @@ nix run github:i9wa4/tmux-a2a-postman
 
 ## Quick Start
 
-Start with a small conversation topology:
+After installing the binary, optionally install the packaged agent skills so
+assistants can discover postman commands while working:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-send-message \
+  --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+  --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
+  --agent codex --scope user
+```
+
+Replace `--agent codex` with `--agent claude-code` for Claude Code. The daemon
+works without these skills; they only help assistants send first messages,
+inspect live session state, and audit config.
+
+Create tmux panes for a small conversation topology:
 
 ```mermaid
 graph LR
@@ -108,20 +124,19 @@ graph LR
 ```
 
 For repeatable agent teams, use
-[vde-layout](https://github.com/yuki-yano/vde-layout) presets to recreate the
-tmux pane and window layout after starting tmux. Keep vde-layout YAML
-responsible for panes and commands; keep `postman.md` responsible for role
-names, conversation edges, and local instructions. vde-layout is setup tooling;
-tmux remains the hard runtime dependency.
+[yuki-yano/vde-layout](https://github.com/yuki-yano/vde-layout) presets to
+recreate the tmux pane and window layout after starting tmux. Keep vde-layout
+YAML responsible for panes and commands; keep `postman.md` responsible for
+role names, conversation edges, and local instructions. vde-layout is setup
+tooling; tmux remains the hard runtime dependency.
 
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
-stays in the same frontmatter header; run the `gh skill install` commands under
-Agent Skills first, then uncomment only paths that exist. Markdown under
-`common_template` and node sections is free-form role guidance, so short
-sections can cover identity, boundaries, local conventions, escalation rules,
-or checklists. Only the backtick-wrapped H2 section names and Mermaid edges are
-structural; `### role` sets the short role summary, and other H3 headings are
-ordinary Markdown:
+stays in the same frontmatter header; leave paths commented until the matching
+skills exist for your agent runtime. Markdown under `common_template` and node
+sections is free-form role guidance, so short sections can cover identity,
+boundaries, local conventions, escalation rules, or checklists. Only the
+backtick-wrapped H2 section names and Mermaid edges are structural; `### role`
+sets the short role summary, and other H3 headings are ordinary Markdown:
 
 ````markdown
 ---
@@ -298,37 +313,18 @@ and blockers before relaying, approving, or closing work.
 
 ## Configuration
 
-`postman.toml` is optional. Embedded defaults from
-`internal/config/postman.default.toml` are enough for the daemon to run.
-
-Place user-maintained config files under the global config directory:
+Most users only maintain `postman.md` under the global config directory:
 
 - `$XDG_CONFIG_HOME/tmux-a2a-postman/`
 - `~/.config/tmux-a2a-postman/` fallback when `XDG_CONFIG_HOME` is unset
 
-`postman.md` is the file humans maintain as panes, roles, and operating rules
-change. It defines three things:
+`postman.toml` is optional. Embedded defaults are enough for the daemon to run;
+add TOML only when you need to change daemon-level defaults.
 
-- conversation edges in the Mermaid `edges` graph
-- role instructions under role headings, such as the `worker` example above
-- optional `skill_path` catalogs for assistant-specific skills
-
-Every node named in the Mermaid graph is materialized automatically. Write
-`a --- b` when two roles can exchange mail, and mark the human-facing role with
-the Mermaid `ui_node` class so startup PINGs route to the operator's entry
-point.
-
-Grow role sections by adding concise recipient instructions under the role
-heading, using short sections such as `role`, `Workflow`, and
-`Operating rules`.
-Keep task-specific direction in messages; keep durable routing, role, and
-coordination rules in `postman.md`.
-
-Optional `skill_path` frontmatter adds compact skill catalogs later. Most
-configs omit `inject`; omitted `inject` and `inject: context` add catalogs to
-normal role context. `inject: ping` is for compaction-triggered PING catalogs;
-the compatibility `compaction_skill_path` form is covered in the syntax
-reference.
+In `postman.md`, keep conversation edges in the Mermaid `edges` graph, durable
+role guidance under role headings, and optional `skill_path` catalogs in the
+frontmatter. Every node named in the graph is materialized automatically; mark
+the human-facing role with the Mermaid `ui_node` class.
 
 Detailed configuration references:
 
@@ -336,48 +332,7 @@ Detailed configuration references:
 - [configuration defaults and merge policy](docs/design/config-ssot.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
 
-## Agent Skills
-
-The binary works without bundled skills. The optional skills help AI assistants
-discover commands, operate live message state, and audit configuration:
-
-- `postman-send-message`
-- `postman-session-operator`
-- `postman-config-auditor`
-
-Install them with GitHub CLI 2.90.0 or newer:
-
-```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-session-operator --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
-```
-
-Replace `--agent codex` with `--agent claude-code` for Claude Code.
-
-Use the skills as a maintenance loop:
-
-- run `postman-config-auditor` after editing `postman.md` to check topology,
-  role templates, skill catalogs, and deprecated references
-- restart the daemon after config changes so the running session reflects the
-  updated topology and templates
-- use `postman-session-operator` to inspect pending replies, inbox state, and
-  archived messages while work is live
-- use `postman-send-message` when starting a new role-to-role conversation
-
-Claude Code and Codex CLI have different runtime surfaces outside postman; see
+Command help lives in the binary: `tmux-a2a-postman help`,
+`tmux-a2a-postman help commands`, and `tmux-a2a-postman help config`. Claude
+Code and Codex CLI have different runtime surfaces outside postman; see
 [docs/agent-runtime-feature-differences.md](docs/agent-runtime-feature-differences.md).
-
-## Help
-
-The binary contains the command reference:
-
-```sh
-tmux-a2a-postman help
-tmux-a2a-postman help commands
-tmux-a2a-postman help config
-tmux-a2a-postman help directories
-tmux-a2a-postman help messaging
-```
-
-Additional design notes live under [docs/design](docs/design).
