@@ -246,10 +246,14 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
 	}
 
+	manager := journal.NewManager("test-ctx", 31337)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
 	// Place a message for unknown recipient (with valid frontmatter for envelope validation, Issue #161)
 	filename := "20260201-030000-from-orchestrator-to-unknown-node.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: unknown-node\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: unknown-node\n  timestamp: 2026-02-01T03:00:00Z\n  input_request_id: ireq_deadletter_123\n---\n\ntest message\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -273,6 +277,64 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	deadPath := filepath.Join(sessionDir, "dead-letter", "20260201-030000-from-orchestrator-to-unknown-node-dl-unknown-recipient.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not in dead-letter: %v", err)
+	}
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	}
+	if events[2].Type != projection.MailboxProjectionDeadLetteredEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_dead_lettered", events[2].Type)
+	}
+	var payload journal.MailboxEventPayload
+	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
+	}
+	if payload.MessageID != filename || payload.From != "orchestrator" || payload.To != "unknown-node" {
+		t.Fatalf("payload identifiers = %#v, want original message/from/to", payload)
+	}
+	if payload.InputRequestID != "ireq_deadletter_123" {
+		t.Fatalf("payload.InputRequestID = %q, want ireq_deadletter_123", payload.InputRequestID)
+	}
+	if payload.FailureReason != "unknown-recipient" {
+		t.Fatalf("payload.FailureReason = %q, want unknown-recipient", payload.FailureReason)
+	}
+	if payload.Path != filepath.Join("dead-letter", filepath.Base(deadPath)) || payload.SourcePath != filepath.Join("post", filename) {
+		t.Fatalf("payload paths = %q/%q, want dead-letter path and original post path", payload.Path, payload.SourcePath)
+	}
+}
+
+func TestDeadLetterFailureReason(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "extracts reason from dead-letter basename",
+			path: "dead-letter/20260201-030000-from-orchestrator-to-worker-dl-routing-denied.md",
+			want: "routing-denied",
+		},
+		{
+			name: "uses final marker when original basename contains marker",
+			path: "dead-letter/message-dl-original-dl-unknown-recipient.md",
+			want: "unknown-recipient",
+		},
+		{
+			name: "missing marker",
+			path: "dead-letter/message.md",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deadLetterFailureReason(tt.path); got != tt.want {
+				t.Fatalf("deadLetterFailureReason(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 

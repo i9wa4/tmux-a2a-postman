@@ -28,7 +28,10 @@ layer for operator escalation.
    body into the pane hint.
 
 Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
-manual recovery guidance and is separate from normal pane hints.
+manual recovery guidance and is separate from normal pane hints. The durable
+dead-letter journal event preserves the original message ID, sender, recipient,
+source `post/` path, dead-letter path, failure reason, and any exact
+input-request identifiers parsed from the message metadata.
 
 ## 3. Health Model
 

@@ -17,6 +17,7 @@ type MailboxEventPayload struct {
 	CompletionRule      string `json:"completion_rule,omitempty"`
 	Path                string `json:"path,omitempty"`
 	SourcePath          string `json:"source_path,omitempty"`
+	FailureReason       string `json:"failure_reason,omitempty"`
 	Content             string `json:"content,omitempty"`
 }
 
