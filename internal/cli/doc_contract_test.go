@@ -331,6 +331,30 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 	}
 }
 
+func TestSchemaEventTerminologyDocContract(t *testing.T) {
+	terminologyDoc := readRepoFile(t, "docs/design/schema-event-terminology.md")
+	nodeStateDoc := readRepoFile(t, "docs/design/node-state-machine.md")
+	notificationDoc := readRepoFile(t, "docs/design/notification.md")
+
+	assertContainsAllNormalized(t, terminologyDoc,
+		"Keep schema version 3 immutable.",
+		"there is no concrete consumer that needs status-named aliases for the v3 machine contract",
+		"add no alias fields, no parallel event family, and no schema bump in this slice",
+		"`get-status` and `get-status-oneline` remain the public command names",
+		"the v3 JSON, journal, replay, and TUI payload contracts keep their existing health-named surfaces",
+		"Treat `session_health_snapshot` as historical archive truth",
+		"Add status aliases only where a real consumer needs them.",
+	)
+	assertContainsAllNormalized(t, nodeStateDoc,
+		"The remaining health-named machine contract surfaces are intentional.",
+		"Schema and Event Terminology Migration",
+	)
+	assertContainsAllNormalized(t, notificationDoc,
+		"The public command is named `get-status`, but schema v3 and replay-facing event names still contain health terminology by design.",
+		"Schema and Event Terminology Migration",
+	)
+}
+
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)")

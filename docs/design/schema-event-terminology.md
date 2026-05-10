@@ -32,6 +32,13 @@ Do not rename existing v3 JSON fields, Go contract types, or journal event
 names in place. Treat `session_health_snapshot` as historical archive truth for
 existing journal records.
 
+As of #423, there is no concrete consumer that needs status-named aliases for
+the v3 machine contract. The implementation decision is therefore to add no
+alias fields, no parallel event family, and no schema bump in this slice.
+`get-status` and `get-status-oneline` remain the public command names, while
+the v3 JSON, journal, replay, and TUI payload contracts keep their existing
+health-named surfaces.
+
 Any future terminology cleanup must use an additive transition:
 
 1. Introduce new status-named surfaces alongside the existing health-named
