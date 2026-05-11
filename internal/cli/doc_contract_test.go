@@ -311,8 +311,8 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"Agent Runtime Feature Differences",
 		"do not duplicate the long-term runtime comparison here",
 		"Only `skill_path` mappings accept `inject`.",
-		"`compaction_skill_path` list items may be scalar paths or mappings with `path`, `runtime`, and `skills`.",
-		"`compaction_skill_path` entries are always ping-injected compatibility entries and do not accept `inject`.",
+		"`inject: ping` stores the generated catalog for every daemon PING",
+		"`inject: compaction_ping` stores the generated catalog for compaction-triggered daemon PING",
 	)
 
 	publicDocs := map[string]string{
