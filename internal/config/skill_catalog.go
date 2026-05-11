@@ -39,7 +39,7 @@ func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, sp
 	return joinTemplateSections(commonTemplate, catalog), nil
 }
 
-func renderCompactionSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
+func renderRuntimeSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
 	byRuntime := make(map[string][]skillCatalogSpec)
 	var runtimes []string
 	var sharedSpecs []skillCatalogSpec

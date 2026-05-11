@@ -358,6 +358,7 @@ func TestDefaultConfigOnlyInitializesStructuralFields(t *testing.T) {
 		Edges:                   []string{},
 		Nodes:                   map[string]NodeConfig{},
 		NodeOrder:               []string{},
+		PingSkillCatalogs:       map[string]string{},
 		CompactionSkillCatalogs: map[string]string{},
 	}
 

@@ -254,6 +254,10 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 		Nodes: map[string]config.NodeConfig{
 			"worker": {Template: "Worker template."},
 		},
+		PingSkillCatalogs: map[string]string{
+			"":                  "### Available Skills\n\n- `postman-send-message`: Normal ping fallback rules.",
+			agentruntime.Claude: "### Available Skills\n\n- `postman-send-message`: Normal ping Claude rules.",
+		},
 		CompactionSkillCatalogs: map[string]string{
 			"":                  "### Available Skills\n\n- `postman-session-operator`: Fallback runtime rules.",
 			agentruntime.Claude: "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
@@ -271,6 +275,9 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 	}
 	if strings.Contains(normalBody, "Fallback runtime rules.") {
 		t.Fatalf("normal ping included fallback compaction catalog: %q", normalBody)
+	}
+	if !strings.Contains(normalBody, "Normal ping fallback rules.") {
+		t.Fatalf("normal ping missing ping catalog: %q", normalBody)
 	}
 
 	clearInbox := func() {
@@ -296,6 +303,9 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 	if !strings.Contains(compactionBody, "Claude rules.") {
 		t.Fatalf("compaction ping missing claude catalog: %q", compactionBody)
 	}
+	if !strings.Contains(compactionBody, "Normal ping Claude rules.") {
+		t.Fatalf("compaction ping missing ping catalog: %q", compactionBody)
+	}
 	if strings.Contains(compactionBody, "Codex rules.") {
 		t.Fatalf("compaction ping included wrong runtime catalog: %q", compactionBody)
 	}
@@ -311,6 +321,9 @@ func TestSendPingToNodeWithOptions_AppendsCompactionCatalogOnlyForMatchingRuntim
 	_, otherBody := readSingleInboxMessage(t, sessionDir, "worker")
 	if !strings.Contains(otherBody, "Fallback runtime rules.") {
 		t.Fatalf("compaction ping missing fallback runtime catalog: %q", otherBody)
+	}
+	if !strings.Contains(otherBody, "Normal ping fallback rules.") {
+		t.Fatalf("compaction ping missing fallback ping catalog: %q", otherBody)
 	}
 	if strings.Contains(otherBody, "Claude rules.") || strings.Contains(otherBody, "Codex rules.") {
 		t.Fatalf("compaction ping included exact runtime catalog for fallback runtime: %q", otherBody)
