@@ -135,8 +135,8 @@ No reply needed for: DONE, ACK, PING, HEARTBEAT_OK, status updates, alerts, or p
 #   {session_name}, {session_dir}
 # Pass 2 variables (caller-injected): {message_type}, {heading}, {message},
 #   {role_content}
-# For compaction-triggered daemon PINGs, {role_content} may include catalogs
-# generated from postman.md skill_path entries with inject: compaction_ping.
+# For daemon PINGs, {role_content} may include catalogs generated from
+# postman.md skill_path entries with inject: ping or inject: compaction_ping.
 daemon_message_template = """---
 params:
   contextId: {context_id}

@@ -456,8 +456,7 @@ func stripFrontmatter(content string) string {
 // Global frontmatter keys: ui_node → Config.UINode override,
 // reply_command → Config.ReplyCommand,
 // skill_path → generated skill catalog appended to Config.CommonTemplate, or
-// to compaction-triggered PING role content when an entry uses inject: compaction_ping.
-// compaction_skill_path → compatibility form for compaction-triggered PING catalogs.
+// to daemon PING role content when an entry uses inject: ping or inject: compaction_ping.
 // Mermaid edges may mark the UI node with the ui_node class when frontmatter
 // does not override it.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
@@ -469,10 +468,10 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	content := string(raw)
-	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}, CompactionSkillCatalogs: make(map[string]string)}
+	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}, PingSkillCatalogs: make(map[string]string), CompactionSkillCatalogs: make(map[string]string)}
 
 	// Parse global frontmatter.
-	fm, skillCatalogSpecs, compactionSkillCatalogSpecs, err := parsePostmanFrontmatter(content)
+	fm, skillCatalogSpecs, pingSkillCatalogSpecs, compactionSkillCatalogSpecs, err := parsePostmanFrontmatter(content)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -516,8 +515,15 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		}
 		cfg.CommonTemplate = commonTemplate
 	}
+	if len(pingSkillCatalogSpecs) > 0 {
+		catalogs, err := renderRuntimeSkillCatalogs(path, pingSkillCatalogSpecs)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		cfg.PingSkillCatalogs = catalogs
+	}
 	if len(compactionSkillCatalogSpecs) > 0 {
-		catalogs, err := renderCompactionSkillCatalogs(path, compactionSkillCatalogSpecs)
+		catalogs, err := renderRuntimeSkillCatalogs(path, compactionSkillCatalogSpecs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}

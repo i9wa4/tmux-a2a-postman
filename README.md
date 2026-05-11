@@ -155,8 +155,22 @@ sets the short role summary, and other H3 headings are ordinary Markdown:
 # Optional: after installing packaged skills, uncomment only paths that exist.
 # skill_path:
 #   - path: ~/.codex/skills
+#     inject: ping
+#     runtime: codex
+#     skills:
+#       - postman-send-message
+#       - postman-session-operator
+#       - postman-config-auditor
+#   - path: ~/.codex/skills
 #     inject: compaction_ping
 #     runtime: codex
+#     skills:
+#       - postman-send-message
+#       - postman-session-operator
+#       - postman-config-auditor
+#   - path: ~/.claude/skills
+#     inject: ping
+#     runtime: claude
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator

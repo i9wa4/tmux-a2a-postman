@@ -10,49 +10,48 @@ import (
 )
 
 const (
-	skillCatalogInjectRole           = "role"
-	skillCatalogInjectContext        = "context"
-	skillCatalogInjectCompactionPing = "compaction_ping"
 	skillCatalogInjectPing           = "ping"
+	skillCatalogInjectCompactionPing = "compaction_ping"
 )
 
-func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogSpec, []skillCatalogSpec, error) {
+func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogSpec, []skillCatalogSpec, []skillCatalogSpec, error) {
 	scalars := make(map[string]string)
 	lines := strings.Split(content, "\n")
 	start, end, ok, err := frontmatterBounds(lines)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if !ok {
-		return scalars, nil, nil, nil
+		return scalars, nil, nil, nil, nil
 	}
 
 	raw := strings.TrimSpace(strings.Join(lines[start+1:end], "\n"))
 	if raw == "" {
-		return scalars, nil, nil, nil
+		return scalars, nil, nil, nil, nil
 	}
 
 	var document yaml.Node
 	yamlInput := strings.Repeat("\n", start+1) + raw
 	if err := yaml.Unmarshal([]byte(yamlInput), &document); err != nil {
-		return nil, nil, nil, fmt.Errorf("parse postman.md frontmatter: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("parse postman.md frontmatter: %w", err)
 	}
 	if len(document.Content) == 0 || document.Content[0].Kind == yaml.ScalarNode && document.Content[0].Tag == "!!null" {
-		return scalars, nil, nil, nil
+		return scalars, nil, nil, nil, nil
 	}
 
 	root := document.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return nil, nil, nil, frontmatterNodeError(root, "postman.md frontmatter must be a YAML mapping")
+		return nil, nil, nil, nil, frontmatterNodeError(root, "postman.md frontmatter must be a YAML mapping")
 	}
 
 	var skillSpecs []skillCatalogSpec
+	var pingSkillSpecs []skillCatalogSpec
 	var compactionSkillSpecs []skillCatalogSpec
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		keyNode := root.Content[i]
 		valueNode := root.Content[i+1]
 		if keyNode.Kind != yaml.ScalarNode {
-			return nil, nil, nil, frontmatterNodeError(keyNode, "frontmatter keys must be strings")
+			return nil, nil, nil, nil, frontmatterNodeError(keyNode, "frontmatter keys must be strings")
 		}
 
 		key := strings.ToLower(strings.TrimSpace(keyNode.Value))
@@ -60,34 +59,32 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 		case "ui_node", "reply_command":
 			value, err := parseYAMLScalarString(valueNode)
 			if err != nil {
-				return nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")
+				return nil, nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")
 			}
 			scalars[key] = value
 		case "skill_path":
 			specs, err := parseSkillPathFrontmatterNode(valueNode, "skill_path", true, true)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
-			roleSpecs, compactionPingSpecs, err := splitSkillPathSpecsByInject(specs)
+			roleSpecs, pingSpecs, compactionPingSpecs, err := splitSkillPathSpecsByInject(specs)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			skillSpecs = append(skillSpecs, roleSpecs...)
+			pingSkillSpecs = append(pingSkillSpecs, pingSpecs...)
 			compactionSkillSpecs = append(compactionSkillSpecs, compactionPingSpecs...)
 		case "compaction_skill_path":
-			specs, err := parseSkillPathFrontmatterNode(valueNode, "compaction_skill_path", true, false)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			compactionSkillSpecs = append(compactionSkillSpecs, specs...)
+			return nil, nil, nil, nil, frontmatterNodeError(keyNode, "compaction_skill_path is unsupported; use skill_path entries with inject: compaction_ping")
 		}
 	}
 
-	return scalars, skillSpecs, compactionSkillSpecs, nil
+	return scalars, skillSpecs, pingSkillSpecs, compactionSkillSpecs, nil
 }
 
-func splitSkillPathSpecsByInject(specs []skillCatalogSpec) ([]skillCatalogSpec, []skillCatalogSpec, error) {
+func splitSkillPathSpecsByInject(specs []skillCatalogSpec) ([]skillCatalogSpec, []skillCatalogSpec, []skillCatalogSpec, error) {
 	var roleSpecs []skillCatalogSpec
+	var pingSpecs []skillCatalogSpec
 	var compactionPingSpecs []skillCatalogSpec
 	for _, spec := range specs {
 		inject := normalizeSkillCatalogInject(spec.Inject)
@@ -96,14 +93,19 @@ func splitSkillPathSpecsByInject(specs []skillCatalogSpec) ([]skillCatalogSpec, 
 			roleSpecs = append(roleSpecs, spec)
 			continue
 		}
-		if isCompactionPingSkillCatalogInject(inject) {
+		if inject == skillCatalogInjectPing {
+			spec.Inject = ""
+			pingSpecs = append(pingSpecs, spec)
+			continue
+		}
+		if inject == skillCatalogInjectCompactionPing {
 			spec.Inject = ""
 			compactionPingSpecs = append(compactionPingSpecs, spec)
 			continue
 		}
-		return nil, nil, fmt.Errorf("unsupported skill_path item inject %q", spec.Inject)
+		return nil, nil, nil, fmt.Errorf("unsupported skill_path item inject %q", spec.Inject)
 	}
-	return roleSpecs, compactionPingSpecs, nil
+	return roleSpecs, pingSpecs, compactionPingSpecs, nil
 }
 
 func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime, allowInject bool) ([]skillCatalogSpec, error) {
@@ -115,9 +117,6 @@ func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime, al
 		}
 		if strings.TrimSpace(path) == "" {
 			return nil, nil
-		}
-		if key == "compaction_skill_path" && !isGlobalSkillCatalogPath(path) {
-			return nil, frontmatterNodeError(node, key+" requires a global/user-level path (~ or absolute); relative paths are invalid for compaction PING catalogs")
 		}
 		return []skillCatalogSpec{{Path: path, All: true}}, nil
 	case yaml.SequenceNode:
@@ -188,7 +187,7 @@ func parseSkillPathMappingNode(node *yaml.Node, key string, allowRuntime, allowI
 			}
 			inject = normalizeSkillCatalogInject(inject)
 			switch {
-			case isRoleSkillCatalogInject(inject), isCompactionPingSkillCatalogInject(inject):
+			case isRoleSkillCatalogInject(inject), inject == skillCatalogInjectPing, inject == skillCatalogInjectCompactionPing:
 				spec.Inject = inject
 			default:
 				return skillCatalogSpec{}, frontmatterNodeError(valueNode, fmt.Sprintf("unsupported %s item inject %q", key, inject))
@@ -212,8 +211,8 @@ func parseSkillPathMappingNode(node *yaml.Node, key string, allowRuntime, allowI
 	if strings.TrimSpace(spec.Path) == "" {
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a non-empty path")
 	}
-	if key == "skill_path" && spec.Runtime != "" && !isCompactionPingSkillCatalogInject(spec.Inject) {
-		return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path item runtime requires inject: compaction_ping")
+	if key == "skill_path" && spec.Runtime != "" && !isPingSkillCatalogInject(spec.Inject) {
+		return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path item runtime requires inject: ping or inject: compaction_ping")
 	}
 	if requiresGlobalSkillCatalogPath(key, spec) && !isGlobalSkillCatalogPath(spec.Path) {
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a global/user-level path (~ or absolute); relative paths are invalid for compaction PING catalogs")
@@ -268,17 +267,12 @@ func normalizeSkillCatalogInject(inject string) string {
 }
 
 func isRoleSkillCatalogInject(inject string) bool {
-	switch normalizeSkillCatalogInject(inject) {
-	case "", skillCatalogInjectRole, skillCatalogInjectContext:
-		return true
-	default:
-		return false
-	}
+	return normalizeSkillCatalogInject(inject) == ""
 }
 
-func isCompactionPingSkillCatalogInject(inject string) bool {
+func isPingSkillCatalogInject(inject string) bool {
 	switch normalizeSkillCatalogInject(inject) {
-	case skillCatalogInjectCompactionPing, skillCatalogInjectPing:
+	case skillCatalogInjectPing, skillCatalogInjectCompactionPing:
 		return true
 	default:
 		return false
@@ -286,10 +280,7 @@ func isCompactionPingSkillCatalogInject(inject string) bool {
 }
 
 func requiresGlobalSkillCatalogPath(key string, spec skillCatalogSpec) bool {
-	if key == "compaction_skill_path" {
-		return true
-	}
-	return key == "skill_path" && isCompactionPingSkillCatalogInject(spec.Inject)
+	return key == "skill_path" && isPingSkillCatalogInject(spec.Inject)
 }
 
 func isGlobalSkillCatalogPath(path string) bool {

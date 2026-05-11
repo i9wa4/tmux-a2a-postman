@@ -57,6 +57,7 @@ type Config struct {
 	DaemonMessageTemplate        string            `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
 	DraftTemplate                string            `toml:"draft_template"`                  // Draft body used by send
 	CommonTemplate               string            `toml:"common_template"`                 // Issue #49: Shared template for all nodes
+	PingSkillCatalogs            map[string]string `toml:"-"`                               // postman.md skill_path inject: ping catalogs by runtime
 	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md skill_path inject: compaction_ping catalogs by runtime
 	EdgeViolationWarningTemplate string            `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode     string            `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
@@ -117,6 +118,7 @@ func DefaultConfig() *Config {
 		Edges:                   []string{},
 		Nodes:                   make(map[string]NodeConfig),
 		NodeOrder:               []string{},
+		PingSkillCatalogs:       make(map[string]string),
 		CompactionSkillCatalogs: make(map[string]string),
 	}
 }
@@ -265,14 +267,28 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 }
 
 func (cfg *Config) CompactionSkillCatalogForRuntime(runtime string) string {
-	if cfg == nil || len(cfg.CompactionSkillCatalogs) == 0 {
+	if cfg == nil {
+		return ""
+	}
+	return skillCatalogForRuntime(cfg.CompactionSkillCatalogs, runtime)
+}
+
+func (cfg *Config) PingSkillCatalogForRuntime(runtime string) string {
+	if cfg == nil {
+		return ""
+	}
+	return skillCatalogForRuntime(cfg.PingSkillCatalogs, runtime)
+}
+
+func skillCatalogForRuntime(catalogs map[string]string, runtime string) string {
+	if len(catalogs) == 0 {
 		return ""
 	}
 	runtime = normalizeSkillCatalogRuntime(runtime)
-	if catalog := cfg.CompactionSkillCatalogs[runtime]; catalog != "" {
+	if catalog := catalogs[runtime]; catalog != "" {
 		return catalog
 	}
-	return cfg.CompactionSkillCatalogs[""]
+	return catalogs[""]
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
@@ -680,6 +696,16 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.CommonTemplate != "" {
 		base.CommonTemplate = override.CommonTemplate
+	}
+	if len(override.PingSkillCatalogs) > 0 {
+		if base.PingSkillCatalogs == nil {
+			base.PingSkillCatalogs = make(map[string]string)
+		}
+		for runtime, catalog := range override.PingSkillCatalogs {
+			if catalog != "" {
+				base.PingSkillCatalogs[runtime] = catalog
+			}
+		}
 	}
 	if len(override.CompactionSkillCatalogs) > 0 {
 		if base.CompactionSkillCatalogs == nil {

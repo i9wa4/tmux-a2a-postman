@@ -65,30 +65,26 @@ Important merge rules:
   footer.
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from
   selected `SKILL.md` files and appends them to that Markdown layer's
-  `common_template` unless a mapping uses `inject: compaction_ping`.
+  `common_template` unless a mapping uses `inject: ping` or
+  `inject: compaction_ping`.
   `skill_path` accepts YAML list entries with `path`, optional `inject`, and
   optional `skills`. Omitted `skills` means every skill under that path; a
   present `skills` list selects explicit skill directory names, including a real
   skill named `all`. The scalar `skills: all` remains accepted as a legacy
   shorthand.
-- `postman.md` frontmatter `skill_path` entries with `inject: compaction_ping`
-  generate compact skill catalogs but keep them out of `common_template`. Those
-  catalogs are appended only to compaction-triggered daemon PING role content.
-  These entries may include optional `runtime` selectors such as `claude` or
-  `codex`; entries without `runtime` are shared catalogs included in
-  runtime-specific catalogs and in the fallback catalog.
-- Compaction PING entries, including runtime-specific entries and
-  `compaction_skill_path`, must use global/user-level paths: `~/...` or
-  absolute. Repo-local relative paths remain valid only for normal role
-  catalogs.
+- `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
+  compact skill catalogs for every daemon PING. Entries with
+  `inject: compaction_ping` generate catalogs only for compaction-triggered
+  daemon PINGs. Both stay out of `common_template`. These entries may include
+  optional `runtime` selectors such as `claude` or `codex`; entries without
+  `runtime` are shared catalogs included in runtime-specific catalogs and in
+  the fallback catalog.
+- PING entries, including runtime-specific entries, must use global/user-level
+  paths: `~/...` or absolute. Repo-local relative paths remain valid only for
+  normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`. Later path entries
   override earlier entries with the same rendered name; runtime-specific
   compaction PING entries override shared entries with the same name.
-- `postman.md` frontmatter `compaction_skill_path` remains accepted as a
-  compatibility form for compaction PING catalogs. Its mappings are always
-  compaction PING entries and accept only `path`, `runtime`, and `skills`; they
-  do not accept `inject`. New examples should use `skill_path` with
-  `inject: compaction_ping`.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
@@ -125,25 +121,26 @@ Important merge rules:
 - Confirm role text lives under an h3 `role` section or in supported
   frontmatter.
 - Confirm global `postman.md` frontmatter stays within the supported YAML
-  surface: scalar settings plus `skill_path` path entries, with
-  `compaction_skill_path` only as a compatibility form.
+  surface: scalar settings plus `skill_path` path entries.
 - Prefer keeping `ui_node` in the Mermaid `edges` graph. Treat frontmatter
   `ui_node` as an explicit override, not the normal topology declaration.
 - If `skill_path` is set for normal role catalogs, confirm relative paths
   resolve from the declaring `postman.md` directory, `~/...` points to the
   current user's home directory, and each selected skill name maps to a
   subdirectory containing `SKILL.md`.
+- If `skill_path` entries use `inject: ping`, confirm they are intended for all
+  daemon PINGs rather than normal role context, confirm their paths are `~/...`
+  or absolute, and confirm any `runtime` selector matches pane commands such as
+  `claude` or `codex`.
 - If `skill_path` entries use `inject: compaction_ping`, confirm they are
-  intended for compaction-triggered PINGs rather than normal role context,
-  confirm their paths are `~/...` or absolute, and confirm any `runtime`
-  selector matches pane commands such as `claude` or `codex`.
-- For runtime-specific compaction PING entries, prefer `$HOME/.claude/skills`
-  and `$HOME/.codex/skills` for user-level runtime skill catalogs.
-- If shared and runtime-specific compaction PING entries overlap, confirm the
-  later-entry override behavior is intended and the rendered catalog has no
-  duplicate skill bodies.
-- If `compaction_skill_path` is set, confirm it can stay as compatibility
-  config or move to `skill_path` with `inject: compaction_ping`.
+  intended only for compaction-triggered PINGs, confirm their paths are `~/...`
+  or absolute, and confirm any `runtime` selector matches pane commands such as
+  `claude` or `codex`.
+- For runtime-specific PING entries, prefer `$HOME/.claude/skills` and
+  `$HOME/.codex/skills` for user-level runtime skill catalogs.
+- If shared and runtime-specific PING entries overlap, confirm the later-entry
+  override behavior is intended and the rendered catalog has no duplicate skill
+  bodies.
 - Confirm omitted `skills` means all skills, while present `skills` uses
   explicit YAML list items. Glob patterns such as `postman-*` are unsupported.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
@@ -188,8 +185,8 @@ Measure section sizes before editing, then reduce in this order:
 2. Generated `skill_path` catalog descriptions, because `skill_path` appends
    them to `common_template`.
 3. The specific node template that receives noisy `pop` output.
-4. `skill_path` entries with `inject: compaction_ping`, only when
-   compaction-triggered PINGs become too large.
+4. `skill_path` entries with `inject: ping` or `inject: compaction_ping`, only
+   when daemon PINGs become too large.
 5. Other node templates, only when they are noisy for their own recipients.
 
 Keep content in `postman.md` when it is needed before an agent can safely
@@ -201,8 +198,8 @@ choose a skill:
 - state-machine semantics that affect `get-status` or `get-status-oneline`
 - role-specific authority boundaries, such as who may approve or implement
 - compact reminders that prevent prompt deadlocks or broken message flow
-- the `skill_path` declaration, using `inject: compaction_ping` when a larger
-  catalog should appear only after context compaction
+- the `skill_path` declaration, using `inject: ping` for all daemon PINGs or
+  `inject: compaction_ping` only after context compaction
 - a short rule to read listed `SKILL.md` files before execution
 
 Move content to `SKILL.md` when it is reusable procedure rather than routing
@@ -250,6 +247,7 @@ of:
 | Transport contract | `postman.md`                                | Needed for delivery, replies, status, or escalation |
 | Role contract      | `postman.md`                                | Needed to behave correctly as this node             |
 | Skill index        | `skill_path`                                | Generated from skill frontmatter, not hand-written  |
+| Ping index         | `skill_path` with `inject: ping`            | Generated for every daemon PING                     |
 | Compaction index   | `skill_path` with `inject: compaction_ping` | Generated only for compaction-triggered PINGs       |
 | Task procedure     | `SKILL.md`                                  | Needed only after a relevant task is selected       |
 | Reference material | `references/*.md`                           | Too detailed for the skill body unless needed       |
