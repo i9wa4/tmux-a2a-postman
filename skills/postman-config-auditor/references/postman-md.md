@@ -38,7 +38,7 @@ Supported global keys in `postman.md`:
 | ----------------------- | ----------------------------------------------------------------------- |
 | `ui_node`               | Sets `Config.UINode` as a frontmatter override                          |
 | `reply_command`         | Sets `Config.ReplyCommand` when non-empty                               |
-| `skill_path`            | Appends catalogs to role context, or to compaction PINGs |
+| `skill_path`            | Appends catalogs to role context, or to compaction PINGs                |
 | `compaction_skill_path` | Compatibility form for compaction-triggered daemon PING catalogs        |
 
 Rules:
@@ -51,10 +51,10 @@ Rules:
 - `skill_path` list items may be scalar paths or mappings with `path`,
   `inject`, `runtime`, and `skills`.
 - Only `skill_path` mappings accept `inject`.
-- For `skill_path` mappings, omitted `inject` and `inject: role` append the
-  generated catalog to normal role context.
-- `inject: context` remains accepted as a compatibility alias for
-  `inject: role`.
+- For `skill_path` mappings, omitted `inject` appends the generated catalog to
+  normal role context.
+- `inject: context` and `inject: role` remain accepted as compatibility aliases
+  for omitted `inject`.
 - For `skill_path` mappings, `inject: compaction_ping` stores the generated
   catalog for compaction-triggered daemon PING role content and keeps it out of
   normal role context.
@@ -75,7 +75,7 @@ Rules:
 - Compaction PING paths, including runtime-specific entries and
   `compaction_skill_path`, must be global/user-level: `~/...` or absolute.
   Repo-local relative paths are invalid for compaction PING catalogs and remain
-  valid only for non-compaction role catalogs.
+  valid only for normal role catalogs.
 - Omitted `skills` means every skill under that path.
 - When `skills` is present, use a YAML list of explicit skill directory names.
   A real skill named `all` is selected with `skills: [all]`.
@@ -119,14 +119,13 @@ skill_path:
 ```
 
 Each `path` points to a directory containing one subdirectory per skill, each
-with a `SKILL.md` file. For non-compaction role catalogs, relative paths are
-resolved from the directory containing the `postman.md` file. `~/...` expands
-to the current user's home directory, and symlinked skill directories are
-followed. Generated catalogs read `name` and `description` from selected
-`SKILL.md` frontmatter and render a compact Markdown list. `skill_path` entries
-with omitted `inject` or `inject: role` append that list to
-`common_template`, which reaches normal role context, so use them for compact
-runtime-agnostic catalogs only.
+with a `SKILL.md` file. For normal role catalogs, relative paths are resolved
+from the directory containing the `postman.md` file. `~/...` expands to the
+current user's home directory, and symlinked skill directories are followed.
+Generated catalogs read `name` and `description` from selected `SKILL.md`
+frontmatter and render a compact Markdown list. `skill_path` entries with
+omitted `inject` append that list to `common_template`, which reaches normal
+role context, so use them for compact runtime-agnostic catalogs only.
 `skill_path` entries with `inject: compaction_ping` keep their list out of
 `common_template` and append it only to daemon PING role content when pane
 capture detects a context-compaction marker. Runtime-specific compaction PING
@@ -292,10 +291,9 @@ Important rules:
   Markdown file.
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
 - `skill_path` is applied within the Markdown layer that declares it. Entries
-  with omitted `inject` or `inject: role` append generated catalogs to that
-  layer's `common_template` content; entries with `inject: compaction_ping`
-  stay separate and append only to compaction-triggered daemon PING role
-  content.
+  with omitted `inject` append generated catalogs to that layer's
+  `common_template` content; entries with `inject: compaction_ping` stay
+  separate and append only to compaction-triggered daemon PING role content.
 - When multiple entries select the same skill frontmatter `name`, the later
   entry wins and the rendered catalog includes one body for that name.
 - `compaction_skill_path` is applied within the Markdown layer that declares it

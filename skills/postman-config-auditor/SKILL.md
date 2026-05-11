@@ -79,7 +79,7 @@ Important merge rules:
   runtime-specific catalogs and in the fallback catalog.
 - Compaction PING entries, including runtime-specific entries and
   `compaction_skill_path`, must use global/user-level paths: `~/...` or
-  absolute. Repo-local relative paths remain valid only for non-compaction role
+  absolute. Repo-local relative paths remain valid only for normal role
   catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`. Later path entries
   override earlier entries with the same rendered name; runtime-specific
@@ -129,8 +129,8 @@ Important merge rules:
   `compaction_skill_path` only as a compatibility form.
 - Prefer keeping `ui_node` in the Mermaid `edges` graph. Treat frontmatter
   `ui_node` as an explicit override, not the normal topology declaration.
-- If `skill_path` is set for non-compaction role catalogs, confirm relative
-  paths resolve from the declaring `postman.md` directory, `~/...` points to the
+- If `skill_path` is set for normal role catalogs, confirm relative paths
+  resolve from the declaring `postman.md` directory, `~/...` points to the
   current user's home directory, and each selected skill name maps to a
   subdirectory containing `SKILL.md`.
 - If `skill_path` entries use `inject: compaction_ping`, confirm they are
@@ -223,7 +223,7 @@ they can be selected by skill:
 | `pending`, `waiting`, `stale`, queues                 | `postman-session-operator` |
 | dead-letter diagnosis and safe retry flow             | `postman-session-operator` |
 | `postman.md` syntax, edges, merge order               | `postman-config-auditor`   |
-| `skill_path` and compaction PING catalog behavior                | `postman-config-auditor`   |
+| `skill_path` and compaction PING catalog behavior     | `postman-config-auditor`   |
 
 Flag these imbalance patterns:
 
@@ -245,15 +245,15 @@ Flag these imbalance patterns:
 When recommending a balance fix, classify each moved or retained block as one
 of:
 
-| Class              | Destination                      | Reason                                              |
-| ------------------ | -------------------------------- | --------------------------------------------------- |
-| Transport contract | `postman.md`                     | Needed for delivery, replies, status, or escalation |
-| Role contract      | `postman.md`                     | Needed to behave correctly as this node             |
-| Skill index        | `skill_path`                     | Generated from skill frontmatter, not hand-written  |
+| Class              | Destination                                 | Reason                                              |
+| ------------------ | ------------------------------------------- | --------------------------------------------------- |
+| Transport contract | `postman.md`                                | Needed for delivery, replies, status, or escalation |
+| Role contract      | `postman.md`                                | Needed to behave correctly as this node             |
+| Skill index        | `skill_path`                                | Generated from skill frontmatter, not hand-written  |
 | Compaction index   | `skill_path` with `inject: compaction_ping` | Generated only for compaction-triggered PINGs       |
-| Task procedure     | `SKILL.md`                       | Needed only after a relevant task is selected       |
-| Reference material | `references/*.md`                | Too detailed for the skill body unless needed       |
-| Runtime default    | embedded TOML                    | Product default, not a local role instruction       |
+| Task procedure     | `SKILL.md`                                  | Needed only after a relevant task is selected       |
+| Reference material | `references/*.md`                           | Too detailed for the skill body unless needed       |
+| Runtime default    | embedded TOML                               | Product default, not a local role instruction       |
 
 ### 3.5. Runtime Symptoms
 

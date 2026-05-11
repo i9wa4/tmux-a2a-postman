@@ -975,7 +975,6 @@ description: Codex shell rules.
 	content := `---
 skill_path:
   - path: context-skills
-    inject: role
   - path: ~/.config/tmux-a2a-postman/skills
     inject: compaction_ping
   - path: ~/.claude/skills

@@ -17,8 +17,8 @@ defaults.
   with the `ui_node` class, keeping topology-facing settings in one diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
-  Entries with omitted `inject` or `inject: role` are appended to normal
-  role context and remain runtime-agnostic.
+  Entries with omitted `inject` are appended to normal role context and remain
+  runtime-agnostic.
 - `postman.md` frontmatter `skill_path` entries with
   `inject: compaction_ping` generate larger catalogs that stay out of normal
   role context and appear only in compaction-triggered daemon PINGs. Runtime
@@ -28,7 +28,7 @@ defaults.
 - Compaction PING catalog paths, including runtime-specific entries and the
   compatibility `compaction_skill_path` form, must be global/user-level:
   `~/...` or absolute. Repo-local relative paths remain supported only for
-  non-compaction role catalogs and are invalid for compaction PING catalogs.
+  normal role catalogs and are invalid for compaction PING catalogs.
 - Rendered skill catalogs dedupe by frontmatter `name`. Later path entries
   override earlier entries with the same rendered name. Runtime-specific
   compaction PING catalogs evaluate shared entries first and the matching

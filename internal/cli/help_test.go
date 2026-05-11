@@ -126,7 +126,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)",
 		"pane_capture_tail_lines          Recent lines scanned for compaction markers",
 		"Skill catalogs:",
-		"role skill_path relative paths resolve from the declaring postman.md directory",
+		"default skill_path relative paths resolve from the declaring postman.md directory",
 		"inject: compaction_ping and compaction_skill_path paths must be ~/... or absolute",
 		"inject: compaction_ping may use runtime: claude or runtime: codex for compaction-triggered PING catalogs",
 		"duplicate rendered skill names are deduped; later entries win, runtime entries override shared entries",
