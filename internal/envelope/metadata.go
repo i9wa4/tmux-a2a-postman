@@ -7,6 +7,7 @@ import (
 )
 
 type Metadata struct {
+	ContextID           string
 	From                string
 	To                  string
 	MessageID           string
@@ -122,6 +123,8 @@ func ParseMetadata(content string) (Metadata, error) {
 				continue
 			}
 			switch key {
+			case "contextId", "context_id":
+				metadata.ContextID = value
 			case "from":
 				metadata.From = value
 			case "to":

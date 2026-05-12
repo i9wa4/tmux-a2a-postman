@@ -133,11 +133,26 @@ func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelo
 	if meta.MessageID == "" {
 		meta.MessageID = payload.MessageID
 	}
+	if meta.ContextID == "" {
+		meta.ContextID = payload.ContextID
+	}
 	if meta.From == "" {
 		meta.From = payload.From
 	}
 	if meta.To == "" {
 		meta.To = payload.To
+	}
+	if meta.ReplyPolicy == "" {
+		meta.ReplyPolicy = payload.ReplyPolicy
+	}
+	if meta.ReplyTo == "" {
+		meta.ReplyTo = payload.ReplyTo
+	}
+	if meta.MessageType == "" {
+		meta.MessageType = payload.MessageType
+	}
+	if meta.Timestamp == "" {
+		meta.Timestamp = payload.Timestamp
 	}
 	if meta.InputRequestID == "" {
 		meta.InputRequestID = payload.InputRequestID
