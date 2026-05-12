@@ -134,6 +134,34 @@ func TestProjectMessageInputRequestState_ReplayFixturesRebuildOpenFilledAndUncer
 	}
 }
 
+func TestInputRequestMetadataFromPayloadUsesDurableMetadataFallbacks(t *testing.T) {
+	meta := inputRequestMetadataFromPayload(journal.MailboxEventPayload{
+		ContextID:           "ctx-replay",
+		MessageID:           "m1.md",
+		From:                "orchestrator",
+		To:                  "worker",
+		ReplyPolicy:         "required",
+		ReplyTo:             "previous.md",
+		MessageType:         "task",
+		Timestamp:           "2026-05-10T08:00:00Z",
+		InputRequestID:      "ireq_123",
+		FillsInputRequestID: "ireq_prev",
+		InputRequestSetID:   "ireqset_1",
+		BranchID:            "branch_1",
+		CompletionRule:      "all",
+	})
+
+	if meta.ContextID != "ctx-replay" || meta.MessageID != "m1.md" || meta.From != "orchestrator" || meta.To != "worker" {
+		t.Fatalf("identity metadata = %#v, want durable payload fallbacks", meta)
+	}
+	if meta.ReplyPolicy != "required" || meta.ReplyTo != "previous.md" || meta.MessageType != "task" || meta.Timestamp != "2026-05-10T08:00:00Z" {
+		t.Fatalf("lifecycle metadata = %#v, want durable payload fallbacks", meta)
+	}
+	if meta.InputRequestID != "ireq_123" || meta.FillsInputRequestID != "ireq_prev" || meta.InputRequestSetID != "ireqset_1" || meta.BranchID != "branch_1" || meta.CompletionRule != "all" {
+		t.Fatalf("input request metadata = %#v, want durable payload fallbacks", meta)
+	}
+}
+
 func TestProjectMessageInputRequestState_RepliesResolveRequiredMessages(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.May, 3, 9, 20, 0, 0, time.UTC)

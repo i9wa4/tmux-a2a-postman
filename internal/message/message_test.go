@@ -1303,7 +1303,8 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 
 	filename := "20260414-173500-r1234-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T17:35:00Z\n---\n\nshadow delivery\n"
+	replyTo := "20260414-173000-r0001-from-worker-to-orchestrator.md"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyPolicy: required\n  replyTo: " + replyTo + "\n  messageType: task\n  timestamp: 2026-04-14T17:35:00Z\n  input_request_id: ireq_delivery_123\n---\n\nshadow delivery\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile postPath failed: %v", err)
 	}
@@ -1341,6 +1342,19 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 	}
 	if payload["content"] != content {
 		t.Fatalf("payload[content] = %q, want %q", payload["content"], content)
+	}
+	for key, want := range map[string]string{
+		"context_id":       "test-ctx",
+		"message_id":       filename,
+		"reply_policy":     "required",
+		"reply_to":         replyTo,
+		"message_type":     "task",
+		"timestamp":        "2026-04-14T17:35:00Z",
+		"input_request_id": "ireq_delivery_123",
+	} {
+		if payload[key] != want {
+			t.Fatalf("payload[%s] = %q, want %q", key, payload[key], want)
+		}
 	}
 }
 
