@@ -689,7 +689,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 					mode = "compact"
 				}
 				if mode == "verbose" {
-					replyInstructions := fmt.Sprintf("\n\ntmux-a2a-postman send-heredoc --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - Use the quoted heredoc delimiter so shell snippets stay literal.",
+					replyInstructions := fmt.Sprintf(
+						"\n\ntmux-a2a-postman send-heredoc --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - Use the quoted heredoc delimiter so shell snippets stay literal.",
 						neighborsStr,
 					)
 					warnContent += replyInstructions
