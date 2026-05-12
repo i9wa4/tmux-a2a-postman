@@ -87,14 +87,14 @@ blocked-report metadata.
 
 The remaining notification-related public settings are:
 
-| Field                      | Purpose                                                   |
-| -------------------------- | --------------------------------------------------------- |
+| Field                      | Purpose                                                     |
+| -------------------------- | ----------------------------------------------------------- |
 | `notification_template`    | Pane hint rendered when mail arrives; not full message body |
-| `message_footer`           | Reply guidance rendered before the sender body separator  |
-| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown    |
-| `daemon_message_template`  | Structured envelope for daemon-originated startup PING    |
-| `ui_node`                  | Optional target filter for startup auto-PING              |
-| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes           |
+| `message_footer`           | Reply guidance rendered before the sender body separator    |
+| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown      |
+| `daemon_message_template`  | Structured envelope for daemon-originated startup PING      |
+| `ui_node`                  | Optional target filter for startup auto-PING                |
+| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes             |
 
 Stored message Markdown is an envelope. The default `send-heredoc` template
 keeps recipient instructions, reply guidance, and sender-authored content

@@ -17,26 +17,27 @@ Markdown configuration language.
 
 Supported files:
 
-| File type            | XDG path                                            | Project-local path                  |
-| -------------------- | --------------------------------------------------- | ----------------------------------- |
-| Main Markdown config | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`      | `.tmux-a2a-postman/postman.md`      |
-| Split node Markdown  | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md` | `.tmux-a2a-postman/nodes/{node}.md` |
+| File type            | XDG path                                            |
+| -------------------- | --------------------------------------------------- |
+| Main Markdown config | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`      |
+| Split node Markdown  | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md` |
+
+Implicit project-local `.tmux-a2a-postman/` overlays are retired. Keep
+workspace-specific alternatives explicit by passing `--config`.
 
 ## 2. Global Frontmatter
 
 Only a leading `---` block is parsed. The main `postman.md` frontmatter is
 YAML. Keep it small: scalar settings plus the `skill_path` catalog list are the
-supported public surface. `compaction_skill_path` remains accepted as a
-compatibility form for ping-injected catalogs.
+supported public surface.
 
 Supported global keys in `postman.md`:
 
-| Key                     | Effect                                                                  |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `ui_node`               | Sets `Config.UINode` as a frontmatter override                          |
-| `reply_command`         | Sets `Config.ReplyCommand` when non-empty                               |
-| `skill_path`            | Appends catalogs to context, or to compaction PINGs with `inject: ping` |
-| `compaction_skill_path` | Compatibility form for compaction-triggered daemon PING catalogs        |
+| Key             | Effect                                                              |
+| --------------- | ------------------------------------------------------------------- |
+| `ui_node`       | Sets `Config.UINode` as a frontmatter override                      |
+| `reply_command` | Sets `Config.ReplyCommand` when non-empty                           |
+| `skill_path`    | Appends catalogs to role context, daemon PINGs, or compaction PINGs |
 
 Rules:
 
@@ -48,27 +49,24 @@ Rules:
 - `skill_path` list items may be scalar paths or mappings with `path`,
   `inject`, `runtime`, and `skills`.
 - Only `skill_path` mappings accept `inject`.
-- For `skill_path` mappings, omitted `inject` and `inject: context` append the
-  generated catalog to normal role context.
+- For `skill_path` mappings, omitted `inject` appends the generated catalog to
+  normal role context.
 - For `skill_path` mappings, `inject: ping` stores the generated catalog for
-  compaction-triggered daemon PING role content and keeps it out of normal role
-  context.
-- `compaction_skill_path` may be a scalar path or a YAML list of path entries.
-- `compaction_skill_path` list items may be scalar paths or mappings with
-  `path`, `runtime`, and `skills`.
-- `compaction_skill_path` entries are always ping-injected compatibility
-  entries and do not accept `inject`.
-- `skill_path` mappings with `inject: ping`, and all `compaction_skill_path`
-  mappings, may include `runtime`; the currently supported exact runtime
-  selectors are `claude` and `codex`.
+  every daemon PING role content and keeps it out of normal role context.
+- For `skill_path` mappings, `inject: compaction_ping` stores the generated
+  catalog for compaction-triggered daemon PING role content and keeps it out of
+  normal role context.
+- `skill_path` mappings with `inject: ping` or `inject: compaction_ping` may
+  include `runtime`; the currently supported exact runtime selectors are
+  `claude` and `codex`.
 - Omitted `runtime` means the catalog is shared: it is included in
   runtime-specific catalogs and in the fallback catalog used when no exact
   runtime catalog matches.
-- `runtime` under `skill_path` requires `inject: ping`.
-- Ping-injected paths, including runtime-specific entries and
-  `compaction_skill_path`, must be global/user-level: `~/...` or absolute.
-  Repo-local relative paths are invalid for ping catalogs and remain valid only
-  for non-ping context catalogs.
+- `runtime` under `skill_path` requires `inject: ping` or
+  `inject: compaction_ping`.
+- PING paths, including runtime-specific entries, must be global/user-level:
+  `~/...` or absolute. Repo-local relative paths are invalid for PING catalogs
+  and remain valid only for normal role catalogs.
 - Omitted `skills` means every skill under that path.
 - When `skills` is present, use a YAML list of explicit skill directory names.
   A real skill named `all` is selected with `skills: [all]`.
@@ -78,7 +76,7 @@ Rules:
   explicitly.
 - Rendered catalogs contain at most one entry per skill frontmatter `name`.
   Later path entries override earlier entries with the same name. Runtime
-  catalogs evaluate shared ping entries first and matching runtime entries
+  catalogs evaluate shared entries first and matching runtime entries
   second, so runtime-specific entries override shared entries without duplicate
   rendered skill bodies.
 - An unclosed frontmatter block is an error.
@@ -99,11 +97,15 @@ skill_path:
     inject: ping
     skills:
       - postman-session-operator
+  - path: ~/.config/tmux-a2a-postman/skills
+    inject: compaction_ping
+    skills:
+      - postman-session-operator
   - path: ~/.claude/skills
-    inject: ping
+    inject: compaction_ping
     runtime: claude
   - path: ~/.codex/skills
-    inject: ping
+    inject: compaction_ping
     runtime: codex
     skills:
       - postman-config-auditor
@@ -112,25 +114,25 @@ skill_path:
 ```
 
 Each `path` points to a directory containing one subdirectory per skill, each
-with a `SKILL.md` file. For non-ping context catalogs, relative paths are
-resolved from the directory containing the `postman.md` file. `~/...` expands
-to the current user's home directory, and symlinked skill directories are
-followed. Generated catalogs read `name` and `description` from selected
-`SKILL.md` frontmatter and render a compact Markdown list. `skill_path` entries
-with omitted `inject` or `inject: context` append that list to
-`common_template`, which reaches normal role context, so use them for compact
-runtime-agnostic catalogs only.
+with a `SKILL.md` file. For normal role catalogs, relative paths are resolved
+from the directory containing the `postman.md` file. `~/...` expands to the
+current user's home directory, and symlinked skill directories are followed.
+Generated catalogs read `name` and `description` from selected `SKILL.md`
+frontmatter and render a compact Markdown list. `skill_path` entries with
+omitted `inject` append that list to `common_template`, which reaches normal
+role context, so use them for compact runtime-agnostic catalogs only.
 `skill_path` entries with `inject: ping` keep their list out of
+`common_template` and append it to every daemon PING role content.
+`skill_path` entries with `inject: compaction_ping` keep their list out of
 `common_template` and append it only to daemon PING role content when pane
-capture detects a context-compaction marker. Runtime-specific ping entries are
+capture detects a context-compaction marker. Runtime-specific PING entries are
 selected from the pane's current command. Entries without `runtime` are shared
 catalogs included in all runtime-specific catalogs and in the fallback catalog.
-Exact runtime-specific compaction handling is intentionally limited to Claude
-Code and Codex CLI because those are the runtimes with pane compaction markers
-today. `compaction_skill_path` has the same ping-injection behavior and remains
-accepted as a compatibility form. Ping-injected paths must be `~/...` or
-absolute; repo-local relative paths are invalid in this mode. For user-level
-runtime skill trees, prefer `$HOME/.claude/skills` and `$HOME/.codex/skills`.
+Exact runtime-specific PING handling is intentionally limited to Claude Code
+and Codex CLI because those are the runtimes with pane compaction markers today.
+PING paths must be `~/...` or absolute; repo-local relative paths are invalid in
+this mode. For user-level runtime skill trees, prefer `$HOME/.claude/skills`
+and `$HOME/.codex/skills`.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 
@@ -271,10 +273,12 @@ Effective configuration is loaded from low to high priority:
 3. XDG `nodes/*.toml`
 4. XDG `nodes/*.md`
 5. XDG `postman.md`
-6. Project-local `postman.toml`
-7. Project-local `nodes/*.toml`
-8. Project-local `nodes/*.md`
-9. Project-local `postman.md`
+
+The daemon snapshots this effective configuration once at startup. Edits to
+`postman.toml`, `postman.md`, or `nodes/*` require a daemon restart before they
+affect routing, role templates, daemon defaults, or skill catalogs. Runtime
+watchers remain for mail delivery, read/archive moves, and daemon submit queues;
+they do not hot-reload global config.
 
 Important rules:
 
@@ -287,16 +291,13 @@ Important rules:
   frontmatter does not set it. Frontmatter `ui_node` wins within the same
   Markdown file.
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
-- Project-local `postman.md` `message_footer` appends to the effective base
-  footer.
 - `skill_path` is applied within the Markdown layer that declares it. Entries
-  with omitted `inject` or `inject: context` append generated catalogs to that
-  layer's `common_template` content; entries with `inject: ping` stay separate
-  and append only to compaction-triggered daemon PING role content.
+  with omitted `inject` append generated catalogs to that layer's
+  `common_template` content; entries with `inject: ping` or
+  `inject: compaction_ping` stay separate and append only to matching daemon
+  PING role content.
 - When multiple entries select the same skill frontmatter `name`, the later
   entry wins and the rendered catalog includes one body for that name.
-- `compaction_skill_path` is applied within the Markdown layer that declares it
-  as a compatibility form for `skill_path` entries with `inject: ping`.
 - Nodes referenced by valid edges are materialized automatically.
 
 ## 8. Minimal Valid postman.md

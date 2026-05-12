@@ -358,6 +358,7 @@ func TestDefaultConfigOnlyInitializesStructuralFields(t *testing.T) {
 		Edges:                   []string{},
 		Nodes:                   map[string]NodeConfig{},
 		NodeOrder:               []string{},
+		PingSkillCatalogs:       map[string]string{},
 		CompactionSkillCatalogs: map[string]string{},
 	}
 
@@ -405,6 +406,7 @@ func assertNonZeroTOMLTaggedFieldsDeclared(t *testing.T, section string, value a
 }
 
 func TestLoadConfig_ProjectLocal_EmptyUINodeOverridesEmbeddedDefault(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	projectDir := filepath.Join(fakeHome, "project")
@@ -1160,6 +1162,7 @@ func TestGetTmuxSessionName(t *testing.T) {
 }
 
 func TestResolveProjectLocalConfig_FoundInCWD(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -1180,6 +1183,7 @@ func TestResolveProjectLocalConfig_FoundInCWD(t *testing.T) {
 }
 
 func TestResolveProjectLocalConfig_FoundInParent(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	subDir := filepath.Join(tmpDir, "sub", "nested")
 	if err := os.MkdirAll(subDir, 0o755); err != nil {
@@ -1204,6 +1208,7 @@ func TestResolveProjectLocalConfig_FoundInParent(t *testing.T) {
 }
 
 func TestResolveProjectLocalConfig_StopsBeforeHome(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	subDir := filepath.Join(fakeHome, "project")
@@ -1231,6 +1236,7 @@ func TestResolveProjectLocalConfig_StopsBeforeHome(t *testing.T) {
 }
 
 func TestResolveProjectLocalConfig_SkipsXDGDuplicate(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, ".tmux-a2a-postman")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -1252,6 +1258,7 @@ func TestResolveProjectLocalConfig_SkipsXDGDuplicate(t *testing.T) {
 }
 
 func TestResolveProjectLocalConfig_NotFound(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir) // walk stops before tmpDir (== home)
 
@@ -1332,6 +1339,7 @@ func TestMergeConfig_NodeMerge(t *testing.T) {
 }
 
 func TestLoadConfig_ProjectLocal_Only(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	subDir := filepath.Join(fakeHome, "project")
@@ -1392,6 +1400,7 @@ role = "orchestrator"
 }
 
 func TestLoadConfig_ProjectLocal_Overrides_XDG(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 
@@ -1465,7 +1474,107 @@ scan_interval_seconds = 9.0
 	}
 }
 
+func TestLoadConfig_IgnoresProjectLocalWhenXDGExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	xdgConfigHome := filepath.Join(tmpDir, "xdg")
+	xdgConfigDir := filepath.Join(xdgConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(xdgConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll xdgConfigDir failed: %v", err)
+	}
+	xdgConfig := `
+[postman]
+scan_interval_seconds = 2.0
+edges = ["worker --- orchestrator"]
+
+[worker]
+role = "xdg-worker"
+
+[orchestrator]
+role = "xdg-orchestrator"
+`
+	if err := os.WriteFile(filepath.Join(xdgConfigDir, "postman.toml"), []byte(xdgConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile XDG config failed: %v", err)
+	}
+
+	projectDir := filepath.Join(fakeHome, "project")
+	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
+	if err := os.MkdirAll(localConfigDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localConfigDir failed: %v", err)
+	}
+	localConfig := `
+[postman]
+scan_interval_seconds = 9.0
+
+[worker]
+role = "local-worker"
+`
+	if err := os.WriteFile(filepath.Join(localConfigDir, "postman.toml"), []byte(localConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile local config failed: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	t.Setenv("HOME", fakeHome)
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.ScanInterval != 2.0 {
+		t.Fatalf("ScanInterval = %v, want XDG value 2.0", cfg.ScanInterval)
+	}
+	if cfg.Nodes["worker"].Role != "xdg-worker" {
+		t.Fatalf("worker.Role = %q, want xdg-worker", cfg.Nodes["worker"].Role)
+	}
+}
+
+func TestLoadConfig_ExplicitConfigIgnoresProjectLocalNodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeHome := filepath.Join(tmpDir, "home")
+	explicitDir := filepath.Join(tmpDir, "explicit")
+	if err := os.MkdirAll(explicitDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll explicitDir failed: %v", err)
+	}
+	explicitConfigPath := filepath.Join(explicitDir, "postman.toml")
+	explicitConfig := `
+[postman]
+edges = ["worker --- orchestrator"]
+
+[worker]
+role = "explicit-worker"
+
+[orchestrator]
+role = "explicit-orchestrator"
+`
+	if err := os.WriteFile(explicitConfigPath, []byte(explicitConfig), 0o644); err != nil {
+		t.Fatalf("WriteFile explicit config failed: %v", err)
+	}
+
+	projectDir := filepath.Join(fakeHome, "project")
+	localNodesDir := filepath.Join(projectDir, ".tmux-a2a-postman", "nodes")
+	if err := os.MkdirAll(localNodesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll localNodesDir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localNodesDir, "worker.toml"), []byte("[worker]\nrole = \"local-worker\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile local node failed: %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "empty-xdg"))
+	t.Setenv("HOME", fakeHome)
+	t.Chdir(projectDir)
+
+	cfg, err := LoadConfig(explicitConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(%q) failed: %v", explicitConfigPath, err)
+	}
+	if cfg.Nodes["worker"].Role != "explicit-worker" {
+		t.Fatalf("worker.Role = %q, want explicit-worker", cfg.Nodes["worker"].Role)
+	}
+}
+
 func TestLoadConfig_ProjectLocal_ZeroValuePostmanInventory(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalPostmanConfig())
 
 	cfg, err := LoadConfig("")
@@ -1480,6 +1589,7 @@ func TestLoadConfig_ProjectLocal_ZeroValuePostmanInventory(t *testing.T) {
 }
 
 func TestLoadConfig_ProjectLocal_ZeroValueNodeInventory(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalNodeConfig())
 
 	cfg, err := LoadConfig("")
@@ -1494,6 +1604,7 @@ func TestLoadConfig_ProjectLocal_ZeroValueNodeInventory(t *testing.T) {
 }
 
 func TestLoadConfig_ProjectLocal_ZeroValueNodeDefaultsEnterCount(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	projectDir, _ := setupProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalNodeDefaultsConfig())
 
 	cfg, err := LoadConfig("")
@@ -1510,6 +1621,7 @@ func TestLoadConfig_ProjectLocal_ZeroValueNodeDefaultsEnterCount(t *testing.T) {
 }
 
 func TestLoadConfig_ExplicitConfig_ProjectLocalZeroValueInventory(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	_, explicitConfigPath := setupExplicitProjectLocalOverlayFixture(t, zeroValueInventoryBaseConfig(), zeroValueInventoryLocalAllConfig())
 
 	cfg, err := LoadConfig(explicitConfigPath)
@@ -2085,6 +2197,7 @@ func TestIsSessionPIDAlive_FreshContextWithoutPIDIsNotAlive(_ *testing.T) {
 // Issue #274: Project-local nodes/ override tests.
 
 func TestLoadConfig_ProjectLocal_Nodes_Override(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 
@@ -2160,6 +2273,7 @@ role = "local-worker"
 }
 
 func TestLoadConfig_ProjectLocal_Nodes_Merge(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 
@@ -2230,6 +2344,7 @@ role = "local-worker"
 }
 
 func TestLoadConfig_ProjectLocal_Nodes_SkipsReserved(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 
@@ -2310,6 +2425,7 @@ role = "local-worker"
 // When LoadConfig is called with an explicit config path, project-local nodes/ must
 // still be applied on top.
 func TestLoadConfig_ExplicitConfig_RespectProjectLocalNodes(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir) // Isolate from XDG postman.md
 	fakeHome := filepath.Join(tmpDir, "home")
@@ -2400,8 +2516,8 @@ func TestResolveLocalConfigPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveLocalConfigPath: %v", err)
 	}
-	if got != configPath {
-		t.Errorf("ResolveLocalConfigPath = %q, want %q", got, configPath)
+	if got != "" {
+		t.Errorf("ResolveLocalConfigPath = %q, want empty after project-local retirement", got)
 	}
 
 	// Returns "" when no sentinel.
@@ -2527,6 +2643,7 @@ role = "worker"
 }
 
 func TestLoadConfig_ExplicitConfigProjectLocalMarkdownShellExpansionBlocked(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	projectDir := filepath.Join(fakeHome, "project")
@@ -2572,6 +2689,7 @@ role = "worker"
 }
 
 func TestLoadConfig_MessageFooter_ProjectLocalPrecedence(t *testing.T) {
+	t.Skip("project-local implicit overlays retired by #419")
 	tmpDir := t.TempDir()
 	fakeHome := filepath.Join(tmpDir, "home")
 	projectDir := filepath.Join(fakeHome, "project")

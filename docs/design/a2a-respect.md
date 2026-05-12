@@ -11,13 +11,13 @@ operations, negotiate `A2A-Version`, or guarantee A2A wire interoperability.
 
 ## Sources Consulted
 
-| Source                    | Version or date                 | URL                                                              | Use in this page                                      |
-| ------------------------- | ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
-| A2A specification         | Latest released version 1.0.0   | <https://a2a-protocol.org/latest/specification/>                   | Core model, TaskState, Message, Part, AgentCard       |
-| A2A protobuf              | Tag `v1.0.0`, package `lf.a2a.v1` | <https://raw.githubusercontent.com/a2aproject/A2A/v1.0.0/specification/a2a.proto> | Normative field and enum names                        |
-| A2A Life of a Task        | Accessed 2026-05-06             | <https://a2a-protocol.org/latest/topics/life-of-a-task/>           | Context/task/message relationships and follow-ups     |
-| A2A GitHub releases       | `v1.0.0`, 2026-03-12            | <https://github.com/a2aproject/A2A/releases>                       | Current release and v1.0 migration notes              |
-| tmux-a2a-postman issue #396 | Open, accessed 2026-05-06       | <https://github.com/i9wa4/tmux-a2a-postman/issues/396>             | `pop` JSON, frontmatter, and `markdown_path` direction |
+| Source                      | Version or date                   | URL                                                                               | Use in this page                                       |
+| --------------------------- | --------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| A2A specification           | Latest released version 1.0.0     | <https://a2a-protocol.org/latest/specification/>                                  | Core model, TaskState, Message, Part, AgentCard        |
+| A2A protobuf                | Tag `v1.0.0`, package `lf.a2a.v1` | <https://raw.githubusercontent.com/a2aproject/A2A/v1.0.0/specification/a2a.proto> | Normative field and enum names                         |
+| A2A Life of a Task          | Accessed 2026-05-06               | <https://a2a-protocol.org/latest/topics/life-of-a-task/>                          | Context/task/message relationships and follow-ups      |
+| A2A GitHub releases         | `v1.0.0`, 2026-03-12              | <https://github.com/a2aproject/A2A/releases>                                      | Current release and v1.0 migration notes               |
+| tmux-a2a-postman issue #396 | Open, accessed 2026-05-06         | <https://github.com/i9wa4/tmux-a2a-postman/issues/396>                            | `pop` JSON, frontmatter, and `markdown_path` direction |
 
 The A2A spec says the protocol has a layered model: a canonical data model,
 abstract operations, and concrete protocol bindings. It also identifies the
@@ -107,22 +107,22 @@ plus node health projection.
 
 ## Term Mapping
 
-| A2A term                     | Postman term or surface                                               | Current recommendation                                          |
-| ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `contextId`                  | Stored frontmatter `params.contextId`; health JSON `context_id`       | Prefer A2A-natural `contextId` in future generated detail views; expose stored keys unchanged only as archive truth. |
-| `taskId` / `task_id`         | External issue, plan, mkmd task, or future daemon-owned task          | Do not generate daemon `task_id` until postman owns tasks.      |
+| A2A term                     | Postman term or surface                                               | Current recommendation                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `contextId`                  | Stored frontmatter `params.contextId`; health JSON `context_id`       | Prefer A2A-natural `contextId` in future generated detail views; expose stored keys unchanged only as archive truth.                    |
+| `taskId` / `task_id`         | External issue, plan, mkmd task, or future daemon-owned task          | Do not generate daemon `task_id` until postman owns tasks.                                                                              |
 | `Message.messageId`          | Stored frontmatter `messageId`; public JSON `message_id`; file name   | Prefer an A2A-aware `message.messageId` projection in future detail JSON; keep raw stored keys only where they report archive metadata. |
-| `Message.role`               | `from`, `to`, pane title, node name                                   | Keep local peer routing names; A2A user/agent roles do not fit. |
-| `Message.parts`              | Markdown body; possible future body projection from #396              | Treat body as one `text/markdown` part only if #396 adds parts. |
-| `Message.metadata`           | YAML frontmatter fields under `params` and other top-level sections   | Project structured frontmatter in `pop` JSON after #396.        |
-| `referenceTaskIds`           | Optional future `reference_task_ids` for external task IDs            | Do not overload `input_request_set_id`; they are different concepts.    |
-| `Artifact`                   | mkmd task artifacts or produced files                                 | Use as analogy; do not claim A2A Artifact without IDs/parts.    |
-| `Task.status.state`          | `visible_state`, `severity`, `nodes[*].flow`                          | Provide an alignment view, not direct replacement.              |
-| `input-required`             | Recipient `input_required`; open `input_request_id`                     | Good conceptual match for required recipient input.             |
-| `TaskStatus.message`         | Reply-required message body and footer guidance                       | Use as analogy when explaining why a reply is needed.           |
-| `AgentCard`                  | `postman.md`, `postman.toml`, `nodes/*`, `skills/*/SKILL.md`          | Consider an AgentCard-like export later; not implemented now.   |
-| `AgentSkill`                 | Published postman skills and node role capabilities                   | Keep skill docs precise and installable.                        |
-| A2A protocol binding         | None                                                                  | Do not claim JSON-RPC, gRPC, or HTTP+JSON binding support.      |
+| `Message.role`               | `from`, `to`, pane title, node name                                   | Keep local peer routing names; A2A user/agent roles do not fit.                                                                         |
+| `Message.parts`              | Markdown body; possible future body projection from #396              | Treat body as one `text/markdown` part only if #396 adds parts.                                                                         |
+| `Message.metadata`           | YAML frontmatter fields under `params` and other top-level sections   | Project structured frontmatter in `pop` JSON after #396.                                                                                |
+| `referenceTaskIds`           | Optional future `reference_task_ids` for external task IDs            | Do not overload `input_request_set_id`; they are different concepts.                                                                    |
+| `Artifact`                   | mkmd task artifacts or produced files                                 | Use as analogy; do not claim A2A Artifact without IDs/parts.                                                                            |
+| `Task.status.state`          | `visible_state`, `severity`, `nodes[*].flow`                          | Provide an alignment view, not direct replacement.                                                                                      |
+| `input-required`             | Recipient `input_required`; open `input_request_id`                   | Good conceptual match for required recipient input.                                                                                     |
+| `TaskStatus.message`         | Reply-required message body and footer guidance                       | Use as analogy when explaining why a reply is needed.                                                                                   |
+| `AgentCard`                  | `postman.md`, `postman.toml`, `nodes/*`, `skills/*/SKILL.md`          | Consider an AgentCard-like export later; not implemented now.                                                                           |
+| `AgentSkill`                 | Published postman skills and node role capabilities                   | Keep skill docs precise and installable.                                                                                                |
+| A2A protocol binding         | None                                                                  | Do not claim JSON-RPC, gRPC, or HTTP+JSON binding support.                                                                              |
 
 ## State Alignment
 
@@ -132,20 +132,20 @@ should not be stored as direct replacements.
 
 | Postman state or severity              | Closest A2A term                 | Recommendation                                                                 |
 | -------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------ |
-| `ready`                                | No active task, or `completed`   | Keep `ready`; A2A `completed` only applies to an explicit task.                 |
+| `ready`                                | No active task, or `completed`   | Keep `ready`; A2A `completed` only applies to an explicit task.                |
 | `working` severity                     | `working`                        | Good alignment when pane activity or queued delivery proves work in progress.  |
-| `waiting` visible state                | Client waiting for a task update | Keep `waiting`; A2A has no sender-side wait state.                              |
+| `waiting` visible state                | Client waiting for a task update | Keep `waiting`; A2A has no sender-side wait state.                             |
 | `pending` visible state                | `input-required`                 | Best alignment; recipient has input/reply work to do.                          |
-| `input_required` input request           | `input-required`                 | Strong match; consider an `input_request_id` alias only after #396 design.      |
-| `waiting_on_input` input request          | No direct TaskState              | Keep; it is sender-side projection, not task lifecycle.                         |
+| `input_required` input request         | `input-required`                 | Strong match; consider an `input_request_id` alias only after #396 design.     |
+| `waiting_on_input` input request       | No direct TaskState              | Keep; it is sender-side projection, not task lifecycle.                        |
 | `blocked` severity                     | `input-required` or `failed`     | Do not auto-map; blocked may be recoverable or terminal depending on evidence. |
 | `delivery_stuck` severity              | No direct TaskState              | Keep postman-specific; it is transport health.                                 |
 | `delivery_failure` severity            | No direct TaskState              | Keep postman-specific; dead letters are routing failures, not task failures.   |
-| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; it means pane or session evidence is unreliable.         |
+| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; it means pane or session evidence is unreliable.        |
 | `unavailable` session fallback         | `unknown` / unspecified          | Keep postman-specific; it is a daemon ownership/canonical-health condition.    |
-| Future explicit cancellation           | `canceled`                       | Use only when a task/request is explicitly canceled.                            |
-| Future explicit rejection              | `rejected`                       | Use only when a node explicitly refuses the work.                               |
-| Future authentication wait             | `auth-required`                  | Use only when an auth handoff is modeled as a first-class obligation.           |
+| Future explicit cancellation           | `canceled`                       | Use only when a task/request is explicitly canceled.                           |
+| Future explicit rejection              | `rejected`                       | Use only when a node explicitly refuses the work.                              |
+| Future authentication wait             | `auth-required`                  | Use only when an auth handoff is modeled as a first-class obligation.          |
 
 Recommended public wording:
 
@@ -192,26 +192,26 @@ Design rules:
 
 Current postman input-request fields are operationally accurate:
 
-| Current field                  | Meaning                                                        | A2A alignment note                                     |
-| ------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------ |
-| `input_request_id`             | Exact required-input request opened for a recipient            | Similar to one `input-required` request, not A2A wire. |
-| `fills_input_request_id`       | Exact input request that this reply resolves                   | Mechanical closure field; good for projection.         |
-| `input_request_set_id`         | Reserved aggregate for grouped input requests                  | Not the same as A2A `referenceTaskIds`.                |
-| `reply_to`                     | Message ID this message references                            | Similar to linking message history, not task identity. |
-| `input_required`               | Recipient-side open reply-required work                       | Best local name for `input-required` behavior.         |
-| `waiting_on_input`             | Sender-side open wait for required reply                      | Postman-specific perspective.                          |
-| `inspect-input --id`           | Finds open input requests by `input_request_id` or message ID  | Useful operator API.                                   |
-| `nodes[*].flow.input_requests` | Health JSON projection of open required-input requests         | Correct home for detailed input-request state.         |
-| `pop` JSON fields              | Claimed message envelope path and structured frontmatter metadata | Expose archive truth without embedding full body.    |
+| Current field                  | Meaning                                                           | A2A alignment note                                     |
+| ------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------ |
+| `input_request_id`             | Exact required-input request opened for a recipient               | Similar to one `input-required` request, not A2A wire. |
+| `fills_input_request_id`       | Exact input request that this reply resolves                      | Mechanical closure field; good for projection.         |
+| `input_request_set_id`         | Reserved aggregate for grouped input requests                     | Not the same as A2A `referenceTaskIds`.                |
+| `reply_to`                     | Message ID this message references                                | Similar to linking message history, not task identity. |
+| `input_required`               | Recipient-side open reply-required work                           | Best local name for `input-required` behavior.         |
+| `waiting_on_input`             | Sender-side open wait for required reply                          | Postman-specific perspective.                          |
+| `inspect-input --id`           | Finds open input requests by `input_request_id` or message ID     | Useful operator API.                                   |
+| `nodes[*].flow.input_requests` | Health JSON projection of open required-input requests            | Correct home for detailed input-request state.         |
+| `pop` JSON fields              | Claimed message envelope path and structured frontmatter metadata | Expose archive truth without embedding full body.      |
 
 Counterpart names if the project later models richer request closure:
 
-| Candidate                         | Verdict       | Reason                                                                   |
-| --------------------------------- | ------------- | ------------------------------------------------------------------------ |
+| Candidate                         | Verdict       | Reason                                                                    |
+| --------------------------------- | ------------- | ------------------------------------------------------------------------- |
 | `fills_input_request_id`          | Current       | Short, mirrors exact closure, and says the request is satisfied.          |
 | `responds_to_input_request_id`    | Rejected      | A response may not actually satisfy or close the request.                 |
 | `satisfies_input_request_id`      | Plausible     | Precise, but long and implies semantic validation beyond current closure. |
-| `input_response_to`               | Rejected      | Less consistent with existing `reply_to` and `fills_*` naming.           |
+| `input_response_to`               | Rejected      | Less consistent with existing `reply_to` and `fills_*` naming.            |
 | `input_request_id` only           | Insufficient  | Needs a counterpart field for exact closure.                              |
 
 Forward path:
@@ -269,37 +269,37 @@ local schema/version contract that is independent of the A2A reference.
 
 ## Where to Store A2A Reference Metadata
 
-| Surface                     | Recommendation                                  | Why                                                            |
-| --------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
-| Public docs                 | Required                                        | Explains what version the project is using for terminology.    |
-| mkmd task artifacts         | Useful for design work                          | Records research evidence and decisions without changing wire data. |
-| Build metadata              | Optional                                        | Useful for `version` output, but does not make archives self-describing. |
-| `postman.toml` / `postman.md` | Plausible default source                       | Lets a session declare alignment policy once.                  |
-| Message frontmatter         | Recommended only if #396 accepts metadata noise | Makes each archived message self-describing and visible in pop JSON. |
-| `get-status` JSON           | Optional additive field                         | Useful for operators, but health is runtime state, not archive truth. |
-| CLI help text               | Mention sparingly                               | Help should not become a protocol essay.                       |
+| Surface                       | Recommendation                                  | Why                                                                      |
+| ----------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
+| Public docs                   | Required                                        | Explains what version the project is using for terminology.              |
+| mkmd task artifacts           | Useful for design work                          | Records research evidence and decisions without changing wire data.      |
+| Build metadata                | Optional                                        | Useful for `version` output, but does not make archives self-describing. |
+| `postman.toml` / `postman.md` | Plausible default source                        | Lets a session declare alignment policy once.                            |
+| Message frontmatter           | Recommended only if #396 accepts metadata noise | Makes each archived message self-describing and visible in pop JSON.     |
+| `get-status` JSON             | Optional additive field                         | Useful for operators, but health is runtime state, not archive truth.    |
+| CLI help text                 | Mention sparingly                               | Help should not become a protocol essay.                                 |
 
 If the reference is written into every message, use the minimal shape above and
 keep it non-normative. Do not write `a2a_compliant: true`.
 
 ## Per-Message Metadata Benefits and Risks
 
-| Benefit                         | Detail                                                              |
-| ------------------------------- | ------------------------------------------------------------------- |
+| Benefit                         | Detail                                                               |
+| ------------------------------- | -------------------------------------------------------------------- |
 | Self-describing archives        | A read message can be understood without knowing the current binary. |
 | Better `pop` JSON after #396    | Structured frontmatter can expose the A2A reference directly.        |
 | Mixed-version history support   | Old and new messages can carry different alignment references.       |
 | Per-message migration evidence  | Migration tools can decide what field vocabulary was intended.       |
 | Debuggable generated templates  | Footer/template regressions become visible in message files.         |
 
-| Risk                              | Detail                                                                 |
-| --------------------------------- | ---------------------------------------------------------------------- |
-| Metadata noise                    | Every stored message gains lines that do not affect routing.           |
+| Risk                              | Detail                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| Metadata noise                    | Every stored message gains lines that do not affect routing.            |
 | Misleading wording                | `a2a_protocol` could be misread as compliance unless docs are explicit. |
 | Version churn                     | A2A patch releases could cause unnecessary template updates.            |
-| Template update blast radius      | Message template changes touch tests, docs, skills, and examples.      |
-| Archive inconsistency             | Some historical messages will not have the marker.                     |
-| Pop payload growth                | #396 wants machine-friendly JSON; extra metadata should stay compact.  |
+| Template update blast radius      | Message template changes touch tests, docs, skills, and examples.       |
+| Archive inconsistency             | Some historical messages will not have the marker.                      |
+| Pop payload growth                | #396 wants machine-friendly JSON; extra metadata should stay compact.   |
 
 Recommendation: add the marker to message frontmatter only when #396 changes
 `pop` JSON to expose structured frontmatter and `markdown_path`. Until then,
@@ -380,18 +380,18 @@ A2A AgentCard describes an agent's identity, interfaces, capabilities, security
 requirements, input/output modes, and skills. Postman has related material, but
 spread across local files and installed skills:
 
-| A2A AgentCard field        | Postman source                                       |
-| -------------------------- | ---------------------------------------------------- |
-| `name` / `description`     | Node role names and role text in `postman.md`        |
-| `supportedInterfaces`      | None today; possible future custom binding metadata  |
-| `version`                  | Binary `version` output and release tag              |
-| `documentationUrl`         | Repository docs and README                           |
+| A2A AgentCard field        | Postman source                                          |
+| -------------------------- | ------------------------------------------------------- |
+| `name` / `description`     | Node role names and role text in `postman.md`           |
+| `supportedInterfaces`      | None today; possible future custom binding metadata     |
+| `version`                  | Binary `version` output and release tag                 |
+| `documentationUrl`         | Repository docs and README                              |
 | `capabilities`             | Daemon commands, health surfaces, input-request support |
-| `defaultInputModes`        | Markdown messages via `send-heredoc`                 |
-| `defaultOutputModes`       | Markdown messages and JSON health/pop output         |
-| `skills`                   | `skills/*/SKILL.md`                                  |
-| `securitySchemes`          | None today; local tmux/user trust boundary           |
-| `securityRequirements`     | None today                                           |
+| `defaultInputModes`        | Markdown messages via `send-heredoc`                    |
+| `defaultOutputModes`       | Markdown messages and JSON health/pop output            |
+| `skills`                   | `skills/*/SKILL.md`                                     |
+| `securitySchemes`          | None today; local tmux/user trust boundary              |
+| `securityRequirements`     | None today                                              |
 
 Recommendation: do not generate AgentCard JSON yet. First decide whether
 postman wants a real custom binding or only a documentation analogy. If a
@@ -469,25 +469,25 @@ Archive and migration handling:
 
 ## Rejected Alternatives
 
-| Alternative                            | Reason rejected                                                       |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| Claim an A2A server surface            | Postman does not implement A2A discovery, operations, or bindings.     |
-| Replace `visible_state` with TaskState | Node health and task lifecycle are different models.                   |
+| Alternative                            | Reason rejected                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| Claim an A2A server surface            | Postman does not implement A2A discovery, operations, or bindings.       |
+| Replace `visible_state` with TaskState | Node health and task lifecycle are different models.                     |
 | Add `postman_schema_version` now       | A2A reference metadata does not require local archive schema versioning. |
-| Add a TOML A2A version knob            | It looks user-configurable but changes no runtime behavior.             |
-| Put A2A reference only in build output  | Archived messages would not be self-describing.                       |
-| Put full A2A AgentCard in docs now     | Would imply a discovery surface that does not exist.                   |
+| Add a TOML A2A version knob            | It looks user-configurable but changes no runtime behavior.              |
+| Put A2A reference only in build output | Archived messages would not be self-describing.                          |
+| Put full A2A AgentCard in docs now     | Would imply a discovery surface that does not exist.                     |
 
 ## Open Questions
 
-| Question                                      | Decision needed                                                   |
-| --------------------------------------------- | ----------------------------------------------------------------- |
-| Per-message marker                            | Should every new message carry `protocol.respects.a2a_protocol`?  |
-| Version string                                | Should archives store `"1.0"` or exact release `"1.0.0"`?         |
-| Alias timing                                  | Should #396 add `input_request_id` aliases or only expose current fields? |
-| Task ownership                                | Should postman ever generate task IDs, or leave tasks to mkmd/issues? |
-| AgentCard-like export                         | Should config/skills become a generated discovery document later? |
-| Body projection                               | Should #396 expose `parts`, or only `markdown_path` and frontmatter? |
+| Question                                      | Decision needed                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Per-message marker                            | Should every new message carry `protocol.respects.a2a_protocol`?            |
+| Version string                                | Should archives store `"1.0"` or exact release `"1.0.0"`?                   |
+| Alias timing                                  | Should #396 add `input_request_id` aliases or only expose current fields?   |
+| Task ownership                                | Should postman ever generate task IDs, or leave tasks to mkmd/issues?       |
+| AgentCard-like export                         | Should config/skills become a generated discovery document later?           |
+| Body projection                               | Should #396 expose `parts`, or only `markdown_path` and frontmatter?        |
 | Custom binding                                | Is a file/tmux A2A custom binding a goal, or is terminology respect enough? |
 
 These choices need user judgment because they affect public archives, JSON

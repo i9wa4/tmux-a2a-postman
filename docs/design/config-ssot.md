@@ -6,7 +6,8 @@ defaults.
 ## Policy
 
 - `DefaultConfig()` initializes structural and derived containers only:
-  `Edges`, `Nodes`, `NodeOrder`, and `CompactionSkillCatalogs`.
+  `Edges`, `Nodes`, `NodeOrder`, `PingSkillCatalogs`, and
+  `CompactionSkillCatalogs`.
 - Non-zero defaults for public config fields belong in
   `internal/config/postman.default.toml`.
 - `postman.toml` is optional. With no user TOML, embedded defaults are enough
@@ -17,32 +18,34 @@ defaults.
   with the `ui_node` class, keeping topology-facing settings in one diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
-  Entries with omitted `inject` or `inject: context` are appended to normal
-  role context and remain runtime-agnostic.
+  Entries with omitted `inject` are appended to normal role context and remain
+  runtime-agnostic.
 - `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
-  larger catalogs that stay out of normal role context and appear only in
-  compaction-triggered daemon PINGs. Runtime selectors for these catalogs live
-  in `postman.md`; exact runtime support is currently Claude Code and Codex
-  CLI, and an omitted `runtime` is shared plus fallback.
-- Ping-injected catalog paths, including runtime-specific entries and the
-  compatibility `compaction_skill_path` form, must be global/user-level:
-  `~/...` or absolute. Repo-local relative paths remain supported only for
-  non-ping context catalogs and are invalid for ping catalogs.
+  catalogs for every daemon PING. Entries with `inject: compaction_ping`
+  generate catalogs only for compaction-triggered daemon PINGs. Both stay out
+  of normal role context. Runtime selectors for these catalogs live in
+  `postman.md`; exact runtime support is currently Claude Code and Codex CLI,
+  and an omitted `runtime` is shared plus fallback.
+- PING catalog paths, including runtime-specific entries, must be
+  global/user-level: `~/...` or absolute. Repo-local relative paths remain
+  supported only for normal role catalogs and are invalid for PING catalogs.
 - Rendered skill catalogs dedupe by frontmatter `name`. Later path entries
-  override earlier entries with the same rendered name. Runtime-specific ping
-  catalogs evaluate shared entries first and the matching runtime entries
-  second, so runtime entries override shared entries without injecting duplicate
-  skill bodies.
-- `compaction_skill_path` remains accepted as a compatibility form for
-  ping-injected catalogs. New examples should use `skill_path` with
-  `inject: ping`.
+  override earlier entries with the same rendered name. Runtime-specific
+  compaction PING catalogs evaluate shared entries first and the matching
+  runtime entries second, so runtime entries override shared entries without
+  injecting duplicate skill bodies.
 - Omitted `skills` means all skills under that path. A present `skills` value
   should be a YAML list of explicit skill directory names; `skills: [all]`
   selects a real skill named `all`. The scalar `skills: all` remains accepted
   as a legacy shorthand for existing configs.
 - Runtime IDs, product names, and conventional skill-directory metadata are
   centralized in `internal/agentruntime`.
-- Explicit XDG and project-local overrides merge on top of embedded defaults.
+- XDG/global config and explicit `--config` files merge on top of embedded
+  defaults. Implicit project-local `.tmux-a2a-postman/` overlays are not part
+  of the runtime config surface.
+- The daemon snapshots global/explicit config once during startup. Runtime
+  filesystem watchers do not reload `postman.toml`, `postman.md`, or `nodes/*`;
+  operators restart the daemon to apply config changes.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.
 
@@ -66,8 +69,8 @@ follow-up issue explicitly changes the public config surface.
   structural containers.
 - `internal/config/config_test.go` asserts each non-zero embedded default loaded
   into public TOML-tagged fields is declared in `postman.default.toml`.
-- Project-local zero-value overlay tests assert explicit zero overrides still
-  survive the embedded defaults layer.
+- Config tests assert CWD-local `.tmux-a2a-postman/` files do not override XDG
+  or explicit config.
 
 ## Minimal Topology
 
