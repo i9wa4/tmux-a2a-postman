@@ -264,8 +264,9 @@ Start the daemon after writing `postman.md`:
 tmux-a2a-postman start
 ```
 
-After changing `postman.md` later, restart the daemon so topology, role
-templates, and skill catalogs are reloaded:
+After changing `postman.md`, `postman.toml`, or `nodes/*` later, restart the
+daemon so topology, role templates, daemon defaults, and skill catalogs are
+reloaded:
 
 ```sh
 tmux-a2a-postman stop
@@ -346,6 +347,10 @@ Most users only maintain `postman.md` under the global config directory:
 
 `postman.toml` is optional. Embedded defaults are enough for the daemon to run;
 add TOML only when you need to change daemon-level defaults.
+
+The daemon reads global configuration once at startup. Restart it after editing
+`postman.md`, `postman.toml`, or `nodes/*`; runtime watchers continue to handle
+mail delivery, read/archive moves, and daemon submit queues.
 
 In `postman.md`, keep conversation edges in the Mermaid `edges` graph, durable
 role guidance under role headings, and optional `skill_path` catalogs in the

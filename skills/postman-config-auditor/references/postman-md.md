@@ -274,6 +274,12 @@ Effective configuration is loaded from low to high priority:
 4. XDG `nodes/*.md`
 5. XDG `postman.md`
 
+The daemon snapshots this effective configuration once at startup. Edits to
+`postman.toml`, `postman.md`, or `nodes/*` require a daemon restart before they
+affect routing, role templates, daemon defaults, or skill catalogs. Runtime
+watchers remain for mail delivery, read/archive moves, and daemon submit queues;
+they do not hot-reload global config.
+
 Important rules:
 
 - Main config files merge node fields rather than replacing whole nodes.
