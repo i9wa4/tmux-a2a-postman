@@ -11,6 +11,9 @@ nodes referenced by those edges are materialized automatically. Mark the
 human-facing startup PING target with the Mermaid ui_node class.
 Public defaults are owned by postman.default.toml; DefaultConfig only
 initializes structural containers.
+Global config is read once at daemon startup. Restart the daemon after editing
+postman.toml, postman.md, or nodes/*; runtime watchers still handle mail,
+read/archive moves, and daemon submit queues.
 
 Runtime state model:
   Core visible states: ready, waiting, pending, stale
@@ -28,8 +31,7 @@ Core config:
   message_footer                   Header guidance before the sender body separator
   draft_template                   Structured envelope for stored send-heredoc Markdown
   daemon_message_template          Structured envelope for daemon-originated PING mail
-  skill_path                       postman.md skill catalogs; use inject: ping for compaction PINGs
-  compaction_skill_path            Compatibility form for compaction-only skill catalogs
+  skill_path                       postman.md skill catalogs; use inject: ping or inject: compaction_ping for PINGs
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.10)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
   notification_template            Pane hint rendered when mail arrives
@@ -38,9 +40,10 @@ Core config:
   pane_capture_tail_lines          Recent lines scanned for compaction markers (default: 100; 0 = visible pane only)
 
 Skill catalogs:
-  context skill_path relative paths resolve from the declaring postman.md directory
-  inject: ping and compaction_skill_path paths must be ~/... or absolute
-  inject: ping may use runtime: claude or runtime: codex for compaction-triggered PING catalogs
+  default skill_path relative paths resolve from the declaring postman.md directory
+  inject: ping and inject: compaction_ping paths must be ~/... or absolute
+  inject: ping may use runtime: claude or runtime: codex for daemon PING catalogs
+  inject: compaction_ping may use runtime: claude or runtime: codex for compaction-triggered PING catalogs
   duplicate rendered skill names are deduped; later entries win, runtime entries override shared entries
 
 Edge syntax:

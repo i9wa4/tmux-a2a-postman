@@ -23,6 +23,15 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    markdown-formatter = {
+      url = "github:i9wa4/markdown-formatter";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-parts.follows = "flake-parts";
+        git-hooks.follows = "git-hooks";
+        treefmt-nix.follows = "treefmt-nix";
+      };
+    };
   };
 
   outputs =
@@ -47,6 +56,7 @@
         {
           config,
           pkgs,
+          system,
           ...
         }:
         let
@@ -76,6 +86,7 @@
           cdPackages = with pkgs; [
             goreleaser
           ];
+          markdownFormatter = "${inputs.markdown-formatter.packages.${system}.default}/bin/mdfmt";
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -317,6 +328,12 @@
               rumdl-check = {
                 enable = true;
                 entry = "${pkgs.rumdl}/bin/rumdl check --config ${rumdlConfig}";
+                types = [ "markdown" ];
+              };
+              markdown-formatter = {
+                enable = true;
+                name = "markdown-formatter";
+                entry = "${markdownFormatter} --no-heading-numbering --write";
                 types = [ "markdown" ];
               };
 
