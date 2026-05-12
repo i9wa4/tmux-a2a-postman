@@ -153,7 +153,10 @@ the message ID plus participant as the fallback key.
 
 | Fact                       | Meaning                                                       |
 | -------------------------- | ------------------------------------------------------------- |
+| `context_id`               | Durable context namespace for correlating files and events    |
 | `message_id`               | Stable message identifier used by inbox, read, and reply data |
+| `timestamp`                | Sender timestamp preserved from message frontmatter           |
+| `message_type`             | Optional semantic class such as ping or task                  |
 | `thread_id`                | Optional workflow strand for related messages and events      |
 | `reply_policy`             | `required` or `none`, resolved when the message is created    |
 | `input_request_id`         | Exact required-input request opened by a required message     |
