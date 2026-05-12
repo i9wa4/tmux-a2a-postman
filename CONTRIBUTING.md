@@ -11,6 +11,13 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
+Tmux discovery integration checks are opt-in so the default test suite stays
+usable without a live tmux server. To exercise the tmux-backed discovery lane:
+
+```sh
+TMUX_A2A_POSTMAN_TMUX_INTEGRATION=1 go test ./internal/discovery -run 'TestDiscoverNodes_With(ChildProcess|PaneTitle)' -count=1
+```
+
 Go version policy:
 
 - Keep `go.mod` at major.minor (for example `go 1.26`)

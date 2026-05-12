@@ -144,7 +144,7 @@ recipient blocked.
 | `queues.post_count`        | Messages still waiting in the post queue |
 | `queues.inbox_count`       | Unread inbox messages                    |
 | `queues.dead_letter_count` | Delivery failed or route unavailable     |
-| `input_required_count`    | Inbound required replies still open      |
+| `input_required_count`     | Inbound required replies still open      |
 | `waiting_on_input_count`   | Outbound required replies still open     |
 | `info_unread_count`        | Unread no-reply messages                 |
 
@@ -169,16 +169,16 @@ Severity ranks from least to most urgent:
 7. `delivery_stuck`
 8. `delivery_failure`
 
-| Field                 | Use                                              |
-| --------------------- | ------------------------------------------------ |
-| `severity`            | Worst contextual severity for the session/node   |
-| `severity_source`     | Surface that produced that severity              |
-| `severity_reason`     | Short reason for the chosen severity             |
+| Field                 | Use                                                 |
+| --------------------- | --------------------------------------------------- |
+| `severity`            | Worst contextual severity for the session/node      |
+| `severity_source`     | Surface that produced that severity                 |
+| `severity_reason`     | Short reason for the chosen severity                |
 | `compact_severity`    | ASCII token used by `get-status-oneline --severity` |
-| `delivery`            | Post queue and dead-letter delivery health       |
-| `nodes[*].node_local` | Pane-local activity/staleness evidence           |
-| `nodes[*].flow`       | Input-request and blocked-report workflow evidence |
-| `nodes[*].queues`     | Node queue counts                                |
+| `delivery`            | Post queue and dead-letter delivery health          |
+| `nodes[*].node_local` | Pane-local activity/staleness evidence              |
+| `nodes[*].flow`       | Input-request and blocked-report workflow evidence  |
+| `nodes[*].queues`     | Node queue counts                                   |
 
 Interpretation rules:
 
