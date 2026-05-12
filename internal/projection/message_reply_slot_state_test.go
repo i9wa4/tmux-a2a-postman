@@ -47,6 +47,93 @@ func appendInputRequestMailboxEvent(t *testing.T, writer *journal.Writer, eventT
 	}
 }
 
+func TestProjectMessageInputRequestState_ReplayFixturesRebuildOpenFilledAndUncertainStates(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name                    string
+		appendReply             func(t *testing.T, writer *journal.Writer, now time.Time)
+		wantInputRequiredCount  int
+		wantWaitingOnInputCount int
+	}{
+		{
+			name:                    "open required request stays visible after replay",
+			wantInputRequiredCount:  1,
+			wantWaitingOnInputCount: 1,
+		},
+		{
+			name: "exact fill closes the replayed request",
+			appendReply: func(t *testing.T, writer *journal.Writer, now time.Time) {
+				reply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "ireq_replay_123", "DONE")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
+			},
+			wantInputRequiredCount:  0,
+			wantWaitingOnInputCount: 0,
+		},
+		{
+			name: "missing exact fill target keeps the replayed request open",
+			appendReply: func(t *testing.T, writer *journal.Writer, now time.Time) {
+				reply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "ireq_missing", "DONE")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
+			},
+			wantInputRequiredCount:  1,
+			wantWaitingOnInputCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionDir := t.TempDir()
+
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatalf("OpenShadowWriter() error = %v", err)
+			}
+
+			request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_replay_123", "", "please work")
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(2*time.Second))
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "m1.md", "orchestrator", "worker", request, now.Add(3*time.Second))
+
+			if tt.appendReply != nil {
+				tt.appendReply(t, writer, now)
+			}
+
+			events, err := journal.Replay(sessionDir)
+			if err != nil {
+				t.Fatalf("Replay() error = %v", err)
+			}
+			if len(events) == 0 {
+				t.Fatal("Replay() returned no events, want persisted durable facts")
+			}
+
+			got, ok, err := ProjectMessageInputRequestState(sessionDir, "review")
+			if err != nil {
+				t.Fatalf("ProjectMessageInputRequestState() error = %v", err)
+			}
+			if !ok {
+				t.Fatal("ProjectMessageInputRequestState() ok = false, want true")
+			}
+			if got.InputRequiredCounts["worker"] != tt.wantInputRequiredCount {
+				t.Fatalf("worker action required = %d, want %d", got.InputRequiredCounts["worker"], tt.wantInputRequiredCount)
+			}
+			if got.WaitingOnInputCounts["orchestrator"] != tt.wantWaitingOnInputCount {
+				t.Fatalf("orchestrator waiting = %d, want %d", got.WaitingOnInputCounts["orchestrator"], tt.wantWaitingOnInputCount)
+			}
+			if tt.wantInputRequiredCount == 1 {
+				if len(got.InputRequired) != 1 || got.InputRequired[0].InputRequestID != "ireq_replay_123" {
+					t.Fatalf("input required details = %#v, want replayed ireq_replay_123 left open", got.InputRequired)
+				}
+				if got.InputRequired[0].OpenedEventID == "" || got.InputRequired[0].ReadEventID == "" {
+					t.Fatalf("input required detail = %#v, want replayable opened/read event ids", got.InputRequired[0])
+				}
+			}
+		})
+	}
+}
+
 func TestInputRequestMetadataFromPayloadUsesDurableMetadataFallbacks(t *testing.T) {
 	meta := inputRequestMetadataFromPayload(journal.MailboxEventPayload{
 		ContextID:           "ctx-replay",

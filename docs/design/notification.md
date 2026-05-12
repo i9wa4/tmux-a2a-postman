@@ -28,7 +28,10 @@ layer for operator escalation.
    body into the pane hint.
 
 Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
-manual recovery guidance and is separate from normal pane hints.
+manual recovery guidance and is separate from normal pane hints. The durable
+dead-letter journal event preserves the original message ID, sender, recipient,
+source `post/` path, dead-letter path, failure reason, and any exact
+input-request identifiers parsed from the message metadata.
 
 ## 3. Health Model
 
@@ -84,14 +87,14 @@ blocked-report metadata.
 
 The remaining notification-related public settings are:
 
-| Field                      | Purpose                                                   |
-| -------------------------- | --------------------------------------------------------- |
+| Field                      | Purpose                                                     |
+| -------------------------- | ----------------------------------------------------------- |
 | `notification_template`    | Pane hint rendered when mail arrives; not full message body |
-| `message_footer`           | Reply guidance rendered before the sender body separator  |
-| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown    |
-| `daemon_message_template`  | Structured envelope for daemon-originated startup PING    |
-| `ui_node`                  | Optional target filter for startup auto-PING              |
-| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes           |
+| `message_footer`           | Reply guidance rendered before the sender body separator    |
+| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown      |
+| `daemon_message_template`  | Structured envelope for daemon-originated startup PING      |
+| `ui_node`                  | Optional target filter for startup auto-PING                |
+| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes             |
 
 Stored message Markdown is an envelope. The default `send-heredoc` template
 keeps recipient instructions, reply guidance, and sender-authored content

@@ -34,14 +34,14 @@ or interpret `task_id`.
 
 Identity names are chosen to make lifecycle size visible to a new operator:
 
-| Name                  | Scale                         | Why it is not another name                                  |
-| --------------------- | ----------------------------- | ----------------------------------------------------------- |
-| `message_id`          | One delivered mailbox record  | A message is the smallest transport record, not a workflow. |
-| `thread_id`           | Conversation or workflow line | A thread can contain many messages and input requests.      |
-| `input_request_id`    | One required recipient reply  | A request is opened by one required message and filled later. |
-| `input_request_set_id` | Multi-recipient aggregate    | A set can contain several input-request branches.           |
-| `branch_id`           | One branch inside a group     | A branch is smaller than a group but still action-scoped.   |
-| `task_id`             | External work item            | A task is broader than transport and has no daemon owner.   |
+| Name                   | Scale                         | Why it is not another name                                    |
+| ---------------------- | ----------------------------- | ------------------------------------------------------------- |
+| `message_id`           | One delivered mailbox record  | A message is the smallest transport record, not a workflow.   |
+| `thread_id`            | Conversation or workflow line | A thread can contain many messages and input requests.        |
+| `input_request_id`     | One required recipient reply  | A request is opened by one required message and filled later. |
+| `input_request_set_id` | Multi-recipient aggregate     | A set can contain several input-request branches.             |
+| `branch_id`            | One branch inside a group     | A branch is smaller than a group but still action-scoped.     |
+| `task_id`              | External work item            | A task is broader than transport and has no daemon owner.     |
 
 The names do not try to encode a strict parent/child hierarchy. They distinguish
 scale: a single delivered message, a conversational thread, an actionable
@@ -223,16 +223,16 @@ report exists.
 
 `get-status` exposes the evidence as:
 
-| Field                  | Meaning                                      |
-| ---------------------- | -------------------------------------------- |
-| `severity`             | Worst contextual severity                    |
-| `severity_source`      | Surface that produced the chosen severity    |
-| `severity_reason`      | Short human-readable reason                  |
-| `compact_severity`     | ASCII one-line summary token                 |
-| `delivery`             | Session delivery health                      |
-| `nodes[*].node_local`  | Pane-local activity/staleness health         |
+| Field                  | Meaning                                         |
+| ---------------------- | ----------------------------------------------- |
+| `severity`             | Worst contextual severity                       |
+| `severity_source`      | Surface that produced the chosen severity       |
+| `severity_reason`      | Short human-readable reason                     |
+| `compact_severity`     | ASCII one-line summary token                    |
+| `delivery`             | Session delivery health                         |
+| `nodes[*].node_local`  | Pane-local activity/staleness health            |
 | `nodes[*].flow`        | Input-request and blocked-report workflow state |
-| `nodes[*].queues`      | Node-local queue counts                      |
+| `nodes[*].queues`      | Node-local queue counts                         |
 
 Open input-request details include `opened_event_id` and `read_event_id` when
 the corresponding journal events are known. These IDs are traceability

@@ -57,11 +57,18 @@ func SendPingToNodeWithOptions(nodeInfo discovery.NodeInfo, contextID, nodeName,
 	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
 
 	// Pass 2: inject daemon message variables.
-	compactionCatalog := ""
-	if options.CompactionTriggered && cfg != nil {
-		compactionCatalog = cfg.CompactionSkillCatalogForRuntime(options.Runtime)
+	var skillCatalogs []string
+	if cfg != nil {
+		if pingCatalog := cfg.PingSkillCatalogForRuntime(options.Runtime); pingCatalog != "" {
+			skillCatalogs = append(skillCatalogs, pingCatalog)
+		}
+		if options.CompactionTriggered {
+			if compactionCatalog := cfg.CompactionSkillCatalogForRuntime(options.Runtime); compactionCatalog != "" {
+				skillCatalogs = append(skillCatalogs, compactionCatalog)
+			}
+		}
 	}
-	roleContent := envelope.BuildRoleContentWithAppendix(cfg, simpleName, compactionCatalog)
+	roleContent := envelope.BuildRoleContentWithAppendix(cfg, simpleName, joinSkillCatalogs(skillCatalogs))
 	content = template.ExpandVariables(content, map[string]string{
 		"message_type": "ping",
 		"heading":      "Ping",
@@ -70,4 +77,15 @@ func SendPingToNodeWithOptions(nodeInfo discovery.NodeInfo, contextID, nodeName,
 	})
 
 	return message.DeliverSystemMessageDirectResultToTarget(filename, target, "postman", contextID, content, cfg, adjacency, nodes, livenessMap)
+}
+
+func joinSkillCatalogs(catalogs []string) string {
+	var parts []string
+	for _, catalog := range catalogs {
+		catalog = strings.TrimSpace(catalog)
+		if catalog != "" {
+			parts = append(parts, catalog)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
