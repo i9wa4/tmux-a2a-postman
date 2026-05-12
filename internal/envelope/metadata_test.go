@@ -96,11 +96,14 @@ func TestResolveReplyPolicyFromContentWithoutMetadataDefaultsToNone(t *testing.T
 }
 
 func TestParseMetadataAcceptsReplyPolicy(t *testing.T) {
-	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  reply_policy: required\n  timestamp: 2026-05-03T09:00:00Z\n---\n\nplease review\n"
+	content := "---\nparams:\n  contextId: ctx-replay\n  from: orchestrator\n  to: worker\n  reply_policy: required\n  timestamp: 2026-05-03T09:00:00Z\n---\n\nplease review\n"
 
 	got, err := ParseMetadata(content)
 	if err != nil {
 		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.ContextID != "ctx-replay" {
+		t.Fatalf("ContextID = %q, want ctx-replay", got.ContextID)
 	}
 	if got.ReplyPolicy != "required" {
 		t.Fatalf("ReplyPolicy = %q, want required", got.ReplyPolicy)

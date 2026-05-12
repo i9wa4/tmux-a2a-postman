@@ -94,11 +94,26 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	if payload.MessageID == "" {
 		payload.MessageID = metadata.MessageID
 	}
+	if payload.ContextID == "" {
+		payload.ContextID = metadata.ContextID
+	}
 	if payload.From == "" {
 		payload.From = metadata.From
 	}
 	if payload.To == "" {
 		payload.To = metadata.To
+	}
+	if payload.ReplyPolicy == "" {
+		payload.ReplyPolicy = envelope.ResolveReplyPolicyFromMetadata(metadata)
+	}
+	if payload.ReplyTo == "" {
+		payload.ReplyTo = metadata.ReplyTo
+	}
+	if payload.MessageType == "" {
+		payload.MessageType = metadata.MessageType
+	}
+	if payload.Timestamp == "" {
+		payload.Timestamp = metadata.Timestamp
 	}
 	if payload.ThreadID == "" {
 		payload.ThreadID = metadata.ThreadID
@@ -258,16 +273,26 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		return err
 	}
 	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
-		MessageID:  messageID,
-		From:       from,
-		To:         to,
-		ThreadID:   mailboxThreadIDFromContent(content),
-		Path:       shadowRelativePath(sessionDir, dstPath),
-		SourcePath: shadowRelativePath(sessionDir, srcPath),
-		Content:    content,
+		MessageID:     messageID,
+		From:          from,
+		To:            to,
+		ThreadID:      mailboxThreadIDFromContent(content),
+		Path:          shadowRelativePath(sessionDir, dstPath),
+		SourcePath:    shadowRelativePath(sessionDir, srcPath),
+		FailureReason: deadLetterFailureReason(dstPath),
+		Content:       content,
 	})
 	syncMailboxProjection(sessionDir)
 	return nil
+}
+
+func deadLetterFailureReason(deadLetterPath string) string {
+	base := strings.TrimSuffix(filepath.Base(deadLetterPath), ".md")
+	idx := strings.LastIndex(base, "-dl-")
+	if idx < 0 {
+		return ""
+	}
+	return base[idx+len("-dl-"):]
 }
 
 func resolveRuntimeNode(address, sourceSessionName string, knownNodes map[string]discovery.NodeInfo) router.Resolution {
