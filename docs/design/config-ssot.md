@@ -43,6 +43,9 @@ defaults.
 - XDG/global config and explicit `--config` files merge on top of embedded
   defaults. Implicit project-local `.tmux-a2a-postman/` overlays are not part
   of the runtime config surface.
+- The daemon snapshots global/explicit config once during startup. Runtime
+  filesystem watchers do not reload `postman.toml`, `postman.md`, or `nodes/*`;
+  operators restart the daemon to apply config changes.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.
 

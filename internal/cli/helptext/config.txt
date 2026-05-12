@@ -11,6 +11,9 @@ nodes referenced by those edges are materialized automatically. Mark the
 human-facing startup PING target with the Mermaid ui_node class.
 Public defaults are owned by postman.default.toml; DefaultConfig only
 initializes structural containers.
+Global config is read once at daemon startup. Restart the daemon after editing
+postman.toml, postman.md, or nodes/*; runtime watchers still handle mail,
+read/archive moves, and daemon submit queues.
 
 Runtime state model:
   Core visible states: ready, waiting, pending, stale

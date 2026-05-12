@@ -294,31 +294,6 @@ func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 	} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {
 		rt.handleReadWatcherEvent(eventPath, event.Op)
 	}
-
-	isConfigEvent := false
-	for _, watchedConfigPath := range rt.configPaths {
-		if eventPath == watchedConfigPath {
-			isConfigEvent = true
-			break
-		}
-	}
-	isNodesDirEvent := false
-	for _, nodesDir := range rt.nodesDirs {
-		if strings.HasPrefix(eventPath, nodesDir+string(filepath.Separator)) {
-			isNodesDirEvent = true
-			break
-		}
-	}
-	if isConfigEvent || isNodesDirEvent {
-		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-			if rt.configTimer != nil {
-				rt.configTimer.Stop()
-			}
-			rt.configTimer = safeAfterFunc(200*time.Millisecond, "config-reload", rt.events, func() {
-				rt.handleConfigReload()
-			})
-		}
-	}
 }
 
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
@@ -703,55 +678,6 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 			"node":   prefixedKey,
 			"source": "read_move",
 		},
-	}
-}
-
-func (rt *daemonRuntime) handleConfigReload() {
-	newCfg, err := config.LoadConfig(rt.configPath)
-	if err != nil {
-		rt.events <- tui.DaemonEvent{
-			Type:    "error",
-			Message: fmt.Sprintf("config reload failed: %v", err),
-		}
-		return
-	}
-
-	newAdjacency, err := config.ParseEdges(newCfg.Edges)
-	if err != nil {
-		rt.events <- tui.DaemonEvent{
-			Type:    "error",
-			Message: fmt.Sprintf("edge parsing failed: %v", err),
-		}
-		return
-	}
-
-	rt.cfg = newCfg
-	rt.adjacency = newAdjacency
-
-	if freshNodes, _, discErr := discovery.DiscoverNodesWithCollisions(rt.baseDir, rt.contextID, rt.selfSession); discErr != nil {
-		log.Printf("postman: WARNING: failed to refresh nodes after config reload: %v\n", discErr)
-	} else {
-		filterNodesByRuntimeConfig(freshNodes, rt.cfg)
-		rt.nodes = freshNodes
-	}
-	rt.storeSharedNodes()
-
-	allSessions, _ := discovery.DiscoverAllSessions()
-	if allSessions == nil {
-		allSessions = []string{}
-	}
-	snapshot := buildRuntimeStatusSnapshot(rt.nodes, allSessions, rt.daemonState.GetConfiguredSessionEnabled)
-
-	rt.events <- tui.DaemonEvent{
-		Type: "config_update",
-		Details: map[string]interface{}{
-			"sessions":      snapshot.Sessions,
-			"session_nodes": snapshot.SessionNodes,
-		},
-	}
-	rt.events <- tui.DaemonEvent{
-		Type:    "message_received",
-		Message: "Config reloaded",
 	}
 }
 

@@ -19,12 +19,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-func TestHandleWatcherEvent_ConfigAndNodesEventsDebounceReload(t *testing.T) {
+func TestHandleWatcherEvent_ConfigAndNodesEventsDoNotMutateStartupSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
-	installWatcherReloadTmux(t, tmpDir)
 
 	baseDir := filepath.Join(tmpDir, "state")
-	contextID := "ctx-reload"
+	contextID := "ctx-startup-snapshot"
 	sessionName := "review-session"
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -64,20 +63,16 @@ func TestHandleWatcherEvent_ConfigAndNodesEventsDebounceReload(t *testing.T) {
 
 	writeWatcherReloadConfig(t, configPath, 7)
 	rt.handleWatcherEvent(fsnotify.Event{Name: configPath, Op: fsnotify.Write})
-	waitForDaemonEvent(t, events, "config reload", func(event tui.DaemonEvent) bool {
-		return event.Type == "message_received" && event.Message == "Config reloaded"
-	})
-	if got := rt.cfg.ScanInterval; got != 7 {
-		t.Fatalf("config path reload ScanInterval = %v, want 7", got)
+	assertNoConfigReloadEvent(t, events)
+	if got := rt.cfg.ScanInterval; got != 1 {
+		t.Fatalf("config path event mutated ScanInterval = %v, want startup snapshot 1", got)
 	}
 
 	writeWatcherReloadConfig(t, configPath, 11)
 	rt.handleWatcherEvent(fsnotify.Event{Name: filepath.Join(nodesDir, "worker.toml"), Op: fsnotify.Create})
-	waitForDaemonEvent(t, events, "nodes dir config reload", func(event tui.DaemonEvent) bool {
-		return event.Type == "message_received" && event.Message == "Config reloaded"
-	})
-	if got := rt.cfg.ScanInterval; got != 11 {
-		t.Fatalf("nodes dir reload ScanInterval = %v, want 11", got)
+	assertNoConfigReloadEvent(t, events)
+	if got := rt.cfg.ScanInterval; got != 1 {
+		t.Fatalf("nodes dir event mutated ScanInterval = %v, want startup snapshot 1", got)
 	}
 }
 
@@ -404,9 +399,32 @@ func installWatcherReloadTmux(t *testing.T, tmpDir string) {
 
 func writeWatcherReloadConfig(t *testing.T, path string, scanInterval float64) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll(config dir): %v", err)
+	}
 	content := fmt.Sprintf("[postman]\nscan_interval_seconds = %.1f\nsession_scan_interval_seconds = 3600.0\nedges = [\"orchestrator --- worker\"]\n", scanInterval)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(config): %v", err)
+	}
+}
+
+func assertNoConfigReloadEvent(t *testing.T, events <-chan tui.DaemonEvent) {
+	t.Helper()
+	timer := time.NewTimer(25 * time.Millisecond)
+	defer timer.Stop()
+
+	for {
+		select {
+		case event := <-events:
+			if event.Type == "message_received" && event.Message == "Config reloaded" {
+				t.Fatalf("unexpected config reload event: %#v", event)
+			}
+			if event.Type == "config_update" {
+				t.Fatalf("unexpected config update event: %#v", event)
+			}
+		case <-timer.C:
+			return
+		}
 	}
 }
 
