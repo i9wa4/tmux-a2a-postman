@@ -618,6 +618,10 @@ func (m Model) renderNodesSection() string {
 		}
 		return b.String() + m.renderNodesSectionFromHealth(health)
 	}
+	if len(m.sessionNodes[selectedSession]) == 0 {
+		b.WriteString("(non-AI or unknown session)\n")
+		return b.String()
+	}
 	b.WriteString("(loading canonical health)\n")
 	return b.String()
 }

@@ -177,8 +177,8 @@ func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *tes
 
 	requireSessionRow(t, view, "> ", "⚪", 0, "ghost")
 	requireSessionRow(t, view, "  ", "⚪", 1, "review")
-	if !strings.Contains(view, "(loading canonical health)") {
-		t.Fatalf("view missing loading state for selected tmux session without health: %q", view)
+	if !strings.Contains(view, "(non-AI or unknown session)") {
+		t.Fatalf("view missing non-AI/unknown state for selected tmux session without health or nodes: %q", view)
 	}
 }
 
@@ -240,6 +240,9 @@ func TestTUI_Update_StatusUpdate_PreservesTmuxSessionRowsWithoutCanonicalNodes(t
 
 	requireSessionRow(t, view, "> ", "⚪", 0, "ghost")
 	requireSessionRow(t, view, "  ", "⚪", 1, "main")
+	if !strings.Contains(view, "(non-AI or unknown session)") {
+		t.Fatalf("view missing non-AI/unknown text for selected session without detected nodes: %q", view)
+	}
 }
 
 func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
