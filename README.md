@@ -144,8 +144,8 @@ tooling; tmux remains the hard runtime dependency.
 
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
 stays in the same frontmatter header; leave paths commented until the matching
-skills exist for your agent runtime. Markdown under `common_template` and node
-sections is free-form role guidance, so short sections can cover identity,
+skill tree exists for your agent runtime. Markdown under `common_template` and
+node sections is free-form role guidance, so short sections can cover identity,
 boundaries, local conventions, escalation rules, or checklists. Only the
 backtick-wrapped H2 section names and Mermaid edges are structural; `### role`
 sets the short role summary, and other H3 headings are ordinary Markdown:
@@ -153,31 +153,29 @@ sets the short role summary, and other H3 headings are ordinary Markdown:
 ````markdown
 ---
 # Optional: after installing packaged skills, uncomment only paths that exist.
+# For PING catalogs, list the explicit user-level skill tree paths you want
+# included; postman does not select skill catalogs by runtime.
 # skill_path:
 #   - path: ~/.codex/skills
 #     inject: ping
-#     runtime: codex
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.codex/skills
 #     inject: compaction_ping
-#     runtime: codex
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject: ping
-#     runtime: claude
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject: compaction_ping
-#     runtime: claude
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator

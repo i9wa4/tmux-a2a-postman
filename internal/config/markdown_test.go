@@ -949,7 +949,7 @@ skill_path:
 	}
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectPingAndCompactionPingBuildRuntimeCatalogs(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectPingAndCompactionPingBuildCatalogs(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
 	writeFile(t, filepath.Join(dir, "context-skills", "repo-local", "SKILL.md"), `---
@@ -986,10 +986,8 @@ skill_path:
     inject: compaction_ping
   - path: ~/.claude/skills
     inject: compaction_ping
-    runtime: claude
   - path: ~/.codex/skills
     inject: compaction_ping
-    runtime: codex
 ---
 
 ## ` + "`common_template`" + `
@@ -1019,17 +1017,17 @@ Compact shared instructions.
 	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
 	assertContains(t, claudeCatalog, "- `postman-session-operator`: Shared ping rules.")
 	assertContains(t, claudeCatalog, "- `agent-harness-engineering`: Claude harness rules.")
-	assertNotContains(t, claudeCatalog, "Codex shell rules.")
+	assertContains(t, claudeCatalog, "- `bash`: Codex shell rules.")
 
 	codexCatalog := cfg.CompactionSkillCatalogForRuntime("codex")
 	assertContains(t, codexCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, codexCatalog, "- `agent-harness-engineering`: Claude harness rules.")
 	assertContains(t, codexCatalog, "- `bash`: Codex shell rules.")
-	assertNotContains(t, codexCatalog, "Claude harness rules.")
 
 	unknownCatalog := cfg.CompactionSkillCatalogForRuntime("node")
 	assertContains(t, unknownCatalog, "- `postman-session-operator`: Shared ping rules.")
-	assertNotContains(t, unknownCatalog, "Claude harness rules.")
-	assertNotContains(t, unknownCatalog, "Codex shell rules.")
+	assertContains(t, unknownCatalog, "- `agent-harness-engineering`: Claude harness rules.")
+	assertContains(t, unknownCatalog, "- `bash`: Codex shell rules.")
 }
 
 func TestLoadMarkdownConfig_SkillPathRejectsInjectAliases(t *testing.T) {
@@ -1052,7 +1050,7 @@ skill_path:
 	}
 }
 
-func TestLoadMarkdownConfig_SkillPathInjectCompactionPingRuntimeDuplicateOverridesShared(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathInjectCompactionPingDuplicateNamesLaterPathWins(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
 	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "bash", "SKILL.md"), `---
@@ -1076,7 +1074,6 @@ skill_path:
     inject: compaction_ping
   - path: ~/.claude/skills
     inject: compaction_ping
-    runtime: claude
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -1097,8 +1094,8 @@ skill_path:
 	}
 
 	fallbackCatalog := cfg.CompactionSkillCatalogForRuntime("other")
-	assertContains(t, fallbackCatalog, "- `bash`: Shared bash rules.")
-	assertNotContains(t, fallbackCatalog, "Claude-specific bash rules.")
+	assertNotContains(t, fallbackCatalog, "Shared bash rules.")
+	assertContains(t, fallbackCatalog, "- `bash`: Claude-specific bash rules.")
 }
 
 func TestLoadMarkdownConfig_SkillPathInjectCompactionPingSamePathOverlapRendersOnce(t *testing.T) {
@@ -1115,7 +1112,6 @@ skill_path:
     inject: compaction_ping
   - path: ~/.claude/skills
     inject: compaction_ping
-    runtime: claude
     skills: [bash]
 ---
 `
@@ -1175,7 +1171,7 @@ skill_path:
 	if err == nil {
 		t.Fatal("expected loadMarkdownConfig to fail")
 	}
-	if !strings.Contains(err.Error(), "skill_path item runtime requires inject: ping or inject: compaction_ping") {
+	if !strings.Contains(err.Error(), "skill_path item runtime is unsupported; list explicit skill_path entries instead") {
 		t.Fatalf("error mismatch: %v", err)
 	}
 }
@@ -1240,13 +1236,13 @@ skill_path:
 	}
 }
 
-func TestLoadMarkdownConfig_SkillPathRejectsUnsupportedRuntimeSelector(t *testing.T) {
+func TestLoadMarkdownConfig_SkillPathRejectsRuntimeSelectorWithInject(t *testing.T) {
 	dir := t.TempDir()
 	content := `---
 skill_path:
   - path: skills
     inject: compaction_ping
-    runtime: vim
+    runtime: claude
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -1256,7 +1252,7 @@ skill_path:
 	if err == nil {
 		t.Fatal("expected loadMarkdownConfig to fail")
 	}
-	if !strings.Contains(err.Error(), `unsupported skill_path item runtime "vim"; supported runtimes are claude, codex`) {
+	if !strings.Contains(err.Error(), "skill_path item runtime is unsupported; list explicit skill_path entries instead") {
 		t.Fatalf("error mismatch: %v", err)
 	}
 }
