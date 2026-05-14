@@ -67,7 +67,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true`)
 	assertContainsNormalized(t, popHelp, "Use markdown_absolute_path when present for programmatic file/body reads.")
 	assertContainsNormalized(t, popHelp, "pop claims and archives the message; it never embeds full body text inline.")
-	assertContainsNormalized(t, popHelp, "After every successful pop with status=message, read the complete archived Markdown body before classifying work or deciding no action is needed.")
+	assertContainsNormalized(t, popHelp, "After every successful pop with status=message, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
 	assertContainsNormalized(t, popHelp, "messageType: ping, replyPolicy: none, and other metadata do not waive this requirement.")
 	assertContainsNormalized(t, popHelp, "Truncated command output from cat, sed, rg, shell logs, or other bounded stdout paths is not a valid archived-body read.")
 	assertContainsNormalized(t, popHelp, "pop — claim and archive the next inbox message")
@@ -120,7 +120,7 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
 	assertContainsNormalized(t, notificationDoc, "Sender Message")
 	assertContainsNormalized(t, notificationDoc, "Sender body Markdown is inserted verbatim after that separator")
-	assertContainsNormalized(t, notificationDoc, "The recipient reads the complete archived Markdown body before classifying the message or deciding no work applies.")
+	assertContainsNormalized(t, notificationDoc, "The recipient reads the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
 	assertContainsNormalized(t, notificationDoc, "This applies to daemon PING mail, `messageType: ping`, `replyPolicy: none`, and every other message type.")
 	assertContainsNormalized(t, notificationDoc, "truncated output is not a complete body read.")
 }
@@ -392,23 +392,23 @@ func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
 
 	assertContainsAllNormalized(
 		t, readme,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no work applies.",
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
 	)
 	assertContainsAllNormalized(
 		t, messagingHelp,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying work or deciding no action is needed.",
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
 		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
 		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
 	)
 	assertContainsAllNormalized(
 		t, pathDisplayDoc,
-		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before classifying the message or deciding that no work applies.",
+		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
 		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
 		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
 	)
 	assertContainsAllNormalized(
 		t, operatorSkill,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no action is needed.",
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
 		"`messageType: ping`, `replyPolicy: none`, and other metadata do not allow skipping the body.",
 		"truncated command output does not count as a complete read.",
 	)

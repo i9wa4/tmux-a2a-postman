@@ -143,7 +143,7 @@ type popMessageOutput struct {
 	ArchivedBodyReadInstruction string         `json:"archived_body_read_instruction,omitempty"`
 }
 
-const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before classifying this message; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
+const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
 func writeEmptyPopOutput() error {
 	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})

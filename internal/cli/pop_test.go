@@ -344,7 +344,7 @@ func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
 	}
 }
 
-func TestRunPop_RequiresCompleteArchivedBodyReadBeforeClassification(t *testing.T) {
+func TestRunPop_RequiresCompleteArchivedBodyReadBeforeHandlingDecision(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
@@ -355,7 +355,7 @@ func TestRunPop_RequiresCompleteArchivedBodyReadBeforeClassification(t *testing.
 	}
 	filename := "20260512-010103-from-postman-to-worker.md"
 	longFiller := strings.Repeat("filler line that could consume a bounded stdout window\n", 256)
-	lateInstruction := "LATE RECIPIENT INSTRUCTION: classify only after the full archived body is available."
+	lateInstruction := "LATE RECIPIENT INSTRUCTION: handle this message only after the full archived body is available."
 	content := "---\nparams:\n" +
 		"  from: postman\n" +
 		"  to: worker\n" +
@@ -387,6 +387,11 @@ func TestRunPop_RequiresCompleteArchivedBodyReadBeforeClassification(t *testing.
 	}
 	for _, want := range []string{
 		"complete archived Markdown body",
+		"before any handling",
+		"routing",
+		"reply",
+		"status decision",
+		"no-action or no-op decision",
 		"messageType",
 		"replyPolicy",
 		"truncated command output is not a complete read",

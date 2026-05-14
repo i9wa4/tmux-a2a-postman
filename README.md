@@ -287,11 +287,11 @@ tmux-a2a-postman pop
 
 Recipients usually run `pop` after a pane notification or message footer says
 mail is waiting. After every successful `pop` with `status=message`, read the
-complete archived Markdown body before classifying the message or deciding no
-work applies. `messageType: ping`, `replyPolicy: none`, and other metadata do
-not allow skipping the body. Truncated command output from bounded stdout does
-not count as a complete read. To inspect archived mail later, use
-`inspect-message --id <message_id>`.
+complete archived Markdown body before any handling, routing, reply, status
+decision, or no-action or no-op decision. `messageType: ping`,
+`replyPolicy: none`, and other metadata do not allow skipping the body.
+Truncated output from bounded stdout does not count as a complete read. To
+inspect archived mail later, use `inspect-message --id <message_id>`.
 
 Inspect live session state:
 

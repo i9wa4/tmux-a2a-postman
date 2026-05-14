@@ -26,9 +26,10 @@ layer for operator escalation.
 5. The recipient claims and archives the message with `pop`; `pop` returns
    metadata plus the archived message/body path instead of pushing the full
    body into the pane hint.
-6. The recipient reads the complete archived Markdown body before classifying
-   the message or deciding no work applies. This applies to daemon PING mail,
-   `messageType: ping`, `replyPolicy: none`, and every other message type.
+6. The recipient reads the complete archived Markdown body before any handling,
+   routing, reply, status decision, or no-action or no-op decision. This
+   applies to daemon PING mail, `messageType: ping`, `replyPolicy: none`, and
+   every other message type.
 
 Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
 manual recovery guidance and is separate from normal pane hints. The durable
@@ -122,11 +123,11 @@ archived body path. This preserves the receiver-owned mailbox state transition:
 the daemon may hint that mail arrived, but the receiver decides when to pop the
 inbox item and open the referenced body.
 
-Consumers must not treat metadata-only inspection as classification. After
-`pop` returns `status=message`, the archived Markdown body is the authoritative
-instruction surface. If a runtime reads it through bounded stdout, it must
-detect truncation and continue with verified chunks through EOF; truncated
-output is not a complete body read.
+Consumers must not make handling, routing, reply, status, no-action, or no-op
+decisions from metadata-only inspection. After `pop` returns `status=message`,
+the archived Markdown body is the authoritative instruction surface. If a
+runtime reads it through bounded stdout, it must detect truncation and continue
+with verified chunks through EOF; truncated output is not a complete body read.
 
 No separate claim/open alias exists today. The command name `pop` remains the
 canonical state-machine operation; the user-facing wording and `pop` JSON

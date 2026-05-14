@@ -63,7 +63,8 @@ needed, read the archived path after `pop` instead of expecting inline
 body/content in the JSON.
 
 After every successful `pop` with `status=message`, read the complete archived
-Markdown body before classifying the message or deciding no action is needed.
+Markdown body before any handling, routing, reply, status decision, or
+no-action or no-op decision.
 `messageType: ping`, `replyPolicy: none`, and other metadata do not allow
 skipping the body. Truncated command output from `cat`, `sed`, `rg`, shell
 logs, or other bounded stdout paths is not a valid archived-body read. If a
@@ -229,11 +230,13 @@ progress evidence matters.
    you need the exact open item before reading. Then run
    `tmux-a2a-postman pop` when you are ready to claim and archive the message.
 4. After `pop`, use `frontmatter` for routing metadata and input-request
-   identifiers, but do not classify the message from metadata alone. Read the
-   complete archived Markdown body by opening the returned
+   identifiers, but do not make handling, routing, reply, status, no-action, or
+   no-op decisions from metadata alone. Read the complete archived Markdown body
+   by opening the returned
    `markdown_absolute_path` when present, otherwise `markdown_path`. If your
    runtime only exposes bounded command output, read verified chunks through
-   EOF before classifying the message.
+   EOF before any handling, routing, reply, status decision, or no-action or
+   no-op decision.
    `messageType: ping`, `replyPolicy: none`, and other metadata do not waive
    this complete-body read. Default pop JSON does not include inline
    body/content, and truncated command output does not count as a complete read.
