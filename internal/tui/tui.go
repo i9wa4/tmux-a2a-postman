@@ -529,8 +529,10 @@ func sessionIndicator(state string, enabled bool) string {
 		return "⚫"
 	}
 	switch state {
-	case "unavailable", "unowned":
+	case "", "initial", "unavailable", "unowned":
 		return "⚪"
+	case "waiting":
+		return "🟡"
 	case "pending":
 		return "🔷"
 	case "stale":
@@ -566,7 +568,9 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 
 func nodeStateLabel(state string) string {
 	switch state {
-	case "", "ready", "active", "idle":
+	case "", "initial", "unavailable", "unowned":
+		return "initial"
+	case "ready", "active", "idle":
 		return "ready"
 	case "stale":
 		return "stale"
@@ -663,7 +667,7 @@ func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string 
 
 	nodeNames := orderedHealthNodeNames(health)
 	if len(nodeNames) == 0 {
-		return "(no nodes)\n"
+		return "(non-AI or unknown session)\n"
 	}
 
 	nameWidth := 0

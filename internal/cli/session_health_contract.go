@@ -29,6 +29,8 @@ type sessionPane struct {
 
 func compactStatusMark(state string) string {
 	switch status.NormalizeState(state) {
+	case "initial":
+		return "⚪"
 	case "ready", "active", "idle":
 		return "🟢"
 	case "waiting":
@@ -43,7 +45,7 @@ func compactStatusMark(state string) string {
 func compactSessionStatusMark(visibleState string) string {
 	switch visibleState {
 	case "unavailable", "unowned":
-		return "🔴"
+		return "⚪"
 	default:
 		return compactStatusMark(visibleState)
 	}

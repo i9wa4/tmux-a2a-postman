@@ -49,7 +49,8 @@ func TestCompactStatusMark(t *testing.T) {
 		{"waiting", "🟡"},
 		{"idle", "🟢"},
 		{"stale", "🔴"},
-		{"", "🔴"},
+		{"initial", "⚪"},
+		{"", "⚪"},
 	}
 	for _, c := range cases {
 		got := compactStatusMark(c.status)
@@ -60,8 +61,11 @@ func TestCompactStatusMark(t *testing.T) {
 }
 
 func TestCompactSessionStatusMark(t *testing.T) {
-	if got := compactSessionStatusMark("unavailable"); got != "🔴" {
-		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "unavailable", got, "🔴")
+	if got := compactSessionStatusMark("unavailable"); got != "⚪" {
+		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "unavailable", got, "⚪")
+	}
+	if got := compactSessionStatusMark("initial"); got != "⚪" {
+		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "initial", got, "⚪")
 	}
 	if got := compactSessionStatusMark("pending"); got != "🔷" {
 		t.Fatalf("compactSessionStatusMark(%q) = %q, want %q", "pending", got, "🔷")
@@ -332,7 +336,7 @@ func TestRunGetSessionStatusOneline_PreservesSessionIDIndicesAcrossSessionsWitho
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	if stdout.String() != "[0]🟢🟢 [1]🟢\n" {
+	if stdout.String() != "[0]🟢🟢 [1]⚪\n" {
 		t.Fatalf("stdout = %q, want compact status line", stdout.String())
 	}
 }

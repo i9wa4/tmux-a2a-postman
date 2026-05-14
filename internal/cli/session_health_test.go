@@ -595,7 +595,10 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	if payload.Sessions[0].Compact != "🟢🟢" {
 		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🟢🟢")
 	}
-	if payload.Sessions[1].Compact != "🟢" {
-		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "🟢")
+	if payload.Sessions[1].VisibleState != "initial" {
+		t.Fatalf("ghost visible_state = %q, want %q", payload.Sessions[1].VisibleState, "initial")
+	}
+	if payload.Sessions[1].Compact != "⚪" {
+		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "⚪")
 	}
 }

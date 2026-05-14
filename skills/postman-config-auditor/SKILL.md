@@ -257,11 +257,13 @@ of:
 
 - Use `tmux-a2a-postman get-status` for structured state and
   `tmux-a2a-postman get-status-oneline` for compact coordination.
+- Treat `initial` as neutral: no positive live evidence yet, including non-AI,
+  unknown, or not-yet-classified panes/sessions.
 - Treat `pending` as inbound reply-required action.
 - Treat `waiting` as outbound reply-required mail waiting for a response.
-- Treat `stale` as missing, unavailable, or unknown pane/session state before
-  changing templates. A live pane that is merely quiet should not be diagnosed
-  as stale.
+- Treat `stale` as previously known but unhealthy pane/session state before
+  changing templates. A live pane that is merely quiet or still initial should
+  not be diagnosed as stale.
 - Treat dead-letter as a routing/config issue until edges prove otherwise.
 
 ## 4. Findings Format

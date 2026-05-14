@@ -68,16 +68,19 @@ instructions, message metadata, health output, and observed send results.
 
 ## 3. Visible State
 
-| State         | Meaning                                       | Usual action                                        |
-| ------------- | --------------------------------------------- | --------------------------------------------------- |
-| `ready`       | Pane is live with no open action or wait      | No action unless the user or workflow asks          |
-| `pending`     | Inbound reply-required message is open        | `pop`, handle the message, send an exact reply      |
-| `waiting`     | Outbound reply-required message is unresolved | Wait, or follow up only when timeout policy says so |
-| `stale`       | Pane or session is missing or unknown         | Verify pane/session before blaming workflow         |
-| `unavailable` | Status is unavailable                         | Report infrastructure unavailable to the operator   |
+| State         | Meaning                                       | Usual action                                         |
+| ------------- | --------------------------------------------- | ---------------------------------------------------- |
+| `initial`     | Pane or session has no positive live evidence | Wait for health, or verify only if workflow needs it |
+| `ready`       | Pane is live with no open action or wait      | No action unless the user or workflow asks           |
+| `pending`     | Inbound reply-required message is open        | `pop`, handle the message, send an exact reply       |
+| `waiting`     | Outbound reply-required message is unresolved | Wait, or follow up only when timeout policy says so  |
+| `stale`       | Previously known pane/session is not healthy  | Verify pane/session before blaming workflow          |
+| `unavailable` | Status is unavailable                         | Report infrastructure unavailable to the operator    |
 
 `pending` beats `waiting` because the node has something it can do now.
-`stale` beats both because live state is not trustworthy.
+`stale` beats both because live state is not trustworthy. `initial` is neutral:
+non-AI, unknown, or not-yet-classified panes and sessions should not be treated
+as ready until there is positive live evidence.
 
 ## 4. Input Requests
 
@@ -238,8 +241,10 @@ progress evidence matters.
 8. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
 9. If a node is `stale` or `attention_stale`, verify the tmux pane and session
-   before resending work. If status remains unavailable, report the
-   infrastructure problem instead of attempting repair or low-level checks.
+   before resending work. If a pane or session is only `initial`, wait for
+   positive evidence unless the workflow explicitly needs verification. If
+   status remains unavailable, report the infrastructure problem instead of
+   attempting repair or low-level checks.
 10. Audit topology and recipient names before retrying messages in dead-letter.
 11. Do not edit `post/`, `inbox/`, `read/`, or dead-letter files manually.
 

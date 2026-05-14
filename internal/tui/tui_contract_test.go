@@ -245,6 +245,63 @@ func TestTUI_Update_StatusUpdate_PreservesTmuxSessionRowsWithoutCanonicalNodes(t
 	}
 }
 
+func TestTUI_View_CanonicalZeroNodeSessionStaysInitial(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "scratch", Enabled: true},
+	}
+	m.sessionHealth["scratch"] = status.SessionHealth{
+		SessionName:  "scratch",
+		VisibleState: "initial",
+		Nodes:        []status.NodeHealth{},
+	}
+
+	view := m.View().Content
+
+	requireSessionRow(t, view, "> ", "⚪", 0, "scratch")
+	if strings.Contains(view, "🟢") {
+		t.Fatalf("view shows ready indicator without positive node evidence: %q", view)
+	}
+	if !strings.Contains(view, "(non-AI or unknown session)") {
+		t.Fatalf("view missing non-AI/unknown text for canonical zero-node session: %q", view)
+	}
+}
+
+func TestTUI_View_NodeWithoutPositiveEvidenceStaysInitial(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	m := InitialModel(ch, nil, config.DefaultConfig(), "")
+	m.sessions = []SessionInfo{
+		{Name: "review", Enabled: true},
+	}
+	m.sessionHealth["review"] = status.SessionHealth{
+		SessionName:  "review",
+		VisibleState: "initial",
+		Nodes: []status.NodeHealth{
+			{Name: "worker"},
+		},
+		Windows: []status.SessionWindow{
+			{
+				Index: "0",
+				Nodes: []status.WindowNode{
+					{Name: "worker"},
+				},
+			},
+		},
+	}
+
+	view := m.View().Content
+
+	requireSessionRow(t, view, "> ", "⚪", 0, "review")
+	if !strings.Contains(view, "worker  ⚪  initial") {
+		t.Fatalf("view missing initial node row: %q", view)
+	}
+}
+
 func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
