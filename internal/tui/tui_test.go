@@ -156,10 +156,10 @@ func TestTUI_View(t *testing.T) {
 	if !strings.Contains(view, "[sessions]") {
 		t.Error("view missing [sessions] section")
 	}
-	if !strings.Contains(view, "> [0] main") {
+	if !strings.Contains(view, "> 🟢 [0] main") {
 		t.Error("view missing selected numbered session row")
 	}
-	if !strings.Contains(view, "  [1] review") {
+	if !strings.Contains(view, "  🔴 [1] review") {
 		t.Error("view missing secondary numbered session row")
 	}
 	if !strings.Contains(view, "[nodes]") {
@@ -302,7 +302,7 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 	if m.selectedSession != 1 {
 		t.Fatalf("selectedSession = %d, want 1", m.selectedSession)
 	}
-	if !strings.Contains(view, "> [1] review 🟢") {
+	if !strings.Contains(view, "> 🟢 [1] review") {
 		t.Fatalf("view missing selected session row with canonical indicator: %q", view)
 	}
 }
