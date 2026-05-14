@@ -145,8 +145,6 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
-	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
-	pathDisplayDoc := readRepoFile(t, "docs/design/path-display-policy.md")
 	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
 	configAuditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
 	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
@@ -172,19 +170,6 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"--agent claude-code",
 		"postman-send-message",
 		"postman-config-auditor",
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no work applies.",
-	)
-	assertContainsAllNormalized(
-		t, messagingHelp,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying work or deciding no action is needed.",
-		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
-		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
-	)
-	assertContainsAllNormalized(
-		t, pathDisplayDoc,
-		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before classifying the message or deciding that no work applies.",
-		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
-		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
 	)
 	assertContainsAllNormalized(
 		t, commandsHelp,
@@ -201,11 +186,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"tmux-a2a-postman inspect-message --id <message_id>",
 		"read-only historical lookup",
 		"Use `--path` for the stored Markdown path and `--body` for sender-authored body text.",
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no action is needed.",
-		"`messageType: ping`, `replyPolicy: none`, and other metadata do not allow skipping the body.",
-		"truncated command output does not count as a complete read.",
 	)
-	assertNotContainsNormalized(t, operatorSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
 	assertContainsAllNormalized(
 		t, sendSkill,
 		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
@@ -401,4 +382,35 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
 	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
 	assertContainsNormalized(t, configHelp, "Mermaid class <node> ui_node")
+}
+
+func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
+	pathDisplayDoc := readRepoFile(t, "docs/design/path-display-policy.md")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+
+	assertContainsAllNormalized(
+		t, readme,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no work applies.",
+	)
+	assertContainsAllNormalized(
+		t, messagingHelp,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying work or deciding no action is needed.",
+		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
+		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
+	)
+	assertContainsAllNormalized(
+		t, pathDisplayDoc,
+		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before classifying the message or deciding that no work applies.",
+		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
+		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
+	)
+	assertContainsAllNormalized(
+		t, operatorSkill,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no action is needed.",
+		"`messageType: ping`, `replyPolicy: none`, and other metadata do not allow skipping the body.",
+		"truncated command output does not count as a complete read.",
+	)
+	assertNotContainsNormalized(t, operatorSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
 }
