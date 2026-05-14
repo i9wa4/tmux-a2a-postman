@@ -47,7 +47,7 @@ Rules:
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
 - `skill_path` may be a scalar path or a YAML list of path entries.
 - `skill_path` list items may be scalar paths or mappings with `path`,
-  `inject`, `runtime`, and `skills`.
+  `inject`, and `skills`.
 - Only `skill_path` mappings accept `inject`.
 - For `skill_path` mappings, omitted `inject` appends the generated catalog to
   normal role context.
@@ -56,15 +56,9 @@ Rules:
 - For `skill_path` mappings, `inject: compaction_ping` stores the generated
   catalog for compaction-triggered daemon PING role content and keeps it out of
   normal role context.
-- `skill_path` mappings with `inject: ping` or `inject: compaction_ping` may
-  include `runtime`; the currently supported exact runtime selectors are
-  `claude` and `codex`.
-- Omitted `runtime` means the catalog is shared: it is included in
-  runtime-specific catalogs and in the fallback catalog used when no exact
-  runtime catalog matches.
-- `runtime` under `skill_path` requires `inject: ping` or
-  `inject: compaction_ping`.
-- PING paths, including runtime-specific entries, must be global/user-level:
+- `runtime` is unsupported under `skill_path`; list explicit path entries for
+  the skill catalogs that should be included.
+- PING paths must be global/user-level:
   `~/...` or absolute. Repo-local relative paths are invalid for PING catalogs
   and remain valid only for normal role catalogs.
 - Omitted `skills` means every skill under that path.
@@ -75,10 +69,7 @@ Rules:
 - Glob patterns such as `postman-*` are unsupported; list skill names
   explicitly.
 - Rendered catalogs contain at most one entry per skill frontmatter `name`.
-  Later path entries override earlier entries with the same name. Runtime
-  catalogs evaluate shared entries first and matching runtime entries
-  second, so runtime-specific entries override shared entries without duplicate
-  rendered skill bodies.
+  Later path entries override earlier entries with the same name.
 - An unclosed frontmatter block is an error.
 
 Example:
@@ -103,10 +94,8 @@ skill_path:
       - postman-session-operator
   - path: ~/.claude/skills
     inject: compaction_ping
-    runtime: claude
   - path: ~/.codex/skills
     inject: compaction_ping
-    runtime: codex
     skills:
       - postman-config-auditor
       - postman-session-operator
@@ -125,14 +114,10 @@ role context, so use them for compact runtime-agnostic catalogs only.
 `common_template` and append it to every daemon PING role content.
 `skill_path` entries with `inject: compaction_ping` keep their list out of
 `common_template` and append it only to daemon PING role content when pane
-capture detects a context-compaction marker. Runtime-specific PING entries are
-selected from the pane's current command. Entries without `runtime` are shared
-catalogs included in all runtime-specific catalogs and in the fallback catalog.
-Exact runtime-specific PING handling is intentionally limited to Claude Code
-and Codex CLI because those are the runtimes with pane compaction markers today.
-PING paths must be `~/...` or absolute; repo-local relative paths are invalid in
-this mode. For user-level runtime skill trees, prefer `$HOME/.claude/skills`
-and `$HOME/.codex/skills`.
+capture detects a context-compaction marker. PING catalog entries are not
+selected by runtime; list explicit `~/...` or absolute skill tree paths for the
+catalogs that should be included. Repo-local relative paths are invalid in this
+mode.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 

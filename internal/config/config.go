@@ -57,8 +57,8 @@ type Config struct {
 	DaemonMessageTemplate        string            `toml:"daemon_message_template"`         // Unified envelope for daemon-originated PING
 	DraftTemplate                string            `toml:"draft_template"`                  // Draft body used by send
 	CommonTemplate               string            `toml:"common_template"`                 // Issue #49: Shared template for all nodes
-	PingSkillCatalogs            map[string]string `toml:"-"`                               // postman.md skill_path inject: ping catalogs by runtime
-	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md skill_path inject: compaction_ping catalogs by runtime
+	PingSkillCatalogs            map[string]string `toml:"-"`                               // postman.md skill_path inject: ping catalogs
+	CompactionSkillCatalogs      map[string]string `toml:"-"`                               // postman.md skill_path inject: compaction_ping catalogs
 	EdgeViolationWarningTemplate string            `toml:"edge_violation_warning_template"` // Issue #80: Warning message for routing denied
 	EdgeViolationWarningMode     string            `toml:"edge_violation_warning_mode"`     // Issue #92: "compact" or "verbose" (default: compact)
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
@@ -283,10 +283,6 @@ func (cfg *Config) PingSkillCatalogForRuntime(runtime string) string {
 func skillCatalogForRuntime(catalogs map[string]string, runtime string) string {
 	if len(catalogs) == 0 {
 		return ""
-	}
-	runtime = normalizeSkillCatalogRuntime(runtime)
-	if catalog := catalogs[runtime]; catalog != "" {
-		return catalog
 	}
 	return catalogs[""]
 }
