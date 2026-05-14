@@ -7,7 +7,7 @@ Usage:
 Output:
   Always JSON.
   {"status":"empty"}
-  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}
+  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before classifying this message; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."}
 
 Fields:
   message_id              Stable message identity
@@ -19,9 +19,23 @@ Fields:
   input_request_set_id    Aggregate input request set id when grouped
   reply_to                Message id this message references
   remaining               Unread messages remaining after this command
+  archived_body_read_required
+                          True for message results; consumers must read the
+                          complete archived Markdown body before classification
+  archived_body_read_instruction
+                          Node-neutral body-read rule for pop consumers
 
 Path policy:
   User-facing path output shortens paths under the user's home directory with ~.
   Use markdown_absolute_path when present for programmatic file/body reads.
   pop claims and archives the message; it never embeds full body text inline.
   See docs/design/path-display-policy.md.
+
+Body-read invariant:
+  After every successful pop with status=message, read the complete archived
+  Markdown body before classifying work or deciding no action is needed.
+  messageType: ping, replyPolicy: none, and other metadata do not waive this
+  requirement. Truncated command output from cat, sed, rg, shell logs, or other
+  bounded stdout paths is not a valid archived-body read. If full file reads are
+  unavailable, read verified chunks until EOF or stop with a clear
+  body-not-fully-read state.

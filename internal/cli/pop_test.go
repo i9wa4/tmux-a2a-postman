@@ -344,6 +344,73 @@ func TestRunPop_ParsesEnvelopeMetadataForJSONPayload(t *testing.T) {
 	}
 }
 
+func TestRunPop_RequiresCompleteArchivedBodyReadBeforeClassification(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-body-read-required"
+	inboxDir := filepath.Join(tmpDir, contextID, "test-session", "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260512-010103-from-postman-to-worker.md"
+	longFiller := strings.Repeat("filler line that could consume a bounded stdout window\n", 256)
+	lateInstruction := "LATE RECIPIENT INSTRUCTION: classify only after the full archived body is available."
+	content := "---\nparams:\n" +
+		"  from: postman\n" +
+		"  to: worker\n" +
+		"  messageId: " + filename + "\n" +
+		"  replyPolicy: none\n" +
+		"  messageType: ping\n" +
+		"  timestamp: 2026-05-12T01:01:03Z\n" +
+		"---\n\n" +
+		"# Ping\n\n" +
+		longFiller +
+		lateInstruction + "\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--context-id", contextID})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout)
+	assertPopPayloadOmitsInlineMarkdown(t, stdout)
+	if strings.Contains(stdout, lateInstruction) {
+		t.Fatalf("pop JSON leaked late body instruction instead of requiring archive read:\n%s", stdout)
+	}
+	if !payload.ArchivedBodyReadRequired {
+		t.Fatal("payload.ArchivedBodyReadRequired = false, want true")
+	}
+	for _, want := range []string{
+		"complete archived Markdown body",
+		"messageType",
+		"replyPolicy",
+		"truncated command output is not a complete read",
+	} {
+		if !strings.Contains(payload.ArchivedBodyReadInstruction, want) {
+			t.Fatalf("ArchivedBodyReadInstruction missing %q: %q", want, payload.ArchivedBodyReadInstruction)
+		}
+	}
+	if payload.ReplyPolicy != "none" {
+		t.Fatalf("ReplyPolicy = %q, want none", payload.ReplyPolicy)
+	}
+	params := popFrontmatterParamsForTest(t, payload)
+	if params["messageType"] != "ping" {
+		t.Fatalf("frontmatter params messageType = %#v, want ping", params["messageType"])
+	}
+	archived := readPopArchiveForTest(t, payload)
+	if !strings.Contains(archived, lateInstruction) {
+		t.Fatalf("archived body missing late instruction:\n%s", archived)
+	}
+	if archived != content {
+		t.Fatalf("archived content changed:\n got %q\nwant %q", archived, content)
+	}
+}
+
 func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")

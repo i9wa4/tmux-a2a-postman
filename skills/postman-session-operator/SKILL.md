@@ -62,6 +62,14 @@ embeds sender-authored body text inline; when sender-authored content is
 needed, read the archived path after `pop` instead of expecting inline
 body/content in the JSON.
 
+After every successful `pop` with `status=message`, read the complete archived
+Markdown body before classifying the message or deciding no action is needed.
+`messageType: ping`, `replyPolicy: none`, and other metadata do not allow
+skipping the body. Truncated command output from `cat`, `sed`, `rg`, shell
+logs, or other bounded stdout paths is not a valid archived-body read. If a
+runtime only exposes bounded stdout, read verified chunks through EOF or stop
+with a clear body-not-fully-read state.
+
 Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body
 instructions, message metadata, health output, and observed send results.
@@ -221,10 +229,14 @@ progress evidence matters.
    you need the exact open item before reading. Then run
    `tmux-a2a-postman pop` when you are ready to claim and archive the message.
 4. After `pop`, use `frontmatter` for routing metadata and input-request
-   identifiers. If you need the sender-authored content, run
-   `tmux-a2a-postman inspect-message --id <message_id> --body` or open the
-   returned `markdown_absolute_path` when present, otherwise `markdown_path`;
-   default pop JSON does not include inline body/content.
+   identifiers, but do not classify the message from metadata alone. Read the
+   complete archived Markdown body by opening the returned
+   `markdown_absolute_path` when present, otherwise `markdown_path`. If your
+   runtime only exposes bounded command output, read verified chunks through
+   EOF before classifying the message.
+   `messageType: ping`, `replyPolicy: none`, and other metadata do not waive
+   this complete-body read. Default pop JSON does not include inline
+   body/content, and truncated command output does not count as a complete read.
 5. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-input-request-id <input_request_id>` when the pop output includes
    `input_request_id`; keep `--reply-to <message_id>` for traceability when the
