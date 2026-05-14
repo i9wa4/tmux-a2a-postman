@@ -23,17 +23,13 @@ defaults.
 - `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
   catalogs for every daemon PING. Entries with `inject: compaction_ping`
   generate catalogs only for compaction-triggered daemon PINGs. Both stay out
-  of normal role context. Runtime selectors for these catalogs live in
-  `postman.md`; exact runtime support is currently Claude Code and Codex CLI,
-  and an omitted `runtime` is shared plus fallback.
-- PING catalog paths, including runtime-specific entries, must be
-  global/user-level: `~/...` or absolute. Repo-local relative paths remain
-  supported only for normal role catalogs and are invalid for PING catalogs.
+  of normal role context. These catalogs are runtime-agnostic; list explicit
+  user-level skill tree paths for the catalogs to include.
+- PING catalog paths must be global/user-level: `~/...` or absolute.
+  Repo-local relative paths remain supported only for normal role catalogs and
+  are invalid for PING catalogs.
 - Rendered skill catalogs dedupe by frontmatter `name`. Later path entries
-  override earlier entries with the same rendered name. Runtime-specific
-  compaction PING catalogs evaluate shared entries first and the matching
-  runtime entries second, so runtime entries override shared entries without
-  injecting duplicate skill bodies.
+  override earlier entries with the same rendered name.
 - Omitted `skills` means all skills under that path. A present `skills` value
   should be a YAML list of explicit skill directory names; `skills: [all]`
   selects a real skill named `all`. The scalar `skills: all` remains accepted
