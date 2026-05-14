@@ -152,7 +152,8 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
 	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
 
-	assertContainsAllNormalized(t, readme,
+	assertContainsAllNormalized(
+		t, readme,
 		"postman daemon",
 		"tmux pane",
 		"Any AI coding agent",
@@ -173,17 +174,20 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"postman-config-auditor",
 		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying the message or deciding no work applies.",
 	)
-	assertContainsAllNormalized(t, messagingHelp,
+	assertContainsAllNormalized(
+		t, messagingHelp,
 		"After every successful `pop` with `status=message`, read the complete archived Markdown body before classifying work or deciding no action is needed.",
 		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
 		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
 	)
-	assertContainsAllNormalized(t, pathDisplayDoc,
+	assertContainsAllNormalized(
+		t, pathDisplayDoc,
 		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before classifying the message or deciding that no work applies.",
 		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
 		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
 	)
-	assertContainsAllNormalized(t, commandsHelp,
+	assertContainsAllNormalized(
+		t, commandsHelp,
 		"send",
 		"pop",
 		"get-status",
@@ -192,7 +196,8 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"version",
 		"help [topic]",
 	)
-	assertContainsAllNormalized(t, operatorSkill,
+	assertContainsAllNormalized(
+		t, operatorSkill,
 		"tmux-a2a-postman inspect-message --id <message_id>",
 		"read-only historical lookup",
 		"Use `--path` for the stored Markdown path and `--body` for sender-authored body text.",
@@ -201,20 +206,23 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"truncated command output does not count as a complete read.",
 	)
 	assertNotContainsNormalized(t, operatorSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
-	assertContainsAllNormalized(t, sendSkill,
+	assertContainsAllNormalized(
+		t, sendSkill,
 		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
 		"Do not pass message text as a CLI argument, file-body shortcut, or generic pipe-oriented body.",
 		"The sender is auto-detected from the current tmux pane title.",
 		"tmux-a2a-postman help send-heredoc",
 	)
-	assertContainsAllNormalized(t, configAuditorSkill,
+	assertContainsAllNormalized(
+		t, configAuditorSkill,
 		"postman-config-auditor",
 		"postman.md",
 		"postman.toml",
 		"get-status",
 		"references/postman-md.md",
 	)
-	assertContainsAllNormalized(t, postmanMDReference,
+	assertContainsAllNormalized(
+		t, postmanMDReference,
 		"Mermaid",
 		"Only `---` is parsed as an edge operator.",
 		"message_footer",
@@ -266,11 +274,13 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 	defaultConfig := readRepoFile(t, "internal/config/postman.default.toml")
 	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
 
-	assertContainsAllNormalized(t, defaultConfig,
+	assertContainsAllNormalized(
+		t, defaultConfig,
 		"required_reply_completion_gate",
 		"completion proof guidance for reply-required messages; empty otherwise",
 	)
-	assertContainsAllNormalized(t, messagingHelp,
+	assertContainsAllNormalized(
+		t, messagingHelp,
 		"Filling an input request closes transport, not task acceptance.",
 		"Task artifact: <artifact-reference>",
 		"Original checklist: PASS",
@@ -279,14 +289,16 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 		"Use BLOCKED with Original checklist: FAIL",
 		"Receivers should verify checklist status, durable references, evidence, and blockers before relaying, approving, or closing work.",
 	)
-	assertContainsAllNormalized(t, readme,
+	assertContainsAllNormalized(
+		t, readme,
 		"Filling an input request closes transport, not task acceptance.",
 		"Task artifact",
 		"Original checklist: PASS",
 		"Remaining blockers: none",
 		"Receivers verify the checklist status, durable references, evidence, and blockers before relaying, approving, or closing work.",
 	)
-	assertContainsAllNormalized(t, operatorSkill,
+	assertContainsAllNormalized(
+		t, operatorSkill,
 		"Filling an input request closes transport, not task acceptance.",
 		"Task artifact: <artifact-reference>",
 		"Original checklist: PASS",
@@ -314,7 +326,8 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 	productDirection := readRepoFile(t, "docs/design/product-direction.md")
 	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
 
-	assertContainsAllNormalized(t, runtimeDifferences,
+	assertContainsAllNormalized(
+		t, runtimeDifferences,
 		"Feature / behavior area",
 		"Claude Code behavior",
 		"Codex CLI behavior",
@@ -326,19 +339,23 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"repo-relative paths or stable URLs only",
 		"Runtime behavior changes need a separate issue.",
 	)
-	assertContainsAllNormalized(t, readme,
+	assertContainsAllNormalized(
+		t, readme,
 		"Claude Code and Codex CLI have different runtime surfaces outside postman",
 		"docs/agent-runtime-feature-differences.md",
 	)
-	assertContainsAllNormalized(t, configSSOT,
+	assertContainsAllNormalized(
+		t, configSSOT,
 		"Agent Runtime Feature Differences",
 		"Do not encode runtime-specific behavior in `postman.toml` defaults",
 	)
-	assertContainsAllNormalized(t, productDirection,
+	assertContainsAllNormalized(
+		t, productDirection,
 		"which behavior belongs to tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI",
 		"Agent Runtime Feature Differences",
 	)
-	assertContainsAllNormalized(t, postmanMDReference,
+	assertContainsAllNormalized(
+		t, postmanMDReference,
 		"Agent Runtime Feature Differences",
 		"do not duplicate the long-term runtime comparison here",
 		"Only `skill_path` mappings accept `inject`.",

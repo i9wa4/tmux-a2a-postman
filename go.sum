@@ -26,8 +26,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/ISU=
 github.com/ebitengine/purego v0.10.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/gofsnotify/fsnotify v0.0.4 h1:RuJQe7852TsOfRVOgLcs5ej36LPmL9zRvsmTlpY/a/8=
-github.com/gofsnotify/fsnotify v0.0.4/go.mod h1:2ABUH3E+Z40JVdAwCeNFKIvKSZF6NcnEH9BUN3/GmG8=
+github.com/gofsnotify/fsnotify v0.0.5 h1:yAWW7w4uDhcOXDpvm5aTIUzBSNzBbOwBPdf6U6Gx83Y=
+github.com/gofsnotify/fsnotify v0.0.5/go.mod h1:2ABUH3E+Z40JVdAwCeNFKIvKSZF6NcnEH9BUN3/GmG8=
 github.com/lucasb-eyer/go-colorful v1.4.0 h1:UtrWVfLdarDgc44HcS7pYloGHJUjHV/4FwW4TvVgFr4=
 github.com/lucasb-eyer/go-colorful v1.4.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-runewidth v0.0.23 h1:7ykA0T0jkPpzSvMS5i9uoNn2Xy3R383f9HDx3RybWcw=

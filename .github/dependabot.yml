@@ -13,22 +13,6 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  - package-ecosystem: "gomod"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    cooldown:
-      default-days: 7
-      semver-major-days: 14
-      semver-minor-days: 7
-      semver-patch-days: 3
-    groups:
-      gomod:
-        patterns:
-          - "*"
-    commit-message:
-      prefix: "chore(deps)"
-
   - package-ecosystem: "nix"
     directory: "/"
     schedule:
