@@ -1,0 +1,17 @@
+id: negative-trigger-001
+name: Negative Trigger 1
+description: Generic conversation should not trigger message sending.
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Summarize why tmux panes are useful for terminal workflows."
+expected:
+  should_trigger: false
+graders:
+  - type: text
+    name: omits-skill-keywords
+    config:
+      not_contains:
+        - "send-heredoc"
+        - "postman-send-message"
+        - "first message"
