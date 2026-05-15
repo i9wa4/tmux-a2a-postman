@@ -9,21 +9,21 @@ description: |
 
 # postman-session-operator
 
-Operate existing message workflows.
-
-**UTILITY SKILL**. INVOKES: live status inspection and mailbox commands.
+**UTILITY SKILL**. INVOKES: status and mailbox commands.
 
 ## USE FOR
 
-- Interpret status, pending, waiting, blocked, stale, and dead-letter signals.
-- Claim unread mail, read complete archives, and close exact input requests.
+- Interpret pending, waiting, blocked, stale, and dead-letter state.
+- Claim unread mail, read complete archives, and close exact requests.
 - Use `tmux-a2a-postman inspect-message --id <message_id>` as a read-only
   historical lookup. Use `--path` for the stored Markdown path and `--body` for
   sender-authored body text.
 
 ## Procedure
 
-1. Use `tmux-a2a-postman get-status`.
+1. Use `tmux-a2a-postman get-status` for on-demand decisions, not polling.
+   After delegation/reply-required mail, wait for pane notifications, exact
+   replies, timeouts, or suspected delivery trouble.
 2. After every successful `pop` with `status=message`, read the complete
    archived Markdown body before any handling, routing, reply, status decision,
    or no-action or no-op decision.
