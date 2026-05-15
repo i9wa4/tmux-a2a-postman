@@ -43,6 +43,14 @@ func assertContainsAllNormalized(t *testing.T, got string, wants ...string) {
 	}
 }
 
+func assertNotContainsNormalized(t *testing.T, got, forbidden string) {
+	t.Helper()
+
+	if strings.Contains(normalizeSpace(got), normalizeSpace(forbidden)) {
+		t.Fatalf("content contains forbidden normalized substring %q", forbidden)
+	}
+}
+
 func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendHelp := readRepoFile(t, "internal/cli/helptext/send-heredoc.txt")
@@ -56,9 +64,12 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
 	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]⚫")
 	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}`)
-	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}`)
+	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true`)
 	assertContainsNormalized(t, popHelp, "Use markdown_absolute_path when present for programmatic file/body reads.")
 	assertContainsNormalized(t, popHelp, "pop claims and archives the message; it never embeds full body text inline.")
+	assertContainsNormalized(t, popHelp, "After every successful pop with status=message, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
+	assertContainsNormalized(t, popHelp, "messageType: ping, replyPolicy: none, and other metadata do not waive this requirement.")
+	assertContainsNormalized(t, popHelp, "Truncated command output from cat, sed, rg, shell logs, or other bounded stdout paths is not a valid archived-body read.")
 	assertContainsNormalized(t, popHelp, "pop — claim and archive the next inbox message")
 	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
 	assertContainsNormalized(t, statusHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
@@ -109,6 +120,9 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
 	assertContainsNormalized(t, notificationDoc, "Sender Message")
 	assertContainsNormalized(t, notificationDoc, "Sender body Markdown is inserted verbatim after that separator")
+	assertContainsNormalized(t, notificationDoc, "The recipient reads the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
+	assertContainsNormalized(t, notificationDoc, "This applies to daemon PING mail, `messageType: ping`, `replyPolicy: none`, and every other message type.")
+	assertContainsNormalized(t, notificationDoc, "truncated output is not a complete body read.")
 }
 
 func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
@@ -368,4 +382,35 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
 	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
 	assertContainsNormalized(t, configHelp, "Mermaid class <node> ui_node")
+}
+
+func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
+	pathDisplayDoc := readRepoFile(t, "docs/design/path-display-policy.md")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+
+	assertContainsAllNormalized(
+		t, readme,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
+	)
+	assertContainsAllNormalized(
+		t, messagingHelp,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
+		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
+		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
+	)
+	assertContainsAllNormalized(
+		t, pathDisplayDoc,
+		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
+		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
+		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
+	)
+	assertContainsAllNormalized(
+		t, operatorSkill,
+		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
+		"`messageType: ping`, `replyPolicy: none`, and other metadata do not allow skipping the body.",
+		"truncated command output does not count as a complete read.",
+	)
+	assertNotContainsNormalized(t, operatorSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func sessionRowPattern(cursor string, indicator string, index int, name string) string {
-	return regexp.QuoteMeta(cursor) + `\[` + regexp.QuoteMeta(strconv.Itoa(index)) + `\] ` + regexp.QuoteMeta(name) + `\s+` + regexp.QuoteMeta(indicator)
+	return regexp.QuoteMeta(cursor) + regexp.QuoteMeta(indicator) + ` \[` + regexp.QuoteMeta(strconv.Itoa(index)) + `\] ` + regexp.QuoteMeta(name)
 }
 
 func requireSessionRow(t *testing.T, view string, cursor string, indicator string, index int, name string) {
@@ -77,7 +77,7 @@ func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review 🔴") {
+	if !strings.Contains(view, "> 🔴 [0] review") {
 		t.Fatalf("view missing canonical session indicator: %q", view)
 	}
 	if !strings.Contains(view, "critic  🔷  pending") {
@@ -102,7 +102,7 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review ⚫") {
+	if !strings.Contains(view, "> ⚫ [0] review") {
 		t.Fatalf("view missing loading session indicator: %q", view)
 	}
 	if !strings.Contains(view, "(loading canonical health)") {
@@ -128,7 +128,7 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 
 	view := m.View().Content
 
-	if !strings.Contains(view, "> [0] review ⚫") {
+	if !strings.Contains(view, "> ⚫ [0] review") {
 		t.Fatalf("view missing unavailable session indicator: %q", view)
 	}
 	if !strings.Contains(view, "(session unavailable)") {
@@ -428,8 +428,8 @@ func TestTUI_View_DefaultSurfaceRowsUseSettledShape(t *testing.T) {
 	if sessionLine == "" || nodeLine == "" {
 		t.Fatalf("view missing target lines: %q", view)
 	}
-	if strings.Index(sessionLine, "[0]") >= strings.Index(sessionLine, "🟢") {
-		t.Fatalf("session row is not index-first: %q", sessionLine)
+	if strings.Index(sessionLine, "🟢") >= strings.Index(sessionLine, "[0]") {
+		t.Fatalf("session row is not status-first: %q", sessionLine)
 	}
 	if !(strings.Index(nodeLine, "boss") < strings.Index(nodeLine, "🟢") && strings.Index(nodeLine, "🟢") < strings.Index(nodeLine, "ready")) {
 		t.Fatalf("node row is not name + emoji + status: %q", nodeLine)

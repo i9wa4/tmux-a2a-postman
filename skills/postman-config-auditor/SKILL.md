@@ -75,16 +75,13 @@ Important merge rules:
 - `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
   compact skill catalogs for every daemon PING. Entries with
   `inject: compaction_ping` generate catalogs only for compaction-triggered
-  daemon PINGs. Both stay out of `common_template`. These entries may include
-  optional `runtime` selectors such as `claude` or `codex`; entries without
-  `runtime` are shared catalogs included in runtime-specific catalogs and in
-  the fallback catalog.
-- PING entries, including runtime-specific entries, must use global/user-level
-  paths: `~/...` or absolute. Repo-local relative paths remain valid only for
-  normal role catalogs.
+  daemon PINGs. Both stay out of `common_template`. These catalogs are not
+  selected by runtime; list explicit path entries for the skill catalogs that
+  should be included.
+- PING entries must use global/user-level paths: `~/...` or absolute.
+  Repo-local relative paths remain valid only for normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`. Later path entries
-  override earlier entries with the same rendered name; runtime-specific
-  compaction PING entries override shared entries with the same name.
+  override earlier entries with the same rendered name.
 - Project-local templates cannot enable shell expansion for themselves.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
@@ -129,18 +126,13 @@ Important merge rules:
   current user's home directory, and each selected skill name maps to a
   subdirectory containing `SKILL.md`.
 - If `skill_path` entries use `inject: ping`, confirm they are intended for all
-  daemon PINGs rather than normal role context, confirm their paths are `~/...`
-  or absolute, and confirm any `runtime` selector matches pane commands such as
-  `claude` or `codex`.
+  daemon PINGs rather than normal role context, and confirm their paths are
+  `~/...` or absolute.
 - If `skill_path` entries use `inject: compaction_ping`, confirm they are
-  intended only for compaction-triggered PINGs, confirm their paths are `~/...`
-  or absolute, and confirm any `runtime` selector matches pane commands such as
-  `claude` or `codex`.
-- For runtime-specific PING entries, prefer `$HOME/.claude/skills` and
-  `$HOME/.codex/skills` for user-level runtime skill catalogs.
-- If shared and runtime-specific PING entries overlap, confirm the later-entry
-  override behavior is intended and the rendered catalog has no duplicate skill
-  bodies.
+  intended only for compaction-triggered PINGs, and confirm their paths are
+  `~/...` or absolute.
+- If PING entries overlap, confirm the later-entry override behavior is
+  intended and the rendered catalog has no duplicate skill bodies.
 - Confirm omitted `skills` means all skills, while present `skills` uses
   explicit YAML list items. Glob patterns such as `postman-*` are unsupported.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and

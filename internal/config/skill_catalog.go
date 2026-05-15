@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 )
 
 type skillCatalogEntry struct {
@@ -16,11 +14,10 @@ type skillCatalogEntry struct {
 }
 
 type skillCatalogSpec struct {
-	Path    string
-	All     bool
-	Names   []string
-	Runtime string
-	Inject  string
+	Path   string
+	All    bool
+	Names  []string
+	Inject string
 }
 
 var skillCatalogUserHomeDir = os.UserHomeDir
@@ -39,55 +36,15 @@ func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, sp
 	return joinTemplateSections(commonTemplate, catalog), nil
 }
 
-func renderRuntimeSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
-	byRuntime := make(map[string][]skillCatalogSpec)
-	var runtimes []string
-	var sharedSpecs []skillCatalogSpec
-	for _, spec := range specs {
-		if strings.TrimSpace(spec.Path) == "" {
-			continue
-		}
-		runtime := normalizeSkillCatalogRuntime(spec.Runtime)
-		if runtime == "" {
-			sharedSpecs = append(sharedSpecs, spec)
-			continue
-		}
-		if _, ok := byRuntime[runtime]; !ok {
-			runtimes = append(runtimes, runtime)
-		}
-		byRuntime[runtime] = append(byRuntime[runtime], spec)
+func renderInjectedSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (map[string]string, error) {
+	catalog, err := renderSkillCatalogs(markdownPath, specs)
+	if err != nil {
+		return nil, err
 	}
-	if len(sharedSpecs) == 0 && len(byRuntime) == 0 {
+	if catalog == "" {
 		return nil, nil
 	}
-
-	result := make(map[string]string)
-	if len(sharedSpecs) > 0 {
-		catalog, err := renderSkillCatalogs(markdownPath, sharedSpecs)
-		if err != nil {
-			return nil, err
-		}
-		if catalog != "" {
-			result[""] = catalog
-		}
-	}
-
-	sort.Strings(runtimes)
-	for _, runtime := range runtimes {
-		runtimeSpecs := append([]skillCatalogSpec{}, sharedSpecs...)
-		runtimeSpecs = append(runtimeSpecs, byRuntime[runtime]...)
-		catalog, err := renderSkillCatalogs(markdownPath, runtimeSpecs)
-		if err != nil {
-			return nil, err
-		}
-		if catalog != "" {
-			result[runtime] = catalog
-		}
-	}
-	if len(result) == 0 {
-		return nil, nil
-	}
-	return result, nil
+	return map[string]string{"": catalog}, nil
 }
 
 func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string, error) {
@@ -111,9 +68,7 @@ func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string,
 			sourceDisplays = append(sourceDisplays, sourceDisplay)
 		}
 		for _, entry := range entries {
-			// Later specs are more specific in practice: runtime catalogs append
-			// matching-runtime specs after shared specs, so one rendered skill
-			// body wins deterministically without duplicates.
+			// Later specs win deterministically without duplicate rendered skill bodies.
 			entriesByName[entry.Name] = entry
 		}
 	}
@@ -128,10 +83,6 @@ func renderSkillCatalogs(markdownPath string, specs []skillCatalogSpec) (string,
 		return orderedEntries[i].Name < orderedEntries[j].Name
 	})
 	return renderSkillCatalogFromSources(sourceDisplays, orderedEntries), nil
-}
-
-func normalizeSkillCatalogRuntime(runtime string) string {
-	return agentruntime.Normalize(runtime)
 }
 
 func loadSkillCatalogSpec(markdownPath string, spec skillCatalogSpec) ([]skillCatalogEntry, string, error) {

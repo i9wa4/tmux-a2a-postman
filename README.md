@@ -144,8 +144,8 @@ tooling; tmux remains the hard runtime dependency.
 
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
 stays in the same frontmatter header; leave paths commented until the matching
-skills exist for your agent runtime. Markdown under `common_template` and node
-sections is free-form role guidance, so short sections can cover identity,
+skill tree exists for your agent runtime. Markdown under `common_template` and
+node sections is free-form role guidance, so short sections can cover identity,
 boundaries, local conventions, escalation rules, or checklists. Only the
 backtick-wrapped H2 section names and Mermaid edges are structural; `### role`
 sets the short role summary, and other H3 headings are ordinary Markdown:
@@ -153,31 +153,29 @@ sets the short role summary, and other H3 headings are ordinary Markdown:
 ````markdown
 ---
 # Optional: after installing packaged skills, uncomment only paths that exist.
+# For PING catalogs, list the explicit user-level skill tree paths you want
+# included; postman does not select skill catalogs by runtime.
 # skill_path:
 #   - path: ~/.codex/skills
 #     inject: ping
-#     runtime: codex
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.codex/skills
 #     inject: compaction_ping
-#     runtime: codex
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject: ping
-#     runtime: claude
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject: compaction_ping
-#     runtime: claude
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
@@ -288,8 +286,12 @@ tmux-a2a-postman pop
 ```
 
 Recipients usually run `pop` after a pane notification or message footer says
-mail is waiting. To inspect archived mail later, use
-`inspect-message --id <message_id>`.
+mail is waiting. After every successful `pop` with `status=message`, read the
+complete archived Markdown body before any handling, routing, reply, status
+decision, or no-action or no-op decision. `messageType: ping`,
+`replyPolicy: none`, and other metadata do not allow skipping the body.
+Truncated output from bounded stdout does not count as a complete read. To
+inspect archived mail later, use `inspect-message --id <message_id>`.
 
 Inspect live session state:
 

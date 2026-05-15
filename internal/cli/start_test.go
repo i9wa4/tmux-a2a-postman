@@ -414,7 +414,7 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 		DaemonMessageTemplate: "{message}\n{role_content}",
 		TmuxTimeout:           1.0,
 		CompactionSkillCatalogs: map[string]string{
-			"claude": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
+			"": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
 		},
 	}
 

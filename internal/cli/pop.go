@@ -122,24 +122,28 @@ type popEmptyOutput struct {
 }
 
 type popMessageOutput struct {
-	Status               string         `json:"status"`
-	MessageID            string         `json:"message_id,omitempty"`
-	MarkdownPath         string         `json:"markdown_path,omitempty"`
-	MarkdownAbsolutePath string         `json:"markdown_absolute_path,omitempty"`
-	Frontmatter          map[string]any `json:"frontmatter,omitempty"`
-	From                 string         `json:"from"`
-	To                   string         `json:"to"`
-	ReplyPolicy          string         `json:"reply_policy,omitempty"`
-	ReplyTo              string         `json:"reply_to,omitempty"`
-	InputRequestID       string         `json:"input_request_id,omitempty"`
-	FillsInputRequestID  string         `json:"fills_input_request_id,omitempty"`
-	InputRequestSetID    string         `json:"input_request_set_id,omitempty"`
-	BranchID             string         `json:"branch_id,omitempty"`
-	CompletionRule       string         `json:"completion_rule,omitempty"`
-	Timestamp            string         `json:"timestamp"`
-	UnreadBefore         *int           `json:"unread_before,omitempty"`
-	Remaining            *int           `json:"remaining,omitempty"`
+	Status                      string         `json:"status"`
+	MessageID                   string         `json:"message_id,omitempty"`
+	MarkdownPath                string         `json:"markdown_path,omitempty"`
+	MarkdownAbsolutePath        string         `json:"markdown_absolute_path,omitempty"`
+	Frontmatter                 map[string]any `json:"frontmatter,omitempty"`
+	From                        string         `json:"from"`
+	To                          string         `json:"to"`
+	ReplyPolicy                 string         `json:"reply_policy,omitempty"`
+	ReplyTo                     string         `json:"reply_to,omitempty"`
+	InputRequestID              string         `json:"input_request_id,omitempty"`
+	FillsInputRequestID         string         `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID           string         `json:"input_request_set_id,omitempty"`
+	BranchID                    string         `json:"branch_id,omitempty"`
+	CompletionRule              string         `json:"completion_rule,omitempty"`
+	Timestamp                   string         `json:"timestamp"`
+	UnreadBefore                *int           `json:"unread_before,omitempty"`
+	Remaining                   *int           `json:"remaining,omitempty"`
+	ArchivedBodyReadRequired    bool           `json:"archived_body_read_required,omitempty"`
+	ArchivedBodyReadInstruction string         `json:"archived_body_read_instruction,omitempty"`
 }
+
+const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
 func writeEmptyPopOutput() error {
 	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})
@@ -153,6 +157,8 @@ func writePopMessageOutput(content, filename, markdownPath string, unreadBefore,
 	}
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
+	output.ArchivedBodyReadRequired = true
+	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	return json.NewEncoder(os.Stdout).Encode(output)
 }
 

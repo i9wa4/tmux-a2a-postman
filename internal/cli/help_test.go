@@ -128,9 +128,8 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"Skill catalogs:",
 		"default skill_path relative paths resolve from the declaring postman.md directory",
 		"inject: ping and inject: compaction_ping paths must be ~/... or absolute",
-		"inject: ping may use runtime: claude or runtime: codex for daemon PING catalogs",
-		"inject: compaction_ping may use runtime: claude or runtime: codex for compaction-triggered PING catalogs",
-		"duplicate rendered skill names are deduped; later entries win, runtime entries override shared entries",
+		"skill_path runtime selectors are unsupported; list explicit path entries instead",
+		"duplicate rendered skill names are deduped; later entries win",
 		"get-status, get-status-oneline, and the default TUI read the same canonical health contract.",
 	} {
 		if !strings.Contains(got, want) {

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -63,7 +62,7 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 			}
 			scalars[key] = value
 		case "skill_path":
-			specs, err := parseSkillPathFrontmatterNode(valueNode, "skill_path", true, true)
+			specs, err := parseSkillPathFrontmatterNode(valueNode, "skill_path", true)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -108,7 +107,7 @@ func splitSkillPathSpecsByInject(specs []skillCatalogSpec) ([]skillCatalogSpec, 
 	return roleSpecs, pingSpecs, compactionPingSpecs, nil
 }
 
-func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime, allowInject bool) ([]skillCatalogSpec, error) {
+func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowInject bool) ([]skillCatalogSpec, error) {
 	switch node.Kind {
 	case yaml.ScalarNode:
 		path, err := parseYAMLScalarString(node)
@@ -122,7 +121,7 @@ func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime, al
 	case yaml.SequenceNode:
 		specs := make([]skillCatalogSpec, 0, len(node.Content))
 		for _, item := range node.Content {
-			spec, err := parseSkillPathItemNode(item, key, allowRuntime, allowInject)
+			spec, err := parseSkillPathItemNode(item, key, allowInject)
 			if err != nil {
 				return nil, err
 			}
@@ -139,7 +138,7 @@ func parseSkillPathFrontmatterNode(node *yaml.Node, key string, allowRuntime, al
 	}
 }
 
-func parseSkillPathItemNode(node *yaml.Node, key string, allowRuntime, allowInject bool) (skillCatalogSpec, error) {
+func parseSkillPathItemNode(node *yaml.Node, key string, allowInject bool) (skillCatalogSpec, error) {
 	switch node.Kind {
 	case yaml.ScalarNode:
 		path, err := parseYAMLScalarString(node)
@@ -148,13 +147,13 @@ func parseSkillPathItemNode(node *yaml.Node, key string, allowRuntime, allowInje
 		}
 		return skillCatalogSpec{Path: path, All: true}, nil
 	case yaml.MappingNode:
-		return parseSkillPathMappingNode(node, key, allowRuntime, allowInject)
+		return parseSkillPathMappingNode(node, key, allowInject)
 	default:
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" list item must be a path string or a mapping")
 	}
 }
 
-func parseSkillPathMappingNode(node *yaml.Node, key string, allowRuntime, allowInject bool) (skillCatalogSpec, error) {
+func parseSkillPathMappingNode(node *yaml.Node, key string, allowInject bool) (skillCatalogSpec, error) {
 	spec := skillCatalogSpec{All: true}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode := node.Content[i]
@@ -193,26 +192,13 @@ func parseSkillPathMappingNode(node *yaml.Node, key string, allowRuntime, allowI
 				return skillCatalogSpec{}, frontmatterNodeError(valueNode, fmt.Sprintf("unsupported %s item inject %q", key, inject))
 			}
 		case "runtime":
-			if !allowRuntime {
-				return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported %s item key %q", key, keyNode.Value))
-			}
-			runtime, err := parseYAMLScalarString(valueNode)
-			if err != nil {
-				return skillCatalogSpec{}, frontmatterNodeError(valueNode, key+" item runtime must be a scalar value")
-			}
-			spec.Runtime = normalizeSkillCatalogRuntime(runtime)
-			if spec.Runtime != "" && !agentruntime.IsSupported(spec.Runtime) {
-				return skillCatalogSpec{}, frontmatterNodeError(valueNode, fmt.Sprintf("unsupported %s item runtime %q; supported runtimes are %s", key, spec.Runtime, supportedSkillCatalogRuntimeList()))
-			}
+			return skillCatalogSpec{}, frontmatterNodeError(keyNode, key+" item runtime is unsupported; list explicit skill_path entries instead")
 		default:
 			return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported %s item key %q", key, keyNode.Value))
 		}
 	}
 	if strings.TrimSpace(spec.Path) == "" {
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a non-empty path")
-	}
-	if key == "skill_path" && spec.Runtime != "" && !isPingSkillCatalogInject(spec.Inject) {
-		return skillCatalogSpec{}, frontmatterNodeError(node, "skill_path item runtime requires inject: ping or inject: compaction_ping")
 	}
 	if requiresGlobalSkillCatalogPath(key, spec) && !isGlobalSkillCatalogPath(spec.Path) {
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a global/user-level path (~ or absolute); relative paths are invalid for compaction PING catalogs")
@@ -286,15 +272,6 @@ func requiresGlobalSkillCatalogPath(key string, spec skillCatalogSpec) bool {
 func isGlobalSkillCatalogPath(path string) bool {
 	path = strings.TrimSpace(path)
 	return path == "~" || strings.HasPrefix(path, "~/") || filepath.IsAbs(path)
-}
-
-func supportedSkillCatalogRuntimeList() string {
-	definitions := agentruntime.Supported()
-	ids := make([]string, 0, len(definitions))
-	for _, definition := range definitions {
-		ids = append(ids, definition.ID)
-	}
-	return strings.Join(ids, ", ")
 }
 
 func parseYAMLScalarString(node *yaml.Node) (string, error) {

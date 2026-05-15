@@ -588,20 +588,13 @@ func (m Model) renderSessionsSection() string {
 		return b.String()
 	}
 
-	nameWidth := 0
-	for _, session := range m.sessions {
-		if len(session.Name) > nameWidth {
-			nameWidth = len(session.Name)
-		}
-	}
-
 	for i, session := range m.sessions {
 		cursor := "  "
 		if i == m.selectedSession {
 			cursor = "> "
 		}
 		indicator := m.defaultSessionIndicator(session)
-		b.WriteString(fmt.Sprintf("%s[%d] %-*s %s\n", cursor, i, nameWidth, session.Name, indicator))
+		b.WriteString(fmt.Sprintf("%s%s [%d] %s\n", cursor, indicator, i, session.Name))
 	}
 
 	return b.String()

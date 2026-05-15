@@ -25,6 +25,18 @@ the absolute file path for programmatic reads. `pop` never embeds
 sender-authored body text inline; agents read `markdown_absolute_path` when it
 is present, otherwise `markdown_path`.
 
+After every successful `pop` with `status=message`, consumers must read the
+complete archived Markdown body before any handling, routing, reply, status
+decision, or no-action or no-op decision. Frontmatter and JSON metadata are
+only routing and bookkeeping signals. `messageType: ping`, `replyPolicy: none`,
+and other metadata do not waive the body-read requirement.
+
+Opening the archive through bounded stdout is not enough if output can be
+truncated. A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later
+body content does not count as a complete archived-body read. Runtimes with only
+bounded stdout must read verified chunks through EOF or stop with a clear
+body-not-fully-read state.
+
 Public and permanent GitHub surfaces still follow the stricter path hygiene
 rule: use repo-relative paths or stable web URLs for project files, and do not
 include concrete machine-local absolute paths there.

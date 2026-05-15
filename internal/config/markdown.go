@@ -516,14 +516,14 @@ func loadMarkdownConfig(path string) (*Config, error) {
 		cfg.CommonTemplate = commonTemplate
 	}
 	if len(pingSkillCatalogSpecs) > 0 {
-		catalogs, err := renderRuntimeSkillCatalogs(path, pingSkillCatalogSpecs)
+		catalogs, err := renderInjectedSkillCatalogs(path, pingSkillCatalogSpecs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		cfg.PingSkillCatalogs = catalogs
 	}
 	if len(compactionSkillCatalogSpecs) > 0 {
-		catalogs, err := renderRuntimeSkillCatalogs(path, compactionSkillCatalogSpecs)
+		catalogs, err := renderInjectedSkillCatalogs(path, compactionSkillCatalogSpecs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
