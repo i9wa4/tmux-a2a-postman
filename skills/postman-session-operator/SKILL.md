@@ -81,7 +81,8 @@ instructions, message metadata, health output, and observed send results.
 `stale` beats both because live state is not trustworthy. `initial` is neutral:
 non-AI, unknown, not-yet-classified, or expected AI panes and sessions with no
 response/activity should not be treated as ready until there is positive live
-evidence.
+evidence. Compact status uses `⚫` for `initial` and unavailable session
+fallbacks.
 
 ## 4. Input Requests
 

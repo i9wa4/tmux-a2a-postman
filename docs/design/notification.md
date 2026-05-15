@@ -40,7 +40,7 @@ same canonical contract.
 
 | State     | Meaning                                       | Compact mark      |
 | --------- | --------------------------------------------- | ----------------- |
-| `initial` | No positive live evidence has arrived yet     | `🔘` radio button  |
+| `initial` | No positive live evidence has arrived yet     | `⚫` black circle  |
 | `ready`   | Pane is live with no open action or wait      | `🟢` green mark    |
 | `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark   |
 | `pending` | Node has inbound reply-required action        | `🔷` blue diamond  |
@@ -55,7 +55,7 @@ configured or expected AI panes with no positive response or activity remain
 `stale`.
 
 Session fallback may report `unavailable` when this daemon cannot provide
-canonical health for a tmux session. It is displayed with the neutral `🔘`
+canonical health for a tmux session. It is displayed with the neutral `⚫`
 mark, but it is not a per-node state.
 
 The health payload exposes `queues.post_count`, `queues.inbox_count`,

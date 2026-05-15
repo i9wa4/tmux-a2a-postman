@@ -6,7 +6,7 @@ Usage:
   tmux-a2a-postman get-status-oneline --help
 
 Output:
-  [0]🔷🟡:🟢 [1]🔘
+  [0]🔷🟡:🟢 [1]⚫
 
 Severity Output:
   [0]needs_action:node=worker:input_required=1 [1]delivery_stuck:delivery:oldest_post_age=181s
@@ -16,7 +16,7 @@ Severity Output:
   A ? suffix marks inferred evidence, for example blocked?:node=worker.
 
 Marks:
-  🔘 initial   no positive live evidence yet
+  ⚫ initial   no positive live evidence yet
   🔴 stale     previously known pane/session is unhealthy
   🔷 pending   action-required inbound message is open
   🟡 waiting   outbound reply-required message is open

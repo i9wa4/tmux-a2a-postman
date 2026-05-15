@@ -259,7 +259,8 @@ of:
   `tmux-a2a-postman get-status-oneline` for compact coordination.
 - Treat `initial` as neutral: no positive live evidence yet, including non-AI,
   unknown, not-yet-classified, or expected AI panes/sessions with no response
-  or activity.
+  or activity. Compact status uses `⚫` for `initial` and unavailable session
+  fallbacks.
 - Treat `pending` as inbound reply-required action.
 - Treat `waiting` as outbound reply-required mail waiting for a response.
 - Treat `stale` as previously known but unhealthy pane/session state before

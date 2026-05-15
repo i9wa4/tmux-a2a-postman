@@ -282,7 +282,7 @@ func TestCollectSessionHealth_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(
 	if health.VisibleState != "initial" {
 		t.Fatalf("health.VisibleState = %q, want initial for expected AI pane without evidence", health.VisibleState)
 	}
-	if health.Compact != "🔘" {
+	if health.Compact != "⚫" {
 		t.Fatalf("health.Compact = %q, want neutral initial mark", health.Compact)
 	}
 	if len(health.Nodes) != 1 {
@@ -657,7 +657,7 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	if payload.Sessions[1].VisibleState != "initial" {
 		t.Fatalf("ghost visible_state = %q, want %q", payload.Sessions[1].VisibleState, "initial")
 	}
-	if payload.Sessions[1].Compact != "🔘" {
-		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "🔘")
+	if payload.Sessions[1].Compact != "⚫" {
+		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "⚫")
 	}
 }
