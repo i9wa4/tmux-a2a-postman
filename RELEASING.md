@@ -2,6 +2,12 @@
 
 ## 1. Release Steps
 
+Release and skill-publish commands require an explicit release request from the
+user at the time of execution. Do not infer release intent from PR work, skill
+validation, Waza readiness, or review follow-up. In those cases, stop at normal
+branch publication plus validation commands such as `nix run '.#skill-check'`
+or `gh skill publish --dry-run`.
+
 1. Commit all changes to main branch
 2. Run local pre-release checks:
 
