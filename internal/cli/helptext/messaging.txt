@@ -65,3 +65,11 @@ Sender is auto-detected from the tmux pane title (no --from flag).
 `send-heredoc` and `pop` print JSON by default. `pop` claims the next inbox
 message and returns metadata plus an archived message/body path; it does not
 print the full body inline.
+
+After every successful `pop` with `status=message`, read the complete archived
+Markdown body before any handling, routing, reply, status decision, or
+no-action or no-op decision.
+`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow
+skipping the archived body. Truncated command output from `cat`, `sed`, `rg`,
+shell logs, or other bounded stdout paths is not a complete read; use a
+complete file-read path or verified chunks through EOF.
