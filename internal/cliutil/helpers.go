@@ -111,7 +111,7 @@ func PrintDoubleDashDefaultsExcept(w io.Writer, fs *flag.FlagSet, hidden map[str
 		} else {
 			line = fmt.Sprintf("  --%s %s", f.Name, typeName)
 		}
-		fmt.Fprintf(w, "%s\n\t\t%s\n", line, usage)
+		_, _ = fmt.Fprintf(w, "%s\n\t\t%s\n", line, usage)
 	})
 }
 
@@ -119,7 +119,7 @@ func PrintDoubleDashDefaultsExcept(w io.Writer, fs *flag.FlagSet, hidden map[str
 // command-specific help output while keeping the flag functional.
 func SetUsageWithoutContextID(fs *flag.FlagSet) {
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		_, _ = fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
 		PrintDoubleDashDefaultsExcept(fs.Output(), fs, map[string]bool{
 			"config":     true,
 			"context-id": true,

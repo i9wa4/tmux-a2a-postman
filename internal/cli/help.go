@@ -48,11 +48,11 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 
 	path, ok := helpTopicFiles[topic]
 	if !ok {
-		fmt.Fprintf(stderr, "unknown help topic: %q\n", topic)
-		fmt.Fprintln(stderr, "")
-		fmt.Fprintln(stderr, "Available topics:")
+		_, _ = fmt.Fprintf(stderr, "unknown help topic: %q\n", topic)
+		_, _ = fmt.Fprintln(stderr, "")
+		_, _ = fmt.Fprintln(stderr, "Available topics:")
 		for _, t := range sortedHelpTopics() {
-			fmt.Fprintf(stderr, "  %s\n", t)
+			_, _ = fmt.Fprintf(stderr, "  %s\n", t)
 		}
 		return fmt.Errorf("unknown help topic: %q", topic)
 	}

@@ -189,39 +189,6 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	}
 }
 
-func deadLetterDst(sessionDir, filename, suffix string) string {
-	base := strings.TrimSuffix(filename, ".md")
-	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
-}
-
-func validateDeadLetterTarget(dstPath string) error {
-	deadLetterDir := filepath.Dir(dstPath)
-	dirInfo, err := os.Lstat(deadLetterDir)
-	if err != nil {
-		return fmt.Errorf("lstat dead-letter dir: %w", err)
-	}
-	if dirInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("dead-letter target dir is symlink: %s", deadLetterDir)
-	}
-
-	dstInfo, err := os.Lstat(dstPath)
-	if err == nil {
-		if dstInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("dead-letter target is symlink: %s", dstPath)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("lstat dead-letter target: %w", err)
-	}
-	return nil
-}
-
-func writeDeadLetterFile(dstPath string, content []byte) error {
-	if err := validateDeadLetterTarget(dstPath); err != nil {
-		return err
-	}
-	return os.WriteFile(dstPath, content, 0o600)
-}
-
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)

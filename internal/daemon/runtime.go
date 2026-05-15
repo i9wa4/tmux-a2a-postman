@@ -48,7 +48,6 @@ type daemonRuntime struct {
 
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
-	configTimer        *time.Timer
 	watchedDirs        map[string]bool
 	claimedPanes       map[string]bool
 	prevPaneStatesJSON string
@@ -283,15 +282,16 @@ func (rt *daemonRuntime) handleContextDone() {
 func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
 	eventPath := event.Name
 
-	if filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon) {
+	switch {
+	case filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon):
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
 			rt.handleDaemonSubmitRequest(eventPath)
 		}
-	} else if strings.HasSuffix(filepath.Dir(eventPath), "post") {
+	case strings.HasSuffix(filepath.Dir(eventPath), "post"):
 		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
 			rt.wakePostReconciler(eventPath)
 		}
-	} else if strings.HasSuffix(filepath.Dir(eventPath), "read") {
+	case strings.HasSuffix(filepath.Dir(eventPath), "read"):
 		rt.handleReadWatcherEvent(eventPath, event.Op)
 	}
 }
@@ -382,18 +382,6 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 		rt.wakePostReconciler(workerResult.result.PostPath)
 	}
 	rt.dispatchPendingDaemonSubmitRequests()
-}
-
-func (rt *daemonRuntime) handleDaemonSubmitResults() {
-	rt.ensureDaemonSubmitRuntime()
-	for {
-		select {
-		case workerResult := <-rt.daemonSubmitResults:
-			rt.handleDaemonSubmitResult(workerResult)
-		default:
-			return
-		}
-	}
 }
 
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {

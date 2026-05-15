@@ -22,12 +22,6 @@ type skillCatalogSpec struct {
 
 var skillCatalogUserHomeDir = os.UserHomeDir
 
-func appendSkillCatalogToCommonTemplate(commonTemplate, markdownPath, skillPath string) (string, error) {
-	return appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath, []skillCatalogSpec{
-		{Path: skillPath, All: true},
-	})
-}
-
 func appendSkillCatalogsToCommonTemplate(commonTemplate, markdownPath string, specs []skillCatalogSpec) (string, error) {
 	catalog, err := renderSkillCatalogs(markdownPath, specs)
 	if err != nil {
@@ -329,10 +323,6 @@ func foldYAMLBlock(lines []string) string {
 func compactSkillDescription(description string) string {
 	fields := strings.Fields(description)
 	return strings.Join(fields, " ")
-}
-
-func renderSkillCatalog(skillPath string, entries []skillCatalogEntry) string {
-	return renderSkillCatalogFromSources([]string{skillPath}, entries)
 }
 
 func renderSkillCatalogFromSources(skillPaths []string, entries []skillCatalogEntry) string {

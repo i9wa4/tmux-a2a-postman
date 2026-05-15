@@ -31,16 +31,6 @@ func shellSensitiveBodyForSendTest() string {
 		"EOF\n"
 }
 
-func writeSendMessageBodyFile(t *testing.T, body string) string {
-	t.Helper()
-
-	bodyPath := filepath.Join(t.TempDir(), "message.md")
-	if err := os.WriteFile(bodyPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("WriteFile message body: %v", err)
-	}
-	return bodyPath
-}
-
 func withSendHeredocBody(t *testing.T, body string, fn func() error) error {
 	t.Helper()
 
@@ -450,7 +440,7 @@ func TestRunSendMessage_RegularFileStdinAcceptedForZshHeredocCompatibility(t *te
 	if err != nil {
 		t.Fatalf("Open body: %v", err)
 	}
-	defer bodyFile.Close()
+	defer func() { _ = bodyFile.Close() }()
 	previousStdin := sendBodyStdin
 	previousIsTerminal := sendBodyStdinIsTerminal
 	sendBodyStdin = bodyFile

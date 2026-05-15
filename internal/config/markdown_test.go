@@ -1499,7 +1499,7 @@ func setupXDGAndHome(t *testing.T, tmpDir string) (xdgDir string, fakeHome strin
 	}
 	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(xdgDir))
 	t.Setenv("HOME", fakeHome)
-	// Isolate CWD so project-local .tmux-a2a-postman/ is not discovered.
+	// Isolate CWD so retired project-local .tmux-a2a-postman/ fixtures do not interfere.
 	t.Chdir(fakeHome)
 	return xdgDir, fakeHome
 }
@@ -1555,121 +1555,6 @@ delivery_idle_timeout_seconds = 300
 	}
 	if cfg.ScanInterval != 5.0 {
 		t.Errorf("ScanInterval: got %v, want 5.0", cfg.ScanInterval)
-	}
-}
-
-// TestLoadConfig_ThreeWayConflict: postman.md > nodes/worker.md > nodes/worker.toml
-// for the same node.
-func TestLoadConfig_ThreeWayConflict(t *testing.T) {
-	t.Skip("project-local implicit overlays retired by #419")
-	tmpDir := t.TempDir()
-	xdgDir, fakeHome := setupXDGAndHome(t, tmpDir)
-
-	// XDG level: no TOML (only local matters here)
-	// Silence XDG so only project-local fires
-	t.Setenv("XDG_CONFIG_HOME", "/nonexistent")
-	_ = xdgDir
-
-	// Project-local dir: subdir of fakeHome/project
-	projectDir := filepath.Join(fakeHome, "project")
-	localCfgDir := filepath.Join(projectDir, ".tmux-a2a-postman")
-	nodesDir := filepath.Join(localCfgDir, "nodes")
-
-	writeFile(t, filepath.Join(localCfgDir, "postman.toml"), `
-[postman]
-scan_interval_seconds = 1.0
-`)
-	writeFile(t, filepath.Join(nodesDir, "worker.toml"), `[worker]
-template = "from nodes/worker.toml"
-delivery_idle_timeout_seconds = 42
-`)
-	writeFile(t, filepath.Join(nodesDir, "worker.md"), "---\nrole: md-role\n---\n\nfrom nodes/worker.md\n")
-	writeFile(t, filepath.Join(localCfgDir, "postman.md"), "## `worker` Node\n\nfrom postman.md\n")
-
-	origWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(origWd) }()
-	if err := os.Chdir(projectDir); err != nil {
-		t.Fatalf("Chdir: %v", err)
-	}
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-
-	// postman.md wins (loaded last)
-	if cfg.Nodes["worker"].Template != "from postman.md" {
-		t.Errorf("worker.Template: got %q, want %q", cfg.Nodes["worker"].Template, "from postman.md")
-	}
-	// nodes/worker.md role set (postman.md has no role frontmatter)
-	if cfg.Nodes["worker"].Role != "md-role" {
-		t.Errorf("worker.Role: got %q, want %q", cfg.Nodes["worker"].Role, "md-role")
-	}
-	// TOML structural field preserved
-	if cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds != 42 {
-		t.Errorf("worker.DeliveryIdleTimeoutSeconds: got %v, want 42", cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds)
-	}
-}
-
-func TestLoadConfig_ProjectLocalMarkdownMessageFooterShellExpansionBlocked(t *testing.T) {
-	t.Skip("project-local implicit overlays retired by #419")
-	tmpDir := t.TempDir()
-	xdgDir, fakeHome := setupXDGAndHome(t, tmpDir)
-
-	writeFile(t, filepath.Join(xdgDir, "postman.toml"), `
-[postman]
-allow_shell_templates = true
-
-[worker]
-role = "worker"
-`)
-
-	projectDir := filepath.Join(fakeHome, "project")
-	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
-	writeFile(t, filepath.Join(localConfigDir, "postman.md"), "## `message_footer`\n\nProject footer $(printf project-local-markdown-footer)\n")
-
-	t.Chdir(projectDir)
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if !cfg.AllowShellTemplates {
-		t.Fatal("AllowShellTemplates = false, want true from trusted base")
-	}
-	if !strings.Contains(cfg.MessageFooter, "You can talk to:\n{contacts_section}") {
-		t.Fatalf("MessageFooter missing default footer content: %q", cfg.MessageFooter)
-	}
-	if !strings.Contains(cfg.MessageFooter, "Project footer $(printf project-local-markdown-footer)") {
-		t.Fatalf("MessageFooter missing appended project-local footer: %q", cfg.MessageFooter)
-	}
-
-	got := template.ExpandTemplate(cfg.MessageFooter, map[string]string{}, 5*time.Second, cfg.AllowShellForMessageFooter())
-	if !strings.Contains(got, "$(printf project-local-markdown-footer)") {
-		t.Fatalf("project-local Markdown footer unexpectedly executed shell command: %q", got)
-	}
-}
-
-func TestLoadConfig_ProjectLocalMarkdown_EmptyUINodeOverridesEmbeddedDefault(t *testing.T) {
-	t.Skip("project-local implicit overlays retired by #419")
-	tmpDir := t.TempDir()
-	_, fakeHome := setupXDGAndHome(t, tmpDir)
-
-	projectDir := filepath.Join(fakeHome, "project")
-	localConfigDir := filepath.Join(projectDir, ".tmux-a2a-postman")
-	writeFile(t, filepath.Join(localConfigDir, "postman.md"), "---\nui_node:\n---\n")
-
-	t.Chdir(projectDir)
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if cfg.UINode != "" {
-		t.Fatalf("UINode: got %q, want empty", cfg.UINode)
-	}
-	if !cfg.HasExplicitUINodeSetting() {
-		t.Fatal("project-local Markdown empty ui_node should remain an explicit setting")
 	}
 }
 

@@ -74,14 +74,6 @@ func collectLiveSessionStatus(baseDir, contextID, sessionName string, cfg *confi
 	return collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName, cfg, nil, false)
 }
 
-func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool) {
-	projected, ok, err := projection.ProjectMailboxState(sessionDir, sessionName)
-	if err != nil || !ok {
-		return nil, false
-	}
-	return projected.InboxCounts, true
-}
-
 func projectedInputRequestCounts(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {
 	projected, ok, err := projection.ProjectMessageInputRequestState(sessionDir, sessionName)
 	if err != nil || !ok {

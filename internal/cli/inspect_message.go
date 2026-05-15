@@ -236,7 +236,9 @@ func writeInspectMessagePlainOutput(output inspectMessageOutput, pathOnly, bodyO
 		return fmt.Errorf("%s: message id %q matched %d files", output.Status, output.ID, output.MatchCount)
 	}
 	if pathOnly {
-		fmt.Fprintln(os.Stdout, output.Message.MarkdownPath)
+		if _, err := fmt.Fprintln(os.Stdout, output.Message.MarkdownPath); err != nil {
+			return err
+		}
 		return nil
 	}
 	if bodyOnly {
@@ -246,9 +248,13 @@ func writeInspectMessagePlainOutput(output inspectMessageOutput, pathOnly, bodyO
 		}
 		body, exact := envelope.SenderBodyFromContent(string(content))
 		if exact {
-			fmt.Fprint(os.Stdout, body)
+			if _, err := fmt.Fprint(os.Stdout, body); err != nil {
+				return err
+			}
 		} else {
-			fmt.Fprintln(os.Stdout, body)
+			if _, err := fmt.Fprintln(os.Stdout, body); err != nil {
+				return err
+			}
 		}
 		return nil
 	}

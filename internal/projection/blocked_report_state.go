@@ -104,13 +104,14 @@ func blockedReportFromMetadata(meta envelope.Metadata, observedAt string) (Block
 	messageType := strings.ToLower(strings.TrimSpace(meta.MessageType))
 	evidenceLevel := ""
 	evidenceSource := ""
-	if messageType == "blocked_report" {
+	switch {
+	case messageType == "blocked_report":
 		evidenceLevel = "proven"
 		evidenceSource = "metadata.message_type"
-	} else if startsWithStateLine(line, "BLOCKED") {
+	case startsWithStateLine(line, "BLOCKED"):
 		evidenceLevel = "inferred"
 		evidenceSource = "body.first_line"
-	} else {
+	default:
 		return BlockedReport{}, false
 	}
 

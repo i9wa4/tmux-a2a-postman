@@ -64,16 +64,8 @@ func deadLetterDst(sessionDir, filename, suffix string) string {
 	return store.DeadLetterPath(sessionDir, filename, suffix)
 }
 
-func validateDeadLetterTarget(dstPath string) error {
-	return store.ValidateDeadLetterTarget(dstPath)
-}
-
 func moveToDeadLetter(srcPath, dstPath string) error {
 	return store.MoveToDeadLetter(srcPath, dstPath)
-}
-
-func writeDeadLetterFile(dstPath string, content []byte) error {
-	return store.WriteDeadLetterFile(dstPath, content)
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {

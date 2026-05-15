@@ -92,6 +92,6 @@ func main() {
 
 func printUsage(w io.Writer) {
 	if err := cli.WriteHelp(w, w, nil); err != nil {
-		fmt.Fprintf(w, "failed to render help: %v\n", err)
+		_, _ = fmt.Fprintf(w, "failed to render help: %v\n", err)
 	}
 }

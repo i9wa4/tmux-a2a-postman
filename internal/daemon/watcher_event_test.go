@@ -384,19 +384,6 @@ func newWatcherPostRuntime(t *testing.T, contextID, sessionName string) (*daemon
 	return rt, sessionDir
 }
 
-func installWatcherReloadTmux(t *testing.T, tmpDir string) {
-	t.Helper()
-	fakeBin := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(fakeBin, 0o700); err != nil {
-		t.Fatalf("MkdirAll(fakeBin): %v", err)
-	}
-	script := "#!/bin/sh\ncase \"$1\" in\n  list-panes) exit 0 ;;\n  list-sessions) printf '%s\\t$1\\n' 'review-session'; exit 0 ;;\n  set-option|show-options) exit 0 ;;\n  *) exit 0 ;;\nesac\n"
-	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatalf("WriteFile(fake tmux): %v", err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
 func writeWatcherReloadConfig(t *testing.T, path string, scanInterval float64) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

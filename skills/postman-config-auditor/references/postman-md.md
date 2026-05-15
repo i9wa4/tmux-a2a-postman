@@ -4,10 +4,9 @@ This reference describes the Markdown format parsed by tmux-a2a-postman. It is
 based on the implementation in `internal/config/markdown.go` and the load order
 in `internal/config/config.go`.
 
-Claude Code and Codex CLI runtime differences are tracked in
-[Agent Runtime Feature Differences](../../../docs/agent-runtime-feature-differences.md).
-Keep this file focused on `postman.md` syntax; do not duplicate the long-term
-runtime comparison here.
+Claude Code and Codex CLI runtime differences are tracked in the repository
+docs as Agent Runtime Feature Differences. Keep this file focused on
+`postman.md` syntax; do not duplicate the long-term runtime comparison here.
 
 ## 1. Purpose
 

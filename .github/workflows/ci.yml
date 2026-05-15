@@ -90,6 +90,9 @@ jobs:
       - name: Run nix build
         run: nix build --print-build-logs
 
+      - name: Run Go linters
+        run: nix develop .#ci --command golangci-lint run ./...
+
       - name: Validate agent skills
         env:
           GH_TOKEN: ${{ github.token }}

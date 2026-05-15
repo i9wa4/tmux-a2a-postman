@@ -344,7 +344,7 @@ func TestTUI_Update_StatusUpdate_PreservesExactTmuxSessionOrder(t *testing.T) {
 	ghostPos := strings.Index(view, "[0] ghost")
 	reviewPos := strings.Index(view, "[1] review")
 	mainPos := strings.Index(view, "[2] main")
-	if !(ghostPos >= 0 && reviewPos > ghostPos && mainPos > reviewPos) {
+	if ghostPos < 0 || reviewPos <= ghostPos || mainPos <= reviewPos {
 		t.Fatalf("view order does not match tmux session order: %q", view)
 	}
 }
@@ -431,7 +431,10 @@ func TestTUI_View_DefaultSurfaceRowsUseSettledShape(t *testing.T) {
 	if strings.Index(sessionLine, "🟢") >= strings.Index(sessionLine, "[0]") {
 		t.Fatalf("session row is not status-first: %q", sessionLine)
 	}
-	if !(strings.Index(nodeLine, "boss") < strings.Index(nodeLine, "🟢") && strings.Index(nodeLine, "🟢") < strings.Index(nodeLine, "ready")) {
+	bossPos := strings.Index(nodeLine, "boss")
+	readyIndicatorPos := strings.Index(nodeLine, "🟢")
+	readyTextPos := strings.Index(nodeLine, "ready")
+	if bossPos >= readyIndicatorPos || readyIndicatorPos >= readyTextPos {
 		t.Fatalf("node row is not name + emoji + status: %q", nodeLine)
 	}
 }

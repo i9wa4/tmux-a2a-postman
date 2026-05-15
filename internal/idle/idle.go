@@ -213,10 +213,6 @@ func compactionTriggerScan(runtime, content string) compactionMarkerScan {
 	}
 }
 
-func claudeCompactionTrigger(content string) string {
-	return claudeCompactionTriggerScan(content).Trigger
-}
-
 func claudeCompactionTriggerScan(content string) compactionMarkerScan {
 	return scanCompactionMarkers(content, agentruntime.Claude+":conversation-compaction", isClaudeCompactionLine)
 }
@@ -225,10 +221,6 @@ func isClaudeCompactionLine(line string) bool {
 	normalized := normalizeStatusLine(line)
 	return strings.HasPrefix(normalized, "conversation compacted") ||
 		strings.HasPrefix(normalized, "compacted (ctrl+o")
-}
-
-func codexCompactionTrigger(content string) string {
-	return codexCompactionTriggerScan(content).Trigger
 }
 
 func codexCompactionTriggerScan(content string) compactionMarkerScan {
@@ -335,7 +327,6 @@ func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerS
 }
 
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
-// Issue #xxx: Hybrid idle detection with screen capture.
 func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]discovery.NodeInfo) []CompactionPingTarget {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) {
 		return nil
@@ -505,7 +496,6 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 }
 
 // StartPaneCaptureCheck starts a goroutine that periodically captures pane content.
-// Issue #xxx: Hybrid idle detection with screen capture.
 func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Config, baseDir string, contextID string, selfSession string, onCompactionPing func(map[string]discovery.NodeInfo, []CompactionPingTarget)) {
 	if !config.BoolVal(cfg.PaneCaptureEnabled, true) || cfg.PaneCaptureIntervalSeconds <= 0 {
 		return // Pane capture disabled

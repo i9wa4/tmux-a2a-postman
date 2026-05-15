@@ -270,11 +270,12 @@ func BuildRoleContentWithAppendix(cfg *config.Config, nodeName string, appendix 
 	nc := cfg.GetNodeConfig(nodeName)
 	nodeTemplate := nc.Template
 	roleContent := ""
-	if cfg.CommonTemplate != "" && nodeTemplate != "" {
+	switch {
+	case cfg.CommonTemplate != "" && nodeTemplate != "":
 		roleContent = cfg.CommonTemplate + "\n\n" + nodeTemplate
-	} else if cfg.CommonTemplate != "" {
+	case cfg.CommonTemplate != "":
 		roleContent = cfg.CommonTemplate
-	} else {
+	default:
 		roleContent = nodeTemplate
 	}
 	roleContent = joinSections(roleContent, appendix)

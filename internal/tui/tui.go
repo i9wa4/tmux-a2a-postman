@@ -95,7 +95,6 @@ type Model struct {
 	generalStatus string            // fallback for non-session-scoped events
 	nodeCount     int
 	lastEvent     string
-	lastKey       string
 	quitting      bool
 
 	// Config reference (for node state thresholds)
@@ -594,7 +593,7 @@ func (m Model) renderSessionsSection() string {
 			cursor = "> "
 		}
 		indicator := m.defaultSessionIndicator(session)
-		b.WriteString(fmt.Sprintf("%s%s [%d] %s\n", cursor, indicator, i, session.Name))
+		fmt.Fprintf(&b, "%s%s [%d] %s\n", cursor, indicator, i, session.Name)
 	}
 
 	return b.String()
@@ -676,7 +675,7 @@ func (m Model) renderNodesSectionFromStatus(snapshot status.SessionStatus) strin
 		visibleState := visibleStateLabel(node)
 		indicator := sessionIndicator(visibleState, true)
 		label := nodeStateLabel(visibleState)
-		b.WriteString(fmt.Sprintf("%-*s  %s  %s\n", nameWidth, nodeName, indicator, label))
+		fmt.Fprintf(&b, "%-*s  %s  %s\n", nameWidth, nodeName, indicator, label)
 	}
 
 	return b.String()
