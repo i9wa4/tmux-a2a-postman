@@ -38,19 +38,25 @@ input-request identifiers parsed from the message metadata.
 get-status, get-status-oneline, and the default TUI are three views over the
 same canonical contract.
 
-| State     | Meaning                                             | Compact mark |
-| --------- | --------------------------------------------------- | ------------ |
-| `ready`   | Pane is live with no open action or wait            | green mark   |
-| `waiting` | Node is waiting for a reply-required response       | yellow mark  |
-| `pending` | Node has inbound reply-required action              | blue diamond |
-| `stale`   | Pane or session is missing, unavailable, or unknown | red mark     |
+| State     | Meaning                                       | Compact mark      |
+| --------- | --------------------------------------------- | ----------------- |
+| `initial` | No positive live evidence has arrived yet     | `🔘` radio button  |
+| `ready`   | Pane is live with no open action or wait      | `🟢` green mark    |
+| `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark   |
+| `pending` | Node has inbound reply-required action        | `🔷` blue diamond  |
+| `stale`   | Previously known pane/session is unhealthy    | `🔴` red mark      |
 
 A live pane that simply has not changed for a long time is internally `idle`
 and remains `ready` in the visible health model.
 
+`initial` is neutral. Non-AI panes, unreachable or unclassified sessions, and
+configured or expected AI panes with no positive response or activity remain
+`initial` until evidence moves them to `ready`, `waiting`, `pending`, or
+`stale`.
+
 Session fallback may report `unavailable` when this daemon cannot provide
-canonical health for a tmux session. It is displayed as red, but it is not a
-per-node state.
+canonical health for a tmux session. It is displayed with the neutral `🔘`
+mark, but it is not a per-node state.
 
 The health payload exposes `queues.post_count`, `queues.inbox_count`,
 `queues.dead_letter_count`, and per-node input-request counts for mailbox

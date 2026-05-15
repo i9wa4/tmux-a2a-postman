@@ -238,6 +238,65 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 }
 
+func TestCollectSessionHealth_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "20260407-ctx"
+	sessionName := "review"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	if err := os.MkdirAll(filepath.Join(sessionDir, "inbox", "worker"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(worker inbox): %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  \"list-panes -a -F\"*)\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker'\n" +
+		"    ;;\n" +
+		"  \"list-windows -t " + sessionName + "\"*)\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + ":0\"*)\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	health, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+		Edges: []string{"worker --- critic"},
+	})
+	if err != nil {
+		t.Fatalf("collectSessionHealthLegacy: %v", err)
+	}
+
+	if health.VisibleState != "initial" {
+		t.Fatalf("health.VisibleState = %q, want initial for expected AI pane without evidence", health.VisibleState)
+	}
+	if health.Compact != "🔘" {
+		t.Fatalf("health.Compact = %q, want neutral initial mark", health.Compact)
+	}
+	if len(health.Nodes) != 1 {
+		t.Fatalf("nodes = %#v, want one worker node", health.Nodes)
+	}
+	node := health.Nodes[0]
+	if node.Name != "worker" || node.CurrentCommand != "claude" {
+		t.Fatalf("node = %#v, want worker claude pane", node)
+	}
+	if node.PaneState != "" || node.VisibleState != "initial" {
+		t.Fatalf("node evidence = pane_state %q visible_state %q, want no pane evidence and initial", node.PaneState, node.VisibleState)
+	}
+}
+
 func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
@@ -598,7 +657,7 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	if payload.Sessions[1].VisibleState != "initial" {
 		t.Fatalf("ghost visible_state = %q, want %q", payload.Sessions[1].VisibleState, "initial")
 	}
-	if payload.Sessions[1].Compact != "⚪" {
-		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "⚪")
+	if payload.Sessions[1].Compact != "🔘" {
+		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "🔘")
 	}
 }

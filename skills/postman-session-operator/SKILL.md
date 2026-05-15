@@ -79,8 +79,9 @@ instructions, message metadata, health output, and observed send results.
 
 `pending` beats `waiting` because the node has something it can do now.
 `stale` beats both because live state is not trustworthy. `initial` is neutral:
-non-AI, unknown, or not-yet-classified panes and sessions should not be treated
-as ready until there is positive live evidence.
+non-AI, unknown, not-yet-classified, or expected AI panes and sessions with no
+response/activity should not be treated as ready until there is positive live
+evidence.
 
 ## 4. Input Requests
 

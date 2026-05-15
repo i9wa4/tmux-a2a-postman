@@ -124,6 +124,13 @@ func TestSessionVisibleState(t *testing.T) {
 			want: "initial",
 		},
 		{
+			name: "expected_ai_without_positive_evidence_stays_initial",
+			nodes: []NodeHealth{
+				{Name: "worker", CurrentCommand: "claude"},
+			},
+			want: "initial",
+		},
+		{
 			name: "ready_from_positive_pane_evidence",
 			nodes: []NodeHealth{
 				{Name: "worker", PaneState: "active"},

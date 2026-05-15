@@ -530,7 +530,7 @@ func sessionIndicator(state string, enabled bool) string {
 	}
 	switch state {
 	case "", "initial", "unavailable", "unowned":
-		return "⚪"
+		return "🔘"
 	case "waiting":
 		return "🟡"
 	case "pending":
@@ -550,10 +550,10 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	health, ok := m.sessionHealthFor(session.Name)
 	if !ok {
 		// Session exists in tmux, but canonical health has not arrived yet.
-		return "⚪"
+		return "🔘"
 	}
 	if sessionHealthUnavailable(health) {
-		return "⚪"
+		return "🔘"
 	}
 	state := health.VisibleState
 	if state == "" {
@@ -561,7 +561,7 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	}
 	if state == "" {
 		// Session exists, but there are no canonical panes to classify yet.
-		return "⚪"
+		return "🔘"
 	}
 	return sessionIndicator(state, true)
 }

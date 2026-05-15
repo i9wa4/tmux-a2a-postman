@@ -107,9 +107,10 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		"Runtime state model:",
-		"Core visible states: ready, waiting, pending, stale",
+		"Core visible states: initial, ready, waiting, pending, stale",
 		"Quick reading guide:",
 		"visible_state in get-status JSON answers what the node looks like now",
+		"initial means no positive live evidence yet; ready requires live evidence",
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",

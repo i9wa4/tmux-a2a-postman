@@ -2,7 +2,8 @@
 
 The visible node state model is intentionally small. It combines pane
 availability with input-request projection so agents can tell whether a node
-has work, is blocked on another node, or is unavailable.
+has no positive live evidence yet, has work, is blocked on another node, or is
+unavailable.
 
 It is not a full conversation workflow model. Message files remain the source
 of truth; health commands only replay their structured metadata and journal
@@ -52,27 +53,31 @@ input-request identity belongs to daemon health and reply projection.
 
 ## 2. State Surfaces
 
-| Surface                                   | Values                                                | Meaning                                                   |
-| ----------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| `nodes[*].pane_state`                     | `active`, `idle`, `stale`                             | Pane availability and activity fact                       |
-| `nodes[*].visible_state`                  | `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
-| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`            | Non-content pane progress evidence                        |
-| session `visible_state`                   | `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
-| `severity`                                | See contextual severity table                         | Additive triage severity for operators                    |
-| `compact_severity`                        | ASCII token                                           | One-line severity summary for opt-in compact scans        |
+| Surface                                   | Values                                                           | Meaning                                                   |
+| ----------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
+| `nodes[*].pane_state`                     | empty, `active`, `idle`, `stale`                                 | Pane availability and activity fact                       |
+| `nodes[*].visible_state`                  | `initial`, `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
+| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                        |
+| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
+| `severity`                                | See contextual severity table                                    | Additive triage severity for operators                    |
+| `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans        |
 
 `active` and `idle` pane facts normalize to `ready` unless input requests
 override them. A live pane that has not changed for a long time remains `idle`
 internally and stays `ready` visibly when there is no open action or wait.
-Missing pane state normalizes to `stale` so unknown nodes do not look healthy
-by accident.
+Missing pane state normalizes to `initial`, the neutral no-positive-evidence
+state. This includes non-AI panes, unreachable or unclassified sessions, and
+configured or expected AI panes before any positive response, activity, or other
+live evidence arrives. A configured edge, role name, or AI command alone is not
+enough to mark a node or session `ready`.
 
 `screen_progress` carries timestamps and an opaque fingerprint from pane
 capture state so operators can tell whether the pane is still changing without
 reading raw pane text. It does not affect visible-state ranking.
 
 `unavailable` is a session-level fallback, not a per-node state. It means this
-daemon cannot provide canonical health for that tmux session.
+daemon cannot provide canonical health for that tmux session. It is displayed
+with the same neutral compact mark as `initial`.
 
 `schema_version: 3` reports contextual severity alongside `visible_state` and
 `compact`. Consumers that only need the compact operator view can read those
@@ -84,12 +89,13 @@ renaming JSON contracts, projection event names, or replay-facing identifiers.
 
 ## 3. Visible Node States
 
-| State     | Meaning                                             | Source fact                            |
-| --------- | --------------------------------------------------- | -------------------------------------- |
-| `ready`   | Pane is live with no open action or wait            | tmux pane activity and input requests  |
-| `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_input_count > 0`           |
-| `pending` | Node has inbound reply-required action unresolved   | `input_required_count > 0`             |
-| `stale`   | Pane or session is missing, unavailable, or unknown | pane discovery/activity data           |
+| State     | Meaning                                             | Source fact                           |
+| --------- | --------------------------------------------------- | ------------------------------------- |
+| `initial` | No positive live evidence has arrived yet           | missing pane/session evidence         |
+| `ready`   | Pane is live with no open action or wait            | positive tmux pane activity evidence  |
+| `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_input_count > 0`          |
+| `pending` | Node has inbound reply-required action unresolved   | `input_required_count > 0`            |
+| `stale`   | Previously known pane/session evidence is unhealthy | stale pane/session data               |
 
 Unread no-reply mail is still counted as unread mail, but it does not make a
 node `pending`. This keeps daemon PINGs, `ACK`, `DONE`, and status-only notices
@@ -99,24 +105,31 @@ from making healthy nodes look like they owe work.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ready
+    [*] --> initial
+    initial --> ready: positive live evidence and no open input requests
+    initial --> pending: inbound required message delivered
+    initial --> waiting: outbound required message sent
     ready --> pending: inbound required message delivered
     ready --> waiting: outbound required message sent
     pending --> waiting: resolving reply sent and other waits remain
     pending --> ready: resolving reply sent and no waits remain
     waiting --> pending: inbound required message delivered
     waiting --> ready: reply received
+    initial --> stale: stale evidence arrives
     ready --> stale: pane/session unavailable
     waiting --> stale: pane/session unavailable
     pending --> stale: pane/session unavailable
+    stale --> initial: pane/session reappears without positive evidence
     stale --> ready: pane returns with no open input requests
     stale --> waiting: pane returns with outbound waits
     stale --> pending: pane returns with inbound actions
 ```
 
-Projection priority is `stale`, `pending`, `waiting`, then `ready`. A stale
-pane cannot be trusted live. Inbound action beats waiting because the node has
-something it can do now.
+Projection priority is `stale`, `pending`, `waiting`, `ready`, then `initial`.
+A stale pane cannot be trusted live. Inbound action beats waiting because the
+node has something it can do now. `initial` is the floor state and remains until
+positive live evidence, an input-request fact, or stale evidence moves it out of
+neutral.
 
 ## 5. Reply Policy
 
@@ -190,10 +203,11 @@ The canonical contract is shared by `get-status`, `get-status-oneline`, and the
 default TUI. Per-node state is exposed as `nodes[*].visible_state`.
 Session-level state is the worst visible state across nodes, ranked as:
 
-1. `ready`
-2. `waiting`
-3. `pending`
-4. `stale`
+1. `initial`
+2. `ready`
+3. `waiting`
+4. `pending`
+5. `stale`
 
 Queue facts are reported separately in `queues.post_count`,
 `queues.inbox_count`, and `queues.dead_letter_count`. Input-request facts are
@@ -244,14 +258,14 @@ inferred evidence, such as `blocked?:node=worker`.
 
 ## 9. Severity Examples
 
-| Scenario            | Primary evidence                         | Severity             |
-| ------------------- | ---------------------------------------- | -------------------- |
-| Idle                | Live pane, no open action or wait        | `ok`                 |
-| Active work         | Active pane or changed screen evidence   | `working`            |
-| Approval wait       | Outbound required reply still open       | `expected_wait`      |
-| Reply-required wait | Outbound required reply still open       | `expected_wait`      |
-| Required action     | Inbound required reply open              | `needs_action`       |
-| Blocked             | Structured blocked report or `BLOCKED:`  | `blocked`            |
-| Stale pane          | Missing or stale pane evidence           | `attention_stale`    |
-| Delivery stuck      | Oldest pending post is at least 180s old | `delivery_stuck`     |
-| Dead letter         | One or more dead-letter files exist      | `delivery_failure`   |
+| Scenario            | Primary evidence                           | Severity             |
+| ------------------- | ------------------------------------------ | -------------------- |
+| Idle                | Positive live pane, no open action or wait | `ok`                 |
+| Active work         | Active pane or changed screen evidence     | `working`            |
+| Approval wait       | Outbound required reply still open         | `expected_wait`      |
+| Reply-required wait | Outbound required reply still open         | `expected_wait`      |
+| Required action     | Inbound required reply open                | `needs_action`       |
+| Blocked             | Structured blocked report or `BLOCKED:`    | `blocked`            |
+| Stale pane          | Stale pane evidence                        | `attention_stale`    |
+| Delivery stuck      | Oldest pending post is at least 180s old   | `delivery_stuck`     |
+| Dead letter         | One or more dead-letter files exist        | `delivery_failure`   |

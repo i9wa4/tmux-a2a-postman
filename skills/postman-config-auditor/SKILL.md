@@ -258,7 +258,8 @@ of:
 - Use `tmux-a2a-postman get-status` for structured state and
   `tmux-a2a-postman get-status-oneline` for compact coordination.
 - Treat `initial` as neutral: no positive live evidence yet, including non-AI,
-  unknown, or not-yet-classified panes/sessions.
+  unknown, not-yet-classified, or expected AI panes/sessions with no response
+  or activity.
 - Treat `pending` as inbound reply-required action.
 - Treat `waiting` as outbound reply-required mail waiting for a response.
 - Treat `stale` as previously known but unhealthy pane/session state before

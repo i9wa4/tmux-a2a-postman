@@ -16,12 +16,13 @@ postman.toml, postman.md, or nodes/*; runtime watchers still handle mail,
 read/archive moves, and daemon submit queues.
 
 Runtime state model:
-  Core visible states: ready, waiting, pending, stale
+  Core visible states: initial, ready, waiting, pending, stale
   Session fallback: unavailable (this daemon does not own canonical health)
   get-status, get-status-oneline, and the default TUI read the same canonical health contract.
 
 Quick reading guide:
   visible_state in get-status JSON answers what the node looks like now
+  initial means no positive live evidence yet; ready requires live evidence
   pane hints answer that delivery reached a recipient inbox
 
 Core config:

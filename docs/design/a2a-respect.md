@@ -132,6 +132,7 @@ should not be stored as direct replacements.
 
 | Postman state or severity              | Closest A2A term                 | Recommendation                                                                 |
 | -------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------ |
+| `initial` visible state                | `unknown` / unspecified          | Keep postman-specific; no positive live evidence has arrived yet.              |
 | `ready`                                | No active task, or `completed`   | Keep `ready`; A2A `completed` only applies to an explicit task.                |
 | `working` severity                     | `working`                        | Good alignment when pane activity or queued delivery proves work in progress.  |
 | `waiting` visible state                | Client waiting for a task update | Keep `waiting`; A2A has no sender-side wait state.                             |
@@ -141,7 +142,7 @@ should not be stored as direct replacements.
 | `blocked` severity                     | `input-required` or `failed`     | Do not auto-map; blocked may be recoverable or terminal depending on evidence. |
 | `delivery_stuck` severity              | No direct TaskState              | Keep postman-specific; it is transport health.                                 |
 | `delivery_failure` severity            | No direct TaskState              | Keep postman-specific; dead letters are routing failures, not task failures.   |
-| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; it means pane or session evidence is unreliable.        |
+| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; previously known pane or session evidence is unhealthy. |
 | `unavailable` session fallback         | `unknown` / unspecified          | Keep postman-specific; it is a daemon ownership/canonical-health condition.    |
 | Future explicit cancellation           | `canceled`                       | Use only when a task/request is explicitly canceled.                           |
 | Future explicit rejection              | `rejected`                       | Use only when a node explicitly refuses the work.                              |
@@ -149,9 +150,9 @@ should not be stored as direct replacements.
 
 Recommended public wording:
 
-- `visible_state` stays postman-native: `ready`, `waiting`, `pending`,
-  `stale`, with session `unavailable`, because it reports node observability,
-  not an A2A task lifecycle.
+- `visible_state` stays postman-native: `initial`, `ready`, `waiting`,
+  `pending`, `stale`, with session `unavailable`, because it reports node
+  observability, not an A2A task lifecycle.
 - `severity` stays postman-native: `ok`, `working`, `expected_wait`,
   `needs_action`, `blocked`, `attention_stale`, `delivery_stuck`,
   `delivery_failure`, because it reports operator urgency and transport

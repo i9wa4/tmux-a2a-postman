@@ -54,7 +54,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, commandsHelp, "get-status-oneline Print compact all-session health for quick agent coordination.")
 	assertContainsNormalized(t, commandsHelp, "version Print the build version JSON.")
 	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
-	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]🔴")
+	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]🔘")
 	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}`)
 	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0}`)
 	assertContainsNormalized(t, popHelp, "Use markdown_absolute_path when present for programmatic file/body reads.")
