@@ -529,8 +529,10 @@ func sessionIndicator(state string, enabled bool) string {
 		return "⚫"
 	}
 	switch state {
-	case "unavailable", "unowned":
-		return "⚪"
+	case "", "initial", "unavailable", "unowned":
+		return "⚫"
+	case "waiting":
+		return "🟡"
 	case "pending":
 		return "🔷"
 	case "stale":
@@ -548,10 +550,10 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	health, ok := m.sessionHealthFor(session.Name)
 	if !ok {
 		// Session exists in tmux, but canonical health has not arrived yet.
-		return "⚪"
+		return "⚫"
 	}
 	if sessionHealthUnavailable(health) {
-		return "⚪"
+		return "⚫"
 	}
 	state := health.VisibleState
 	if state == "" {
@@ -559,14 +561,16 @@ func (m Model) defaultSessionIndicator(session SessionInfo) string {
 	}
 	if state == "" {
 		// Session exists, but there are no canonical panes to classify yet.
-		return "⚪"
+		return "⚫"
 	}
 	return sessionIndicator(state, true)
 }
 
 func nodeStateLabel(state string) string {
 	switch state {
-	case "", "ready", "active", "idle":
+	case "", "initial", "unavailable", "unowned":
+		return "initial"
+	case "ready", "active", "idle":
 		return "ready"
 	case "stale":
 		return "stale"
@@ -611,6 +615,10 @@ func (m Model) renderNodesSection() string {
 		}
 		return b.String() + m.renderNodesSectionFromHealth(health)
 	}
+	if len(m.sessionNodes[selectedSession]) == 0 {
+		b.WriteString("(non-AI or unknown session)\n")
+		return b.String()
+	}
 	b.WriteString("(loading canonical health)\n")
 	return b.String()
 }
@@ -652,7 +660,7 @@ func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string 
 
 	nodeNames := orderedHealthNodeNames(health)
 	if len(nodeNames) == 0 {
-		return "(no nodes)\n"
+		return "(non-AI or unknown session)\n"
 	}
 
 	nameWidth := 0

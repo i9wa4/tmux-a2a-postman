@@ -163,12 +163,13 @@ type AllSessionHealth struct {
 }
 
 var stateRank = map[string]int{
-	"ready":   0,
-	"active":  0,
-	"idle":    0,
-	"waiting": 1,
-	"pending": 2,
-	"stale":   3,
+	"initial": 0,
+	"ready":   1,
+	"active":  1,
+	"idle":    1,
+	"waiting": 2,
+	"pending": 3,
+	"stale":   4,
 }
 
 var severityRank = map[string]int{
@@ -211,13 +212,13 @@ func NormalizeState(state string) string {
 	switch state {
 	case "active", "idle", "ready":
 		return "ready"
+	case "", "initial":
+		return "initial"
 	case "waiting":
 		return "waiting"
 	case "pending":
 		return "pending"
 	case "stale":
-		return "stale"
-	case "":
 		return "stale"
 	default:
 		return state
@@ -246,7 +247,7 @@ func VisibleStateWithInputRequests(paneState string, unreadCount, inputRequiredC
 }
 
 func SessionVisibleState(nodes []NodeHealth) string {
-	worstState := "ready"
+	worstState := "initial"
 	worstRank := StateRank(worstState)
 	for _, node := range nodes {
 		state := node.VisibleState

@@ -10,6 +10,12 @@ func TestVisibleState(t *testing.T) {
 		want        string
 	}{
 		{
+			name:        "initial_from_missing_pane_state",
+			paneState:   "",
+			unreadCount: 0,
+			want:        "initial",
+		},
+		{
 			name:        "ready_from_active",
 			paneState:   "active",
 			unreadCount: 0,
@@ -99,13 +105,54 @@ func TestVisibleStateWithInputRequests(t *testing.T) {
 }
 
 func TestSessionVisibleState(t *testing.T) {
-	nodes := []NodeHealth{
-		{Name: "worker", VisibleState: "pending"},
-		{Name: "critic", VisibleState: "stale"},
+	tests := []struct {
+		name  string
+		nodes []NodeHealth
+		want  string
+	}{
+		{
+			name:  "empty_node_set_stays_initial",
+			nodes: nil,
+			want:  "initial",
+		},
+		{
+			name: "only_initial_nodes_stay_initial",
+			nodes: []NodeHealth{
+				{Name: "worker", VisibleState: "initial"},
+				{Name: "critic"},
+			},
+			want: "initial",
+		},
+		{
+			name: "expected_ai_without_positive_evidence_stays_initial",
+			nodes: []NodeHealth{
+				{Name: "worker", CurrentCommand: "claude"},
+			},
+			want: "initial",
+		},
+		{
+			name: "ready_from_positive_pane_evidence",
+			nodes: []NodeHealth{
+				{Name: "worker", PaneState: "active"},
+			},
+			want: "ready",
+		},
+		{
+			name: "worst_specific_state_wins",
+			nodes: []NodeHealth{
+				{Name: "worker", VisibleState: "pending"},
+				{Name: "critic", VisibleState: "stale"},
+			},
+			want: "stale",
+		},
 	}
 
-	if got := SessionVisibleState(nodes); got != "stale" {
-		t.Fatalf("SessionVisibleState(...) = %q, want %q", got, "stale")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SessionVisibleState(tt.nodes); got != tt.want {
+				t.Fatalf("SessionVisibleState(...) = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
