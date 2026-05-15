@@ -37,7 +37,7 @@ func TestRunGetSessionStatus_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 	}
 }
 
-func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
+func TestSessionStatus_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "review", "worker")
 
@@ -64,7 +64,7 @@ func TestSessionHealth_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 		t.Fatalf("ReadAll(stdout): %v", err)
 	}
 
-	var payload status.SessionHealth
+	var payload status.SessionStatus
 	if err := json.Unmarshal(out, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", string(out), err)
 	}
@@ -160,13 +160,13 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+	legacy, err := collectLiveSessionStatus(tmpDir, contextID, sessionName, &config.Config{
 		Edges: []string{"worker --- critic"},
 	})
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy: %v", err)
+		t.Fatalf("collectLiveSessionStatus: %v", err)
 	}
-	appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+	appendSessionStatusSnapshot(t, sessionStatusProjectionFixture{
 		baseDir:     tmpDir,
 		contextID:   contextID,
 		sessionName: sessionName,
@@ -238,7 +238,7 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 }
 
-func TestCollectSessionHealth_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(t *testing.T) {
+func TestCollectSessionStatus_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260407-ctx"
 	sessionName := "review"
@@ -272,11 +272,11 @@ func TestCollectSessionHealth_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	health, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+	health, err := collectLiveSessionStatus(tmpDir, contextID, sessionName, &config.Config{
 		Edges: []string{"worker --- critic"},
 	})
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy: %v", err)
+		t.Fatalf("collectLiveSessionStatus: %v", err)
 	}
 
 	if health.VisibleState != "initial" {
@@ -360,13 +360,13 @@ func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, err := collectSessionHealthLegacy(tmpDir, contextID, sessionName, &config.Config{
+	legacy, err := collectLiveSessionStatus(tmpDir, contextID, sessionName, &config.Config{
 		Edges: []string{"worker --- critic"},
 	})
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy: %v", err)
+		t.Fatalf("collectLiveSessionStatus: %v", err)
 	}
-	appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+	appendSessionStatusSnapshot(t, sessionStatusProjectionFixture{
 		baseDir:     tmpDir,
 		contextID:   contextID,
 		sessionName: sessionName,
@@ -435,7 +435,7 @@ func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	}
 }
 
-func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrder(t *testing.T) {
+func TestCollectAllSessionStatus_ReturnsAggregateCanonicalPayloadInSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	mainSessionDir := filepath.Join(tmpDir, contextID, "main")
@@ -529,21 +529,21 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+		t.Fatalf("collectAllLiveSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+		t.Fatal("collectAllLiveSessionStatus reported no active context")
 	}
-	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+	appendAllSessionStatusSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
-	payload, _, ok, err := collectAllSessionHealth(contextID, "", configPath)
+	payload, _, ok, err := collectAllSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealth: %v", err)
+		t.Fatalf("collectAllSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealth reported no active context")
+		t.Fatal("collectAllSessionStatus reported no active context")
 	}
 	if payload.ContextID != contextID {
 		t.Fatalf("context_id = %q, want %q", payload.ContextID, contextID)
@@ -562,7 +562,7 @@ func TestCollectAllSessionHealth_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	}
 }
 
-func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionIDOrder(t *testing.T) {
+func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionIDOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260406-ctx"
 	ghostSessionDir := filepath.Join(tmpDir, contextID, "ghost")
@@ -629,21 +629,21 @@ func TestCollectAllSessionHealth_IncludesSessionsWithoutCanonicalPanesInSessionI
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+		t.Fatalf("collectAllLiveSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+		t.Fatal("collectAllLiveSessionStatus reported no active context")
 	}
-	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+	appendAllSessionStatusSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
-	payload, _, ok, err := collectAllSessionHealth(contextID, "", configPath)
+	payload, _, ok, err := collectAllSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealth: %v", err)
+		t.Fatalf("collectAllSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealth reported no active context")
+		t.Fatal("collectAllSessionStatus reported no active context")
 	}
 	if len(payload.Sessions) != 2 {
 		t.Fatalf("sessions = %#v, want main then ghost to preserve numeric tmux session_id order", payload.Sessions)

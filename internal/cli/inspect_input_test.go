@@ -84,9 +84,9 @@ func TestRunInspectInputReturnsNotFoundForClosedWrongAndNoReplyIDs(t *testing.T)
 	})
 }
 
-func writeInspectInputFixture(t *testing.T) sessionHealthProjectionFixture {
+func writeInspectInputFixture(t *testing.T) sessionStatusProjectionFixture {
 	t.Helper()
-	return writeSessionHealthProjectionFixture(
+	return writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
@@ -94,7 +94,7 @@ func writeInspectInputFixture(t *testing.T) sessionHealthProjectionFixture {
 	)
 }
 
-func appendInspectInputRequest(t *testing.T, fixture sessionHealthProjectionFixture, messageID, inputRequestID string) {
+func appendInspectInputRequest(t *testing.T, fixture sessionStatusProjectionFixture, messageID, inputRequestID string) {
 	t.Helper()
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
 	now := time.Date(2026, time.April, 14, 6, 0, 0, 0, time.UTC)
@@ -102,15 +102,15 @@ func appendInspectInputRequest(t *testing.T, fixture sessionHealthProjectionFixt
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	content := sessionHealthMessageContent("critic", "worker", messageID, map[string]string{
+	content := sessionStatusMessageContent("critic", "worker", messageID, map[string]string{
 		"replyPolicy":      "required",
 		"input_request_id": inputRequestID,
 	}, "please review")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, messageID, "critic", "worker", content, now.Add(time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, messageID, "critic", "worker", content, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "critic", "worker", content, now.Add(2*time.Second))
 }
 
-func appendInspectInputResolution(t *testing.T, fixture sessionHealthProjectionFixture, messageID, replyTo, fillsInputRequestID string) {
+func appendInspectInputResolution(t *testing.T, fixture sessionStatusProjectionFixture, messageID, replyTo, fillsInputRequestID string) {
 	t.Helper()
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
 	now := time.Date(2026, time.April, 14, 6, 5, 0, 0, time.UTC)
@@ -118,16 +118,16 @@ func appendInspectInputResolution(t *testing.T, fixture sessionHealthProjectionF
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	content := sessionHealthMessageContent("worker", "critic", messageID, map[string]string{
+	content := sessionStatusMessageContent("worker", "critic", messageID, map[string]string{
 		"replyPolicy":            "none",
 		"replyTo":                replyTo,
 		"fills_input_request_id": fillsInputRequestID,
 	}, "DONE")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, messageID, "worker", "critic", content, now.Add(time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "worker", "critic", content, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, messageID, "worker", "critic", content, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "worker", "critic", content, now.Add(2*time.Second))
 }
 
-func appendInspectInputInfo(t *testing.T, fixture sessionHealthProjectionFixture, messageID string) {
+func appendInspectInputInfo(t *testing.T, fixture sessionStatusProjectionFixture, messageID string) {
 	t.Helper()
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
 	now := time.Date(2026, time.April, 14, 6, 10, 0, 0, time.UTC)
@@ -135,13 +135,13 @@ func appendInspectInputInfo(t *testing.T, fixture sessionHealthProjectionFixture
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	content := sessionHealthMessageContent("critic", "worker", messageID, map[string]string{
+	content := sessionStatusMessageContent("critic", "worker", messageID, map[string]string{
 		"replyPolicy": "none",
 	}, "FYI")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "critic", "worker", content, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, messageID, "critic", "worker", content, now.Add(time.Second))
 }
 
-func runInspectInputForFixture(t *testing.T, fixture sessionHealthProjectionFixture, id string) inspectInputOutput {
+func runInspectInputForFixture(t *testing.T, fixture sessionStatusProjectionFixture, id string) inspectInputOutput {
 	t.Helper()
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunInspectInput([]string{

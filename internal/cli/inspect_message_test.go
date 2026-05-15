@@ -90,7 +90,7 @@ func TestRunInspectMessageFindsStoredMessageAfterInspectInputIsClosed(t *testing
 		t.Fatalf("inspect-input output = %#v, want closed input request not_found", inspectInput)
 	}
 
-	content := sessionHealthMessageContent("critic", "worker", messageID, map[string]string{
+	content := sessionStatusMessageContent("critic", "worker", messageID, map[string]string{
 		"replyPolicy":      "required",
 		"input_request_id": inputRequestID,
 	}, "Original request body")

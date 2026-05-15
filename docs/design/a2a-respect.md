@@ -91,9 +91,9 @@ Reply-required flow is the most important local lifecycle:
 ```text
 sender sends reply-required message
   |
-  +-- sender health: waiting_on_input
+  +-- sender status: waiting_on_input
   |
-  +-- recipient health: input_required
+  +-- recipient status: input_required
         |
         +-- recipient sends reply with fills_input_request_id
               |
@@ -103,13 +103,13 @@ sender sends reply-required message
 
 This is similar to an A2A task reaching `input-required`, but it is not the same
 object. A2A has `Task.status.state`; postman has per-message reply obligations
-plus node health projection.
+plus node status projection.
 
 ## Term Mapping
 
 | A2A term                     | Postman term or surface                                               | Current recommendation                                                                                                                  |
 | ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `contextId`                  | Stored frontmatter `params.contextId`; health JSON `context_id`       | Prefer A2A-natural `contextId` in future generated detail views; expose stored keys unchanged only as archive truth.                    |
+| `contextId`                  | Stored frontmatter `params.contextId`; status JSON `context_id`       | Prefer A2A-natural `contextId` in future generated detail views; expose stored keys unchanged only as archive truth.                    |
 | `taskId` / `task_id`         | External issue, plan, mkmd task, or future daemon-owned task          | Do not generate daemon `task_id` until postman owns tasks.                                                                              |
 | `Message.messageId`          | Stored frontmatter `messageId`; public JSON `message_id`; file name   | Prefer an A2A-aware `message.messageId` projection in future detail JSON; keep raw stored keys only where they report archive metadata. |
 | `Message.role`               | `from`, `to`, pane title, node name                                   | Keep local peer routing names; A2A user/agent roles do not fit.                                                                         |
@@ -140,10 +140,10 @@ should not be stored as direct replacements.
 | `input_required` input request         | `input-required`                 | Strong match; consider an `input_request_id` alias only after #396 design.     |
 | `waiting_on_input` input request       | No direct TaskState              | Keep; it is sender-side projection, not task lifecycle.                        |
 | `blocked` severity                     | `input-required` or `failed`     | Do not auto-map; blocked may be recoverable or terminal depending on evidence. |
-| `delivery_stuck` severity              | No direct TaskState              | Keep postman-specific; it is transport health.                                 |
+| `delivery_stuck` severity              | No direct TaskState              | Keep postman-specific; it is transport status.                                 |
 | `delivery_failure` severity            | No direct TaskState              | Keep postman-specific; dead letters are routing failures, not task failures.   |
-| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; previously known pane or session evidence is unhealthy. |
-| `unavailable` session fallback         | `unknown` / unspecified          | Keep postman-specific; it is a daemon ownership/canonical-health condition.    |
+| `stale` visible state                  | `unknown` / unspecified          | Keep postman-specific; previously known pane or session evidence is stale.     |
+| `unavailable` session fallback         | `unknown` / unspecified          | Keep postman-specific; it is a daemon ownership/canonical-status condition.    |
 | Future explicit cancellation           | `canceled`                       | Use only when a task/request is explicitly canceled.                           |
 | Future explicit rejection              | `rejected`                       | Use only when a node explicitly refuses the work.                              |
 | Future authentication wait             | `auth-required`                  | Use only when an auth handoff is modeled as a first-class obligation.          |
@@ -156,7 +156,7 @@ Recommended public wording:
 - `severity` stays postman-native: `ok`, `working`, `expected_wait`,
   `needs_action`, `blocked`, `attention_stale`, `delivery_stuck`,
   `delivery_failure`, because it reports operator urgency and transport
-  health.
+  status.
 - Future A2A alignment fields can be additive, for example
   `a2a_alignment.task_state_hint: "input-required"`.
 
@@ -164,7 +164,7 @@ Recommended public wording:
 
 Detailed `get-status` JSON should be understandable to A2A-aware users with
 low conceptual friction. It is the right surface for clear semantic names and
-explanatory hierarchy. Compact and one-line health views should stay compact,
+explanatory hierarchy. Compact and one-line status views should stay compact,
 but detailed JSON does not need terse internal abbreviations when a clearer
 A2A-natural shape is accurate.
 
@@ -175,7 +175,7 @@ Design rules:
   explained with `input-required` alignment, while sender-side
   `waiting_on_input` needs a postman-specific explanation.
 - Document postman-specific differences and their reasons directly in detailed
-  JSON docs. Delivery health, tmux pane liveness, and input-request closure are
+  JSON docs. Delivery status, tmux pane liveness, and input-request closure are
   local runtime facts, not A2A protocol objects.
 - Avoid false equivalence. Do not label `get-status` as `GetTask`, do not call
   node visibility a `TaskState`, and do not imply an A2A task exists before the
@@ -202,7 +202,7 @@ Current postman input-request fields are operationally accurate:
 | `input_required`               | Recipient-side open reply-required work                           | Best local name for `input-required` behavior.         |
 | `waiting_on_input`             | Sender-side open wait for required reply                          | Postman-specific perspective.                          |
 | `inspect-input --id`           | Finds open input requests by `input_request_id` or message ID     | Useful operator API.                                   |
-| `nodes[*].flow.input_requests` | Health JSON projection of open required-input requests            | Correct home for detailed input-request state.         |
+| `nodes[*].flow.input_requests` | Status JSON projection of open required-input requests            | Correct home for detailed input-request state.         |
 | `pop` JSON fields              | Claimed message envelope path and structured frontmatter metadata | Expose archive truth without embedding full body.      |
 
 Counterpart names if the project later models richer request closure:
@@ -277,7 +277,7 @@ local schema/version contract that is independent of the A2A reference.
 | Build metadata                | Optional                                        | Useful for `version` output, but does not make archives self-describing. |
 | `postman.toml` / `postman.md` | Plausible default source                        | Lets a session declare alignment policy once.                            |
 | Message frontmatter           | Recommended only if #396 accepts metadata noise | Makes each archived message self-describing and visible in pop JSON.     |
-| `get-status` JSON             | Optional additive field                         | Useful for operators, but health is runtime state, not archive truth.    |
+| `get-status` JSON             | Optional additive field                         | Useful for operators, but status is runtime state, not archive truth.    |
 | CLI help text                 | Mention sparingly                               | Help should not become a protocol essay.                                 |
 
 If the reference is written into every message, use the minimal shape above and
@@ -387,9 +387,9 @@ spread across local files and installed skills:
 | `supportedInterfaces`      | None today; possible future custom binding metadata     |
 | `version`                  | Binary `version` output and release tag                 |
 | `documentationUrl`         | Repository docs and README                              |
-| `capabilities`             | Daemon commands, health surfaces, input-request support |
+| `capabilities`             | Daemon commands, status surfaces, input-request support |
 | `defaultInputModes`        | Markdown messages via `send-heredoc`                    |
-| `defaultOutputModes`       | Markdown messages and JSON health/pop output            |
+| `defaultOutputModes`       | Markdown messages and JSON status/pop output            |
 | `skills`                   | `skills/*/SKILL.md`                                     |
 | `securitySchemes`          | None today; local tmux/user trust boundary              |
 | `securityRequirements`     | None today                                              |
@@ -473,7 +473,7 @@ Archive and migration handling:
 | Alternative                            | Reason rejected                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------ |
 | Claim an A2A server surface            | Postman does not implement A2A discovery, operations, or bindings.       |
-| Replace `visible_state` with TaskState | Node health and task lifecycle are different models.                     |
+| Replace `visible_state` with TaskState | Node status and task lifecycle are different models.                     |
 | Add `postman_schema_version` now       | A2A reference metadata does not require local archive schema versioning. |
 | Add a TOML A2A version knob            | It looks user-configurable but changes no runtime behavior.              |
 | Put A2A reference only in build output | Archived messages would not be self-describing.                          |

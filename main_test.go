@@ -119,10 +119,10 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
 		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
 	}
-	if !strings.Contains(got, "get-status                 Print canonical session health JSON") {
+	if !strings.Contains(got, "get-status                 Print canonical session status JSON") {
 		t.Fatalf("usage missing get-status command: %q", got)
 	}
-	if !strings.Contains(got, "get-status-oneline         Print compact all-session health") {
+	if !strings.Contains(got, "get-status-oneline         Print compact all-session status") {
 		t.Fatalf("usage missing get-status-oneline command: %q", got)
 	}
 	if !strings.Contains(got, "version                    Print the build version JSON") {
@@ -131,7 +131,7 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "inspect-message            Inspect persisted message content by id") {
 		t.Fatalf("usage missing inspect-message command: %q", got)
 	}
-	for _, hidden := range []string{" status ", " read ", " todo ", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
+	for _, hidden := range []string{"\n  status", "\n  read", "\n  todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("usage exposes hidden surface %q: %q", hidden, got)
 		}

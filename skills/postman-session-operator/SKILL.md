@@ -24,7 +24,7 @@ infrastructure.
 ## 1. First Commands
 
 Use `tmux-a2a-postman get-status` when making a session decision. It returns
-the canonical JSON health contract.
+the canonical JSON status contract.
 
 Use `tmux-a2a-postman get-status-oneline` for a compact scan across sessions.
 Add `--severity` when you need the opt-in contextual severity token instead of
@@ -73,17 +73,17 @@ with a clear body-not-fully-read state.
 
 Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body
-instructions, message metadata, health output, and observed send results.
+instructions, message metadata, status output, and observed send results.
 
 ## 3. Visible State
 
 | State         | Meaning                                       | Usual action                                         |
 | ------------- | --------------------------------------------- | ---------------------------------------------------- |
-| `initial`     | Pane or session has no positive live evidence | Wait for health, or verify only if workflow needs it |
+| `initial`     | Pane or session has no positive live evidence | Wait for status, or verify only if workflow needs it |
 | `ready`       | Pane is live with no open action or wait      | No action unless the user or workflow asks           |
 | `pending`     | Inbound reply-required message is open        | `pop`, handle the message, send an exact reply       |
 | `waiting`     | Outbound reply-required message is unresolved | Wait, or follow up only when timeout policy says so  |
-| `stale`       | Previously known pane/session is not healthy  | Verify pane/session before blaming workflow          |
+| `stale`       | Previously known pane/session is stale        | Verify pane/session before blaming workflow          |
 | `unavailable` | Status is unavailable                         | Report infrastructure unavailable to the operator    |
 
 `pending` beats `waiting` because the node has something it can do now.
@@ -167,7 +167,7 @@ If dead letters exist, treat routing or configuration as suspect and use
 
 ## 6. Contextual Severity
 
-`get-status` schema version 3 exposes `visible_state`, `compact`, and
+`get-status` schema version 4 exposes `visible_state`, `compact`, and
 contextual severity fields. Use these fields to decide
 whether a state is an expected wait, live work, a blocked report, stale local
 evidence, or delivery trouble.
@@ -189,7 +189,7 @@ Severity ranks from least to most urgent:
 | `severity_source`     | Surface that produced that severity                 |
 | `severity_reason`     | Short reason for the chosen severity                |
 | `compact_severity`    | ASCII token used by `get-status-oneline --severity` |
-| `delivery`            | Post queue and dead-letter delivery health          |
+| `delivery`            | Post queue and dead-letter delivery status          |
 | `nodes[*].node_local` | Pane-local activity/staleness evidence              |
 | `nodes[*].flow`       | Input-request and blocked-report workflow evidence  |
 | `nodes[*].queues`     | Node queue counts                                   |
@@ -212,7 +212,7 @@ Interpretation rules:
 
 `nodes[*].screen_progress` is non-content pane evidence. Use it to distinguish
 a pane that is changing from one that is merely quiet; do not expect raw pane
-text in health output.
+text in status output.
 
 | Field                                   | Meaning                                              |
 | --------------------------------------- | ---------------------------------------------------- |

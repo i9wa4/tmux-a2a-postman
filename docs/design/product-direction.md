@@ -14,9 +14,9 @@ The message lane remains the center:
 
 Around that core, the product is gaining runtime surfaces:
 
-- canonical health JSON
-- compact all-session health
-- a default TUI over the same health contract
+- canonical status JSON
+- compact all-session status
+- a default TUI over the same status contract
 
 Runtime surfaces must stay explicit about which behavior belongs to
 tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI. The
@@ -35,7 +35,7 @@ and the broader runtime shape is not settled enough to justify rename churn.
 Internal terminology should become more precise:
 
 - `message lane`: stored-message delivery and reading
-- `session runtime`: live health, projections, and other session state
+- `session runtime`: live status, projections, and other session state
 - `runtime surface`: explicit operator views outside stored messages
 
 Design rule: keep stored messages simple and durable. Add runtime surfaces

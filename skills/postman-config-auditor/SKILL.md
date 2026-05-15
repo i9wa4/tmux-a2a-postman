@@ -255,7 +255,7 @@ of:
   fallbacks.
 - Treat `pending` as inbound reply-required action.
 - Treat `waiting` as outbound reply-required mail waiting for a response.
-- Treat `stale` as previously known but unhealthy pane/session state before
+- Treat `stale` as previously known but stale pane/session state before
   changing templates. A live pane that is merely quiet or still initial should
   not be diagnosed as stale.
 - Treat dead-letter as a routing/config issue until edges prove otherwise.

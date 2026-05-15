@@ -23,7 +23,7 @@ type projectionJournalStep struct {
 	to   string
 }
 
-type sessionHealthProjectionFixture struct {
+type sessionStatusProjectionFixture struct {
 	baseDir     string
 	contextID   string
 	sessionName string
@@ -31,7 +31,7 @@ type sessionHealthProjectionFixture struct {
 	cfg         *config.Config
 }
 
-func TestSessionHealthProjectionParity(t *testing.T) {
+func TestSessionStatusProjectionParity(t *testing.T) {
 	tests := []struct {
 		name         string
 		paneStates   map[string]string
@@ -71,25 +71,25 @@ func TestSessionHealthProjectionParity(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := writeSessionHealthProjectionFixture(t, tc.paneStates, tc.liveInbox, tc.journalSteps)
+			fixture := writeSessionStatusProjectionFixture(t, tc.paneStates, tc.liveInbox, tc.journalSteps)
 
-			legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+			legacy, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 			if err != nil {
-				t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+				t.Fatalf("collectLiveSessionStatus() error = %v", err)
 			}
-			appendSessionHealthSnapshot(t, fixture, legacy)
-			projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+			appendSessionStatusSnapshot(t, fixture, legacy)
+			projected, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 			if err != nil {
-				t.Fatalf("collectSessionHealth() error = %v", err)
+				t.Fatalf("collectSessionStatus() error = %v", err)
 			}
 
-			assertSessionHealthParity(t, legacy, projected)
+			assertSessionStatusParity(t, legacy, projected)
 		})
 	}
 }
 
 func TestGetStatusOnelineProjectionParity(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"critic": 1},
@@ -101,25 +101,25 @@ func TestGetStatusOnelineProjectionParity(t *testing.T) {
 		},
 	)
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(fixture.contextID, "", fixture.configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(fixture.contextID, "", fixture.configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectAllLiveSessionStatus() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy() ok = false, want true")
+		t.Fatal("collectAllLiveSessionStatus() ok = false, want true")
 	}
-	appendSessionHealthSnapshot(t, fixture, legacy.Sessions[0])
+	appendSessionStatusSnapshot(t, fixture, legacy.Sessions[0])
 
-	projected, _, ok, err := collectAllSessionHealth(fixture.contextID, "", fixture.configPath)
+	projected, _, ok, err := collectAllSessionStatus(fixture.contextID, "", fixture.configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealth() error = %v", err)
+		t.Fatalf("collectAllSessionStatus() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealth() ok = false, want true")
+		t.Fatal("collectAllSessionStatus() ok = false, want true")
 	}
 
-	legacyOneline := formatAllSessionHealthOneline(legacy)
-	projectedOneline := formatAllSessionHealthOneline(projected)
+	legacyOneline := formatAllSessionStatusOneline(legacy)
+	projectedOneline := formatAllSessionStatusOneline(projected)
 	if legacyOneline != projectedOneline {
 		t.Fatalf("oneline mismatch:\nlegacy:    %q\nprojected: %q", legacyOneline, projectedOneline)
 	}
@@ -136,7 +136,7 @@ func TestNoActivePostmanUnavailableContract(t *testing.T) {
 		t.Fatalf("RunGetSessionStatus() error = %v", err)
 	}
 
-	var payload status.SessionHealth
+	var payload status.SessionStatus
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
 	}
@@ -152,7 +152,7 @@ func TestNoActivePostmanUnavailableContract(t *testing.T) {
 }
 
 func TestTUIProjectionParity(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
@@ -161,11 +161,11 @@ func TestTUIProjectionParity(t *testing.T) {
 		},
 	)
 
-	legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	legacy, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
-	appendSessionHealthSnapshot(t, fixture, legacy)
+	appendSessionStatusSnapshot(t, fixture, legacy)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -183,20 +183,20 @@ func TestTUIProjectionParity(t *testing.T) {
 	}
 
 	<-tuiEvents
-	healthEvent := <-tuiEvents
-	if healthEvent.Type != "session_health_update" {
-		t.Fatalf("health event type = %q, want session_health_update", healthEvent.Type)
+	statusEvent := <-tuiEvents
+	if statusEvent.Type != "session_status_update" {
+		t.Fatalf("health event type = %q, want session_status_update", statusEvent.Type)
 	}
 
-	got, ok := healthEvent.Details["health"].(status.SessionHealth)
+	got, ok := statusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+		t.Fatalf("health payload type = %T, want status.SessionStatus", statusEvent.Details["status"])
 	}
-	assertSessionHealthParity(t, legacy, got)
+	assertSessionStatusParity(t, legacy, got)
 }
 
-func TestSessionHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
@@ -205,9 +205,9 @@ func TestSessionHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 		},
 	)
 
-	projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	projected, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealth() error = %v", err)
+		t.Fatalf("collectSessionStatus() error = %v", err)
 	}
 
 	if projected.ContextID != fixture.contextID {
@@ -224,24 +224,24 @@ func TestSessionHealthUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	}
 }
 
-func TestSessionHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		nil,
 		nil,
 	)
-	writeSessionHealthPaneActivity(t, fixture, `{
+	writeSessionStatusPaneActivity(t, fixture, `{
   "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:00:05Z","screenFingerprint":"00000011"},
   "%12": {"status":"active","lastChangeAt":"2026-04-14T00:01:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000012"}
 }`)
 
-	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -281,24 +281,24 @@ func TestSessionHealthExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	}
 }
 
-func TestSessionHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "stale"},
 		nil,
 		nil,
 	)
-	writeSessionHealthPaneActivity(t, fixture, `{
+	writeSessionStatusPaneActivity(t, fixture, `{
   "%11": "active",
   "%12": {"status":"stale","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:05Z","screenFingerprint":"00000012"}
 }`)
 
-	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -332,8 +332,8 @@ func TestSessionHealthExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	}
 }
 
-func TestSessionHealthUsesReplyObligationProjection(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusUsesReplyObligationProjection(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
@@ -345,17 +345,17 @@ func TestSessionHealthUsesReplyObligationProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	content := sessionHealthObligationContent("critic", "worker", "m1.md", "required", "", "please review")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
+	content := sessionStatusObligationContent("critic", "worker", "m1.md", "required", "", "please review")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
 
-	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -370,8 +370,8 @@ func TestSessionHealthUsesReplyObligationProjection(t *testing.T) {
 	}
 }
 
-func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusAddsSchemaV4SeverityForInputRequests(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
@@ -383,21 +383,21 @@ func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	content := sessionHealthMessageContent("critic", "worker", "m1.md", map[string]string{
+	content := sessionStatusMessageContent("critic", "worker", "m1.md", map[string]string{
 		"replyPolicy":      "required",
 		"input_request_id": "ireq_123",
 	}, "please review")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionReadEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
 
-	health, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if health.SchemaVersion != 3 {
-		t.Fatalf("SchemaVersion = %d, want 3", health.SchemaVersion)
+	if health.SchemaVersion != 4 {
+		t.Fatalf("SchemaVersion = %d, want 4", health.SchemaVersion)
 	}
 	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
 		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)
@@ -412,7 +412,7 @@ func TestSessionHealthAddsSchemaV3SeverityForInputRequests(t *testing.T) {
 		t.Fatalf("CompactSeverity = %q, want needs_action token", health.CompactSeverity)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -508,8 +508,8 @@ func TestCollectSessionDeliveryClassifiesQueuedStuckAndFailure(t *testing.T) {
 	}
 }
 
-func TestSessionHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		nil,
@@ -521,14 +521,14 @@ func TestSessionHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	blockedContent := sessionHealthMessageContent("worker", "critic", "blocked.md", nil, "BLOCKED: waiting on access")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "blocked.md", "worker", "critic", blockedContent, now.Add(time.Second))
+	blockedContent := sessionStatusMessageContent("worker", "critic", "blocked.md", nil, "BLOCKED: waiting on access")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "blocked.md", "worker", "critic", blockedContent, now.Add(time.Second))
 
-	blocked, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	blocked, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy(blocked) error = %v", err)
+		t.Fatalf("collectLiveSessionStatus(blocked) error = %v", err)
 	}
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range blocked.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -542,13 +542,13 @@ func TestSessionHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.
 		t.Fatalf("CompactSeverity = %q, want inferred blocked token", blocked.CompactSeverity)
 	}
 
-	doneContent := sessionHealthMessageContent("worker", "critic", "done.md", nil, "DONE: access granted")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "done.md", "worker", "critic", doneContent, now.Add(2*time.Second))
-	cleared, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	doneContent := sessionStatusMessageContent("worker", "critic", "done.md", nil, "DONE: access granted")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "done.md", "worker", "critic", doneContent, now.Add(2*time.Second))
+	cleared, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy(cleared) error = %v", err)
+		t.Fatalf("collectLiveSessionStatus(cleared) error = %v", err)
 	}
-	nodeByName = map[string]status.NodeHealth{}
+	nodeByName = map[string]status.NodeStatus{}
 	for _, node := range cleared.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -557,8 +557,8 @@ func TestSessionHealthReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.
 	}
 }
 
-func TestSessionHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{},
@@ -566,9 +566,9 @@ func TestSessionHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	)
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
 
-	staleSnapshot, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	staleSnapshot, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() stale snapshot error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() stale snapshot error = %v", err)
 	}
 	if staleSnapshot.VisibleState != "ready" {
 		t.Fatalf("staleSnapshot.VisibleState = %q, want ready", staleSnapshot.VisibleState)
@@ -579,19 +579,19 @@ func TestSessionHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
-	if _, err := writer.AppendEvent(projection.SessionHealthSnapshotEventType, journal.VisibilityControlPlaneOnly, staleSnapshot, now.Add(time.Second)); err != nil {
-		t.Fatalf("AppendEvent(session health snapshot): %v", err)
+	if _, err := writer.AppendEvent(projection.SessionStatusSnapshotEventType, journal.VisibilityControlPlaneOnly, staleSnapshot, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(session status snapshot): %v", err)
 	}
-	content := sessionHealthObligationContent("critic", "worker", "m1.md", "required", "", "please review")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
+	content := sessionStatusObligationContent("critic", "worker", "m1.md", "required", "", "please review")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(3*time.Second))
 
-	health, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealth() error = %v", err)
+		t.Fatalf("collectSessionStatus() error = %v", err)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -603,8 +603,8 @@ func TestSessionHealthPrefersLiveRecomputeOverStaleSnapshot(t *testing.T) {
 	}
 }
 
-func TestSessionHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1, "critic": 1},
@@ -622,15 +622,15 @@ func TestSessionHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("AppendEvent(legacy delivered): %v", err)
 	}
-	content := sessionHealthObligationContent("worker", "critic", "info.md", "none", "", "FYI")
-	appendSessionHealthObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "info.md", "worker", "critic", content, now.Add(2*time.Second))
+	content := sessionStatusObligationContent("worker", "critic", "info.md", "none", "", "FYI")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "info.md", "worker", "critic", content, now.Add(2*time.Second))
 
-	health, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	health, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealth() error = %v", err)
+		t.Fatalf("collectSessionStatus() error = %v", err)
 	}
 
-	nodeByName := map[string]status.NodeHealth{}
+	nodeByName := map[string]status.NodeStatus{}
 	for _, node := range health.Nodes {
 		nodeByName[node.Name] = node
 	}
@@ -645,32 +645,92 @@ func TestSessionHealthFallsBackForUnclassifiedLegacyUnread(t *testing.T) {
 	}
 }
 
-func TestSessionHealthProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+func TestSessionStatusProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "idle"},
 		map[string]int{"worker": 1},
 		nil,
 	)
 
-	legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	legacy, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	appendSessionHealthSnapshot(t, fixture, legacy)
-	removeLiveSessionHealthArtifacts(t, fixture)
-	installSessionHealthProjectionBrokenTmux(t)
+	appendSessionStatusSnapshot(t, fixture, legacy)
+	removeLiveSessionStatusArtifacts(t, fixture)
+	installSessionStatusProjectionBrokenTmux(t)
 
-	projected, err := collectSessionHealth(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	projected, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealth() error = %v", err)
+		t.Fatalf("collectSessionStatus() error = %v", err)
 	}
 
-	assertSessionHealthParity(t, legacy, projected)
+	assertSessionStatusParity(t, legacy, projected)
 }
 
-func sessionHealthObligationContent(from, to, messageID, replyPolicy, replyTo, body string) string {
+func TestSessionStatusProjectionReplaysLegacyHealthArchiveAsV4(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "idle"},
+		map[string]int{"worker": 1},
+		nil,
+	)
+
+	live, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+	legacyArchive := live
+	legacyArchive.SchemaVersion = 3
+
+	appendLegacySessionStatusSnapshot(t, fixture, legacyArchive)
+	removeLiveSessionStatusArtifacts(t, fixture)
+	installSessionStatusProjectionBrokenTmux(t)
+
+	projected, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionStatus() error = %v", err)
+	}
+
+	if projected.SchemaVersion != status.SchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", projected.SchemaVersion, status.SchemaVersion)
+	}
+	assertSessionStatusParity(t, live, projected)
+}
+
+func TestSessionStatusProjectionPrefersStatusSnapshotOverLegacyHealthArchive(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "idle"},
+		map[string]int{"worker": 1},
+		nil,
+	)
+
+	current, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+	legacyArchive := current
+	legacyArchive.SchemaVersion = 3
+	legacyArchive.VisibleState = "stale"
+	legacyArchive.Compact = "🔴"
+
+	appendSessionStatusSnapshot(t, fixture, current)
+	appendLegacySessionStatusSnapshot(t, fixture, legacyArchive)
+	removeLiveSessionStatusArtifacts(t, fixture)
+	installSessionStatusProjectionBrokenTmux(t)
+
+	projected, err := collectSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectSessionStatus() error = %v", err)
+	}
+
+	assertSessionStatusParity(t, current, projected)
+}
+
+func sessionStatusObligationContent(from, to, messageID, replyPolicy, replyTo, body string) string {
 	replyToLine := ""
 	if replyTo != "" {
 		replyToLine = "  replyTo: " + replyTo + "\n"
@@ -684,7 +744,7 @@ func sessionHealthObligationContent(from, to, messageID, replyPolicy, replyTo, b
 		"---\n\n" + body + "\n"
 }
 
-func sessionHealthMessageContent(from, to, messageID string, fields map[string]string, body string) string {
+func sessionStatusMessageContent(from, to, messageID string, fields map[string]string, body string) string {
 	var builder strings.Builder
 	builder.WriteString("---\nparams:\n")
 	builder.WriteString("  from: " + from + "\n")
@@ -704,7 +764,7 @@ func sessionHealthMessageContent(from, to, messageID string, fields map[string]s
 	return builder.String()
 }
 
-func appendSessionHealthObligationEvent(t *testing.T, writer *journal.Writer, eventType, messageID, from, to, content string, now time.Time) {
+func appendSessionStatusObligationEvent(t *testing.T, writer *journal.Writer, eventType, messageID, from, to, content string, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: messageID,
@@ -717,51 +777,51 @@ func appendSessionHealthObligationEvent(t *testing.T, writer *journal.Writer, ev
 }
 
 func TestGetStatusOnelineProjectionRebuildsWithoutLiveTopology(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"critic": 1},
 		nil,
 	)
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(fixture.contextID, "", fixture.configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(fixture.contextID, "", fixture.configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectAllLiveSessionStatus() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy() ok = false, want true")
+		t.Fatal("collectAllLiveSessionStatus() ok = false, want true")
 	}
 
-	appendSessionHealthSnapshot(t, fixture, legacy.Sessions[0])
-	removeLiveSessionHealthArtifacts(t, fixture)
-	installSessionHealthProjectionListSessionsOnlyTmux(t, fixture.sessionName)
+	appendSessionStatusSnapshot(t, fixture, legacy.Sessions[0])
+	removeLiveSessionStatusArtifacts(t, fixture)
+	installSessionStatusProjectionListSessionsOnlyTmux(t, fixture.sessionName)
 
 	var stdout strings.Builder
 	if err := RunGetSessionStatusOneline(&stdout, []string{"--context-id", fixture.contextID, "--config", fixture.configPath}); err != nil {
 		t.Fatalf("RunGetSessionStatusOneline() error = %v", err)
 	}
 
-	if got, want := strings.TrimSpace(stdout.String()), formatAllSessionHealthOneline(legacy); got != want {
+	if got, want := strings.TrimSpace(stdout.String()), formatAllSessionStatusOneline(legacy); got != want {
 		t.Fatalf("status = %q, want %q", got, want)
 	}
 }
 
 func TestTUIProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
-	fixture := writeSessionHealthProjectionFixture(
+	fixture := writeSessionStatusProjectionFixture(
 		t,
 		map[string]string{"worker": "active", "critic": "active"},
 		map[string]int{"worker": 1},
 		nil,
 	)
 
-	legacy, err := collectSessionHealthLegacy(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	legacy, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
 	if err != nil {
-		t.Fatalf("collectSessionHealthLegacy() error = %v", err)
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	appendSessionHealthSnapshot(t, fixture, legacy)
-	removeLiveSessionHealthArtifacts(t, fixture)
-	installSessionHealthProjectionBrokenTmux(t)
+	appendSessionStatusSnapshot(t, fixture, legacy)
+	removeLiveSessionStatusArtifacts(t, fixture)
+	installSessionStatusProjectionBrokenTmux(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -779,19 +839,19 @@ func TestTUIProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 	}
 
 	<-tuiEvents
-	healthEvent := <-tuiEvents
-	if healthEvent.Type != "session_health_update" {
-		t.Fatalf("health event type = %q, want session_health_update", healthEvent.Type)
+	statusEvent := <-tuiEvents
+	if statusEvent.Type != "session_status_update" {
+		t.Fatalf("health event type = %q, want session_status_update", statusEvent.Type)
 	}
 
-	got, ok := healthEvent.Details["health"].(status.SessionHealth)
+	got, ok := statusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+		t.Fatalf("health payload type = %T, want status.SessionStatus", statusEvent.Details["status"])
 	}
-	assertSessionHealthParity(t, legacy, got)
+	assertSessionStatusParity(t, legacy, got)
 }
 
-func assertSessionHealthParity(t *testing.T, legacy, projected status.SessionHealth) {
+func assertSessionStatusParity(t *testing.T, legacy, projected status.SessionStatus) {
 	t.Helper()
 
 	if reflect.DeepEqual(legacy, projected) {
@@ -804,10 +864,10 @@ func assertSessionHealthParity(t *testing.T, legacy, projected status.SessionHea
 		t.Fatalf("parity mismatch and JSON marshal failed: legacyErr=%v projectedErr=%v", legacyErr, projectedErr)
 	}
 
-	t.Fatalf("session health mismatch:\nlegacy:\n%s\nprojected:\n%s", string(legacyJSON), string(projectedJSON))
+	t.Fatalf("session status mismatch:\nlegacy:\n%s\nprojected:\n%s", string(legacyJSON), string(projectedJSON))
 }
 
-func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]string, liveInbox map[string]int, journalSteps []projectionJournalStep) sessionHealthProjectionFixture {
+func writeSessionStatusProjectionFixture(t *testing.T, paneStates map[string]string, liveInbox map[string]int, journalSteps []projectionJournalStep) sessionStatusProjectionFixture {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -856,7 +916,7 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 		}
 	}
 
-	installSessionHealthProjectionTmux(t, contextID, sessionName)
+	installSessionStatusProjectionTmux(t, contextID, sessionName)
 
 	now := time.Date(2026, time.April, 14, 4, 0, 0, 0, time.UTC)
 	writer, err := journal.OpenShadowWriter(sessionDir, contextID, sessionName, 101, now)
@@ -891,7 +951,7 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 	cfg := config.DefaultConfig()
 	cfg.Edges = []string{"worker --- critic"}
 
-	return sessionHealthProjectionFixture{
+	return sessionStatusProjectionFixture{
 		baseDir:     tmpDir,
 		contextID:   contextID,
 		sessionName: sessionName,
@@ -900,7 +960,7 @@ func writeSessionHealthProjectionFixture(t *testing.T, paneStates map[string]str
 	}
 }
 
-func writeSessionHealthPaneActivity(t *testing.T, fixture sessionHealthProjectionFixture, content string) {
+func writeSessionStatusPaneActivity(t *testing.T, fixture sessionStatusProjectionFixture, content string) {
 	t.Helper()
 
 	if err := os.WriteFile(
@@ -912,7 +972,7 @@ func writeSessionHealthPaneActivity(t *testing.T, fixture sessionHealthProjectio
 	}
 }
 
-func installSessionHealthProjectionTmux(t *testing.T, contextID, sessionName string) {
+func installSessionStatusProjectionTmux(t *testing.T, contextID, sessionName string) {
 	t.Helper()
 
 	scriptDir := t.TempDir()
@@ -944,7 +1004,7 @@ func installSessionHealthProjectionTmux(t *testing.T, contextID, sessionName str
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-func installSessionHealthProjectionBrokenTmux(t *testing.T) {
+func installSessionStatusProjectionBrokenTmux(t *testing.T) {
 	t.Helper()
 
 	scriptDir := t.TempDir()
@@ -960,7 +1020,7 @@ func installSessionHealthProjectionBrokenTmux(t *testing.T) {
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-func installSessionHealthProjectionListSessionsOnlyTmux(t *testing.T, sessionName string) {
+func installSessionStatusProjectionListSessionsOnlyTmux(t *testing.T, sessionName string) {
 	t.Helper()
 
 	scriptDir := t.TempDir()
@@ -983,7 +1043,17 @@ func installSessionHealthProjectionListSessionsOnlyTmux(t *testing.T, sessionNam
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-func appendSessionHealthSnapshot(t *testing.T, fixture sessionHealthProjectionFixture, health status.SessionHealth) {
+func appendSessionStatusSnapshot(t *testing.T, fixture sessionStatusProjectionFixture, health status.SessionStatus) {
+	t.Helper()
+	appendSessionStatusSnapshotEvent(t, fixture, projection.SessionStatusSnapshotEventType, health)
+}
+
+func appendLegacySessionStatusSnapshot(t *testing.T, fixture sessionStatusProjectionFixture, health status.SessionStatus) {
+	t.Helper()
+	appendSessionStatusSnapshotEvent(t, fixture, projection.LegacySessionHealthSnapshotEventType, health)
+}
+
+func appendSessionStatusSnapshotEvent(t *testing.T, fixture sessionStatusProjectionFixture, eventType string, health status.SessionStatus) {
 	t.Helper()
 
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
@@ -993,20 +1063,20 @@ func appendSessionHealthSnapshot(t *testing.T, fixture sessionHealthProjectionFi
 		t.Fatalf("OpenShadowWriter(snapshot) error = %v", err)
 	}
 	if _, err := writer.AppendEvent(
-		projection.SessionHealthSnapshotEventType,
+		eventType,
 		journal.VisibilityControlPlaneOnly,
 		health,
 		now.Add(time.Second),
 	); err != nil {
-		t.Fatalf("AppendEvent(session health snapshot): %v", err)
+		t.Fatalf("AppendEvent(%s): %v", eventType, err)
 	}
 }
 
-func appendAllSessionHealthSnapshots(t *testing.T, baseDir, contextID string, sessions []status.SessionHealth) {
+func appendAllSessionStatusSnapshots(t *testing.T, baseDir, contextID string, sessions []status.SessionStatus) {
 	t.Helper()
 
 	for _, health := range sessions {
-		appendSessionHealthSnapshot(t, sessionHealthProjectionFixture{
+		appendSessionStatusSnapshot(t, sessionStatusProjectionFixture{
 			baseDir:     baseDir,
 			contextID:   contextID,
 			sessionName: health.SessionName,
@@ -1014,7 +1084,7 @@ func appendAllSessionHealthSnapshots(t *testing.T, baseDir, contextID string, se
 	}
 }
 
-func removeLiveSessionHealthArtifacts(t *testing.T, fixture sessionHealthProjectionFixture) {
+func removeLiveSessionStatusArtifacts(t *testing.T, fixture sessionStatusProjectionFixture) {
 	t.Helper()
 
 	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)

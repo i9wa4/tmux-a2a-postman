@@ -21,7 +21,7 @@ func isShellCommand(cmd string) bool {
 	return shellCommands[cmd]
 }
 
-// RunGetSessionStatusOneline formats the compact all-session health view in one line.
+// RunGetSessionStatusOneline formats the compact all-session status view in one line.
 // Output format: [0]🔷🟡:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	fs := flag.NewFlagSet("get-status-oneline", flag.ContinueOnError)
@@ -33,7 +33,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		return err
 	}
 
-	healths, _, ok, err := collectAllSessionHealth(*contextID, "", *configPath)
+	statuses, _, ok, err := collectAllSessionStatus(*contextID, "", *configPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
 			return nil
@@ -44,9 +44,9 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		return nil
 	}
 
-	statusStr := formatAllSessionHealthOneline(healths)
+	statusStr := formatAllSessionStatusOneline(statuses)
 	if *severity {
-		statusStr = formatAllSessionHealthSeverityOneline(healths)
+		statusStr = formatAllSessionStatusSeverityOneline(statuses)
 	}
 	if statusStr != "" {
 		_, err := fmt.Fprintln(stdout, statusStr)
@@ -55,31 +55,31 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 	return nil
 }
 
-func formatAllSessionHealthOneline(healths status.AllSessionHealth) string {
+func formatAllSessionStatusOneline(statuses status.AllSessionStatus) string {
 	var sessionStatuses []string
-	for i, health := range healths.Sessions {
-		sessionStatus := formatSessionHealthOneline(health)
+	for i, sessionStatusPayload := range statuses.Sessions {
+		sessionStatus := formatSessionStatusOneline(sessionStatusPayload)
 		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
 	}
 	return strings.Join(sessionStatuses, " ")
 }
 
-func formatSessionHealthOneline(health status.SessionHealth) string {
-	return health.Compact
+func formatSessionStatusOneline(sessionStatus status.SessionStatus) string {
+	return sessionStatus.Compact
 }
 
-func formatAllSessionHealthSeverityOneline(healths status.AllSessionHealth) string {
+func formatAllSessionStatusSeverityOneline(statuses status.AllSessionStatus) string {
 	var sessionStatuses []string
-	for i, health := range healths.Sessions {
-		sessionStatus := formatSessionHealthSeverityOneline(health)
+	for i, sessionStatusPayload := range statuses.Sessions {
+		sessionStatus := formatSessionStatusSeverityOneline(sessionStatusPayload)
 		sessionStatuses = append(sessionStatuses, fmt.Sprintf("[%d]%s", i, sessionStatus))
 	}
 	return strings.Join(sessionStatuses, " ")
 }
 
-func formatSessionHealthSeverityOneline(health status.SessionHealth) string {
-	if health.CompactSeverity != "" {
-		return health.CompactSeverity
+func formatSessionStatusSeverityOneline(sessionStatus status.SessionStatus) string {
+	if sessionStatus.CompactSeverity != "" {
+		return sessionStatus.CompactSeverity
 	}
 	return "ok:session"
 }

@@ -113,10 +113,10 @@ func TestTUI_View(t *testing.T) {
 		"main":   {"boss", "messenger"},
 		"review": {"critic", "worker"},
 	}
-	m.sessionHealth["main"] = status.SessionHealth{
+	m.sessionSnapshots["main"] = status.SessionStatus{
 		SessionName:  "main",
 		VisibleState: "ready",
-		Nodes: []status.NodeHealth{
+		Nodes: []status.NodeStatus{
 			{Name: "boss", VisibleState: "ready"},
 			{Name: "messenger", VisibleState: "ready"},
 		},
@@ -130,10 +130,10 @@ func TestTUI_View(t *testing.T) {
 			},
 		},
 	}
-	m.sessionHealth["review"] = status.SessionHealth{
+	m.sessionSnapshots["review"] = status.SessionStatus{
 		SessionName:  "review",
 		VisibleState: "stale",
-		Nodes: []status.NodeHealth{
+		Nodes: []status.NodeStatus{
 			{Name: "critic", VisibleState: "pending"},
 			{Name: "worker", VisibleState: "stale"},
 		},
@@ -281,11 +281,11 @@ func TestTUI_View_DefaultSurfaceNavigationCanSelectVisibleDisabledSession(t *tes
 		{Name: "main", Enabled: true},
 		{Name: "review", Enabled: false},
 	}
-	m.sessionHealth["main"] = status.SessionHealth{
+	m.sessionSnapshots["main"] = status.SessionStatus{
 		SessionName:  "main",
 		VisibleState: "ready",
 	}
-	m.sessionHealth["review"] = status.SessionHealth{
+	m.sessionSnapshots["review"] = status.SessionStatus{
 		SessionName:  "review",
 		VisibleState: "ready",
 	}

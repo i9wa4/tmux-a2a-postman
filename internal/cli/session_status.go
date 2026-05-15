@@ -1,0 +1,284 @@
+package cli
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
+)
+
+func isNoActivePostmanError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no active postman found")
+}
+
+func emptySessionStatus(sessionName string) status.SessionStatus {
+	result := status.SessionStatus{
+		SchemaVersion: status.SchemaVersion,
+		SessionName:   sessionName,
+		Nodes:         []status.NodeStatus{},
+		Windows:       []status.SessionWindow{},
+	}
+	enrichSessionStatus(&result, "", time.Now())
+	return result
+}
+
+func emptyAllSessionStatus() status.AllSessionStatus {
+	return status.AllSessionStatus{
+		SchemaVersion: status.SchemaVersion,
+		Sessions:      []status.SessionStatus{},
+	}
+}
+
+// RunGetSessionStatus prints the canonical session status JSON payload (#220).
+func RunGetSessionStatus(args []string) error {
+	fs := flag.NewFlagSet("get-status", flag.ExitOnError)
+	cliutil.SetUsageWithoutContextID(fs)
+	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
+	configPath := fs.String("config", "", "Config file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	result, ok, err := collectResolvedSessionStatus(*contextID, "", *configPath)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("tmux session name required (run inside tmux)")
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
+}
+
+type sessionStatusTarget struct {
+	cfg         *config.Config
+	baseDir     string
+	contextID   string
+	sessionName string
+}
+
+type sessionStatusCollector func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error)
+
+func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return sessionStatusTarget{}, false, fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+
+	sessionName := sessionFlag
+	if sessionName == "" {
+		sessionName = config.GetTmuxSessionName()
+	}
+	if sessionName == "" {
+		return sessionStatusTarget{}, false, nil
+	}
+	sessionName, err = config.ValidateSessionName(sessionName)
+	if err != nil {
+		return sessionStatusTarget{}, false, err
+	}
+
+	resolvedContextID := contextIDFlag
+	if resolvedContextID != "" {
+		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		if err != nil {
+			return sessionStatusTarget{}, false, err
+		}
+	} else {
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			if isNoActivePostmanError(err) {
+				return sessionStatusTarget{
+					cfg:         cfg,
+					baseDir:     baseDir,
+					sessionName: sessionName,
+				}, true, err
+			}
+			return sessionStatusTarget{}, false, err
+		}
+	}
+
+	return sessionStatusTarget{
+		cfg:         cfg,
+		baseDir:     baseDir,
+		contextID:   resolvedContextID,
+		sessionName: sessionName,
+	}, true, nil
+}
+
+func collectResolvedSessionStatus(contextIDFlag, sessionFlag, configPath string) (status.SessionStatus, bool, error) {
+	target, ok, err := resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath)
+	if isNoActivePostmanError(err) {
+		return emptySessionStatus(target.sessionName), true, nil
+	}
+	if err != nil || !ok {
+		return status.SessionStatus{}, ok, err
+	}
+
+	result, err := collectSessionStatus(target.baseDir, target.contextID, target.sessionName, target.cfg)
+	if err != nil {
+		return status.SessionStatus{}, true, err
+	}
+	normalizeSessionStatus(&result)
+	return result, true, nil
+}
+
+func unavailableSessionStatus(contextID, sessionName string) status.SessionStatus {
+	result := status.SessionStatus{
+		SchemaVersion: status.SchemaVersion,
+		ContextID:     contextID,
+		SessionName:   sessionName,
+	}
+	result.VisibleState = "unavailable"
+	result.Compact = compactSessionStatusMark(result.VisibleState)
+	enrichSessionStatus(&result, "", time.Now())
+	return result
+}
+
+func projectedSessionStatus(sessionDir string) (status.SessionStatus, bool) {
+	projected, ok, err := projection.ProjectSessionStatus(sessionDir)
+	if err != nil || !ok {
+		return status.SessionStatus{}, false
+	}
+	enrichSessionStatus(&projected, sessionDir, time.Now())
+	return projected, true
+}
+
+func recordSessionStatusSnapshot(sessionDir, sessionName string, snapshot status.SessionStatus, now time.Time) error {
+	return journal.RecordProcessEvent(
+		sessionDir,
+		sessionName,
+		projection.SessionStatusSnapshotEventType,
+		journal.VisibilityControlPlaneOnly,
+		snapshot,
+		now,
+	)
+}
+
+func refreshProjectedSessionStatus(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
+	if !ownsCanonicalSessionStatus(baseDir, contextID, sessionName) {
+		return unavailableSessionStatus(contextID, sessionName), nil
+	}
+
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	projected, projectedOK := projectedSessionStatus(sessionDir)
+
+	live, err := collectLiveSessionStatus(baseDir, contextID, sessionName, cfg)
+	if err == nil {
+		if !projectedOK || !reflect.DeepEqual(projected, live) {
+			if recordErr := recordSessionStatusSnapshot(sessionDir, sessionName, live, time.Now()); recordErr == nil {
+				projected, projectedOK = projectedSessionStatus(sessionDir)
+			}
+		}
+		if projectedOK {
+			return projected, nil
+		}
+		return live, nil
+	}
+
+	if projectedOK {
+		return projected, nil
+	}
+
+	return status.SessionStatus{}, err
+}
+
+func collectAllSessionStatus(contextIDFlag, sessionFlag, configPath string) (status.AllSessionStatus, *config.Config, bool, error) {
+	return collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath, collectSessionStatus)
+}
+
+func collectAllLiveSessionStatus(contextIDFlag, sessionFlag, configPath string) (status.AllSessionStatus, *config.Config, bool, error) {
+	return collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath, collectLiveSessionStatus)
+}
+
+func collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath string, collector sessionStatusCollector) (status.AllSessionStatus, *config.Config, bool, error) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return status.AllSessionStatus{}, nil, false, fmt.Errorf("loading config: %w", err)
+	}
+
+	baseDir := config.ResolveBaseDir(cfg.BaseDir)
+	resolvedContextID := contextIDFlag
+	if resolvedContextID != "" {
+		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		if err != nil {
+			return status.AllSessionStatus{}, nil, false, err
+		}
+	} else {
+		sessionName := sessionFlag
+		if sessionName == "" {
+			sessionName = config.GetTmuxSessionName()
+		}
+		if sessionName == "" {
+			return status.AllSessionStatus{}, cfg, false, nil
+		}
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return status.AllSessionStatus{}, nil, false, err
+		}
+		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		if err != nil {
+			if isNoActivePostmanError(err) {
+				return emptyAllSessionStatus(), cfg, true, nil
+			}
+			return status.AllSessionStatus{}, nil, false, err
+		}
+	}
+
+	sessionNames, err := discovery.DiscoverAllSessions()
+	if err != nil {
+		return status.AllSessionStatus{}, nil, true, err
+	}
+
+	result := status.AllSessionStatus{
+		SchemaVersion: status.SchemaVersion,
+		ContextID:     resolvedContextID,
+		Sessions:      make([]status.SessionStatus, 0, len(sessionNames)),
+	}
+	if ownerSession := config.FindContextSessionName(baseDir, resolvedContextID); ownerSession != "" {
+		result.DaemonOwner = &status.DaemonOwner{
+			ContextID:   resolvedContextID,
+			SessionName: ownerSession,
+		}
+	}
+	for _, sessionName := range sessionNames {
+		sessionName, err = config.ValidateSessionName(sessionName)
+		if err != nil {
+			return status.AllSessionStatus{}, nil, true, err
+		}
+		sessionStatus, err := collector(baseDir, resolvedContextID, sessionName, cfg)
+		if err != nil {
+			return status.AllSessionStatus{}, nil, true, err
+		}
+		normalizeSessionStatus(&sessionStatus)
+		result.Sessions = append(result.Sessions, sessionStatus)
+	}
+
+	return result, cfg, true, nil
+}
+
+func normalizeSessionStatus(sessionStatus *status.SessionStatus) {
+	if sessionStatus.Nodes == nil {
+		sessionStatus.Nodes = []status.NodeStatus{}
+	}
+	if sessionStatus.Windows == nil {
+		sessionStatus.Windows = []status.SessionWindow{}
+	}
+	if sessionStatus.SchemaVersion == 0 || sessionStatus.CompactSeverity == "" {
+		enrichSessionStatus(sessionStatus, "", time.Now())
+	}
+}

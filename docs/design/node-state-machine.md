@@ -6,7 +6,7 @@ has no positive live evidence yet, has work, is blocked on another node, or is
 unavailable.
 
 It is not a full conversation workflow model. Message files remain the source
-of truth; health commands only replay their structured metadata and journal
+of truth; status commands only replay their structured metadata and journal
 events into a compact state.
 
 ## 1. Identity Hierarchy
@@ -49,7 +49,7 @@ scale: a single delivered message, a conversational thread, an actionable
 required-input request, and an optional aggregate for multi-recipient completion
 rules. This keeps `task_id` and `input_request_id` from sounding like same-scale
 runtime concepts: task identity belongs to an external planning layer, while
-input-request identity belongs to daemon health and reply projection.
+input-request identity belongs to daemon status and reply projection.
 
 ## 2. State Surfaces
 
@@ -58,7 +58,7 @@ input-request identity belongs to daemon health and reply projection.
 | `nodes[*].pane_state`                     | empty, `active`, `idle`, `stale`                                 | Pane availability and activity fact                       |
 | `nodes[*].visible_state`                  | `initial`, `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
 | `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                        |
-| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session health |
+| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session status |
 | `severity`                                | See contextual severity table                                    | Additive triage severity for operators                    |
 | `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans        |
 
@@ -76,16 +76,16 @@ capture state so operators can tell whether the pane is still changing without
 reading raw pane text. It does not affect visible-state ranking.
 
 `unavailable` is a session-level fallback, not a per-node state. It means this
-daemon cannot provide canonical health for that tmux session. It is displayed
+daemon cannot provide canonical status for that tmux session. It is displayed
 with the same neutral compact mark as `initial`.
 
-`schema_version: 3` reports contextual severity alongside `visible_state` and
+`schema_version: 4` reports contextual severity alongside `visible_state` and
 `compact`. Consumers that only need the compact operator view can read those
 fields.
 
-The remaining health-named machine contract surfaces are intentional. See
-[Schema and Event Terminology Migration](schema-event-terminology.md) before
-renaming JSON contracts, projection event names, or replay-facing identifiers.
+The canonical machine contract uses status terminology. See
+[Schema and Event Terminology](schema-event-terminology.md) for the narrow
+legacy archive replay exception.
 
 ## 3. Visible Node States
 
@@ -95,11 +95,11 @@ renaming JSON contracts, projection event names, or replay-facing identifiers.
 | `ready`   | Pane is live with no open action or wait            | positive tmux pane activity evidence  |
 | `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_input_count > 0`          |
 | `pending` | Node has inbound reply-required action unresolved   | `input_required_count > 0`            |
-| `stale`   | Previously known pane/session evidence is unhealthy | stale pane/session data               |
+| `stale`   | Previously known pane/session evidence is stale     | stale pane/session data               |
 
 Unread no-reply mail is still counted as unread mail, but it does not make a
 node `pending`. This keeps daemon PINGs, `ACK`, `DONE`, and status-only notices
-from making healthy nodes look like they owe work.
+from making ready nodes look like they owe work.
 
 ## 4. Transitions
 
@@ -140,7 +140,7 @@ Normal `send-heredoc` mail is no-reply unless the sender uses
 override for terminal or informational mail.
 
 A new reply-required message carries an exact `input_request_id`. A resolving
-reply should include `--fills-input-request-id <input-request-id>` so health can
+reply should include `--fills-input-request-id <input-request-id>` so status can
 clear that slot. The default footer includes `--reply-to <message-id>` as
 traceability; for messages without an exact input-request ID, `--reply-to` still
 closes the matching open slot for the original message and participant.
@@ -194,10 +194,10 @@ from later complete events instead of inventing input-request state.
 
 Grouped input-request fields are reserved for the next protocol layer:
 `input_request_set_id`, `branch_id`, and `completion_rule`. They are parsed and
-carried as metadata but do not affect L1 health counts until grouped
+carried as metadata but do not affect L1 status counts until grouped
 completion rules are implemented.
 
-## 7. Health Projection
+## 7. Status Projection
 
 The canonical contract is shared by `get-status`, `get-status-oneline`, and the
 default TUI. Per-node state is exposed as `nodes[*].visible_state`.
@@ -243,8 +243,8 @@ report exists.
 | `severity_source`      | Surface that produced the chosen severity       |
 | `severity_reason`      | Short human-readable reason                     |
 | `compact_severity`     | ASCII one-line summary token                    |
-| `delivery`             | Session delivery health                         |
-| `nodes[*].node_local`  | Pane-local activity/staleness health            |
+| `delivery`             | Session delivery status                         |
+| `nodes[*].node_local`  | Pane-local activity/staleness status            |
 | `nodes[*].flow`        | Input-request and blocked-report workflow state |
 | `nodes[*].queues`      | Node-local queue counts                         |
 

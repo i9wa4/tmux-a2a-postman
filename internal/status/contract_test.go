@@ -2,6 +2,21 @@ package status
 
 import "testing"
 
+func TestSchemaVersionIsV4StatusContract(t *testing.T) {
+	if SchemaVersion != 4 {
+		t.Fatalf("SchemaVersion = %d, want 4", SchemaVersion)
+	}
+
+	payload := SessionStatus{
+		SchemaVersion: SchemaVersion,
+		SessionName:   "review",
+		Nodes:         []NodeStatus{{Name: "worker", VisibleState: "ready"}},
+	}
+	if payload.SchemaVersion != 4 || payload.Nodes[0].Name != "worker" {
+		t.Fatalf("unexpected status payload: %#v", payload)
+	}
+}
+
 func TestVisibleState(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -107,7 +122,7 @@ func TestVisibleStateWithInputRequests(t *testing.T) {
 func TestSessionVisibleState(t *testing.T) {
 	tests := []struct {
 		name  string
-		nodes []NodeHealth
+		nodes []NodeStatus
 		want  string
 	}{
 		{
@@ -117,7 +132,7 @@ func TestSessionVisibleState(t *testing.T) {
 		},
 		{
 			name: "only_initial_nodes_stay_initial",
-			nodes: []NodeHealth{
+			nodes: []NodeStatus{
 				{Name: "worker", VisibleState: "initial"},
 				{Name: "critic"},
 			},
@@ -125,21 +140,21 @@ func TestSessionVisibleState(t *testing.T) {
 		},
 		{
 			name: "expected_ai_without_positive_evidence_stays_initial",
-			nodes: []NodeHealth{
+			nodes: []NodeStatus{
 				{Name: "worker", CurrentCommand: "claude"},
 			},
 			want: "initial",
 		},
 		{
 			name: "ready_from_positive_pane_evidence",
-			nodes: []NodeHealth{
+			nodes: []NodeStatus{
 				{Name: "worker", PaneState: "active"},
 			},
 			want: "ready",
 		},
 		{
 			name: "worst_specific_state_wins",
-			nodes: []NodeHealth{
+			nodes: []NodeStatus{
 				{Name: "worker", VisibleState: "pending"},
 				{Name: "critic", VisibleState: "stale"},
 			},
