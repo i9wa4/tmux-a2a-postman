@@ -97,27 +97,18 @@ func readSendBodyStdin(stdinReader io.Reader) (string, error) {
 }
 
 func sendHeredocBodySourceError() error {
-	return fmt.Errorf("message body is required as a quoted heredoc: use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'; argv, file, and pipe body input can cause shell-expansion mistakes")
+	return fmt.Errorf("message body is required on non-terminal stdin from a quoted heredoc: use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'; body argv and interactive terminal input are disabled to avoid shell-expansion mistakes")
 }
 
 func resolveSendHeredocBody(stdinReader io.Reader, stdinIsTerminal bool) (string, error) {
 	if stdinIsTerminal {
 		return "", sendHeredocBodySourceError()
 	}
-	if stdinFile, ok := stdinReader.(*os.File); ok {
-		info, err := stdinFile.Stat()
-		if err != nil {
-			return "", fmt.Errorf("checking heredoc stdin body: %w", err)
-		}
-		if info.Mode().IsRegular() {
-			return "", sendHeredocBodySourceError()
-		}
-	}
 	return readSendBodyStdin(stdinReader)
 }
 
 func RunSendMessage(args []string) error {
-	return fmt.Errorf("send no longer accepts message bodies because argv, file, and pipe body input can cause shell-expansion mistakes; use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
+	return fmt.Errorf("send no longer accepts message bodies because body argv, file shortcuts, and generic pipe-oriented guidance can cause shell-expansion mistakes; use tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
 }
 
 func RunSendHeredoc(args []string) error {

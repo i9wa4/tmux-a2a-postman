@@ -433,10 +433,17 @@ func TestRunSendMessage_BodyFileFlagRejected(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_RegularFileStdinRejected(t *testing.T) {
+func TestRunSendMessage_RegularFileStdinAcceptedForZshHeredocCompatibility(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := "from regular-file stdin"
 	bodyPath := filepath.Join(tmpDir, "body.md")
-	if err := os.WriteFile(bodyPath, []byte("from file"), 0o600); err != nil {
+	if err := os.WriteFile(bodyPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("WriteFile body: %v", err)
 	}
 	bodyFile, err := os.Open(bodyPath)
@@ -453,14 +460,23 @@ func TestRunSendMessage_RegularFileStdinRejected(t *testing.T) {
 		sendBodyStdinIsTerminal = previousIsTerminal
 	})
 
-	err = RunSendHeredoc([]string{"--to", "worker"})
-	if err == nil {
-		t.Fatal("RunSendHeredoc() error = nil, want regular file stdin rejection")
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunSendHeredoc([]string{
+			"--config", configPath,
+			"--context-id", "ctx-regular-file-stdin",
+			"--to", "worker",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendHeredoc() error = %v, want regular file stdin accepted", err)
 	}
-	for _, want := range []string{"quoted heredoc", "send-heredoc", "shell-expansion"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("RunSendHeredoc() error = %v, want substring %q", err, want)
-		}
+	payload := decodeSendOutputForTest(t, stdout)
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-regular-file-stdin", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	if !strings.Contains(string(content), body) {
+		t.Fatalf("post content did not preserve regular-file stdin body:\n%s", string(content))
 	}
 }
 

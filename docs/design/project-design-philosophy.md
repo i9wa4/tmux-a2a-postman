@@ -47,6 +47,19 @@ Documentation is part of the product surface. Update README, help, and skills
 when an operator contract changes. Keep internal details in focused design notes
 or code comments when they only explain implementation choices.
 
+## Shell And Stdin Portability
+
+Command behavior must work across the shells operators actually use, including
+`bash` and `zsh`. Do not infer unsafe message input from the OS-level shape of
+non-terminal stdin alone. A quoted heredoc may appear as a pipe, character
+device, or regular temporary file depending on the shell and execution
+environment.
+
+For message-body commands, reject explicit unsafe surfaces such as body argv and
+interactive terminal stdin, but accept non-terminal stdin regardless of file
+type. If the product needs a stricter body source contract, add an explicit
+flag, metadata field, or command mode instead of guessing from descriptor type.
+
 ## Applying The Philosophy
 
 For each proposed feature, ask:

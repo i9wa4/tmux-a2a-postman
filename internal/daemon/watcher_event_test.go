@@ -333,7 +333,7 @@ func TestFsnotifyWatcherSeesAtomicRenameIntoWatchedPostDir(t *testing.T) {
 	}
 
 	event := waitForFsnotifyEvent(t, watcher, finalPath, fsnotify.Create|fsnotify.Rename)
-	if event.Name != finalPath {
+	if canonicalTestPath(t, event.Name) != canonicalTestPath(t, finalPath) {
 		t.Fatalf("fsnotify event.Name = %q, want %q", event.Name, finalPath)
 	}
 }
@@ -452,12 +452,13 @@ func waitForFsnotifyEvent(t *testing.T, watcher *fsnotify.Watcher, path string, 
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 
+	wantPath := canonicalTestPath(t, path)
 	var seen []string
 	for {
 		select {
 		case event := <-watcher.Events:
 			seen = append(seen, event.String())
-			if event.Name == path && event.Op&op != 0 {
+			if canonicalTestPath(t, event.Name) == wantPath && event.Op&op != 0 {
 				return event
 			}
 		case err := <-watcher.Errors:
@@ -466,4 +467,13 @@ func waitForFsnotifyEvent(t *testing.T, watcher *fsnotify.Watcher, path string, 
 			t.Fatalf("timed out waiting for watcher event path=%s op=%s; seen=%v", path, op, seen)
 		}
 	}
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }
