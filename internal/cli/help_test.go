@@ -31,10 +31,10 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery:") {
 		t.Fatalf("stdout missing lifecycle split: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-status                 Print canonical session health JSON") {
+	if !strings.Contains(stdout.String(), "get-status                 Print canonical session status JSON") {
 		t.Fatalf("stdout missing get-status overview line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "get-status-oneline         Print compact all-session health") {
+	if !strings.Contains(stdout.String(), "get-status-oneline         Print compact all-session status") {
 		t.Fatalf("stdout missing get-status-oneline overview line: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
@@ -130,7 +130,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"inject: ping and inject: compaction_ping paths must be ~/... or absolute",
 		"skill_path runtime selectors are unsupported; list explicit path entries instead",
 		"duplicate rendered skill names are deduped; later entries win",
-		"get-status, get-status-oneline, and the default TUI read the same canonical health contract.",
+		"get-status, get-status-oneline, and the default TUI read the same canonical status contract.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout missing %q: %q", want, got)

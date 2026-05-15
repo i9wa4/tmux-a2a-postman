@@ -57,7 +57,7 @@ func TestForwardTUIEvent_DropsNonSessionEventWhenChannelIsFull(t *testing.T) {
 	tuiEvents := make(chan tui.DaemonEvent)
 	done := make(chan bool, 1)
 	go func() {
-		done <- forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{Type: "session_health_update"})
+		done <- forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{Type: "session_status_update"})
 	}()
 
 	select {
@@ -106,32 +106,32 @@ func TestForwardTUIEvent_KeepsLatestSessionSnapshotWhenChannelIsFull(t *testing.
 	}
 }
 
-func TestRelayDaemonEventsToTUI_ForwardsSessionSnapshotWhileHealthRefreshIsBlocked(t *testing.T) {
+func TestRelayDaemonEventsToTUI_ForwardsSessionSnapshotWhileStatusRefreshIsBlocked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	healthStarted := make(chan struct{})
-	releaseHealth := make(chan struct{})
+	releaseStatus := make(chan struct{})
 	healthStartedClosed := false
-	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	refreshStatus := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
 		if !healthStartedClosed {
 			close(healthStarted)
 			healthStartedClosed = true
 		}
-		<-releaseHealth
-		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+		<-releaseStatus
+		return status.SessionStatus{SessionName: sessionName, VisibleState: "ready"}, nil
 	}
 	defer func() {
 		select {
-		case <-releaseHealth:
+		case <-releaseStatus:
 		default:
-			close(releaseHealth)
+			close(releaseStatus)
 		}
 	}()
 
 	rawEvents := make(chan tui.DaemonEvent, 2)
 	tuiEvents := make(chan tui.DaemonEvent, 4)
-	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+	go relayDaemonEventsToTUIWithStatusRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshStatus)
 
 	rawEvents <- tui.DaemonEvent{
 		Type: "status_update",
@@ -172,24 +172,24 @@ func TestRelayDaemonEventsToTUI_ForwardsSessionSnapshotWhileHealthRefreshIsBlock
 			t.Fatalf("second sessions = %#v, want new", secondSessions)
 		}
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("session snapshot was blocked behind session health refresh")
+		t.Fatal("session snapshot was blocked behind session status refresh")
 	}
 
-	close(releaseHealth)
+	close(releaseStatus)
 }
 
-func TestRelayDaemonEventsToTUI_RefreshesSessionHealthConcurrentlyWithinBatch(t *testing.T) {
+func TestRelayDaemonEventsToTUI_RefreshesSessionStatusConcurrentlyWithinBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	slowStarted := make(chan struct{})
 	releaseSlow := make(chan struct{})
-	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	refreshStatus := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
 		if sessionName == "aaa-slow" {
 			close(slowStarted)
 			<-releaseSlow
 		}
-		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+		return status.SessionStatus{SessionName: sessionName, VisibleState: "ready"}, nil
 	}
 	defer func() {
 		select {
@@ -201,7 +201,7 @@ func TestRelayDaemonEventsToTUI_RefreshesSessionHealthConcurrentlyWithinBatch(t 
 
 	rawEvents := make(chan tui.DaemonEvent, 1)
 	tuiEvents := make(chan tui.DaemonEvent, 4)
-	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+	go relayDaemonEventsToTUIWithStatusRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshStatus)
 
 	rawEvents <- tui.DaemonEvent{
 		Type: "status_update",
@@ -224,12 +224,12 @@ func TestRelayDaemonEventsToTUI_RefreshesSessionHealthConcurrentlyWithinBatch(t 
 
 	select {
 	case event := <-tuiEvents:
-		if event.Type != "session_health_update" {
-			t.Fatalf("event.Type = %q, want session_health_update", event.Type)
+		if event.Type != "session_status_update" {
+			t.Fatalf("event.Type = %q, want session_status_update", event.Type)
 		}
-		health, ok := event.Details["health"].(status.SessionHealth)
+		health, ok := event.Details["status"].(status.SessionStatus)
 		if !ok {
-			t.Fatalf("health payload type = %T, want status.SessionHealth", event.Details["health"])
+			t.Fatalf("health payload type = %T, want status.SessionStatus", event.Details["status"])
 		}
 		if health.SessionName != "zzz-fast" {
 			t.Fatalf("health.SessionName = %q, want zzz-fast", health.SessionName)
@@ -239,18 +239,18 @@ func TestRelayDaemonEventsToTUI_RefreshesSessionHealthConcurrentlyWithinBatch(t 
 	}
 }
 
-func TestRelayDaemonEventsToTUI_DropsStaleSessionHealthGeneration(t *testing.T) {
+func TestRelayDaemonEventsToTUI_DropsStaleSessionStatusGeneration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	oldStarted := make(chan struct{})
 	releaseOld := make(chan struct{})
-	refreshHealth := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+	refreshStatus := func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
 		if sessionName == "old" {
 			close(oldStarted)
 			<-releaseOld
 		}
-		return status.SessionHealth{SessionName: sessionName, VisibleState: "ready"}, nil
+		return status.SessionStatus{SessionName: sessionName, VisibleState: "ready"}, nil
 	}
 	defer func() {
 		select {
@@ -262,7 +262,7 @@ func TestRelayDaemonEventsToTUI_DropsStaleSessionHealthGeneration(t *testing.T) 
 
 	rawEvents := make(chan tui.DaemonEvent, 2)
 	tuiEvents := make(chan tui.DaemonEvent, 8)
-	go relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshHealth)
+	go relayDaemonEventsToTUIWithStatusRefresher(ctx, rawEvents, tuiEvents, t.TempDir(), "ctx", config.DefaultConfig(), refreshStatus)
 
 	rawEvents <- tui.DaemonEvent{
 		Type: "status_update",
@@ -293,22 +293,22 @@ func TestRelayDaemonEventsToTUI_DropsStaleSessionHealthGeneration(t *testing.T) 
 
 	select {
 	case event := <-tuiEvents:
-		if event.Type != "session_health_update" {
-			t.Fatalf("event.Type = %q, want session_health_update", event.Type)
+		if event.Type != "session_status_update" {
+			t.Fatalf("event.Type = %q, want session_status_update", event.Type)
 		}
-		health, ok := event.Details["health"].(status.SessionHealth)
+		health, ok := event.Details["status"].(status.SessionStatus)
 		if !ok {
-			t.Fatalf("health payload type = %T, want status.SessionHealth", event.Details["health"])
+			t.Fatalf("health payload type = %T, want status.SessionStatus", event.Details["status"])
 		}
 		if health.SessionName != "new" {
 			t.Fatalf("health.SessionName = %q, want stale old health to be dropped and new health emitted", health.SessionName)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for latest session health update")
+		t.Fatal("timed out waiting for latest session status update")
 	}
 }
 
-func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
+func TestRelayDaemonEventsToTUI_EmitsSessionStatusUpdate(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260405-ctx"
 	sessionName := "review"
@@ -387,13 +387,13 @@ func TestRelayDaemonEventsToTUI_EmitsSessionHealthUpdate(t *testing.T) {
 		t.Fatalf("first event type = %q, want status_update", forwarded.Type)
 	}
 
-	healthEvent := <-tuiEvents
-	if healthEvent.Type != "session_health_update" {
-		t.Fatalf("second event type = %q, want session_health_update", healthEvent.Type)
+	statusEvent := <-tuiEvents
+	if statusEvent.Type != "session_status_update" {
+		t.Fatalf("second event type = %q, want session_status_update", statusEvent.Type)
 	}
-	health, ok := healthEvent.Details["health"].(status.SessionHealth)
+	health, ok := statusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+		t.Fatalf("health payload type = %T, want status.SessionStatus", statusEvent.Details["status"])
 	}
 	if health.SessionName != sessionName {
 		t.Fatalf("health.SessionName = %q, want %q", health.SessionName, sessionName)
@@ -474,16 +474,16 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 	}
 
 	<-tuiEvents
-	initialHealthEvent := <-tuiEvents
-	if initialHealthEvent.Type != "session_health_update" {
-		t.Fatalf("initial health event type = %q, want session_health_update", initialHealthEvent.Type)
+	initialStatusEvent := <-tuiEvents
+	if initialStatusEvent.Type != "session_status_update" {
+		t.Fatalf("initial health event type = %q, want session_status_update", initialStatusEvent.Type)
 	}
-	initialHealth, ok := initialHealthEvent.Details["health"].(status.SessionHealth)
+	initialStatus, ok := initialStatusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("initial health payload type = %T, want status.SessionHealth", initialHealthEvent.Details["health"])
+		t.Fatalf("initial health payload type = %T, want status.SessionStatus", initialStatusEvent.Details["status"])
 	}
-	if initialHealth.VisibleState != "ready" {
-		t.Fatalf("initial health.VisibleState = %q, want %q", initialHealth.VisibleState, "ready")
+	if initialStatus.VisibleState != "ready" {
+		t.Fatalf("initial health.VisibleState = %q, want %q", initialStatus.VisibleState, "ready")
 	}
 
 	criticInboxPath := filepath.Join(sessionDir, "inbox", "critic", "20260405-000001-s0000-from-worker-to-critic.md")
@@ -504,13 +504,13 @@ func TestRelayDaemonEventsToTUI_NodeAliveRefreshesCanonicalHealth(t *testing.T) 
 		t.Fatalf("forwarded event type = %q, want node_alive", forwarded.Type)
 	}
 
-	healthEvent := <-tuiEvents
-	if healthEvent.Type != "session_health_update" {
-		t.Fatalf("health event type = %q, want session_health_update", healthEvent.Type)
+	statusEvent := <-tuiEvents
+	if statusEvent.Type != "session_status_update" {
+		t.Fatalf("health event type = %q, want session_status_update", statusEvent.Type)
 	}
-	health, ok := healthEvent.Details["health"].(status.SessionHealth)
+	health, ok := statusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+		t.Fatalf("health payload type = %T, want status.SessionStatus", statusEvent.Details["status"])
 	}
 	if health.VisibleState != "pending" {
 		t.Fatalf("health.VisibleState = %q, want %q", health.VisibleState, "pending")
@@ -604,13 +604,13 @@ func TestRelayDaemonEventsToTUI_SkipsCanonicalHealthForForeignOwnedSession(t *te
 	}
 
 	<-tuiEvents
-	healthEvent := <-tuiEvents
-	if healthEvent.Type != "session_health_update" {
-		t.Fatalf("health event type = %q, want session_health_update", healthEvent.Type)
+	statusEvent := <-tuiEvents
+	if statusEvent.Type != "session_status_update" {
+		t.Fatalf("health event type = %q, want session_status_update", statusEvent.Type)
 	}
-	health, ok := healthEvent.Details["health"].(status.SessionHealth)
+	health, ok := statusEvent.Details["status"].(status.SessionStatus)
 	if !ok {
-		t.Fatalf("health payload type = %T, want status.SessionHealth", healthEvent.Details["health"])
+		t.Fatalf("health payload type = %T, want status.SessionStatus", statusEvent.Details["status"])
 	}
 	if health.SessionName != sessionName {
 		t.Fatalf("health.SessionName = %q, want %q", health.SessionName, sessionName)

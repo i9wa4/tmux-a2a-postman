@@ -77,11 +77,11 @@ type Model struct {
 	height int
 
 	// Session list view (Issue #35: Requirement 3, Issue #45: left pane)
-	sessions        []SessionInfo
-	knownSessions   []SessionInfo
-	selectedSession int
-	sessionNodes    map[string][]string // Issue #59: session name -> simple node names
-	sessionHealth   map[string]status.SessionHealth
+	sessions         []SessionInfo
+	knownSessions    []SessionInfo
+	selectedSession  int
+	sessionNodes     map[string][]string // Issue #59: session name -> simple node names
+	sessionSnapshots map[string]status.SessionStatus
 
 	// Node state tracking (Issue #55)
 	nodeStates        map[string]string // "active" / "idle" / "stale"
@@ -151,30 +151,30 @@ func (m *Model) refreshVisibleSessions() {
 	// Default TUI session rows mirror tmux list-sessions order exactly.
 	m.sessions = append([]SessionInfo(nil), m.knownSessions...)
 	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
-	m.pruneSessionHealth()
+	m.pruneSessionSnapshots()
 }
 
-func (m *Model) pruneSessionHealth() {
-	if len(m.sessionHealth) == 0 || len(m.knownSessions) == 0 {
+func (m *Model) pruneSessionSnapshots() {
+	if len(m.sessionSnapshots) == 0 || len(m.knownSessions) == 0 {
 		return
 	}
 	liveSessions := make(map[string]struct{}, len(m.knownSessions))
 	for _, session := range m.knownSessions {
 		liveSessions[session.Name] = struct{}{}
 	}
-	for sessionName := range m.sessionHealth {
+	for sessionName := range m.sessionSnapshots {
 		if _, ok := liveSessions[sessionName]; !ok {
-			delete(m.sessionHealth, sessionName)
+			delete(m.sessionSnapshots, sessionName)
 		}
 	}
 }
 
-func (m Model) sessionHealthFor(sessionName string) (status.SessionHealth, bool) {
+func (m Model) sessionStatusFor(sessionName string) (status.SessionStatus, bool) {
 	if sessionName == "" {
-		return status.SessionHealth{}, false
+		return status.SessionStatus{}, false
 	}
-	health, ok := m.sessionHealth[sessionName]
-	return health, ok
+	snapshot, ok := m.sessionSnapshots[sessionName]
+	return snapshot, ok
 }
 
 // updateNodeStatesFromActivity updates node states from idle.NodeActivity map (Issue #55).
@@ -188,8 +188,8 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 	}
 
 	// Build a simple-name filter from the known session map. Canonical
-	// session-health snapshots remain the primary TUI source; this path only
-	// updates the legacy in-memory fallback while health is still loading.
+	// session status snapshots remain the primary TUI source; this path only
+	// updates the legacy in-memory fallback while status is still loading.
 	knownNodes := make(map[string]bool)
 	for _, nodes := range m.sessionNodes {
 		for _, node := range nodes {
@@ -238,7 +238,7 @@ func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand
 		knownSessions:     []SessionInfo{},
 		selectedSession:   0,                         // Issue #35: Requirement 3
 		sessionNodes:      make(map[string][]string), // Issue #59: Session-node mapping
-		sessionHealth:     make(map[string]status.SessionHealth),
+		sessionSnapshots:  make(map[string]status.SessionStatus),
 		nodeStates:        make(map[string]string), // Issue #55: Node state tracking
 		unreadInboxCounts: make(map[string]int),
 		config:            cfg,
@@ -359,9 +359,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.knownSessions = sessionList
 				m.refreshVisibleSessions()
 			}
-		case "session_health_update":
-			if health, ok := msg.Details["health"].(status.SessionHealth); ok && health.SessionName != "" {
-				m.sessionHealth[health.SessionName] = health
+		case "session_status_update":
+			if snapshot, ok := msg.Details["status"].(status.SessionStatus); ok && snapshot.SessionName != "" {
+				m.sessionSnapshots[snapshot.SessionName] = snapshot
 				m.refreshVisibleSessions()
 			}
 		case "node_alive":
@@ -542,22 +542,22 @@ func sessionIndicator(state string, enabled bool) string {
 	}
 }
 
-func sessionHealthUnavailable(health status.SessionHealth) bool {
-	return health.VisibleState == "unavailable" || health.VisibleState == "unowned"
+func sessionStatusUnavailable(snapshot status.SessionStatus) bool {
+	return snapshot.VisibleState == "unavailable" || snapshot.VisibleState == "unowned"
 }
 
 func (m Model) defaultSessionIndicator(session SessionInfo) string {
-	health, ok := m.sessionHealthFor(session.Name)
+	snapshot, ok := m.sessionStatusFor(session.Name)
 	if !ok {
-		// Session exists in tmux, but canonical health has not arrived yet.
+		// Session exists in tmux, but canonical status has not arrived yet.
 		return "⚫"
 	}
-	if sessionHealthUnavailable(health) {
+	if sessionStatusUnavailable(snapshot) {
 		return "⚫"
 	}
-	state := health.VisibleState
+	state := snapshot.VisibleState
 	if state == "" {
-		state = status.SessionVisibleState(health.Nodes)
+		state = status.SessionVisibleState(snapshot.Nodes)
 	}
 	if state == "" {
 		// Session exists, but there are no canonical panes to classify yet.
@@ -609,31 +609,31 @@ func (m Model) renderNodesSection() string {
 		b.WriteString("(no nodes)\n")
 		return b.String()
 	}
-	if health, ok := m.sessionHealthFor(selectedSession); ok {
-		if sessionHealthUnavailable(health) {
+	if snapshot, ok := m.sessionStatusFor(selectedSession); ok {
+		if sessionStatusUnavailable(snapshot) {
 			return b.String() + "(session unavailable)\n"
 		}
-		return b.String() + m.renderNodesSectionFromHealth(health)
+		return b.String() + m.renderNodesSectionFromStatus(snapshot)
 	}
 	if len(m.sessionNodes[selectedSession]) == 0 {
 		b.WriteString("(non-AI or unknown session)\n")
 		return b.String()
 	}
-	b.WriteString("(loading canonical health)\n")
+	b.WriteString("(loading canonical status)\n")
 	return b.String()
 }
 
-func visibleStateLabel(node status.NodeHealth) string {
+func visibleStateLabel(node status.NodeStatus) string {
 	if node.VisibleState != "" {
 		return node.VisibleState
 	}
 	return status.VisibleState(node.PaneState, node.InboxCount)
 }
 
-func orderedHealthNodeNames(health status.SessionHealth) []string {
-	seen := make(map[string]struct{}, len(health.Nodes))
+func orderedStatusNodeNames(snapshot status.SessionStatus) []string {
+	seen := make(map[string]struct{}, len(snapshot.Nodes))
 	var ordered []string
-	for _, window := range health.Windows {
+	for _, window := range snapshot.Windows {
 		for _, windowNode := range window.Nodes {
 			if _, ok := seen[windowNode.Name]; ok {
 				continue
@@ -642,7 +642,7 @@ func orderedHealthNodeNames(health status.SessionHealth) []string {
 			ordered = append(ordered, windowNode.Name)
 		}
 	}
-	for _, node := range health.Nodes {
+	for _, node := range snapshot.Nodes {
 		if _, ok := seen[node.Name]; ok {
 			continue
 		}
@@ -652,13 +652,13 @@ func orderedHealthNodeNames(health status.SessionHealth) []string {
 	return ordered
 }
 
-func (m Model) renderNodesSectionFromHealth(health status.SessionHealth) string {
-	nodeByName := make(map[string]status.NodeHealth, len(health.Nodes))
-	for _, node := range health.Nodes {
+func (m Model) renderNodesSectionFromStatus(snapshot status.SessionStatus) string {
+	nodeByName := make(map[string]status.NodeStatus, len(snapshot.Nodes))
+	for _, node := range snapshot.Nodes {
 		nodeByName[node.Name] = node
 	}
 
-	nodeNames := orderedHealthNodeNames(health)
+	nodeNames := orderedStatusNodeNames(snapshot)
 	if len(nodeNames) == 0 {
 		return "(non-AI or unknown session)\n"
 	}

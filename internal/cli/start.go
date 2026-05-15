@@ -460,7 +460,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if !noTUI {
 		tuiEvents = make(chan tui.DaemonEvent, 200)
 	}
-	safeGo("tui-health-relay", nil, func() {
+	safeGo("tui-status-relay", nil, func() {
 		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
 	})
 	safeGo("daemon-loop", daemonEvents, func() {
@@ -476,8 +476,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	// Build session info from nodes (all disabled by default)
 	sessionList := session.BuildSessionList(nodes, allSessions, daemonState.GetConfiguredSessionEnabled)
 	for _, sessionInfo := range sessionList {
-		if _, err := refreshProjectedSessionHealth(baseDir, contextID, sessionInfo.Name, cfg); err != nil {
-			log.Printf("postman: WARNING: initial session health snapshot skipped %s: %v\n", sessionInfo.Name, err)
+		if _, err := refreshProjectedSessionStatus(baseDir, contextID, sessionInfo.Name, cfg); err != nil {
+			log.Printf("postman: WARNING: initial session status snapshot skipped %s: %v\n", sessionInfo.Name, err)
 		}
 	}
 

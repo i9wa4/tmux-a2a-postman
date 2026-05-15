@@ -1,10 +1,10 @@
 package status
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 const DeliveryStuckAfterSeconds = 180
 
-type NodeHealth struct {
+type NodeStatus struct {
 	Name                string                  `json:"name"`
 	PaneID              string                  `json:"pane_id,omitempty"`
 	PaneState           string                  `json:"pane_state,omitempty"`
@@ -20,8 +20,8 @@ type NodeHealth struct {
 	WaitingOnInput      []InputRequestDetail    `json:"-"`
 	CurrentCommand      string                  `json:"current_command,omitempty"`
 	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
-	NodeLocal           *NodeLocalHealth        `json:"node_local,omitempty"`
-	Flow                *NodeFlowHealth         `json:"flow,omitempty"`
+	NodeLocal           *NodeLocalStatus        `json:"node_local,omitempty"`
+	Flow                *NodeFlowStatus         `json:"flow,omitempty"`
 	Queues              *NodeQueues             `json:"queues,omitempty"`
 }
 
@@ -32,7 +32,7 @@ type ScreenProgressEvidence struct {
 	ScreenFingerprint  string `json:"screen_fingerprint,omitempty"`
 }
 
-type HealthItem struct {
+type StatusItem struct {
 	Node             string `json:"node,omitempty"`
 	MessageID        string `json:"message_id,omitempty"`
 	InputRequestID   string `json:"input_request_id,omitempty"`
@@ -78,10 +78,10 @@ type InputRequestDetail struct {
 type BlockedState struct {
 	State     string       `json:"state"`
 	OpenCount int          `json:"open_count"`
-	Items     []HealthItem `json:"items,omitempty"`
+	Items     []StatusItem `json:"items,omitempty"`
 }
 
-type NodeFlowHealth struct {
+type NodeFlowStatus struct {
 	State          string              `json:"state"`
 	Severity       string              `json:"severity"`
 	EvidenceLevel  string              `json:"evidence_level"`
@@ -92,7 +92,7 @@ type NodeFlowHealth struct {
 	Blocked        BlockedState        `json:"blocked"`
 }
 
-type NodeLocalHealth struct {
+type NodeLocalStatus struct {
 	State          string                  `json:"state"`
 	Severity       string                  `json:"severity"`
 	EvidenceLevel  string                  `json:"evidence_level"`
@@ -103,7 +103,7 @@ type NodeLocalHealth struct {
 	ScreenProgress *ScreenProgressEvidence `json:"screen_progress,omitempty"`
 }
 
-type DeliveryHealth struct {
+type DeliveryStatus struct {
 	State                string       `json:"state"`
 	Severity             string       `json:"severity"`
 	EvidenceLevel        string       `json:"evidence_level"`
@@ -115,7 +115,7 @@ type DeliveryHealth struct {
 	StuckAfterSeconds    int          `json:"stuck_after_seconds"`
 	OldestPostAgeSeconds int          `json:"oldest_post_age_seconds,omitempty"`
 	OldestPostObservedAt string       `json:"oldest_post_observed_at,omitempty"`
-	Items                []HealthItem `json:"items,omitempty"`
+	Items                []StatusItem `json:"items,omitempty"`
 }
 
 type WindowNode struct {
@@ -133,7 +133,7 @@ type SessionQueues struct {
 	DeadLetterCount int `json:"dead_letter_count"`
 }
 
-type SessionHealth struct {
+type SessionStatus struct {
 	SchemaVersion   int             `json:"schema_version"`
 	ContextID       string          `json:"context_id"`
 	SessionName     string          `json:"session_name"`
@@ -145,8 +145,8 @@ type SessionHealth struct {
 	Compact         string          `json:"compact"`
 	CompactSeverity string          `json:"compact_severity,omitempty"`
 	Queues          SessionQueues   `json:"queues"`
-	Delivery        *DeliveryHealth `json:"delivery,omitempty"`
-	Nodes           []NodeHealth    `json:"nodes"`
+	Delivery        *DeliveryStatus `json:"delivery,omitempty"`
+	Nodes           []NodeStatus    `json:"nodes"`
 	Windows         []SessionWindow `json:"windows"`
 }
 
@@ -155,11 +155,11 @@ type DaemonOwner struct {
 	SessionName string `json:"session_name"`
 }
 
-type AllSessionHealth struct {
+type AllSessionStatus struct {
 	SchemaVersion int             `json:"schema_version"`
 	ContextID     string          `json:"context_id"`
 	DaemonOwner   *DaemonOwner    `json:"daemon_owner,omitempty"`
-	Sessions      []SessionHealth `json:"sessions"`
+	Sessions      []SessionStatus `json:"sessions"`
 }
 
 var stateRank = map[string]int{
@@ -246,7 +246,7 @@ func VisibleStateWithInputRequests(paneState string, unreadCount, inputRequiredC
 	return state
 }
 
-func SessionVisibleState(nodes []NodeHealth) string {
+func SessionVisibleState(nodes []NodeStatus) string {
 	worstState := "initial"
 	worstRank := StateRank(worstState)
 	for _, node := range nodes {

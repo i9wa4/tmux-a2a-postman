@@ -12,50 +12,50 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-type sessionHealthRefresher func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error)
+type sessionStatusRefresher func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error)
 
-const sessionHealthRefreshWorkerLimit = 4
+const sessionStatusRefreshWorkerLimit = 4
 
-type sessionHealthRequest struct {
+type sessionStatusRequest struct {
 	generation   uint64
 	sessionNames []string
 }
 
-type sessionHealthResult struct {
+type sessionStatusResult struct {
 	generation uint64
 	session    string
-	health     status.SessionHealth
+	status     status.SessionStatus
 	err        error
 }
 
 func relayDaemonEventsToTUI(ctx context.Context, rawEvents <-chan tui.DaemonEvent, tuiEvents chan tui.DaemonEvent, baseDir, contextID string, cfg *config.Config) {
-	relayDaemonEventsToTUIWithHealthRefresher(ctx, rawEvents, tuiEvents, baseDir, contextID, cfg, refreshProjectedSessionHealth)
+	relayDaemonEventsToTUIWithStatusRefresher(ctx, rawEvents, tuiEvents, baseDir, contextID, cfg, refreshProjectedSessionStatus)
 }
 
-func relayDaemonEventsToTUIWithHealthRefresher(
+func relayDaemonEventsToTUIWithStatusRefresher(
 	ctx context.Context,
 	rawEvents <-chan tui.DaemonEvent,
 	tuiEvents chan tui.DaemonEvent,
 	baseDir, contextID string,
 	cfg *config.Config,
-	refreshHealth sessionHealthRefresher,
+	refreshStatus sessionStatusRefresher,
 ) {
 	if tuiEvents != nil {
 		defer close(tuiEvents)
 	}
 
 	knownSessions := make(map[string]struct{})
-	healthRequests := make(chan sessionHealthRequest, 1)
-	var latestHealthGeneration atomic.Uint64
-	var healthWG sync.WaitGroup
-	healthWG.Add(1)
+	statusRequests := make(chan sessionStatusRequest, 1)
+	var latestStatusGeneration atomic.Uint64
+	var statusWG sync.WaitGroup
+	statusWG.Add(1)
 	go func() {
-		defer healthWG.Done()
-		relaySessionHealthUpdates(ctx, healthRequests, tuiEvents, baseDir, contextID, cfg, refreshHealth, &latestHealthGeneration)
+		defer statusWG.Done()
+		relaySessionStatusUpdates(ctx, statusRequests, tuiEvents, baseDir, contextID, cfg, refreshStatus, &latestStatusGeneration)
 	}()
 	defer func() {
-		close(healthRequests)
-		healthWG.Wait()
+		close(statusRequests)
+		statusWG.Wait()
 	}()
 
 	for {
@@ -71,24 +71,24 @@ func relayDaemonEventsToTUIWithHealthRefresher(
 				return
 			}
 			refreshKnownSessions(knownSessions, event)
-			if !shouldRefreshSessionHealth(event.Type) || len(knownSessions) == 0 {
+			if !shouldRefreshSessionStatus(event.Type) || len(knownSessions) == 0 {
 				continue
 			}
 
-			request := sessionHealthRequest{
-				generation:   latestHealthGeneration.Add(1),
+			request := sessionStatusRequest{
+				generation:   latestStatusGeneration.Add(1),
 				sessionNames: sortedSessionNames(knownSessions),
 			}
-			if !requestSessionHealthRefresh(ctx, healthRequests, request) {
+			if !requestSessionStatusRefresh(ctx, statusRequests, request) {
 				return
 			}
 		}
 	}
 }
 
-func requestSessionHealthRefresh(ctx context.Context, healthRequests chan sessionHealthRequest, request sessionHealthRequest) bool {
+func requestSessionStatusRefresh(ctx context.Context, statusRequests chan sessionStatusRequest, request sessionStatusRequest) bool {
 	select {
-	case healthRequests <- request:
+	case statusRequests <- request:
 		return true
 	case <-ctx.Done():
 		return false
@@ -96,63 +96,63 @@ func requestSessionHealthRefresh(ctx context.Context, healthRequests chan sessio
 	}
 
 	select {
-	case <-healthRequests:
+	case <-statusRequests:
 	case <-ctx.Done():
 		return false
 	default:
 	}
 
 	select {
-	case healthRequests <- request:
+	case statusRequests <- request:
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
-func relaySessionHealthUpdates(
+func relaySessionStatusUpdates(
 	ctx context.Context,
-	healthRequests <-chan sessionHealthRequest,
+	statusRequests <-chan sessionStatusRequest,
 	tuiEvents chan tui.DaemonEvent,
 	baseDir, contextID string,
 	cfg *config.Config,
-	refreshHealth sessionHealthRefresher,
+	refreshStatus sessionStatusRefresher,
 	latestGeneration *atomic.Uint64,
 ) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case request, ok := <-healthRequests:
+		case request, ok := <-statusRequests:
 			if !ok {
 				return
 			}
-			if !refreshSessionHealthBatch(ctx, request, tuiEvents, baseDir, contextID, cfg, refreshHealth, latestGeneration) {
+			if !refreshSessionStatusBatch(ctx, request, tuiEvents, baseDir, contextID, cfg, refreshStatus, latestGeneration) {
 				return
 			}
 		}
 	}
 }
 
-func refreshSessionHealthBatch(
+func refreshSessionStatusBatch(
 	ctx context.Context,
-	request sessionHealthRequest,
+	request sessionStatusRequest,
 	tuiEvents chan tui.DaemonEvent,
 	baseDir, contextID string,
 	cfg *config.Config,
-	refreshHealth sessionHealthRefresher,
+	refreshStatus sessionStatusRefresher,
 	latestGeneration *atomic.Uint64,
 ) bool {
 	if len(request.sessionNames) == 0 {
 		return true
 	}
 
-	workerCount := sessionHealthRefreshWorkerLimit
+	workerCount := sessionStatusRefreshWorkerLimit
 	if len(request.sessionNames) < workerCount {
 		workerCount = len(request.sessionNames)
 	}
 	jobs := make(chan string)
-	results := make(chan sessionHealthResult, len(request.sessionNames))
+	results := make(chan sessionStatusResult, len(request.sessionNames))
 
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
@@ -160,12 +160,12 @@ func refreshSessionHealthBatch(
 		go func() {
 			defer workers.Done()
 			for sessionName := range jobs {
-				health, err := refreshHealth(baseDir, contextID, sessionName, cfg)
+				sessionStatus, err := refreshStatus(baseDir, contextID, sessionName, cfg)
 				select {
-				case results <- sessionHealthResult{
+				case results <- sessionStatusResult{
 					generation: request.generation,
 					session:    sessionName,
-					health:     health,
+					status:     sessionStatus,
 					err:        err,
 				}:
 				case <-ctx.Done():
@@ -203,13 +203,13 @@ func refreshSessionHealthBatch(
 				continue
 			}
 			if result.err != nil {
-				log.Printf("postman: session health relay skipped %s: %v\n", result.session, result.err)
+				log.Printf("postman: session status relay skipped %s: %v\n", result.session, result.err)
 				continue
 			}
 			if !forwardTUIEvent(ctx, tuiEvents, tui.DaemonEvent{
-				Type: "session_health_update",
+				Type: "session_status_update",
 				Details: map[string]interface{}{
-					"health": result.health,
+					"status": result.status,
 				},
 			}) {
 				return false
@@ -285,7 +285,7 @@ func sortedSessionNames(knownSessions map[string]struct{}) []string {
 	return sessionNames
 }
 
-func shouldRefreshSessionHealth(eventType string) bool {
+func shouldRefreshSessionStatus(eventType string) bool {
 	switch eventType {
 	case "status_update", "config_update", "node_activity_update", "inbox_unread_count_update", "node_alive", "pane_disappeared", "pane_restart", "session_collapsed":
 		return true

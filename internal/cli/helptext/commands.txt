@@ -29,11 +29,11 @@ pop
   Node is auto-detected from tmux pane title.
 
 get-status
-  Print canonical session health JSON for agents and scripts.
+  Print canonical session status JSON for agents and scripts.
   Uses the current tmux session.
 
 get-status-oneline
-  Print compact all-session health for quick agent coordination.
+  Print compact all-session status for quick agent coordination.
   Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
 

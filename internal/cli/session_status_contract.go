@@ -55,23 +55,23 @@ func orderedEdgeNodeNames(edges []string) []string {
 	return config.OrderedEdgeNodeNames(edges)
 }
 
-func collectSessionHealth(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
+func collectSessionStatus(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
-	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
-		return unavailableSessionHealth(contextID, sessionName), nil
+	if !ownsCanonicalSessionStatus(baseDir, contextID, sessionName) {
+		return unavailableSessionStatus(contextID, sessionName), nil
 	}
-	live, err := collectSessionHealthLegacy(baseDir, contextID, sessionName, cfg)
+	live, err := collectLiveSessionStatus(baseDir, contextID, sessionName, cfg)
 	if err == nil {
 		return live, nil
 	}
-	if projected, ok := projectedSessionHealth(sessionDir); ok {
+	if projected, ok := projectedSessionStatus(sessionDir); ok {
 		return projected, nil
 	}
-	return status.SessionHealth{}, err
+	return status.SessionStatus{}, err
 }
 
-func collectSessionHealthLegacy(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionHealth, error) {
-	return collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName, cfg, nil, false)
+func collectLiveSessionStatus(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
+	return collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName, cfg, nil, false)
 }
 
 func projectedInboxCounts(sessionDir, sessionName string) (map[string]int, bool) {
@@ -90,13 +90,13 @@ func projectedInputRequestCounts(sessionDir, sessionName string) (projection.Mes
 	return projected, true
 }
 
-func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionHealth, error) {
-	result := status.SessionHealth{
+func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionStatus, error) {
+	result := status.SessionStatus{
 		SchemaVersion: status.SchemaVersion,
 		ContextID:     contextID,
 		SessionName:   sessionName,
 	}
-	if !ownsCanonicalSessionHealth(baseDir, contextID, sessionName) {
+	if !ownsCanonicalSessionStatus(baseDir, contextID, sessionName) {
 		result.VisibleState = "unavailable"
 		result.Compact = compactSessionStatusMark(result.VisibleState)
 		return result, nil
@@ -145,7 +145,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 		if useProjectedInboxCounts {
 			inboxCount = inboxCounts[simpleName]
 		}
-		node := status.NodeHealth{
+		node := status.NodeStatus{
 			Name:           simpleName,
 			PaneID:         nodeInfo.PaneID,
 			PaneState:      paneActivity[nodeInfo.PaneID].Status,
@@ -188,7 +188,7 @@ func collectSessionHealthWithInboxCounts(baseDir, contextID, sessionName string,
 	result.Queues = queues
 	result.Windows = buildSessionWindows(result.Nodes, panes)
 	result.Compact = buildSessionCompact(result, panes)
-	enrichSessionHealth(&result, sessionDir, time.Now())
+	enrichSessionStatus(&result, sessionDir, time.Now())
 	return result, nil
 }
 
@@ -221,7 +221,7 @@ func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, no
 	return result
 }
 
-func ownsCanonicalSessionHealth(baseDir, contextID, sessionName string) bool {
+func ownsCanonicalSessionStatus(baseDir, contextID, sessionName string) bool {
 	return config.FindSessionOwner(baseDir, sessionName, contextID) == ""
 }
 
@@ -455,8 +455,8 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 	return panes, nil
 }
 
-func buildSessionCompact(health status.SessionHealth, panes []sessionPane) string {
-	nodeByPaneID := make(map[string]status.NodeHealth, len(health.Nodes))
+func buildSessionCompact(health status.SessionStatus, panes []sessionPane) string {
+	nodeByPaneID := make(map[string]status.NodeStatus, len(health.Nodes))
 	for _, node := range health.Nodes {
 		if node.PaneID == "" {
 			continue
@@ -468,7 +468,7 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 
 	windowSeen := make(map[string]struct{})
 	var windowOrder []string
-	windowNodes := make(map[string][]status.NodeHealth)
+	windowNodes := make(map[string][]status.NodeStatus)
 	for _, pane := range panes {
 		node, ok := nodeByPaneID[pane.paneID]
 		if !ok {
@@ -502,8 +502,8 @@ func buildSessionCompact(health status.SessionHealth, panes []sessionPane) strin
 	return strings.Join(windowMarks, ":")
 }
 
-func buildSessionWindows(nodes []status.NodeHealth, panes []sessionPane) []status.SessionWindow {
-	nodeByPaneID := make(map[string]status.NodeHealth, len(nodes))
+func buildSessionWindows(nodes []status.NodeStatus, panes []sessionPane) []status.SessionWindow {
+	nodeByPaneID := make(map[string]status.NodeStatus, len(nodes))
 	for _, node := range nodes {
 		if node.PaneID == "" {
 			continue

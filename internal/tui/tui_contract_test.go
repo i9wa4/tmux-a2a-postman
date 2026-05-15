@@ -26,15 +26,15 @@ func requireSessionRow(t *testing.T, view string, cursor string, indicator strin
 	}
 }
 
-func TestTUI_Update_SessionHealthUpdateStoresCanonicalSnapshot(t *testing.T) {
+func TestTUI_Update_SessionStatusUpdateStoresCanonicalSnapshot(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
 	m := InitialModel(ch, nil, config.DefaultConfig(), "")
 	event := DaemonEventMsg{
-		Type: "session_health_update",
+		Type: "session_status_update",
 		Details: map[string]interface{}{
-			"health": status.SessionHealth{
+			"status": status.SessionStatus{
 				SessionName:  "review",
 				VisibleState: "pending",
 			},
@@ -44,12 +44,12 @@ func TestTUI_Update_SessionHealthUpdateStoresCanonicalSnapshot(t *testing.T) {
 	newModel, _ := m.Update(event)
 	m = newModel.(Model)
 
-	if got := m.sessionHealth["review"].VisibleState; got != "pending" {
-		t.Fatalf("sessionHealth[review].VisibleState = %q, want %q", got, "pending")
+	if got := m.sessionSnapshots["review"].VisibleState; got != "pending" {
+		t.Fatalf("sessionSnapshots[review].VisibleState = %q, want %q", got, "pending")
 	}
 }
 
-func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
+func TestTUI_View_UsesCanonicalSessionStatusSnapshot(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
@@ -57,10 +57,10 @@ func TestTUI_View_UsesCanonicalSessionHealthSnapshot(t *testing.T) {
 	m.sessions = []SessionInfo{
 		{Name: "review", Enabled: true},
 	}
-	m.sessionHealth["review"] = status.SessionHealth{
+	m.sessionSnapshots["review"] = status.SessionStatus{
 		SessionName:  "review",
 		VisibleState: "stale",
-		Nodes: []status.NodeHealth{
+		Nodes: []status.NodeStatus{
 			{Name: "critic", VisibleState: "pending"},
 			{Name: "worker", VisibleState: "stale"},
 		},
@@ -105,8 +105,8 @@ func TestTUI_View_WaitsForCanonicalHealthSnapshot(t *testing.T) {
 	if !strings.Contains(view, "> ⚫ [0] review") {
 		t.Fatalf("view missing loading session indicator: %q", view)
 	}
-	if !strings.Contains(view, "(loading canonical health)") {
-		t.Fatalf("view missing canonical health loading state: %q", view)
+	if !strings.Contains(view, "(loading canonical status)") {
+		t.Fatalf("view missing canonical status loading state: %q", view)
 	}
 	if strings.Contains(view, "critic  🔷  pending") {
 		t.Fatalf("view unexpectedly fell back to legacy pending state: %q", view)
@@ -121,7 +121,7 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 	m.sessions = []SessionInfo{
 		{Name: "review", Enabled: true},
 	}
-	m.sessionHealth["review"] = status.SessionHealth{
+	m.sessionSnapshots["review"] = status.SessionStatus{
 		SessionName:  "review",
 		VisibleState: "unavailable",
 	}
@@ -136,7 +136,7 @@ func TestTUI_View_ShowsUnavailableSessionWithoutCanonicalNodes(t *testing.T) {
 	}
 }
 
-func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *testing.T) {
+func TestTUI_Update_SessionStatusUpdate_RehydratesUnavailableKnownSession(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
@@ -161,9 +161,9 @@ func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *tes
 	requireSessionRow(t, view, "  ", "⚫", 1, "review")
 
 	healthUpdate := DaemonEventMsg{
-		Type: "session_health_update",
+		Type: "session_status_update",
 		Details: map[string]interface{}{
-			"health": status.SessionHealth{
+			"status": status.SessionStatus{
 				SessionName:  "review",
 				VisibleState: "unavailable",
 			},
@@ -182,7 +182,7 @@ func TestTUI_Update_SessionHealthUpdate_RehydratesUnavailableKnownSession(t *tes
 	}
 }
 
-func TestTUI_Update_SessionHealthUpdate_ShowsUnavailableSelectedSessionText(t *testing.T) {
+func TestTUI_Update_SessionStatusUpdate_ShowsUnavailableSelectedSessionText(t *testing.T) {
 	ch := make(chan DaemonEvent, 10)
 	defer close(ch)
 
@@ -195,9 +195,9 @@ func TestTUI_Update_SessionHealthUpdate_ShowsUnavailableSelectedSessionText(t *t
 	m.selectedSession = 1
 
 	healthUpdate := DaemonEventMsg{
-		Type: "session_health_update",
+		Type: "session_status_update",
 		Details: map[string]interface{}{
-			"health": status.SessionHealth{
+			"status": status.SessionStatus{
 				SessionName:  "review",
 				VisibleState: "unavailable",
 			},
@@ -253,10 +253,10 @@ func TestTUI_View_CanonicalZeroNodeSessionStaysInitial(t *testing.T) {
 	m.sessions = []SessionInfo{
 		{Name: "scratch", Enabled: true},
 	}
-	m.sessionHealth["scratch"] = status.SessionHealth{
+	m.sessionSnapshots["scratch"] = status.SessionStatus{
 		SessionName:  "scratch",
 		VisibleState: "initial",
-		Nodes:        []status.NodeHealth{},
+		Nodes:        []status.NodeStatus{},
 	}
 
 	view := m.View().Content
@@ -278,10 +278,10 @@ func TestTUI_View_NodeWithoutPositiveEvidenceStaysInitial(t *testing.T) {
 	m.sessions = []SessionInfo{
 		{Name: "review", Enabled: true},
 	}
-	m.sessionHealth["review"] = status.SessionHealth{
+	m.sessionSnapshots["review"] = status.SessionStatus{
 		SessionName:  "review",
 		VisibleState: "initial",
-		Nodes: []status.NodeHealth{
+		Nodes: []status.NodeStatus{
 			{Name: "worker"},
 		},
 		Windows: []status.SessionWindow{
@@ -393,10 +393,10 @@ func TestTUI_View_DefaultSurfaceRowsUseSettledShape(t *testing.T) {
 	m.sessions = []SessionInfo{
 		{Name: "main", Enabled: true},
 	}
-	m.sessionHealth["main"] = status.SessionHealth{
+	m.sessionSnapshots["main"] = status.SessionStatus{
 		SessionName:  "main",
 		VisibleState: "ready",
-		Nodes: []status.NodeHealth{
+		Nodes: []status.NodeStatus{
 			{Name: "boss", VisibleState: "ready"},
 			{Name: "messenger", VisibleState: "ready"},
 		},

@@ -72,20 +72,20 @@ func TestCompactSessionStatusMark(t *testing.T) {
 	}
 }
 
-func TestFormatSessionHealthOneline(t *testing.T) {
-	health := status.SessionHealth{
+func TestFormatSessionStatusOneline(t *testing.T) {
+	health := status.SessionStatus{
 		Compact: "🔷🟢",
 	}
 
-	if got, want := formatSessionHealthOneline(health), "🔷🟢"; got != want {
-		t.Fatalf("formatSessionHealthOneline(...) = %q, want %q", got, want)
+	if got, want := formatSessionStatusOneline(health), "🔷🟢"; got != want {
+		t.Fatalf("formatSessionStatusOneline(...) = %q, want %q", got, want)
 	}
 }
 
-func TestFormatAllSessionHealthOneline(t *testing.T) {
-	healths := status.AllSessionHealth{
+func TestFormatAllSessionStatusOneline(t *testing.T) {
+	healths := status.AllSessionStatus{
 		ContextID: "20260406-ctx",
-		Sessions: []status.SessionHealth{
+		Sessions: []status.SessionStatus{
 			{
 				Compact: "🔴",
 			},
@@ -95,16 +95,16 @@ func TestFormatAllSessionHealthOneline(t *testing.T) {
 		},
 	}
 
-	got := formatAllSessionHealthOneline(healths)
+	got := formatAllSessionStatusOneline(healths)
 	if got != "[0]🔴 [1]🔷🟢:🟢" {
-		t.Fatalf("formatAllSessionHealthOneline(...) = %q, want %q", got, "[0]🔴 [1]🔷🟢:🟢")
+		t.Fatalf("formatAllSessionStatusOneline(...) = %q, want %q", got, "[0]🔴 [1]🔷🟢:🟢")
 	}
 }
 
-func TestFormatAllSessionHealthSeverityOneline(t *testing.T) {
-	healths := status.AllSessionHealth{
+func TestFormatAllSessionStatusSeverityOneline(t *testing.T) {
+	healths := status.AllSessionStatus{
 		ContextID: "20260406-ctx",
-		Sessions: []status.SessionHealth{
+		Sessions: []status.SessionStatus{
 			{
 				Compact:         "🔴",
 				CompactSeverity: "delivery_failure:delivery:dead_letter_count=1",
@@ -116,9 +116,9 @@ func TestFormatAllSessionHealthSeverityOneline(t *testing.T) {
 		},
 	}
 
-	got := formatAllSessionHealthSeverityOneline(healths)
+	got := formatAllSessionStatusSeverityOneline(healths)
 	if got != "[0]delivery_failure:delivery:dead_letter_count=1 [1]needs_action:node=worker:input_required=1" {
-		t.Fatalf("formatAllSessionHealthSeverityOneline(...) = %q, want severity status line", got)
+		t.Fatalf("formatAllSessionStatusSeverityOneline(...) = %q, want severity status line", got)
 	}
 }
 
@@ -216,14 +216,14 @@ func TestRunGetSessionStatusOneline_UsesSessionIDOrder(t *testing.T) {
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+		t.Fatalf("collectAllLiveSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+		t.Fatal("collectAllLiveSessionStatus reported no active context")
 	}
-	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+	appendAllSessionStatusSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
 	var stdout bytes.Buffer
 	if err := RunGetSessionStatusOneline(&stdout, []string{
@@ -319,14 +319,14 @@ func TestRunGetSessionStatusOneline_PreservesSessionIDIndicesAcrossSessionsWitho
 	}
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	legacy, _, ok, err := collectAllSessionHealthLegacy(contextID, "", configPath)
+	legacy, _, ok, err := collectAllLiveSessionStatus(contextID, "", configPath)
 	if err != nil {
-		t.Fatalf("collectAllSessionHealthLegacy: %v", err)
+		t.Fatalf("collectAllLiveSessionStatus: %v", err)
 	}
 	if !ok {
-		t.Fatal("collectAllSessionHealthLegacy reported no active context")
+		t.Fatal("collectAllLiveSessionStatus reported no active context")
 	}
-	appendAllSessionHealthSnapshots(t, tmpDir, contextID, legacy.Sessions)
+	appendAllSessionStatusSnapshots(t, tmpDir, contextID, legacy.Sessions)
 
 	var stdout bytes.Buffer
 	if err := RunGetSessionStatusOneline(&stdout, []string{

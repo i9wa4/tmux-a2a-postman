@@ -41,7 +41,7 @@ func RunInspectInput(args []string) error {
 		return fmt.Errorf("--id is required")
 	}
 
-	health, ok, err := collectResolvedSessionHealth(*contextID, *sessionName, *configPath)
+	health, ok, err := collectResolvedSessionStatus(*contextID, *sessionName, *configPath)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func RunInspectInput(args []string) error {
 	return enc.Encode(output)
 }
 
-func inspectInputMatches(id string, health status.SessionHealth, node status.NodeHealth, inputRequests []status.InputRequestDetail) []inspectInputMatch {
+func inspectInputMatches(id string, health status.SessionStatus, node status.NodeStatus, inputRequests []status.InputRequestDetail) []inspectInputMatch {
 	if len(inputRequests) == 0 {
 		return nil
 	}

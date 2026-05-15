@@ -13,9 +13,9 @@ layer for operator escalation.
 | ----------- | ------------------------------------ | ------------------- |
 | Inbox file  | Routed `send-heredoc` or daemon PING | `inbox/{node}/`     |
 | Pane hint   | Successful inbox delivery            | Recipient tmux pane |
-| Health JSON | `get-status`                         | stdout              |
-| Health line | `get-status-oneline`                 | stdout              |
-| Default TUI | Daemon runtime health snapshots      | daemon pane         |
+| Status JSON | `get-status`                         | stdout              |
+| Status line | `get-status-oneline`                 | stdout              |
+| Default TUI | Daemon runtime status snapshots      | daemon pane         |
 
 ## 2. Delivery Path
 
@@ -37,7 +37,7 @@ dead-letter journal event preserves the original message ID, sender, recipient,
 source `post/` path, dead-letter path, failure reason, and any exact
 input-request identifiers parsed from the message metadata.
 
-## 3. Health Model
+## 3. Status Model
 
 get-status, get-status-oneline, and the default TUI are three views over the
 same canonical contract.
@@ -48,10 +48,10 @@ same canonical contract.
 | `ready`   | Pane is live with no open action or wait      | `🟢` green mark    |
 | `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark   |
 | `pending` | Node has inbound reply-required action        | `🔷` blue diamond  |
-| `stale`   | Previously known pane/session is unhealthy    | `🔴` red mark      |
+| `stale`   | Previously known pane/session is stale        | `🔴` red mark      |
 
 A live pane that simply has not changed for a long time is internally `idle`
-and remains `ready` in the visible health model.
+and remains `ready` in the visible status model.
 
 `initial` is neutral. Non-AI panes, unreachable or unclassified sessions, and
 configured or expected AI panes with no positive response or activity remain
@@ -59,23 +59,22 @@ configured or expected AI panes with no positive response or activity remain
 `stale`.
 
 Session fallback may report `unavailable` when this daemon cannot provide
-canonical health for a tmux session. It is displayed with the neutral `⚫`
+canonical status for a tmux session. It is displayed with the neutral `⚫`
 mark, but it is not a per-node state.
 
-The health payload exposes `queues.post_count`, `queues.inbox_count`,
+The status payload exposes `queues.post_count`, `queues.inbox_count`,
 `queues.dead_letter_count`, and per-node input-request counts for mailbox
 backlog checks. Per-node state is reported as `nodes[*].visible_state`.
 
-The schema version 3 payload also exposes additive contextual severity:
+The schema version 4 payload also exposes contextual severity:
 `severity`, `severity_source`, `severity_reason`, `compact_severity`,
 `delivery`, `nodes[*].node_local`, `nodes[*].flow`, and `nodes[*].queues`.
 These fields distinguish expected waits from actionable or broken conditions
 without changing the visible-state fields.
 
-The public command is named `get-status`, but schema v3 and replay-facing event
-names still contain health terminology by design. The compatibility policy is
-defined in
-[Schema and Event Terminology Migration](schema-event-terminology.md).
+Replay keeps a narrow read-only reader for pre-v4 `session_health_snapshot`
+archives, but new writers and live machine consumers use status terminology.
+See [Schema and Event Terminology](schema-event-terminology.md).
 
 | Severity             | Meaning                                           |
 | -------------------- | ------------------------------------------------- |

@@ -1,14 +1,14 @@
-get-status — print canonical session health JSON
+get-status — print canonical session status JSON
 
 Usage:
   tmux-a2a-postman get-status
   tmux-a2a-postman get-status --help
 
 Output:
-  JSON session health contract.
+  JSON session status contract.
   Use nodes[*].visible_state for per-node state, queues for backlog counts,
   and compact for the compact display token.
-  schema_version is 3. visible_state and compact remain stable summary fields.
+  schema_version is 4. visible_state and compact remain stable summary fields.
   Reply-aware fields include input_required_count, waiting_on_input_count,
   and info_unread_count. nodes[*].flow.input_requests includes input_required
   and waiting_on_input detail arrays for open input requests. Details

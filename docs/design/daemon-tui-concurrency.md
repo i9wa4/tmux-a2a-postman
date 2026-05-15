@@ -22,8 +22,8 @@ or when results return to the event loop before shared state is updated.
 
 | Component/path             | Mode after change                         | Trigger/cadence                         | Shared state                               | Blocking IO/tmux/filesystem calls                          | Backpressure                              | Safe parallel boundary                         |
 | -------------------------- | ----------------------------------------- | --------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
-| TUI raw daemon relay       | Serialized event read, latest snapshot    | daemon event channel                    | known session set local to relay           | TUI channel send                                           | snapshot replace, non-session drop        | health refresh requests are side-band          |
-| Session health refresh     | Bounded per-session workers, latest gen   | status/config/activity/alive events     | atomic latest health generation            | `refreshProjectedSessionHealth`, tmux pane/window listing  | worker cap, stale generation drop         | emit only matching generation results          |
+| TUI raw daemon relay       | Serialized event read, latest snapshot    | daemon event channel                    | known session set local to relay           | TUI channel send                                           | snapshot replace, non-session drop        | status refresh requests are side-band          |
+| Session status refresh     | Bounded per-session workers, latest gen   | status/config/activity/alive events     | atomic latest status generation            | `refreshProjectedSessionStatus`, tmux pane/window listing  | worker cap, stale generation drop         | emit only matching generation results          |
 | Session scan tick          | Serialized apply                          | `sessionScanInterval` ticker            | previous session snapshot in runtime       | `discovery.DiscoverAllSessions`                            | blocking TUI status send                  | daemon-submit workers cannot block this tick   |
 | Full scan tick             | Serialized apply                          | `ScanInterval` ticker                   | runtime nodes, known nodes, pane snapshots | node discovery, tmux pane state, projection scan           | event-loop ownership                      | collect IO before mutating runtime state       |
 | Daemon-submit requests     | Bounded workers, per-session active guard | fsnotify create/rename, scan recovery   | active submit session map in event loop    | request claim/read, post write, inbox pop, projection sync | worker cap, per-session filesystem queue  | worker result returns to event loop            |
@@ -37,9 +37,9 @@ or when results return to the event loop before shared state is updated.
 
 | Contract                         | Guardrail                                                                 |
 | -------------------------------- | ------------------------------------------------------------------------- |
-| Raw TUI session snapshots        | A blocked health probe must not delay a newer `status_update`.            |
-| Health batch parallelism         | A slow session health probe must not block a fast session in the batch.   |
-| Health latest-wins               | A stale health generation must not publish after a newer snapshot exists. |
+| Raw TUI session snapshots        | A blocked status probe must not delay a newer `status_update`.            |
+| Status batch parallelism         | A slow session status probe must not block a fast session in the batch.   |
+| Status latest-wins               | A stale status generation must not publish after a newer snapshot exists. |
 | Daemon-submit responsiveness     | A blocked submit worker must not block session status scan propagation.   |
 | Daemon-submit durability         | Saturated workers leave request files pending for the next scan/watcher.  |
 | Same-session submit ordering     | Only one daemon-submit worker per session may be active at a time.        |
@@ -72,10 +72,10 @@ The Go-like concurrency shape is:
   projection writes for that session remain ordered
 - return daemon-submit results to the daemon event loop before waking post
   reconciliation
-- use bounded workers inside a session health refresh batch
-- emit each session health result as it completes so one slow tmux check does
-  not block unrelated health updates
-- tag health refresh requests with a generation and drop stale results once a
+- use bounded workers inside a session status refresh batch
+- emit each session status result as it completes so one slow tmux check does
+  not block unrelated status updates
+- tag status refresh requests with a generation and drop stale results once a
   newer raw session snapshot has been observed
 - keep raw session snapshots on the existing latest-wins TUI forwarding path
 
@@ -87,11 +87,11 @@ direct shared-state mutation outside the owning loop.
 - Daemon-submit concurrency is capped by `daemonSubmitWorkerLimit`.
 - Saturated daemon-submit workers apply filesystem backpressure: the request
   remains pending instead of being claimed and forgotten.
-- Session health refresh concurrency is capped by
-  `sessionHealthRefreshWorkerLimit`.
+- Session status refresh concurrency is capped by
+  `sessionStatusRefreshWorkerLimit`.
 - TUI session snapshots retain latest-wins behavior when the TUI channel is
   full.
-- Non-session health events may still be dropped if the TUI is not consuming;
+- Non-session status events may still be dropped if the TUI is not consuming;
   this prevents a stale UI client from blocking the relay.
 
 ## Unsafe parallelization boundaries

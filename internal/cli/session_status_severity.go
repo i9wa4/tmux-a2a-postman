@@ -12,7 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func enrichSessionHealth(health *status.SessionHealth, sessionDir string, now time.Time) {
+func enrichSessionStatus(health *status.SessionStatus, sessionDir string, now time.Time) {
 	health.SchemaVersion = status.SchemaVersion
 
 	blockedByNode := map[string][]projection.BlockedReport{}
@@ -26,15 +26,15 @@ func enrichSessionHealth(health *status.SessionHealth, sessionDir string, now ti
 	for idx := range health.Nodes {
 		node := &health.Nodes[idx]
 		node.Queues = &status.NodeQueues{InboxCount: node.InboxCount}
-		node.NodeLocal = deriveNodeLocalHealth(*node)
-		node.Flow = deriveNodeFlowHealth(*node, blockedByNode[node.Name])
+		node.NodeLocal = deriveNodeLocalStatus(*node)
+		node.Flow = deriveNodeFlowStatus(*node, blockedByNode[node.Name])
 		applyNodeSeverity(node)
 	}
 	applySessionSeverity(health)
 }
 
-func collectSessionDelivery(sessionDir string, queues status.SessionQueues, now time.Time) *status.DeliveryHealth {
-	delivery := &status.DeliveryHealth{
+func collectSessionDelivery(sessionDir string, queues status.SessionQueues, now time.Time) *status.DeliveryStatus {
+	delivery := &status.DeliveryStatus{
 		State:             "ok",
 		Severity:          "ok",
 		EvidenceLevel:     "proven",
@@ -87,7 +87,7 @@ func collectSessionDelivery(sessionDir string, queues status.SessionQueues, now 
 	return delivery
 }
 
-func collectPendingPostItems(sessionDir string, now time.Time) ([]status.HealthItem, bool) {
+func collectPendingPostItems(sessionDir string, now time.Time) ([]status.StatusItem, bool) {
 	if sessionDir == "" {
 		return nil, false
 	}
@@ -101,7 +101,7 @@ func collectPendingPostItems(sessionDir string, now time.Time) ([]status.HealthI
 	if projected, ok, err := projection.ProjectPendingPostEnqueueTimes(sessionDir); err == nil && ok {
 		journalTimes = projected
 	}
-	items := make([]status.HealthItem, 0, len(entries))
+	items := make([]status.StatusItem, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
@@ -128,7 +128,7 @@ func collectPendingPostItems(sessionDir string, now time.Time) ([]status.HealthI
 		if age < 0 {
 			age = 0
 		}
-		items = append(items, status.HealthItem{
+		items = append(items, status.StatusItem{
 			MessageID:        entry.Name(),
 			Path:             relativePath,
 			EvidenceSource:   source,
@@ -147,7 +147,7 @@ func collectPendingPostItems(sessionDir string, now time.Time) ([]status.HealthI
 	return items, true
 }
 
-func collectDeadLetterItems(sessionDir string) []status.HealthItem {
+func collectDeadLetterItems(sessionDir string) []status.StatusItem {
 	if sessionDir == "" {
 		return nil
 	}
@@ -156,12 +156,12 @@ func collectDeadLetterItems(sessionDir string) []status.HealthItem {
 	if err != nil {
 		return nil
 	}
-	items := make([]status.HealthItem, 0, len(entries))
+	items := make([]status.StatusItem, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		items = append(items, status.HealthItem{
+		items = append(items, status.StatusItem{
 			MessageID:      entry.Name(),
 			Path:           filepath.Join("dead-letter", entry.Name()),
 			EvidenceSource: "dead_letter_file",
@@ -174,8 +174,8 @@ func collectDeadLetterItems(sessionDir string) []status.HealthItem {
 	return items
 }
 
-func deriveNodeLocalHealth(node status.NodeHealth) *status.NodeLocalHealth {
-	local := &status.NodeLocalHealth{
+func deriveNodeLocalStatus(node status.NodeStatus) *status.NodeLocalStatus {
+	local := &status.NodeLocalStatus{
 		State:          "quiet",
 		Severity:       "ok",
 		EvidenceLevel:  "proven",
@@ -210,8 +210,8 @@ func deriveNodeLocalHealth(node status.NodeHealth) *status.NodeLocalHealth {
 	return local
 }
 
-func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.BlockedReport) *status.NodeFlowHealth {
-	flow := &status.NodeFlowHealth{
+func deriveNodeFlowStatus(node status.NodeStatus, blockedReports []projection.BlockedReport) *status.NodeFlowStatus {
+	flow := &status.NodeFlowStatus{
 		State:          "idle",
 		Severity:       "ok",
 		EvidenceLevel:  "proven",
@@ -271,10 +271,10 @@ func deriveNodeFlowHealth(node status.NodeHealth, blockedReports []projection.Bl
 	return flow
 }
 
-func blockedReportItems(reports []projection.BlockedReport) []status.HealthItem {
-	items := make([]status.HealthItem, 0, len(reports))
+func blockedReportItems(reports []projection.BlockedReport) []status.StatusItem {
+	items := make([]status.StatusItem, 0, len(reports))
 	for _, report := range reports {
-		items = append(items, status.HealthItem{
+		items = append(items, status.StatusItem{
 			Node:            report.Node,
 			MessageID:       report.MessageID,
 			BlockedReportID: report.BlockedReportID,
@@ -289,7 +289,7 @@ func blockedReportItems(reports []projection.BlockedReport) []status.HealthItem 
 	return items
 }
 
-func applyNodeSeverity(node *status.NodeHealth) {
+func applyNodeSeverity(node *status.NodeStatus) {
 	node.Severity = "ok"
 	node.SeveritySource = "node.flow"
 	node.SeverityReason = ""
@@ -305,14 +305,14 @@ func applyNodeSeverity(node *status.NodeHealth) {
 	}
 }
 
-func applySessionSeverity(health *status.SessionHealth) {
+func applySessionSeverity(health *status.SessionStatus) {
 	health.Severity = "ok"
 	health.SeveritySource = "session"
 	health.SeverityReason = "session is healthy"
 	if health.VisibleState == "unavailable" || health.VisibleState == "unowned" {
 		health.Severity = "attention_stale"
 		health.SeveritySource = "session"
-		health.SeverityReason = "session health is unavailable"
+		health.SeverityReason = "session status is unavailable"
 	}
 	if health.Delivery != nil {
 		health.Severity = status.WorseSeverity(health.Severity, health.Delivery.Severity)
@@ -331,7 +331,7 @@ func applySessionSeverity(health *status.SessionHealth) {
 	health.CompactSeverity = buildCompactSeverity(*health)
 }
 
-func buildCompactSeverity(health status.SessionHealth) string {
+func buildCompactSeverity(health status.SessionStatus) string {
 	if health.Delivery != nil && health.Severity == health.Delivery.Severity && health.Delivery.Severity != "ok" {
 		switch health.Delivery.Severity {
 		case "delivery_failure":
@@ -354,7 +354,7 @@ func buildCompactSeverity(health status.SessionHealth) string {
 	return "ok:session"
 }
 
-func compactNodeSeverity(node status.NodeHealth) string {
+func compactNodeSeverity(node status.NodeStatus) string {
 	inferred := ""
 	if node.Flow != nil && node.Flow.Severity == node.Severity && node.Flow.EvidenceLevel == "inferred" {
 		inferred = "?"

@@ -1,4 +1,4 @@
-get-status-oneline — print compact all-session health
+get-status-oneline — print compact all-session status
 
 Usage:
   tmux-a2a-postman get-status-oneline
@@ -17,7 +17,7 @@ Severity Output:
 
 Marks:
   ⚫ initial   no positive live evidence yet
-  🔴 stale     previously known pane/session is unhealthy
+  🔴 stale     previously known pane/session is stale
   🔷 pending   action-required inbound message is open
   🟡 waiting   outbound reply-required message is open
   🟢 ready     pane is live with no open action or wait
