@@ -18,28 +18,6 @@ func (cfg *Config) initDirectTemplateRootTrust() {
 	}
 }
 
-func (cfg *Config) markDirectTemplateRootsUntrusted(override *Config) {
-	if cfg == nil || override == nil || cfg.directTemplateRootTrust == nil {
-		return
-	}
-
-	if override.NotificationTemplate != "" {
-		cfg.directTemplateRootTrust[directTemplateRootNotification] = false
-	}
-	if override.DaemonMessageTemplate != "" {
-		cfg.directTemplateRootTrust[directTemplateRootDaemonMessage] = false
-	}
-	if override.DraftTemplate != "" {
-		cfg.directTemplateRootTrust[directTemplateRootDraft] = false
-	}
-	if override.EdgeViolationWarningTemplate != "" {
-		cfg.directTemplateRootTrust[directTemplateRootEdgeViolationWarning] = false
-	}
-	if override.MessageFooter != "" {
-		cfg.directTemplateRootTrust[directTemplateRootMessageFooter] = false
-	}
-}
-
 func (cfg *Config) allowShellForDirectTemplateRoot(root string) bool {
 	if cfg == nil || !cfg.AllowShellTemplates {
 		return false

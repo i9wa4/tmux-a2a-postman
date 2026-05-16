@@ -1,0 +1,17 @@
+id: negative-trigger-001
+name: Negative Trigger 1
+description: First-contact delivery should not trigger session operation.
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Send an initial message to another node using quoted heredoc."
+expected:
+  should_trigger: false
+graders:
+  - type: text
+    name: omits-skill-keywords
+    config:
+      not_contains:
+        - "get-status"
+        - "pop"
+        - "input request"

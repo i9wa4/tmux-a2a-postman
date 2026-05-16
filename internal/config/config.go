@@ -34,7 +34,7 @@ type Config struct {
 	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
-	// Node state thresholds (Issue #xxx)
+	// Node state thresholds.
 	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds since pane change: active
 	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
 	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
@@ -81,9 +81,8 @@ type Config struct {
 	// Shell template execution opt-in (#security)
 	AllowShellTemplates bool `toml:"allow_shell_templates"`
 
-	directTemplateRootTrust  map[string]bool
-	projectLocalExplicitZero localExplicitZeroInventory
-	uiNodeSet                bool
+	directTemplateRootTrust map[string]bool
+	uiNodeSet               bool
 }
 
 // NodeConfig holds per-node configuration.
@@ -94,12 +93,6 @@ type NodeConfig struct {
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
 	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
-}
-
-type localExplicitZeroInventory struct {
-	postman      map[string]bool
-	nodeDefaults map[string]bool
-	nodes        map[string]map[string]bool
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -332,55 +325,6 @@ func loadEmbeddedConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// resolveProjectLocalConfig searches upward from cwd for .tmux-a2a-postman/postman.toml.
-// Stops before the home directory. Deduplicates against xdgPath via EvalSymlinks.
-// Returns the project-local config path, or "" if not found.
-// Issue #121: Project-local config support.
-func resolveProjectLocalConfig(cwd, xdgPath string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", nil // cannot determine home; skip project-local
-	}
-	homeResolved, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		homeResolved = home
-	}
-	xdgResolved := ""
-	if xdgPath != "" {
-		r, err := filepath.EvalSymlinks(xdgPath)
-		if err == nil {
-			xdgResolved = r
-		} else {
-			xdgResolved = xdgPath
-		}
-	}
-	dir := cwd
-	for {
-		candidate := filepath.Join(dir, ".tmux-a2a-postman", "postman.toml")
-		if _, err := os.Stat(candidate); err == nil {
-			candidateResolved, err := filepath.EvalSymlinks(candidate)
-			if err != nil {
-				candidateResolved = candidate
-			}
-			if candidateResolved != xdgResolved {
-				return candidate, nil
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", nil // filesystem root reached
-		}
-		parentResolved, err := filepath.EvalSymlinks(parent)
-		if err != nil {
-			parentResolved = parent
-		}
-		if parentResolved == homeResolved {
-			return "", nil // stop before home directory
-		}
-		dir = parent
-	}
-}
-
 // resolveXDGMarkdownPath returns the path to postman.md in the XDG config
 // directory, or "" if not found. Mirrors ResolveConfigPath() for Markdown.
 // Issue #324: Markdown config format support.
@@ -400,282 +344,10 @@ func resolveXDGMarkdownPath() string {
 	return ""
 }
 
-// resolveProjectLocalMarkdown searches upward from cwd for
-// .tmux-a2a-postman/postman.md. Stops before the home directory.
-// Deduplicates against xdgMarkdownPath via EvalSymlinks.
-// Returns the project-local markdown path, or "" if not found.
-// Issue #324: Markdown config format support.
-func resolveProjectLocalMarkdown(cwd, xdgMarkdownPath string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", nil
-	}
-	homeResolved, err := filepath.EvalSymlinks(home)
-	if err != nil {
-		homeResolved = home
-	}
-	xdgResolved := ""
-	if xdgMarkdownPath != "" {
-		r, err := filepath.EvalSymlinks(xdgMarkdownPath)
-		if err == nil {
-			xdgResolved = r
-		} else {
-			xdgResolved = xdgMarkdownPath
-		}
-	}
-	dir := cwd
-	for {
-		candidate := filepath.Join(dir, ".tmux-a2a-postman", "postman.md")
-		if _, err := os.Stat(candidate); err == nil {
-			candidateResolved, err := filepath.EvalSymlinks(candidate)
-			if err != nil {
-				candidateResolved = candidate
-			}
-			if candidateResolved != xdgResolved {
-				return candidate, nil
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", nil
-		}
-		parentResolved, err := filepath.EvalSymlinks(parent)
-		if err != nil {
-			parentResolved = parent
-		}
-		if parentResolved == homeResolved {
-			return "", nil
-		}
-		dir = parent
-	}
-}
-
-// loadConfigFile parses a TOML config file into a zero-value Config.
-// Unlike LoadConfig, starts from zero-value (not DefaultConfig) so only
-// explicitly-set fields are non-zero. Does not load sibling nodes/ directory.
-// Issue #121: Used for project-local config overlay.
-func loadConfigFile(path string) (*Config, error) {
-	rawBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading project-local config %s: %w", path, err)
-	}
-	warnDeprecatedKeys(rawBytes, path)
-	var rootSections map[string]toml.Primitive
-	md, err := toml.Decode(string(rawBytes), &rootSections)
-	if err != nil {
-		return nil, fmt.Errorf("parsing project-local config %s: %w", path, err)
-	}
-
-	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}}
-
-	if postmanPrim, ok := rootSections["postman"]; ok {
-		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
-			return nil, fmt.Errorf("decoding [postman] in %s: %w", path, err)
-		}
-	}
-
-	for _, name := range orderedTOMLNodeNames(md) {
-		prim := rootSections[name]
-		var node NodeConfig
-		if err := md.PrimitiveDecode(prim, &node); err != nil {
-			return nil, fmt.Errorf("decoding [%s] in %s: %w", name, path, err)
-		}
-		cfg.Nodes[name] = node
-		cfg.recordNodeNames(name)
-	}
-
-	// Decode [node_defaults] section if exists
-	if nodeDefaultsPrim, ok := rootSections["node_defaults"]; ok {
-		if err := md.PrimitiveDecode(nodeDefaultsPrim, &cfg.NodeDefaults); err != nil {
-			return nil, fmt.Errorf("decoding [node_defaults] in %s: %w", path, err)
-		}
-	}
-
-	cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
-	markLocalExplicitZeroInventory(cfg, md)
-
-	return cfg, nil
-}
-
-func markLocalExplicitZeroInventory(cfg *Config, md toml.MetaData) {
-	inventory := localExplicitZeroInventory{
-		postman:      make(map[string]bool),
-		nodeDefaults: make(map[string]bool),
-		nodes:        make(map[string]map[string]bool),
-	}
-	for _, key := range md.Keys() {
-		if len(key) != 2 {
-			continue
-		}
-		section := key[0]
-		field := key[1]
-		switch section {
-		case "postman":
-			if localPostmanExplicitZero(cfg, field) {
-				inventory.postman[field] = true
-			}
-		case "node_defaults":
-			if localNodeDefaultsExplicitZero(cfg.NodeDefaults, field) {
-				inventory.nodeDefaults[field] = true
-			}
-		default:
-			node := cfg.Nodes[section]
-			if localNodeExplicitZero(node, field) {
-				if inventory.nodes[section] == nil {
-					inventory.nodes[section] = make(map[string]bool)
-				}
-				inventory.nodes[section][field] = true
-			}
-		}
-	}
-	cfg.projectLocalExplicitZero = inventory
-}
-
-func localPostmanExplicitZero(cfg *Config, field string) bool {
-	switch field {
-	case "enter_verify_delay_seconds":
-		return cfg.EnterVerifyDelay == 0
-	case "enter_retry_max":
-		return cfg.EnterRetryMax == 0
-	case "message_ttl_seconds":
-		return cfg.MessageTTLSeconds == 0
-	case "retention_period_days":
-		return cfg.RetentionPeriodDays == 0
-	case "min_delivery_gap_seconds":
-		return cfg.MinDeliveryGapSeconds == 0
-	case "startup_drain_window_seconds":
-		return cfg.StartupDrainWindowSeconds == 0
-	case "session_scan_interval_seconds":
-		return cfg.SessionScanInterval == 0
-	case "auto_ping_delay_seconds":
-		return cfg.AutoPingDelaySeconds == 0
-	case "pane_capture_max_panes":
-		return cfg.PaneCaptureMaxPanes == 0
-	case "pane_capture_tail_lines":
-		return cfg.PaneCaptureTailLines == 0
-	default:
-		return false
-	}
-}
-
-func localNodeExplicitZero(node NodeConfig, field string) bool {
-	switch field {
-	case "enter_count":
-		return node.EnterCount == 0
-	case "enter_delay_seconds":
-		return node.EnterDelay == 0
-	case "delivery_idle_timeout_seconds":
-		return node.DeliveryIdleTimeoutSeconds == 0
-	case "delivery_idle_retry_max":
-		return node.DeliveryIdleRetryMax == 0
-	default:
-		return false
-	}
-}
-
-func localNodeDefaultsExplicitZero(node NodeConfig, field string) bool {
-	switch field {
-	case "enter_count":
-		return node.EnterCount == 0
-	case "enter_delay_seconds":
-		return node.EnterDelay == 0
-	case "delivery_idle_timeout_seconds":
-		return node.DeliveryIdleTimeoutSeconds == 0
-	case "delivery_idle_retry_max":
-		return node.DeliveryIdleRetryMax == 0
-	default:
-		return false
-	}
-}
-
-func applyProjectLocalExplicitZero(base, override *Config) {
-	if override == nil {
-		return
-	}
-	for field := range override.projectLocalExplicitZero.postman {
-		switch field {
-		case "enter_verify_delay_seconds":
-			base.EnterVerifyDelay = 0
-		case "enter_retry_max":
-			base.EnterRetryMax = 0
-		case "message_ttl_seconds":
-			base.MessageTTLSeconds = 0
-		case "retention_period_days":
-			base.RetentionPeriodDays = 0
-		case "min_delivery_gap_seconds":
-			base.MinDeliveryGapSeconds = 0
-		case "startup_drain_window_seconds":
-			base.StartupDrainWindowSeconds = 0
-		case "session_scan_interval_seconds":
-			base.SessionScanInterval = 0
-		case "auto_ping_delay_seconds":
-			base.AutoPingDelaySeconds = 0
-		case "pane_capture_max_panes":
-			base.PaneCaptureMaxPanes = 0
-		case "pane_capture_tail_lines":
-			base.PaneCaptureTailLines = 0
-		}
-	}
-	for name, fields := range override.projectLocalExplicitZero.nodes {
-		node := base.Nodes[name]
-		for field := range fields {
-			switch field {
-			case "enter_count":
-				node.EnterCount = 0
-			case "enter_delay_seconds":
-				node.EnterDelay = 0
-			case "delivery_idle_timeout_seconds":
-				node.DeliveryIdleTimeoutSeconds = 0
-			case "delivery_idle_retry_max":
-				node.DeliveryIdleRetryMax = 0
-			}
-		}
-		base.Nodes[name] = node
-	}
-	for field := range override.projectLocalExplicitZero.nodeDefaults {
-		switch field {
-		case "enter_count":
-			base.NodeDefaults.EnterCount = 0
-		case "enter_delay_seconds":
-			base.NodeDefaults.EnterDelay = 0
-		case "delivery_idle_timeout_seconds":
-			base.NodeDefaults.DeliveryIdleTimeoutSeconds = 0
-		case "delivery_idle_retry_max":
-			base.NodeDefaults.DeliveryIdleRetryMax = 0
-		}
-	}
-	base.mergeProjectLocalExplicitZeroNodes(override.projectLocalExplicitZero.nodes)
-}
-
-func (cfg *Config) mergeProjectLocalExplicitZeroNodes(nodes map[string]map[string]bool) {
-	if len(nodes) == 0 {
-		return
-	}
-	if cfg.projectLocalExplicitZero.nodes == nil {
-		cfg.projectLocalExplicitZero.nodes = make(map[string]map[string]bool)
-	}
-	for name, fields := range nodes {
-		if cfg.projectLocalExplicitZero.nodes[name] == nil {
-			cfg.projectLocalExplicitZero.nodes[name] = make(map[string]bool)
-		}
-		for field := range fields {
-			cfg.projectLocalExplicitZero.nodes[name][field] = true
-		}
-	}
-}
-
-func (cfg *Config) hasProjectLocalExplicitZeroNode(name, field string) bool {
-	if cfg == nil {
-		return false
-	}
-	fields := cfg.projectLocalExplicitZero.nodes[name]
-	return fields[field]
-}
-
 // mergeConfig merges override fields into base using "non-zero wins" semantics.
 // Non-zero override values replace base values. Bool fields cannot be overridden to false.
 // Edges are replaced when override has at least one entry. Nodes are merged field-by-field.
-// Issue #121: Used to apply project-local config on top of XDG/embedded config.
+// Used to apply Markdown overlays on top of TOML/embedded config.
 func mergeConfig(base, override *Config) {
 	// String fields
 	if override.BaseDir != "" {
@@ -843,16 +515,6 @@ func mergeConfig(base, override *Config) {
 	if override.NodeDefaults.DeliveryIdleRetryMax != 0 {
 		base.NodeDefaults.DeliveryIdleRetryMax = override.NodeDefaults.DeliveryIdleRetryMax
 	}
-}
-
-func appendMessageFooter(baseFooter, localFooter string) string {
-	if localFooter == "" {
-		return baseFooter
-	}
-	if baseFooter == "" {
-		return localFooter
-	}
-	return strings.TrimRight(baseFooter, "\n") + "\n" + strings.TrimLeft(localFooter, "\n")
 }
 
 // LoadConfig loads configuration from a TOML file (Python format).
@@ -1582,16 +1244,16 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	if specific.Role != "" {
 		result.Role = specific.Role
 	}
-	if specific.EnterCount != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "enter_count") {
+	if specific.EnterCount != 0 {
 		result.EnterCount = specific.EnterCount
 	}
-	if specific.EnterDelay != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "enter_delay_seconds") {
+	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
 	}
-	if specific.DeliveryIdleTimeoutSeconds != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "delivery_idle_timeout_seconds") {
+	if specific.DeliveryIdleTimeoutSeconds != 0 {
 		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
 	}
-	if specific.DeliveryIdleRetryMax != 0 || cfg.hasProjectLocalExplicitZeroNode(name, "delivery_idle_retry_max") {
+	if specific.DeliveryIdleRetryMax != 0 {
 		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result

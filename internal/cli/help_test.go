@@ -94,6 +94,21 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 }
 
+func TestRunHelp_HelpTopicListsRegisteredTopics(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if err := runHelp(&stdout, &stderr, []string{"help"}); err != nil {
+		t.Fatalf("runHelp: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n  inspect-message\n") {
+		t.Fatalf("stdout missing inspect-message help topic: %q", stdout.String())
+	}
+}
+
 func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

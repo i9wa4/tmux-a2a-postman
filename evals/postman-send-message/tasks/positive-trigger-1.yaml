@@ -1,0 +1,17 @@
+id: positive-trigger-001
+name: Positive Trigger 1
+description: Direct skill request should trigger message sending guidance.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "Use postman-send-message to send the first message to the reviewer node."
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: contains-keywords
+    config:
+      contains:
+        - "send-heredoc"
+        - "POSTMAN_BODY"
+        - "reviewer"

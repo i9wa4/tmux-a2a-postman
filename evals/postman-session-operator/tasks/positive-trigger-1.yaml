@@ -1,0 +1,17 @@
+id: positive-trigger-001
+name: Positive Trigger 1
+description: Pending-mail workflow should trigger session operation guidance.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "My node has pending tmux-a2a-postman mail. Decide whether to pop, read the archive, and reply to the exact input request."
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: contains-keywords
+    config:
+      contains:
+        - "get-status"
+        - "pop"
+        - "input request"

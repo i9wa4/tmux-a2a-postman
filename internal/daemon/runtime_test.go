@@ -991,7 +991,7 @@ func installRuntimeSessionScanTmux(t *testing.T, tmpDir string, sessions []strin
 	logPath := filepath.Join(tmpDir, "tmux.log")
 	var sessionOutput strings.Builder
 	for i, sessionName := range sessions {
-		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
+		fmt.Fprintf(&sessionOutput, "  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName)
 	}
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = 'list-sessions' ]; then\n%s  exit 0\nfi\nif [ \"$1\" = 'list-panes' ]; then\n  echo 'unexpected list-panes' >&2\n  exit 42\nfi\nexit 0\n", logPath, sessionOutput.String())
 	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte(script), 0o755); err != nil {
@@ -1014,18 +1014,18 @@ func installRuntimeSessionScanActivationTmuxWithPanes(t *testing.T, tmpDir strin
 	logPath := filepath.Join(tmpDir, "tmux.log")
 	var sessionOutput strings.Builder
 	for i, sessionName := range sessions {
-		sessionOutput.WriteString(fmt.Sprintf("  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName))
+		fmt.Fprintf(&sessionOutput, "  printf '%%s\\t$%d\\n' '%s'\n", i+1, sessionName)
 	}
 	var sessionPaneOutput strings.Builder
 	var allPaneOutput strings.Builder
 	for i, paneTitle := range paneTitles {
 		paneID := fmt.Sprintf("%%%d", 201+i)
-		sessionPaneOutput.WriteString(fmt.Sprintf("  printf '%%s\\n' '%s %s'\n", paneID, paneTitle))
+		fmt.Fprintf(&sessionPaneOutput, "  printf '%%s\\n' '%s %s'\n", paneID, paneTitle)
 		contextForPane := "ctx-fast-session"
 		if paneTitle == "unrelated" {
 			contextForPane = ""
 		}
-		allPaneOutput.WriteString(fmt.Sprintf("  printf '%%s\\n' '%s\t%s\treview\t%s'\n", paneID, contextForPane, paneTitle))
+		fmt.Fprintf(&allPaneOutput, "  printf '%%s\\n' '%s\t%s\treview\t%s'\n", paneID, contextForPane, paneTitle)
 	}
 	script := fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q

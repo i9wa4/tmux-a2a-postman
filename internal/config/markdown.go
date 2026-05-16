@@ -226,9 +226,7 @@ func mermaidStatements(block string) []string {
 	var statements []string
 	for _, line := range strings.Split(block, "\n") {
 		line = stripMermaidComment(line)
-		for _, part := range strings.Split(line, ";") {
-			statements = append(statements, part)
-		}
+		statements = append(statements, strings.Split(line, ";")...)
 	}
 	return statements
 }
@@ -297,15 +295,6 @@ func normalizeMermaidNodeID(raw string) string {
 	node = strings.TrimSpace(node)
 	node = strings.Trim(node, "`\"'")
 	return strings.TrimSpace(node)
-}
-
-// extractNodeName extracts the backtick-wrapped name from an h2 heading.
-// "## `worker-alt` Node" returns "worker-alt" (lowercased).
-// Returns "" if no backtick-wrapped name is found.
-func extractNodeName(heading string) string {
-	// Strip leading ## and whitespace
-	heading = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(heading), "##"))
-	return extractBacktickName(heading)
 }
 
 // extractBacktickName extracts the first backtick-wrapped name from text.

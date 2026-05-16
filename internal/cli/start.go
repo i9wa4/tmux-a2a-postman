@@ -175,8 +175,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	if ownerContext, ownerSession, ok := config.FindCurrentUserDaemon(baseDir); ok {
 		return fmt.Errorf(
-			"a postman daemon is already running for this user in tmux session %q (context: %s).\n"+
-				"Stop it first.",
+			"a postman daemon is already running for this user in tmux session %q (context: %s); stop it first",
 			ownerSession, ownerContext,
 		)
 	}
@@ -209,8 +208,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		// and a tmux-session-wide lock below blocks cross-context same-session startups.
 		if config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, tmuxSessionName) {
 			return fmt.Errorf(
-				"a postman daemon is already running in tmux session %q (context: %s).\n"+
-					"Stop it first.",
+				"a postman daemon is already running in tmux session %q (context: %s); stop it first",
 				tmuxSessionName, contextID,
 			)
 		}
@@ -805,62 +803,4 @@ func isDirectoryEmpty(path string) (bool, error) {
 		return false, err
 	}
 	return len(entries) == 0, nil
-}
-
-// cleanupStaleInbox moves all messages from inbox/ subdirectories to read/.
-// This cleans up stale messages from previous sessions.
-func cleanupStaleInbox(inboxDir, readDir string) error {
-	// Ensure read/ directory exists
-	if err := os.MkdirAll(readDir, 0o700); err != nil {
-		return fmt.Errorf("creating read directory: %w", err)
-	}
-
-	// Read inbox/ directory
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // inbox/ doesn't exist yet
-		}
-		return fmt.Errorf("reading inbox directory: %w", err)
-	}
-
-	// Iterate over node subdirectories
-	movedCount := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		nodeName := entry.Name()
-		nodeInbox := filepath.Join(inboxDir, nodeName)
-
-		// Read messages in node's inbox
-		messages, err := os.ReadDir(nodeInbox)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  postman: failed to read inbox for %s: %v\n", nodeName, err)
-			continue
-		}
-
-		// Move each message to read/
-		for _, msg := range messages {
-			if msg.IsDir() || !strings.HasSuffix(msg.Name(), ".md") {
-				continue
-			}
-
-			src := filepath.Join(nodeInbox, msg.Name())
-			dst := filepath.Join(readDir, msg.Name())
-
-			if err := os.Rename(src, dst); err != nil {
-				log.Printf("⚠️  postman: failed to move stale message %s: %v\n", msg.Name(), err)
-				continue
-			}
-			movedCount++
-		}
-	}
-
-	if movedCount > 0 {
-		log.Printf("🧹 postman: moved %d stale message(s) to read/\n", movedCount)
-	}
-
-	return nil
 }

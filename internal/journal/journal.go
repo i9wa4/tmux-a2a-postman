@@ -605,7 +605,7 @@ func withAppendAuthorityFence(sessionDir string, fn func() error) error {
 	if err != nil {
 		return fmt.Errorf("opening append authority fence: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("chmod append authority fence: %w", err)
