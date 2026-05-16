@@ -32,7 +32,7 @@ Core config:
   message_footer                   Header guidance before the sender body separator
   draft_template                   Structured envelope for stored send-heredoc Markdown
   daemon_message_template          Structured envelope for daemon-originated PING mail
-  skill_path                       postman.md skill catalogs; use inject: ping or inject: compaction_ping for PINGs
+  skill_path                       postman.md skill catalogs; use inject: ping, inject: compaction_ping, or list syntax for PINGs
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.10)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
   notification_template            Pane hint rendered when mail arrives
@@ -42,7 +42,7 @@ Core config:
 
 Skill catalogs:
   default skill_path relative paths resolve from the declaring postman.md directory
-  inject: ping and inject: compaction_ping paths must be ~/... or absolute
+  inject: ping, inject: compaction_ping, and lists containing them must use ~/... or absolute paths
   skill_path runtime selectors are unsupported; list explicit path entries instead
   duplicate rendered skill names are deduped; later entries win
 

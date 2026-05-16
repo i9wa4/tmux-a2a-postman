@@ -14,10 +14,10 @@ type skillCatalogEntry struct {
 }
 
 type skillCatalogSpec struct {
-	Path   string
-	All    bool
-	Names  []string
-	Inject string
+	Path    string
+	All     bool
+	Names   []string
+	Injects []string
 }
 
 var skillCatalogUserHomeDir = os.UserHomeDir

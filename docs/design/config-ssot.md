@@ -23,8 +23,10 @@ defaults.
 - `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
   catalogs for every daemon PING. Entries with `inject: compaction_ping`
   generate catalogs only for compaction-triggered daemon PINGs. Both stay out
-  of normal role context. These catalogs are runtime-agnostic; list explicit
-  user-level skill tree paths for the catalogs to include.
+  of normal role context. List syntax such as
+  `inject: [ping, compaction_ping]` routes one selected catalog to multiple
+  PING targets. These catalogs are runtime-agnostic; list explicit user-level
+  skill tree paths for the catalogs to include.
 - PING catalog paths must be global/user-level: `~/...` or absolute.
   Repo-local relative paths remain supported only for normal role catalogs and
   are invalid for PING catalogs.

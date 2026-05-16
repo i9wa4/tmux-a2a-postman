@@ -35,15 +35,16 @@ Important merge rules:
 - Split `nodes/*.toml` files replace that node at their layer.
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from
   selected `SKILL.md` files and appends them to that Markdown layer's
-  `common_template` unless a mapping uses `inject: ping` or
-  `inject: compaction_ping`.
-- `skill_path` accepts YAML list entries with `path`, optional `inject`, and
-  optional `skills`. Omitted `skills` means every skill under that path; a
-  present `skills` list selects explicit skill directory names, including a real
-  skill named `all`. The scalar `skills: all` remains accepted as legacy input.
+  `common_template` unless a mapping uses a non-empty `inject`.
+- `skill_path` accepts YAML list entries with `path`, optional scalar or list
+  `inject`, and optional `skills`. Omitted `skills` means every skill under
+  that path; a present `skills` list selects explicit skill directory names,
+  including a real skill named `all`. The scalar `skills: all` remains accepted
+  as legacy input.
 - `inject: ping` generates catalogs for every daemon PING. `inject:
   compaction_ping` generates catalogs only for compaction-triggered daemon
-  PINGs. Both stay out of `common_template`.
+  PINGs. `inject: [ping, compaction_ping]` routes the same selected catalog to
+  both targets. Non-empty `inject` catalogs stay out of `common_template`.
 - PING entries must use `~/...` or absolute paths. Repo-local relative paths
   remain valid only for normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`; later path entries
@@ -87,8 +88,8 @@ Important merge rules:
 - For normal role catalogs, confirm relative paths resolve from the declaring
   `postman.md` directory, `~/...` points to the current user's home directory,
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
-- For `inject: ping` or `inject: compaction_ping`, confirm the intent and
-  require `~/...` or absolute paths.
+- For `inject: ping`, `inject: compaction_ping`, or a list containing either
+  mode, confirm the intent and require `~/...` or absolute paths.
 - Prefer omitted `skills` for all-skills catalogs in new or example configs.
   Treat scalar `skills: all` as legacy-only unless compatibility with an
   existing deployed config is the explicit reason.

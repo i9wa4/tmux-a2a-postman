@@ -144,38 +144,30 @@ tooling; tmux remains the hard runtime dependency.
 
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
 stays in the same frontmatter header; leave paths commented until the matching
-skill tree exists for your agent runtime. Markdown under `common_template` and
-node sections is free-form role guidance, so short sections can cover identity,
-boundaries, local conventions, escalation rules, or checklists. Only the
-backtick-wrapped H2 section names and Mermaid edges are structural; `### role`
-sets the short role summary, and other H3 headings are ordinary Markdown:
+skill tree exists. Postman treats `~/.codex/skills` and `~/.claude/skills` as
+explicit skill trees; it does not select catalogs by runtime. Omit `inject` for
+a normal role-context catalog. Use `inject: [ping, compaction_ping]` to reuse
+one path for both daemon PING catalog targets. Markdown under
+`common_template` and node sections is free-form role guidance, so short
+sections can cover identity, boundaries, local conventions, escalation rules,
+or checklists. Only the backtick-wrapped H2 section names and Mermaid edges are
+structural; `### role` sets the short role summary, and other H3 headings are
+ordinary Markdown:
 
 ````markdown
 ---
 # Optional: after installing packaged skills, uncomment only paths that exist.
-# For PING catalogs, list the explicit user-level skill tree paths you want
-# included; postman does not select skill catalogs by runtime.
+# For PING catalogs, use explicit user-level skill tree paths; postman does not
+# select skill catalogs by runtime. `inject` may be a scalar or YAML list.
 # skill_path:
 #   - path: ~/.codex/skills
-#     inject: ping
-#     skills:
-#       - postman-send-message
-#       - postman-session-operator
-#       - postman-config-auditor
-#   - path: ~/.codex/skills
-#     inject: compaction_ping
+#     inject: [ping, compaction_ping]
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
-#     inject: ping
-#     skills:
-#       - postman-send-message
-#       - postman-session-operator
-#       - postman-config-auditor
-#   - path: ~/.claude/skills
-#     inject: compaction_ping
+#     inject: [ping, compaction_ping]
 #     skills:
 #       - postman-send-message
 #       - postman-session-operator

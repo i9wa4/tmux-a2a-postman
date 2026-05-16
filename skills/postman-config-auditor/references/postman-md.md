@@ -46,8 +46,9 @@ Rules:
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
 - `skill_path` may be a scalar path or a YAML list of path entries.
 - `skill_path` list items may be scalar paths or mappings with `path`,
-  `inject`, and `skills`.
-- Only `skill_path` mappings accept `inject`.
+  optional `inject`, and `skills`.
+- Only `skill_path` mappings accept `inject`. It may be a scalar mode or a YAML
+  list of modes.
 - For `skill_path` mappings, omitted `inject` appends the generated catalog to
   normal role context.
 - For `skill_path` mappings, `inject: ping` stores the generated catalog for
@@ -55,6 +56,8 @@ Rules:
 - For `skill_path` mappings, `inject: compaction_ping` stores the generated
   catalog for compaction-triggered daemon PING role content and keeps it out of
   normal role context.
+- For `skill_path` mappings, `inject: [ping, compaction_ping]` routes the same
+  selected catalog to each listed daemon PING target.
 - `runtime` is unsupported under `skill_path`; list explicit path entries for
   the skill catalogs that should be included.
 - PING paths must be global/user-level:
@@ -84,11 +87,7 @@ skill_path:
       - github
       - markdown
   - path: ~/.config/tmux-a2a-postman/skills
-    inject: ping
-    skills:
-      - postman-session-operator
-  - path: ~/.config/tmux-a2a-postman/skills
-    inject: compaction_ping
+    inject: [ping, compaction_ping]
     skills:
       - postman-session-operator
   - path: ~/.claude/skills
@@ -113,10 +112,11 @@ role context, so use them for compact runtime-agnostic catalogs only.
 `common_template` and append it to every daemon PING role content.
 `skill_path` entries with `inject: compaction_ping` keep their list out of
 `common_template` and append it only to daemon PING role content when pane
-capture detects a context-compaction marker. PING catalog entries are not
-selected by runtime; list explicit `~/...` or absolute skill tree paths for the
-catalogs that should be included. Repo-local relative paths are invalid in this
-mode.
+capture detects a context-compaction marker. `inject` may also be a YAML list;
+the same selected catalog is routed to each listed target. PING catalog entries
+are not selected by runtime; list explicit `~/...` or absolute skill tree paths
+for the catalogs that should be included. Repo-local relative paths are invalid
+in this mode.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 
@@ -278,8 +278,9 @@ Important rules:
 - `skill_path` is applied within the Markdown layer that declares it. Entries
   with omitted `inject` append generated catalogs to that layer's
   `common_template` content; entries with `inject: ping` or
-  `inject: compaction_ping` stay separate and append only to matching daemon
-  PING role content.
+  `inject: compaction_ping`, including list syntax such as
+  `inject: [ping, compaction_ping]`, stay separate and append only to matching
+  daemon PING role content.
 - When multiple entries select the same skill frontmatter `name`, the later
   entry wins and the rendered catalog includes one body for that name.
 - Nodes referenced by valid edges are materialized automatically.
