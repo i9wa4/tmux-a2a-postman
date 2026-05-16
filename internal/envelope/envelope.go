@@ -18,9 +18,6 @@ import (
 //
 // tmpl is caller-provided: pass cfg.DaemonMessageTemplate for daemon PING
 // or cfg.NotificationTemplate for pane notification hints.
-//
-// NOTE: resolveNodeName is inlined here as accepted debt from #141.
-// Follow-up: consolidate into internal/discovery — see issue #148.
 func BuildEnvelope(
 	cfg *config.Config,
 	tmpl string,
