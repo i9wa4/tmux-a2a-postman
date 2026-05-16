@@ -68,6 +68,9 @@ Important merge rules:
 - Confirm node names in templates are reachable from the sender when the text
   instructs an agent to contact that node.
 - Treat node names as local protocol identifiers, not generic job titles.
+- When a template declares an ordered approval, review, or escalation lane,
+  confirm the Mermaid graph contains every hop in that order and that node
+  templates do not bypass the declared mediator nodes.
 
 ## postman.md Syntax
 
@@ -86,6 +89,9 @@ Important merge rules:
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
 - For `inject: ping` or `inject: compaction_ping`, confirm the intent and
   require `~/...` or absolute paths.
+- Prefer omitted `skills` for all-skills catalogs in new or example configs.
+  Treat scalar `skills: all` as legacy-only unless compatibility with an
+  existing deployed config is the explicit reason.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
   `description`, rather than hand-maintained stale lists.
 
@@ -94,6 +100,10 @@ Important merge rules:
 - Confirm each active node has clear reply behavior, completion words, and
   escalation rules when the workflow needs a response.
 - Confirm intentionally quiet nodes say that explicitly.
+- For user-facing or transport-only nodes, confirm the template forbids local
+  task execution, repository/config inspection, implementation, and loading
+  task-specific skills; such nodes should relay work to the configured
+  coordinator instead.
 - Confirm templates use `tmux-a2a-postman send-heredoc`, `pop`, and
   `get-status` instead of raw runtime filesystem manipulation.
 - Confirm templates do not duplicate context injected by system templates:
@@ -104,6 +114,9 @@ Important merge rules:
   remain in `SKILL.md`.
 - Confirm instructions moved into a skill are named in that skill's frontmatter
   `description` with concrete trigger conditions.
+- For review nodes, confirm any native subagents are bounded to investigation
+  or review, cannot implement, and do not replace the active node's synthesis
+  and verdict ownership.
 
 ## postman.md / SKILL.md Balance
 
