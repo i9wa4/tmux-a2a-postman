@@ -355,6 +355,7 @@ Detailed configuration references:
 
 - [postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
 - [configuration defaults and merge policy](docs/design/config-ssot.md)
+- [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
 
 Command help lives in the binary: `tmux-a2a-postman help`,

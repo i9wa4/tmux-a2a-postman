@@ -14,8 +14,9 @@ defaults.
   to run the daemon.
 - A minimal `postman.md` may contain only a Mermaid `edges` section. Nodes
   referenced by those edges are materialized with empty `NodeConfig` values.
-- The human-facing startup PING target should normally be marked in Mermaid
-  with the `ui_node` class, keeping topology-facing settings in one diagram.
+- The explicit human-facing startup PING target should normally be marked in
+  Mermaid with the `ui_node` class, keeping topology-facing settings in one
+  diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
   Entries with omitted `inject` are appended to normal role context and remain
@@ -87,4 +88,5 @@ graph LR
 
 This creates `messenger`, `orchestrator`, `worker`, and `critic` nodes even
 when no `[messenger]`, `[orchestrator]`, `[worker]`, or `[critic]` TOML sections
-exist. The `ui_node` class marks `messenger` as the startup auto-PING target.
+exist. The `ui_node` class explicitly marks `messenger` as the startup
+auto-PING target.

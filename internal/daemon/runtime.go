@@ -258,7 +258,7 @@ func (rt *daemonRuntime) bootstrap() {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
 	rt.dispatchPendingDaemonSubmitRequests()
-	rt.recordPendingAutoPings(runtimeNodeKeys(rt.nodes), rt.nodes, "startup", time.Now())
+	rt.recordPendingAutoPings(startupAutoPingNodeKeys(rt.nodes, rt.cfg), rt.nodes, "startup", time.Now())
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
 	rt.dispatchPendingPostMessages()
@@ -1316,4 +1316,19 @@ func runtimeNodeKeys(nodes map[string]discovery.NodeInfo) []string {
 	}
 	sort.Strings(nodeKeys)
 	return nodeKeys
+}
+
+func startupAutoPingNodeKeys(nodes map[string]discovery.NodeInfo, cfg *config.Config) []string {
+	if cfg == nil || !cfg.HasExplicitUINodeSetting() || cfg.UINode == "" {
+		return runtimeNodeKeys(nodes)
+	}
+
+	nodeKeys := runtimeNodeKeys(nodes)
+	filtered := make([]string, 0, len(nodeKeys))
+	for _, nodeKey := range nodeKeys {
+		if ping.ExtractSimpleName(nodeKey) == cfg.UINode {
+			filtered = append(filtered, nodeKey)
+		}
+	}
+	return filtered
 }
