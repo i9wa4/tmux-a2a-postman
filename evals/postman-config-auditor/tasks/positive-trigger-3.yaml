@@ -1,0 +1,17 @@
+id: positive-trigger-003
+name: Positive Trigger 3
+description: Trigger for user-facing node authority-boundary audits.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "Audit our postman.md: messenger is loading postman-config-auditor and inspecting repo files for dead-letter handling. Should that user-facing node be transport-only?"
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: contains-keywords
+    config:
+      contains:
+        - "postman"
+        - "auditor"
+        - "transport"
