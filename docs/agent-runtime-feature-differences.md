@@ -36,14 +36,16 @@ a separate issue.
 | Public GitHub path hygiene           | Public docs, issues, PRs, comments, and commit messages must use repo-relative paths or stable URLs only.                                                                                                                                                                              | Public docs, issues, PRs, comments, and commit messages must use repo-relative paths or stable URLs only.                                                                                                                                                                              | Aligned                | [AGENTS](../AGENTS.md), [CLAUDE](../CLAUDE.md)                                                                                                                                                | Every contributor before posting public GitHub text or committing docs.                                      | 2026-05-06         |
 
 `skill_path` is the primary catalog surface. Entries with omitted `inject` are
-always-injected, runtime-agnostic compact catalogs.
-Entries with `inject: ping` are appended to every daemon PING. Entries with
+runtime-agnostic compact catalogs appended to normal role context. Entries with
+`inject: ping` are appended to every daemon PING. Entries with
 `inject: compaction_ping` are appended only to compaction-triggered daemon
-PINGs. `inject: [ping, compaction_ping]` is equivalent to routing the same
-selected catalog to both daemon PING targets. PING paths must be
-global/user-level paths (`~/...` or absolute); repo-relative paths remain
-available only for normal role catalogs. Duplicate rendered skill names are
-deduped, and later entries win.
+PINGs. A YAML list containing `ping` and `compaction_ping` is equivalent to
+routing the same selected catalog to both daemon PING targets. PING paths must
+be global/user-level paths (`~/...` or absolute); repo-relative paths remain
+available only for normal role catalogs. If multiple configured paths exist,
+their selected skills are combined into one target catalog. Duplicate rendered
+skill names are deduped, and later entries win. Runtime names do not filter
+`skill_path` catalogs.
 
 ## Update Workflow
 

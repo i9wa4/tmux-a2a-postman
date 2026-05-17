@@ -99,9 +99,9 @@ does not create new ping events.
 - `inject: ping`: every daemon PING path above, including startup,
   discovered-node, pane-restart, operator TUI, and compaction.
 - `inject: compaction_ping`: only compaction-triggered daemon PINGs.
-- `inject: [ping, compaction_ping]`: the same selected catalog is routed to
-  both targets. Compaction PINGs receive both every-PING and compaction
-  catalogs.
+- A YAML list containing `ping` and `compaction_ping`: the same selected
+  catalog is routed to both targets. Compaction PINGs receive both every-PING
+  and compaction catalogs.
 
 PING catalog paths must be explicit user-level paths such as `~/...` or
 absolute paths. Repo-local relative paths remain valid only for normal role

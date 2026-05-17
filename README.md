@@ -145,9 +145,12 @@ tooling; tmux remains the hard runtime dependency.
 Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
 stays in the same frontmatter header; leave paths commented until the matching
 skill tree exists. Postman treats `~/.codex/skills` and `~/.claude/skills` as
-explicit skill trees; it does not select catalogs by runtime. Omit `inject` for
-a normal role-context catalog. Use a YAML list to reuse one path for both
-daemon PING catalog targets. Markdown under
+explicit skill trees; if both exist and are uncommented, both are loaded into
+the same selected catalog. It does not select catalogs by runtime. Duplicate
+skills are deduped by `SKILL.md` frontmatter `name`; when names collide, the
+later `skill_path` entry wins. Omit `inject` for a normal role-context catalog.
+Use a YAML list to reuse one path for both daemon PING catalog targets.
+Markdown under
 `common_template` and node sections is free-form role guidance, so short
 sections can cover identity, boundaries, local conventions, escalation rules,
 or checklists. Only the backtick-wrapped H2 section names and Mermaid edges are
@@ -158,7 +161,9 @@ ordinary Markdown:
 ---
 # Optional: after installing packaged skills, uncomment only paths that exist.
 # For PING catalogs, use explicit user-level skill tree paths; postman does not
-# select skill catalogs by runtime. `inject` may be a scalar or YAML list.
+# select skill catalogs by runtime. If multiple paths are uncommented, all are
+# included; later entries win duplicate skill names. `inject` may be a scalar
+# or YAML list.
 # skill_path:
 #   - path: ~/.codex/skills
 #     inject:

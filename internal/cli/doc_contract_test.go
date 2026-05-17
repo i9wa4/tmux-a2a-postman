@@ -342,7 +342,7 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"Only `skill_path` mappings accept `inject`.",
 		"`inject: ping` stores the generated catalog for every daemon PING",
 		"`inject: compaction_ping` stores the generated catalog for compaction-triggered daemon PING",
-		"`inject: [ping, compaction_ping]` routes the same selected catalog to each listed daemon PING target.",
+		"a YAML list containing `ping` and `compaction_ping` routes the same selected catalog to each listed daemon PING target.",
 	)
 
 	publicDocs := map[string]string{

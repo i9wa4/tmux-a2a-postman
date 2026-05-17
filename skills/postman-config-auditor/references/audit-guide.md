@@ -43,12 +43,14 @@ Important merge rules:
   as legacy input.
 - `inject: ping` generates catalogs for every daemon PING. `inject:
   compaction_ping` generates catalogs only for compaction-triggered daemon
-  PINGs. `inject: [ping, compaction_ping]` routes the same selected catalog to
-  both targets. Non-empty `inject` catalogs stay out of `common_template`.
+  PINGs. A YAML list containing `ping` and `compaction_ping` routes the same
+  selected catalog to both targets. Non-empty `inject` catalogs stay out of
+  `common_template`.
 - PING entries must use `~/...` or absolute paths. Repo-local relative paths
   remain valid only for normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`; later path entries
-  override earlier entries with the same rendered name.
+  override earlier entries with the same rendered name. Multiple configured
+  paths are combined when they exist; runtime names do not filter catalogs.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
 - A `postman.toml` file is optional. Treat a TOML file that only restates
