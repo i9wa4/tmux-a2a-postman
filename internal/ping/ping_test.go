@@ -236,6 +236,64 @@ func TestSendPingToNode_DefaultDaemonTemplateShowsContactRoles(t *testing.T) {
 	}
 }
 
+func TestSendPingToNode_DefaultDaemonTemplateShowsDiscoveredContactsBeforeLiveness(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+
+	sessionDir := filepath.Join(tmpDir, "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%100",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+	orchestratorInfo := discovery.NodeInfo{
+		PaneID:      "%101",
+		SessionName: "test-session",
+		SessionDir:  sessionDir,
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"test-session:messenger":    nodeInfo,
+		"test-session:orchestrator": orchestratorInfo,
+	}
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cfg.Edges = []string{"messenger --- orchestrator"}
+	cfg.Nodes = map[string]config.NodeConfig{
+		"messenger":    {Role: "Human interface."},
+		"orchestrator": {Role: "Delegates work and manages review."},
+	}
+
+	err = SendPingToNode(
+		nodeInfo,
+		"ctx-ping",
+		"test-session:messenger",
+		cfg.DaemonMessageTemplate,
+		cfg,
+		[]string{"messenger", "orchestrator"},
+		map[string]bool{},
+		map[string][]string{"messenger": {"orchestrator"}, "orchestrator": {"messenger"}},
+		nodes,
+	)
+	if err != nil {
+		t.Fatalf("SendPingToNode() error = %v", err)
+	}
+
+	_, body := readSingleInboxMessage(t, sessionDir, "messenger")
+	if !strings.Contains(body, "You can talk to:\n- orchestrator: Delegates work and manages review.") {
+		t.Fatalf("default startup ping missing discovered contact before liveness confirmation:\n%s", body)
+	}
+	if strings.Contains(body, "You can talk to:\n- none") {
+		t.Fatalf("default startup ping hid configured contact behind empty liveness map:\n%s", body)
+	}
+}
+
 func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalogs(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")

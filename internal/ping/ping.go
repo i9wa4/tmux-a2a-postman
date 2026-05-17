@@ -54,7 +54,9 @@ func SendPingToNodeWithOptions(nodeInfo discovery.NodeInfo, contextID, nodeName,
 	}
 	postPath := target.PostPath(filename)
 
-	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, livenessMap)
+	// Daemon PINGs bootstrap liveness, so their body route hints must come from
+	// discovered topology rather than the already-confirmed liveness map.
+	content := envelope.BuildEnvelope(cfg, tmpl, simpleName, "postman", contextID, postPath, activeNodes, adjacency, nodes, sourceSessionName, nil)
 
 	// Pass 2: inject daemon message variables.
 	var skillCatalogs []string
