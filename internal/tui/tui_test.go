@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
@@ -338,6 +339,92 @@ func TestTUI_Update_DefaultSurfacePingDispatchesCommand(t *testing.T) {
 		}
 	default:
 		t.Fatal("expected send_ping command after pressing p")
+	}
+}
+
+func TestTUI_Update_DefaultSurfacePingLockedDuringStartupReadiness(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	commands := make(chan TUICommand, 1)
+
+	cfg := config.DefaultConfig()
+	cfg.AutoPingDelaySeconds = 20
+	m := InitialModel(ch, commands, cfg, "")
+	startedAt := time.Date(2026, time.May, 17, 23, 45, 0, 0, time.UTC)
+	m.startupReadinessNow = startedAt
+	m.startupPingReadyAt = startedAt.Add(20 * time.Second)
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+	}
+	m.selectedSession = 0
+
+	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "p", Code: 'p'})
+	if cmd != nil {
+		t.Fatalf("Update(p) returned cmd %v, want nil", cmd)
+	}
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["main"]; got != "Ping locked: startup readiness 20s" {
+		t.Fatalf("sessionStatus[main] = %q, want startup readiness lock", got)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("locked startup ping emitted %d command(s), want 0", len(commands))
+	}
+}
+
+func TestTUI_Update_DefaultSurfacePingDispatchesAfterStartupReadiness(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+	commands := make(chan TUICommand, 1)
+
+	cfg := config.DefaultConfig()
+	cfg.AutoPingDelaySeconds = 20
+	m := InitialModel(ch, commands, cfg, "")
+	startedAt := time.Date(2026, time.May, 17, 23, 45, 0, 0, time.UTC)
+	m.startupReadinessNow = startedAt.Add(20 * time.Second)
+	m.startupPingReadyAt = startedAt.Add(20 * time.Second)
+	m.sessions = []SessionInfo{
+		{Name: "main", Enabled: true},
+	}
+	m.selectedSession = 0
+
+	newModel, cmd := m.Update(tea.KeyPressMsg{Text: "p", Code: 'p'})
+	if cmd != nil {
+		t.Fatalf("Update(p) returned cmd %v, want nil", cmd)
+	}
+	m = newModel.(Model)
+
+	if got := m.sessionStatus["main"]; got != "Sending ping..." {
+		t.Fatalf("sessionStatus[main] = %q, want %q", got, "Sending ping...")
+	}
+	select {
+	case sent := <-commands:
+		if sent.Type != "send_ping" || sent.Target != "main" {
+			t.Fatalf("sent command = %#v, want send_ping main", sent)
+		}
+	default:
+		t.Fatal("expected send_ping command after startup readiness")
+	}
+}
+
+func TestTUI_View_ShowsStartupReadinessCountdown(t *testing.T) {
+	ch := make(chan DaemonEvent, 10)
+	defer close(ch)
+
+	cfg := config.DefaultConfig()
+	cfg.AutoPingDelaySeconds = 20
+	m := InitialModel(ch, nil, cfg, "")
+	startedAt := time.Date(2026, time.May, 17, 23, 45, 0, 0, time.UTC)
+	m.startupReadinessNow = startedAt.Add(8 * time.Second)
+	m.startupPingReadyAt = startedAt.Add(20 * time.Second)
+
+	view := m.View().Content
+
+	if !strings.Contains(view, "[p:locked 12s]") {
+		t.Fatalf("view missing locked p header countdown: %q", view)
+	}
+	if !strings.Contains(view, "startup readiness: PING locked for 12s") {
+		t.Fatalf("view missing startup readiness countdown notice: %q", view)
 	}
 }
 

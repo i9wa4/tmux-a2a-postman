@@ -52,8 +52,9 @@ sends the normal pane notification when inbox delivery succeeds.
   command first activates that session for this daemon.
 - Source: user/operator.
 - Recipients: every discovered node in the selected tmux session.
-- Notes: not limited by startup `ui_node`. If the session is owned by another
-  daemon, the send is blocked.
+- Notes: not limited by startup `ui_node`. During the startup auto-PING delay,
+  the TUI disables `p` and shows a readiness countdown instead of dispatching a
+  manual PING. If the session is owned by another daemon, the send is blocked.
 
 ### 1.5. Compaction Recovery
 

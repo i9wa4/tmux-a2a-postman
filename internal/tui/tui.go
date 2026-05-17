@@ -61,6 +61,8 @@ type DaemonEvent struct {
 // DaemonEventMsg wraps DaemonEvent for tea.Msg interface.
 type DaemonEventMsg DaemonEvent
 
+type startupReadinessTickMsg time.Time
+
 // TUICommand represents a command from TUI to the daemon.
 // Issue #47: Added for manual PING functionality.
 type TUICommand struct {
@@ -96,6 +98,9 @@ type Model struct {
 	nodeCount     int
 	lastEvent     string
 	quitting      bool
+
+	startupPingReadyAt  time.Time
+	startupReadinessNow time.Time
 
 	// Config reference (for node state thresholds)
 	config *config.Config
@@ -144,6 +149,72 @@ func moveSelectedSession(sessions []SessionInfo, selected, delta int) int {
 	}
 
 	return candidate
+}
+
+func startupPingLockDuration(cfg *config.Config) time.Duration {
+	if cfg == nil || cfg.AutoPingDelaySeconds <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.AutoPingDelaySeconds * float64(time.Second))
+}
+
+func ceilSeconds(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	seconds := d / time.Second
+	if d%time.Second != 0 {
+		seconds++
+	}
+	return seconds * time.Second
+}
+
+func (m Model) readinessNow() time.Time {
+	if !m.startupReadinessNow.IsZero() {
+		return m.startupReadinessNow
+	}
+	return time.Now()
+}
+
+func (m Model) startupPingLocked() bool {
+	if m.startupPingReadyAt.IsZero() {
+		return false
+	}
+	return m.readinessNow().Before(m.startupPingReadyAt)
+}
+
+func (m Model) startupPingRemaining() time.Duration {
+	if !m.startupPingLocked() {
+		return 0
+	}
+	return ceilSeconds(m.startupPingReadyAt.Sub(m.readinessNow()))
+}
+
+func formatStartupPingRemaining(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	return fmt.Sprintf("%.0fs", d.Seconds())
+}
+
+func (m Model) startupReadinessTickCmd() tea.Cmd {
+	if !m.startupPingLocked() {
+		return nil
+	}
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return startupReadinessTickMsg(t)
+	})
+}
+
+func (m Model) startupReadinessNotice() string {
+	remaining := m.startupPingRemaining()
+	if remaining <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"startup readiness: PING locked for %s while startup auto-PING discovery opens",
+		formatStartupPingRemaining(remaining),
+	)
 }
 
 func (m *Model) refreshVisibleSessions() {
@@ -230,32 +301,40 @@ func (m *Model) updateNodeStatesFromActivity(nodeStatesRaw interface{}) {
 // Issue #45: Removed messageList and selectedMsg initialization
 // Issue #47: Added tuiCommands channel parameter
 func InitialModel(daemonEvents <-chan DaemonEvent, tuiCommands chan<- TUICommand, cfg *config.Config, ownContextID string) Model {
+	now := time.Now()
+	startupPingReadyAt := time.Time{}
+	if lockDuration := startupPingLockDuration(cfg); lockDuration > 0 {
+		startupPingReadyAt = now.Add(lockDuration)
+	}
+
 	return Model{
-		width:             80,              // Default width (Issue #35)
-		height:            24,              // Default height (Issue #35)
-		sessions:          []SessionInfo{}, // Issue #35: Requirement 3
-		knownSessions:     []SessionInfo{},
-		selectedSession:   0,                         // Issue #35: Requirement 3
-		sessionNodes:      make(map[string][]string), // Issue #59: Session-node mapping
-		sessionSnapshots:  make(map[string]status.SessionStatus),
-		nodeStates:        make(map[string]string), // Issue #55: Node state tracking
-		unreadInboxCounts: make(map[string]int),
-		config:            cfg,
-		daemonEvents:      daemonEvents,
-		tuiCommands:       tuiCommands,    // Issue #47: Command channel
-		events:            []EventEntry{}, // Issue #59: Session-tagged events
-		sessionStatus:     map[string]string{},
-		generalStatus:     "Starting...",
-		nodeCount:         0,
-		lastEvent:         "",
-		quitting:          false,
-		ownContextID:      ownContextID,
+		width:               80,              // Default width (Issue #35)
+		height:              24,              // Default height (Issue #35)
+		sessions:            []SessionInfo{}, // Issue #35: Requirement 3
+		knownSessions:       []SessionInfo{},
+		selectedSession:     0,                         // Issue #35: Requirement 3
+		sessionNodes:        make(map[string][]string), // Issue #59: Session-node mapping
+		sessionSnapshots:    make(map[string]status.SessionStatus),
+		nodeStates:          make(map[string]string), // Issue #55: Node state tracking
+		unreadInboxCounts:   make(map[string]int),
+		config:              cfg,
+		daemonEvents:        daemonEvents,
+		tuiCommands:         tuiCommands,    // Issue #47: Command channel
+		events:              []EventEntry{}, // Issue #59: Session-tagged events
+		sessionStatus:       map[string]string{},
+		generalStatus:       "Starting...",
+		nodeCount:           0,
+		lastEvent:           "",
+		quitting:            false,
+		startupPingReadyAt:  startupPingReadyAt,
+		startupReadinessNow: now,
+		ownContextID:        ownContextID,
 	}
 }
 
 // Init initializes the TUI and subscribes to daemon events.
 func (m Model) Init() tea.Cmd {
-	return waitForDaemonEvent(m.daemonEvents)
+	return tea.Batch(waitForDaemonEvent(m.daemonEvents), m.startupReadinessTickCmd())
 }
 
 // waitForDaemonEvent waits for the next daemon event from the channel.
@@ -279,6 +358,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case startupReadinessTickMsg:
+		m.startupReadinessNow = time.Time(msg)
+		return m, m.startupReadinessTickCmd()
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -293,6 +376,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p":
 			if m.selectedSession >= 0 && m.selectedSession < len(m.sessions) {
 				sess := m.sessions[m.selectedSession]
+				if m.startupPingLocked() {
+					remaining := formatStartupPingRemaining(m.startupPingRemaining())
+					m.sessionStatus[sess.Name] = fmt.Sprintf("Ping locked: startup readiness %s", remaining)
+					log.Printf("[PING] keypress ignored for session %q during startup readiness (%s remaining)\n", sess.Name, remaining)
+					return m, nil
+				}
 				m.sessionStatus[sess.Name] = "Sending ping..."
 				log.Printf("[PING] keypress received for session %q\n", sess.Name)
 				if m.tuiCommands != nil {
@@ -699,7 +788,15 @@ func (m Model) View() tea.View {
 	m.selectedSession = clampSelectedSession(m.sessions, m.selectedSession)
 
 	var b strings.Builder
-	b.WriteString("tmux-a2a-postman " + version.Version + "   [up/down:move] [p:ping] [q:quit]\n\n")
+	pingHint := "[p:ping]"
+	if m.startupPingLocked() {
+		pingHint = fmt.Sprintf("[p:locked %s]", formatStartupPingRemaining(m.startupPingRemaining()))
+	}
+	b.WriteString("tmux-a2a-postman " + version.Version + "   [up/down:move] " + pingHint + " [q:quit]\n")
+	if notice := m.startupReadinessNotice(); notice != "" {
+		b.WriteString(notice + "\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(m.renderSessionsSection())
 	b.WriteString("\n")
 	b.WriteString(m.renderNodesSection())
