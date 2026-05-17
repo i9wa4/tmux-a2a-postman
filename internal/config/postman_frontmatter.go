@@ -86,23 +86,25 @@ func splitSkillPathSpecsByInject(specs []skillCatalogSpec) ([]skillCatalogSpec, 
 	var pingSpecs []skillCatalogSpec
 	var compactionPingSpecs []skillCatalogSpec
 	for _, spec := range specs {
-		inject := normalizeSkillCatalogInject(spec.Inject)
-		if isRoleSkillCatalogInject(inject) {
-			spec.Inject = ""
+		injects := normalizeSkillCatalogInjects(spec.Injects)
+		if len(injects) == 0 {
+			spec.Injects = nil
 			roleSpecs = append(roleSpecs, spec)
 			continue
 		}
-		if inject == skillCatalogInjectPing {
-			spec.Inject = ""
-			pingSpecs = append(pingSpecs, spec)
-			continue
+		for _, inject := range injects {
+			routedSpec := spec
+			routedSpec.Injects = nil
+			if inject == skillCatalogInjectPing {
+				pingSpecs = append(pingSpecs, routedSpec)
+				continue
+			}
+			if inject == skillCatalogInjectCompactionPing {
+				compactionPingSpecs = append(compactionPingSpecs, routedSpec)
+				continue
+			}
+			return nil, nil, nil, fmt.Errorf("unsupported skill_path item inject %q", inject)
 		}
-		if inject == skillCatalogInjectCompactionPing {
-			spec.Inject = ""
-			compactionPingSpecs = append(compactionPingSpecs, spec)
-			continue
-		}
-		return nil, nil, nil, fmt.Errorf("unsupported skill_path item inject %q", spec.Inject)
 	}
 	return roleSpecs, pingSpecs, compactionPingSpecs, nil
 }
@@ -180,17 +182,11 @@ func parseSkillPathMappingNode(node *yaml.Node, key string, allowInject bool) (s
 			if !allowInject {
 				return skillCatalogSpec{}, frontmatterNodeError(keyNode, fmt.Sprintf("unsupported %s item key %q", key, keyNode.Value))
 			}
-			inject, err := parseYAMLScalarString(valueNode)
+			injects, err := parseSkillCatalogInjectNode(valueNode, key)
 			if err != nil {
-				return skillCatalogSpec{}, frontmatterNodeError(valueNode, key+" item inject must be a scalar value")
+				return skillCatalogSpec{}, err
 			}
-			inject = normalizeSkillCatalogInject(inject)
-			switch {
-			case isRoleSkillCatalogInject(inject), inject == skillCatalogInjectPing, inject == skillCatalogInjectCompactionPing:
-				spec.Inject = inject
-			default:
-				return skillCatalogSpec{}, frontmatterNodeError(valueNode, fmt.Sprintf("unsupported %s item inject %q", key, inject))
-			}
+			spec.Injects = injects
 		case "runtime":
 			return skillCatalogSpec{}, frontmatterNodeError(keyNode, key+" item runtime is unsupported; list explicit skill_path entries instead")
 		default:
@@ -204,6 +200,51 @@ func parseSkillPathMappingNode(node *yaml.Node, key string, allowInject bool) (s
 		return skillCatalogSpec{}, frontmatterNodeError(node, key+" item requires a global/user-level path (~ or absolute); relative paths are invalid for compaction PING catalogs")
 	}
 	return spec, nil
+}
+
+func parseSkillCatalogInjectNode(node *yaml.Node, key string) ([]string, error) {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		inject, err := parseYAMLScalarString(node)
+		if err != nil {
+			return nil, frontmatterNodeError(node, key+" item inject must be a scalar value or a YAML list of scalar values")
+		}
+		inject = normalizeSkillCatalogInject(inject)
+		if isRoleSkillCatalogInject(inject) {
+			return nil, nil
+		}
+		if !isPingSkillCatalogInject(inject) {
+			return nil, frontmatterNodeError(node, fmt.Sprintf("unsupported %s item inject %q", key, inject))
+		}
+		return []string{inject}, nil
+	case yaml.SequenceNode:
+		injects := make([]string, 0, len(node.Content))
+		seen := make(map[string]struct{}, len(node.Content))
+		for _, item := range node.Content {
+			inject, err := parseYAMLScalarString(item)
+			if err != nil {
+				return nil, frontmatterNodeError(item, key+" item inject list items must be scalar values")
+			}
+			inject = normalizeSkillCatalogInject(inject)
+			if inject == "" {
+				return nil, frontmatterNodeError(item, key+" item inject list items must be non-empty")
+			}
+			if !isPingSkillCatalogInject(inject) {
+				return nil, frontmatterNodeError(item, fmt.Sprintf("unsupported %s item inject %q", key, inject))
+			}
+			if _, ok := seen[inject]; ok {
+				continue
+			}
+			seen[inject] = struct{}{}
+			injects = append(injects, inject)
+		}
+		if len(injects) == 0 {
+			return nil, frontmatterNodeError(node, key+" item inject list must contain at least one inject mode")
+		}
+		return injects, nil
+	default:
+		return nil, frontmatterNodeError(node, key+" item inject must be a scalar value or a YAML list of scalar values")
+	}
 }
 
 func parseSkillsSelectorNode(node *yaml.Node) (bool, []string, error) {
@@ -252,6 +293,18 @@ func normalizeSkillCatalogInject(inject string) string {
 	return strings.ToLower(strings.TrimSpace(inject))
 }
 
+func normalizeSkillCatalogInjects(injects []string) []string {
+	normalized := make([]string, 0, len(injects))
+	for _, inject := range injects {
+		inject = normalizeSkillCatalogInject(inject)
+		if inject == "" {
+			continue
+		}
+		normalized = append(normalized, inject)
+	}
+	return normalized
+}
+
 func isRoleSkillCatalogInject(inject string) bool {
 	return normalizeSkillCatalogInject(inject) == ""
 }
@@ -266,7 +319,16 @@ func isPingSkillCatalogInject(inject string) bool {
 }
 
 func requiresGlobalSkillCatalogPath(key string, spec skillCatalogSpec) bool {
-	return key == "skill_path" && isPingSkillCatalogInject(spec.Inject)
+	return key == "skill_path" && hasPingSkillCatalogInject(spec.Injects)
+}
+
+func hasPingSkillCatalogInject(injects []string) bool {
+	for _, inject := range injects {
+		if isPingSkillCatalogInject(inject) {
+			return true
+		}
+	}
+	return false
 }
 
 func isGlobalSkillCatalogPath(path string) bool {

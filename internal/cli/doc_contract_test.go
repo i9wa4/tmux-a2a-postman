@@ -342,6 +342,10 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"Only `skill_path` mappings accept `inject`.",
 		"`inject: ping` stores the generated catalog for every daemon PING",
 		"`inject: compaction_ping` stores the generated catalog for compaction-triggered daemon PING",
+		"a YAML list containing `ping` and `compaction_ping` routes the same selected catalog to each listed daemon PING target.",
+		"Flow-style YAML lists such as `inject: [ping, compaction_ping]` are accepted",
+		"Path order controls duplicate precedence and the rendered source-path display order.",
+		"PING event timing",
 	)
 
 	publicDocs := map[string]string{
@@ -358,6 +362,38 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestMarkdownFormatterHeadingPolicyDocContract(t *testing.T) {
+	flake := readRepoFile(t, "flake.nix")
+	contributing := readRepoFile(t, "CONTRIBUTING.md")
+	runtimeDifferences := readRepoFile(t, "docs/agent-runtime-feature-differences.md")
+	readme := readRepoFile(t, "README.md")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+
+	assertContainsAllNormalized(
+		t, flake,
+		"markdown-formatter = {",
+		"name = \"markdown-formatter (all tracked markdown)\";",
+		"entry = \"${markdownFormatter} --write\";",
+		"types = [ \"markdown\" ];",
+	)
+	assertNotContainsNormalized(t, flake, "markdown-formatter-docs")
+	assertNotContainsNormalized(t, flake, "markdown-formatter-stable-headings")
+	assertNotContainsNormalized(t, flake, "--no-heading-numbering")
+	assertContainsAllNormalized(
+		t, contributing,
+		"`markdown-formatter` covers all tracked Markdown files with its default heading-numbering behavior enabled.",
+		"The repository does not maintain separate root-doc or skill exceptions.",
+		"Ignored or generated files such as `.pre-commit-config.yaml` are not repository Markdown policy surfaces.",
+	)
+
+	assertContainsNormalized(t, runtimeDifferences, "## 1. Status Vocabulary")
+	assertContainsNormalized(t, runtimeDifferences, "## 4. Verification")
+	assertContainsNormalized(t, readme, "## 1. Concept")
+	assertNotContainsNormalized(t, readme, "## Concept")
+	assertContainsNormalized(t, operatorSkill, "## 1. USE FOR")
+	assertNotContainsNormalized(t, operatorSkill, "## USE FOR")
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {

@@ -1,0 +1,18 @@
+id: positive-trigger-004
+name: Positive Trigger 4
+description: Trigger for skill_path catalog behavior audits.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "Audit postman.md skill_path config: one entry uses inject: [ping, compaction_ping], another uses block list syntax, and both ~/.claude/skills and ~/.codex/skills define the same skill name. Does postman-config-auditor catch runtime selector mistakes and later-entry duplicate precedence?"
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: contains-keywords
+    config:
+      contains:
+        - "skill_path"
+        - "inject"
+        - "runtime"
+        - "duplicate"

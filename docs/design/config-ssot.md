@@ -3,7 +3,7 @@
 `internal/config/postman.default.toml` is the SSOT for user-configurable
 defaults.
 
-## Policy
+## 1. Policy
 
 - `DefaultConfig()` initializes structural and derived containers only:
   `Edges`, `Nodes`, `NodeOrder`, `PingSkillCatalogs`, and
@@ -14,8 +14,9 @@ defaults.
   to run the daemon.
 - A minimal `postman.md` may contain only a Mermaid `edges` section. Nodes
   referenced by those edges are materialized with empty `NodeConfig` values.
-- The human-facing startup PING target should normally be marked in Mermaid
-  with the `ui_node` class, keeping topology-facing settings in one diagram.
+- The explicit human-facing startup PING target should normally be marked in
+  Mermaid with the `ui_node` class, keeping topology-facing settings in one
+  diagram.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
   Entries with omitted `inject` are appended to normal role context and remain
@@ -23,8 +24,10 @@ defaults.
 - `postman.md` frontmatter `skill_path` entries with `inject: ping` generate
   catalogs for every daemon PING. Entries with `inject: compaction_ping`
   generate catalogs only for compaction-triggered daemon PINGs. Both stay out
-  of normal role context. These catalogs are runtime-agnostic; list explicit
-  user-level skill tree paths for the catalogs to include.
+  of normal role context. A YAML list containing `ping` and
+  `compaction_ping` routes one selected catalog to multiple PING targets. These
+  catalogs are runtime-agnostic; list explicit user-level skill tree paths for
+  the catalogs to include.
 - PING catalog paths must be global/user-level: `~/...` or absolute.
   Repo-local relative paths remain supported only for normal role catalogs and
   are invalid for PING catalogs.
@@ -45,7 +48,7 @@ defaults.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.
 
-## Why
+## 2. Why
 
 Operators should not need a large generated TOML file just to run postman. A
 minimal setup can keep topology in Markdown and inherit all behavior from the
@@ -59,7 +62,7 @@ Claude Code and Codex CLI runtime differences are tracked separately in
 Do not encode runtime-specific behavior in `postman.toml` defaults unless a
 follow-up issue explicitly changes the public config surface.
 
-## Regression Guards
+## 3. Regression Guards
 
 - `internal/config/config_test.go` asserts `DefaultConfig()` stays limited to
   structural containers.
@@ -68,7 +71,7 @@ follow-up issue explicitly changes the public config surface.
 - Config tests assert CWD-local `.tmux-a2a-postman/` files do not override XDG
   or explicit config.
 
-## Minimal Topology
+## 4. Minimal Topology
 
 ````markdown
 ## `edges`
@@ -85,4 +88,5 @@ graph LR
 
 This creates `messenger`, `orchestrator`, `worker`, and `critic` nodes even
 when no `[messenger]`, `[orchestrator]`, `[worker]`, or `[critic]` TOML sections
-exist. The `ui_node` class marks `messenger` as the startup auto-PING target.
+exist. The `ui_node` class explicitly marks `messenger` as the startup
+auto-PING target.

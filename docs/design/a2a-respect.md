@@ -9,7 +9,7 @@ not currently expose an A2A server, publish an AgentCard at
 `.well-known/agent-card.json`, implement `SendMessage`/`GetTask` protocol
 operations, negotiate `A2A-Version`, or guarantee A2A wire interoperability.
 
-## Sources Consulted
+## 1. Sources Consulted
 
 | Source                      | Version or date                   | URL                                                                               | Use in this page                                       |
 | --------------------------- | --------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
@@ -24,7 +24,7 @@ abstract operations, and concrete protocol bindings. It also identifies the
 protobuf file as the authoritative data-model source. Postman can respect the
 data model and some operation names before it implements an A2A binding.
 
-## Respect Boundaries
+## 2. Respect Boundaries
 
 Postman should use A2A terminology when it improves clarity:
 
@@ -47,7 +47,7 @@ Postman should avoid A2A claims that are not implemented:
 The safe phrasing is: postman respects A2A v1.0 terminology and data-model
 shape where useful. It remains a tmux/file-backed coordination runtime.
 
-## Relationship Model
+## 3. Relationship Model
 
 A2A groups interaction with a `contextId`, may create server-owned `Task`
 objects, and carries content in `Message.parts` or `Artifact.parts`.
@@ -105,7 +105,7 @@ This is similar to an A2A task reaching `input-required`, but it is not the same
 object. A2A has `Task.status.state`; postman has per-message reply obligations
 plus node status projection.
 
-## Term Mapping
+## 4. Term Mapping
 
 | A2A term                     | Postman term or surface                                               | Current recommendation                                                                                                                  |
 | ---------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -124,7 +124,7 @@ plus node status projection.
 | `AgentSkill`                 | Published postman skills and node role capabilities                   | Keep skill docs precise and installable.                                                                                                |
 | A2A protocol binding         | None                                                                  | Do not claim JSON-RPC, gRPC, or HTTP+JSON binding support.                                                                              |
 
-## State Alignment
+## 5. State Alignment
 
 A2A v1.0 task states are task lifecycle states. Postman `visible_state` values
 are operator states for tmux nodes. They can be mapped for explanation, but
@@ -160,7 +160,7 @@ Recommended public wording:
 - Future A2A alignment fields can be additive, for example
   `a2a_alignment.task_state_hint: "input-required"`.
 
-## Detailed `get-status` JSON Criteria
+## 6. Detailed `get-status` JSON Criteria
 
 Detailed `get-status` JSON should be understandable to A2A-aware users with
 low conceptual friction. It is the right surface for clear semantic names and
@@ -189,7 +189,7 @@ Design rules:
   A2A-natural detailed shapes should win unless a concrete safety reason, such
   as exact input-request closure or archive truth, is named.
 
-## ID and Field Alignment
+## 7. ID and Field Alignment
 
 Current postman input-request fields are operationally accurate:
 
@@ -227,7 +227,7 @@ Forward path:
    they make the generated detailed shape clearer without obscuring closure
    semantics.
 
-## Frontmatter Metadata
+## 8. Frontmatter Metadata
 
 The favored minimal A2A respect marker is:
 
@@ -268,7 +268,7 @@ Avoid adding `postman_schema_version` as part of A2A respect. Schema versioning
 is a separate product need. Add it only if the archive or JSON output needs a
 local schema/version contract that is independent of the A2A reference.
 
-## Where to Store A2A Reference Metadata
+## 9. Where to Store A2A Reference Metadata
 
 | Surface                       | Recommendation                                  | Why                                                                      |
 | ----------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
@@ -283,7 +283,7 @@ local schema/version contract that is independent of the A2A reference.
 If the reference is written into every message, use the minimal shape above and
 keep it non-normative. Do not write `a2a_compliant: true`.
 
-## Per-Message Metadata Benefits and Risks
+## 10. Per-Message Metadata Benefits and Risks
 
 | Benefit                         | Detail                                                               |
 | ------------------------------- | -------------------------------------------------------------------- |
@@ -306,7 +306,7 @@ Recommendation: add the marker to message frontmatter only when #396 changes
 `pop` JSON to expose structured frontmatter and `markdown_path`. Until then,
 the docs page and task artifacts are enough.
 
-## #396 Pop JSON and Frontmatter Implications
+## 11. #396 Pop JSON and Frontmatter Implications
 
 Issue #396 proposes that `pop` stays JSON by default, stops embedding the full
 Markdown body, returns a stable `markdown_path`, and exposes all structured YAML
@@ -375,7 +375,7 @@ continues to carry the mailbox state-machine meaning, while pane notifications
 and help text describe the user-visible action as claiming/opening the message
 and obtaining its archived body path/reference.
 
-## AgentCard Alignment
+## 12. AgentCard Alignment
 
 A2A AgentCard describes an agent's identity, interfaces, capabilities, security
 requirements, input/output modes, and skills. Postman has related material, but
@@ -399,7 +399,7 @@ postman wants a real custom binding or only a documentation analogy. If a
 future export exists, call it AgentCard-like until it exposes the required A2A
 fields honestly.
 
-## Version and Migration Policy
+## 13. Version and Migration Policy
 
 Recommended baseline:
 
@@ -443,7 +443,7 @@ Archive and migration handling:
 6. Treat historical TOML A2A-version entries as inert input, not as an active
    configuration contract or design constraint.
 
-## Concrete Recommendations
+## 14. Concrete Recommendations
 
 1. Add this docs page as the canonical A2A respect explanation.
 2. Do not preserve older output shapes as the reason for A2A alignment choices.
@@ -468,7 +468,7 @@ Archive and migration handling:
 10. Treat `input_request_set_id` as grouped input-request aggregation, not
     `referenceTaskIds`.
 
-## Rejected Alternatives
+## 15. Rejected Alternatives
 
 | Alternative                            | Reason rejected                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------ |
@@ -479,7 +479,7 @@ Archive and migration handling:
 | Put A2A reference only in build output | Archived messages would not be self-describing.                          |
 | Put full A2A AgentCard in docs now     | Would imply a discovery surface that does not exist.                     |
 
-## Open Questions
+## 16. Open Questions
 
 | Question                                      | Decision needed                                                             |
 | --------------------------------------------- | --------------------------------------------------------------------------- |

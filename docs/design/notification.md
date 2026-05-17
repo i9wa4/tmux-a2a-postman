@@ -4,8 +4,10 @@
 daemon delivers mail to the recipient inbox, sends a pane hint to that recipient
 when delivery succeeds, and emits auto-PING messages when the daemon starts or
 when a node appears. If the same role reappears with a new pane ID, that
-replacement pane is treated as newly appeared. It does not run a separate policy
-layer for operator escalation.
+replacement pane is treated as newly appeared. It also gets a PING after the
+configured delay. Compaction recovery can send a separate compaction-triggered
+PING. See [Ping Events](../ping-events.md) for the full trigger and timing
+matrix. It does not run a separate policy layer for operator escalation.
 
 ## 1. Surfaces
 
@@ -101,7 +103,7 @@ The remaining notification-related public settings are:
 | `notification_template`    | Pane hint rendered when mail arrives; not full message body |
 | `message_footer`           | Reply guidance rendered before the sender body separator    |
 | `draft_template`           | Structured envelope for stored `send-heredoc` Markdown      |
-| `daemon_message_template`  | Structured envelope for daemon-originated startup PING      |
+| `daemon_message_template`  | Structured envelope for daemon-originated PING mail         |
 | `ui_node`                  | Optional target filter for startup auto-PING                |
 | `auto_enable_new_sessions` | Auto-enable sessions with configured node panes             |
 
@@ -141,7 +143,7 @@ fields carry the clearer claim/open/message-file semantics.
 `ui_node` is not a general escalation channel. It is normally set by marking a
 node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline
 `:::ui_node`, frontmatter, and TOML remain explicit override surfaces. When
-empty, startup auto-PING may target all discovered nodes. When set, startup
-auto-PING is limited to that node if it is discovered in an enabled session.
+empty, startup auto-PING may target all discovered nodes. When explicitly set,
+startup auto-PING is limited to matching roles discovered in enabled sessions.
 `auto_enable_new_sessions` defaults to true, so a single user daemon can
 discover project sessions that already have configured node panes.

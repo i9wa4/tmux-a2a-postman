@@ -7,7 +7,7 @@ stay small enough for an operator to inspect, explain, and recover.
 This note applies to all feature work. Issue-specific designs can add local
 details, but they should fit these rules.
 
-## Principles
+## 1. Principles
 
 - Keep features simple and robust. Prefer small behavior that always works over
   clever behavior with surprising modes.
@@ -28,7 +28,7 @@ details, but they should fit these rules.
 - Keep help, README, and skills concise and practical. They should explain the
   operator loop and durable contracts, not every internal edge case.
 
-## Non-Goals
+## 2. Non-Goals
 
 By default, project design should not add:
 
@@ -41,13 +41,13 @@ By default, project design should not add:
 These can be reconsidered only when they prevent a concrete user-facing failure
 that simpler state, clearer commands, or better visibility cannot handle.
 
-## Documentation Discipline
+## 3. Documentation Discipline
 
 Documentation is part of the product surface. Update README, help, and skills
 when an operator contract changes. Keep internal details in focused design notes
 or code comments when they only explain implementation choices.
 
-## Shell And Stdin Portability
+## 4. Shell And Stdin Portability
 
 Command behavior must work across the shells operators actually use, including
 `bash` and `zsh`. Do not infer unsafe message input from the OS-level shape of
@@ -60,7 +60,7 @@ interactive terminal stdin, but accept non-terminal stdin regardless of file
 type. If the product needs a stricter body source contract, add an explicit
 flag, metadata field, or command mode instead of guessing from descriptor type.
 
-## Applying The Philosophy
+## 5. Applying The Philosophy
 
 For each proposed feature, ask:
 

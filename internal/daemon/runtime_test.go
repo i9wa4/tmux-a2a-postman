@@ -1450,6 +1450,72 @@ func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
+func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitUINode(t *testing.T) {
+	baseDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(baseDir, "xdg-config"))
+	t.Setenv("HOME", filepath.Join(baseDir, "home"))
+	t.Chdir(baseDir)
+
+	configPath := filepath.Join(baseDir, "postman.toml")
+	content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(): %v", err)
+	}
+
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 17, 0, 35, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	rt := &daemonRuntime{
+		baseDir:     baseDir,
+		sessionDir:  sessionDir,
+		contextID:   "ctx-self",
+		selfSession: "review",
+		cfg:         cfg,
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		events:      make(chan tui.DaemonEvent, 8),
+		nodes: map[string]discovery.NodeInfo{
+			"review:messenger": {
+				PaneID:      "%63",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+			"review:worker": {
+				PaneID:      "%64",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.bootstrap()
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if !state.Nodes["review:messenger"].Pending {
+		t.Fatal("startup auto-PING was not queued for explicit ui_node")
+	}
+	if state.Nodes["review:worker"].Pending {
+		t.Fatal("startup auto-PING was queued for non-ui_node worker")
+	}
+}
+
 func TestBootstrap_ReconcilesDuePendingAutoPingDebtAfterHydration(t *testing.T) {
 	baseDir := t.TempDir()
 	sessionDir := filepath.Join(baseDir, "ctx-self", "review")

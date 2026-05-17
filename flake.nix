@@ -330,10 +330,12 @@
                 entry = "${pkgs.rumdl}/bin/rumdl check --config ${rumdlConfig}";
                 types = [ "markdown" ];
               };
+              # Apply markdown-formatter uniformly to repository Markdown.
+              # Generated hook config is ignored output and not a policy surface.
               markdown-formatter = {
                 enable = true;
-                name = "markdown-formatter";
-                entry = "${markdownFormatter} --no-heading-numbering --write";
+                name = "markdown-formatter (all tracked markdown)";
+                entry = "${markdownFormatter} --write";
                 types = [ "markdown" ];
               };
 

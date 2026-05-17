@@ -12,7 +12,7 @@ Audit these files when present:
 
 `$XDG_CONFIG_HOME` defaults to `~/.config` when unset.
 
-## Config Model
+## 1. Config Model
 
 Check the effective configuration in this order:
 
@@ -35,19 +35,26 @@ Important merge rules:
 - Split `nodes/*.toml` files replace that node at their layer.
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from
   selected `SKILL.md` files and appends them to that Markdown layer's
-  `common_template` unless a mapping uses `inject: ping` or
-  `inject: compaction_ping`.
-- `skill_path` accepts YAML list entries with `path`, optional `inject`, and
-  optional `skills`. Omitted `skills` means every skill under that path; a
-  present `skills` list selects explicit skill directory names, including a real
-  skill named `all`. The scalar `skills: all` remains accepted as legacy input.
+  `common_template` unless a mapping uses a non-empty `inject`.
+- `skill_path` accepts YAML list entries with `path`, optional scalar or list
+  `inject`, and optional `skills`. Omitted `skills` means every skill under
+  that path; a present `skills` list selects explicit skill directory names,
+  including a real skill named `all`. The scalar `skills: all` remains accepted
+  as legacy input.
 - `inject: ping` generates catalogs for every daemon PING. `inject:
   compaction_ping` generates catalogs only for compaction-triggered daemon
-  PINGs. Both stay out of `common_template`.
+  PINGs. A YAML list containing `ping` and `compaction_ping` routes the same
+  selected catalog to both targets. Flow-style YAML lists such as
+  `inject: [ping, compaction_ping]` are supported for deployed configs, but
+  docs and examples should prefer block-list style. Non-empty `inject` catalogs
+  stay out of `common_template`.
 - PING entries must use `~/...` or absolute paths. Repo-local relative paths
   remain valid only for normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`; later path entries
-  override earlier entries with the same rendered name.
+  override earlier entries with the same rendered name. Multiple configured
+  paths are combined when they exist; runtime names do not filter catalogs.
+  Path order controls duplicate precedence and the rendered source-path display
+  order.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
 - A `postman.toml` file is optional. Treat a TOML file that only restates
@@ -56,7 +63,7 @@ Important merge rules:
 - Public non-zero defaults are owned by
   `internal/config/postman.default.toml` and guarded by config SSOT tests.
 
-## Topology
+## 2. Topology
 
 - Confirm every intended route appears as a bidirectional `---` edge.
 - Confirm Mermaid `postman.md` edges use `---`, not arrows such as `-->`.
@@ -72,7 +79,7 @@ Important merge rules:
   confirm the Mermaid graph contains every hop in that order and that node
   templates do not bypass the declared mediator nodes.
 
-## postman.md Syntax
+## 3. postman.md Syntax
 
 - Use the format reference as the detailed syntax contract.
 - Confirm parsed sections use h2 headings with backtick names, such as `edges`
@@ -87,15 +94,17 @@ Important merge rules:
 - For normal role catalogs, confirm relative paths resolve from the declaring
   `postman.md` directory, `~/...` points to the current user's home directory,
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
-- For `inject: ping` or `inject: compaction_ping`, confirm the intent and
-  require `~/...` or absolute paths.
+- For `inject: ping`, `inject: compaction_ping`, or a list containing either
+  mode, confirm the intent and require `~/...` or absolute paths.
+- For PING timing, trigger source, and operator guidance, use repo doc
+  `docs/ping-events.md` as the source of truth.
 - Prefer omitted `skills` for all-skills catalogs in new or example configs.
   Treat scalar `skills: all` as legacy-only unless compatibility with an
   existing deployed config is the explicit reason.
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
   `description`, rather than hand-maintained stale lists.
 
-## Node Role Templates
+## 4. Node Role Templates
 
 - Confirm each active node has clear reply behavior, completion words, and
   escalation rules when the workflow needs a response.
@@ -118,7 +127,7 @@ Important merge rules:
   or review, cannot implement, and do not replace the active node's synthesis
   and verdict ownership.
 
-## postman.md / SKILL.md Balance
+## 5. postman.md / SKILL.md Balance
 
 Measure the payload that is actually delivered:
 
@@ -143,7 +152,7 @@ rules in `postman.md`.
 Move reusable workflows, command recipes, style guides, debugging loops, review
 rubrics, and long examples to `SKILL.md` or `references/*.md`.
 
-## Runtime Symptoms
+## 6. Runtime Symptoms
 
 - Use `tmux-a2a-postman get-status` for structured state and
   `tmux-a2a-postman get-status-oneline` for compact coordination.
@@ -155,7 +164,7 @@ rubrics, and long examples to `SKILL.md` or `references/*.md`.
   changing templates.
 - Treat dead-letter as a routing/config issue until edges prove otherwise.
 
-## Findings Format
+## 7. Findings Format
 
 Return findings first, ordered by severity:
 
@@ -175,7 +184,7 @@ Severity values:
 - `IMPORTANT`: causes likely agent confusion or repeated workflow failure.
 - `MINOR`: drift, duplication, or maintainability issue.
 
-## Nix Store Warning
+## 8. Nix Store Warning
 
 Before patching deployed config, check whether it is a read-only Nix store
 symlink:
