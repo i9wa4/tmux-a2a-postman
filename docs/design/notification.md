@@ -121,6 +121,16 @@ TOML `role` text, only the first non-empty role line is shown as the summary;
 full node templates are not dumped into the contact list. Custom footers can
 keep using `{can_talk_to}` for the legacy comma-separated node list or
 `{contacts_section}` for the role-aware Markdown list.
+
+For daemon PING bodies, this contact list is an informational hint from
+configured or discovered same-session topology, effectively the `postman.md`
+routes known to the daemon. It is not a live-health guarantee. Startup PINGs
+can render configured contacts before adjacent nodes have confirmed liveness,
+so `- none` means no configured or discovered contact is known for that
+recipient, not merely that known contacts are currently non-live. Delivery and
+pane notification behavior remains liveness-aware and separate from daemon PING
+body rendering.
+
 Daemon PING mail uses the same generated-envelope pattern with
 `Recipient Instructions` and `Daemon Message`.
 

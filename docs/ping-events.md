@@ -73,7 +73,24 @@ because the target inbox queue is full, the pending auto-PING remains in the
 journal and the daemon tries again on later scans. One in-flight auto-PING per
 node is allowed at a time.
 
-## 2. Non-PING Traffic
+## 2. Contact Hints
+
+Daemon PING bodies include a `You can talk to:` contact hint. Treat this as
+informational route context derived from configured or discovered same-session
+topology, effectively the `postman.md` conversation edges known to the daemon.
+It is not a live-health guarantee.
+
+Startup auto-PINGs can arrive before adjacent nodes have confirmed liveness, so
+PING body rendering must not hide configured contacts only because liveness is
+still unknown. Configured contacts can therefore appear before liveness is
+confirmed. A `- none` contact hint means no configured or discovered adjacent
+contact is known for the recipient, not merely that every adjacent contact is
+currently non-live.
+
+Actual delivery and pane notification behavior remains separate from this body
+rendering and continues to use liveness-aware session state.
+
+## 3. Non-PING Traffic
 
 Some traffic can look like ping noise but does not create daemon PING mail.
 
@@ -91,7 +108,7 @@ Some traffic can look like ping noise but does not create daemon PING mail.
   directories. The activation step itself does not send mail; discovery can
   queue a later auto-PING.
 
-## 3. `skill_path.inject`
+## 4. `skill_path.inject`
 
 `skill_path.inject` controls where generated skill catalogs are appended. It
 does not create new ping events.
@@ -108,7 +125,7 @@ PING catalog paths must be explicit user-level paths such as `~/...` or
 absolute paths. Repo-local relative paths remain valid only for normal role
 catalogs.
 
-## 4. Noise Checks
+## 5. Noise Checks
 
 Expected PING mail should line up with one of the events above. Check the
 stored message metadata and daemon logs before treating it as suspicious:
