@@ -3,7 +3,7 @@
 Use this reference after the top-level `postman-session-operator` skill has
 triggered and you need command details for live mailbox decisions.
 
-## First Commands
+## 1. First Commands
 
 Use `tmux-a2a-postman get-status` for the canonical JSON status contract. Use
 `tmux-a2a-postman get-status-oneline` for a compact scan across sessions. Add
@@ -18,7 +18,7 @@ Use `tmux-a2a-postman pop` only when you intend to claim and archive the next
 inbox message. `pop` never embeds sender-authored body text inline. Read the
 archived path after `pop`; prefer `markdown_absolute_path` when present.
 
-## Command Semantics
+## 2. Command Semantics
 
 `send-heredoc` validates the auto-detected sender pane title, configured edges,
 and recipient before delivery. A failed `send-heredoc` is stronger evidence
@@ -34,7 +34,7 @@ Footer lines such as `You can talk to:`, `Reply:`, and `No reply needed for:`
 are delivery hints. When they conflict, prefer current edges, explicit body
 instructions, message metadata, status output, and observed send results.
 
-## Visible State
+## 3. Visible State
 
 | State         | Meaning                                       | Usual action                                         |
 | ------------- | --------------------------------------------- | ---------------------------------------------------- |
@@ -51,7 +51,7 @@ non-AI, unknown, not-yet-classified, or expected AI panes and sessions with no
 response/activity should not be treated as ready until there is positive live
 evidence.
 
-## Input Requests
+## 4. Input Requests
 
 A reply-required message opens action for the recipient and waiting state for
 the sender.
@@ -90,7 +90,7 @@ as follow-up boundaries, not proof of failure. Below the boundary, prefer
 `waiting`; at or beyond it, send one bounded follow-up before declaring the
 recipient blocked.
 
-## Queue Signals
+## 5. Queue Signals
 
 | Field                      | Meaning                                  |
 | -------------------------- | ---------------------------------------- |
@@ -104,7 +104,7 @@ recipient blocked.
 If dead letters exist, treat routing or configuration as suspect and use
 `postman-config-auditor` before manually retrying delivery.
 
-## Contextual Severity
+## 6. Contextual Severity
 
 `get-status` schema version 4 exposes `visible_state`, `compact`, and
 contextual severity fields. Use these fields to decide whether a state is an
@@ -136,7 +136,7 @@ Interpretation rules:
 5. `delivery_failure` means dead-letter files exist. Audit routing before
    retrying.
 
-## Screen Progress
+## 7. Screen Progress
 
 `nodes[*].screen_progress` is non-content pane evidence. Use it to distinguish
 a pane that is changing from one that is merely quiet; do not expect raw pane
@@ -145,7 +145,7 @@ text in status output.
 `get-status-oneline` omits this detail to stay compact; use `get-status` when
 progress evidence matters.
 
-## Safe Operator Flow
+## 8. Safe Operator Flow
 
 1. Run `tmux-a2a-postman get-status`.
 2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
@@ -175,7 +175,7 @@ progress evidence matters.
 10. Audit topology and recipient names before retrying messages in dead-letter.
 11. Do not edit runtime mailbox files manually.
 
-## Escalation Boundaries
+## 9. Escalation Boundaries
 
 Use `postman-config-auditor` when the problem looks like a missing edge, wrong
 node name, stale `postman.md`, or dead-letter route.

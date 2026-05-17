@@ -37,10 +37,13 @@ When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 
 ## 2. Markdown Formatting
 
-`docs/**/*.md` is long-form reference material and is formatted with heading
-numbering enabled. Root public docs such as `README.md`, `CONTRIBUTING.md`, and
-`RELEASING.md`, plus `skills/**/*.md`, are formatted with heading numbering
-disabled so public anchors and skill section names stay stable.
+`markdown-formatter` covers all tracked Markdown files with its default
+heading-numbering behavior enabled. Run `nix fmt` for treefmt-managed
+formatting and let the pre-commit hook apply `mdfmt --write` to Markdown files.
+
+The repository does not maintain separate root-doc or skill exceptions. Ignored
+or generated files such as `.pre-commit-config.yaml` are not repository
+Markdown policy surfaces.
 
 ## 3. Agent Skills
 

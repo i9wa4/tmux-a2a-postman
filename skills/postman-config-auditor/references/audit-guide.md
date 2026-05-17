@@ -12,7 +12,7 @@ Audit these files when present:
 
 `$XDG_CONFIG_HOME` defaults to `~/.config` when unset.
 
-## Config Model
+## 1. Config Model
 
 Check the effective configuration in this order:
 
@@ -63,7 +63,7 @@ Important merge rules:
 - Public non-zero defaults are owned by
   `internal/config/postman.default.toml` and guarded by config SSOT tests.
 
-## Topology
+## 2. Topology
 
 - Confirm every intended route appears as a bidirectional `---` edge.
 - Confirm Mermaid `postman.md` edges use `---`, not arrows such as `-->`.
@@ -79,7 +79,7 @@ Important merge rules:
   confirm the Mermaid graph contains every hop in that order and that node
   templates do not bypass the declared mediator nodes.
 
-## postman.md Syntax
+## 3. postman.md Syntax
 
 - Use the format reference as the detailed syntax contract.
 - Confirm parsed sections use h2 headings with backtick names, such as `edges`
@@ -104,7 +104,7 @@ Important merge rules:
 - Confirm generated skill catalogs match `SKILL.md` frontmatter `name` and
   `description`, rather than hand-maintained stale lists.
 
-## Node Role Templates
+## 4. Node Role Templates
 
 - Confirm each active node has clear reply behavior, completion words, and
   escalation rules when the workflow needs a response.
@@ -127,7 +127,7 @@ Important merge rules:
   or review, cannot implement, and do not replace the active node's synthesis
   and verdict ownership.
 
-## postman.md / SKILL.md Balance
+## 5. postman.md / SKILL.md Balance
 
 Measure the payload that is actually delivered:
 
@@ -152,7 +152,7 @@ rules in `postman.md`.
 Move reusable workflows, command recipes, style guides, debugging loops, review
 rubrics, and long examples to `SKILL.md` or `references/*.md`.
 
-## Runtime Symptoms
+## 6. Runtime Symptoms
 
 - Use `tmux-a2a-postman get-status` for structured state and
   `tmux-a2a-postman get-status-oneline` for compact coordination.
@@ -164,7 +164,7 @@ rubrics, and long examples to `SKILL.md` or `references/*.md`.
   changing templates.
 - Treat dead-letter as a routing/config issue until edges prove otherwise.
 
-## Findings Format
+## 7. Findings Format
 
 Return findings first, ordered by severity:
 
@@ -184,7 +184,7 @@ Severity values:
 - `IMPORTANT`: causes likely agent confusion or repeated workflow failure.
 - `MINOR`: drift, duplication, or maintainability issue.
 
-## Nix Store Warning
+## 8. Nix Store Warning
 
 Before patching deployed config, check whether it is a read-only Nix store
 symlink:

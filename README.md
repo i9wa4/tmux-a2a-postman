@@ -13,7 +13,7 @@ commands.
 Any AI coding agent that can run commands in a tmux pane can participate;
 postman keeps handoffs local with filesystem-backed inboxes.
 
-## Concept
+## 1. Concept
 
 ```mermaid
 graph TD
@@ -63,7 +63,7 @@ Each tmux session is a separate project workspace. `ui_node` marks the role
 the human talks to first, while the daemon keeps routing, delivery, and
 archived mail outside the agent panes.
 
-## Why Use It
+## 2. Why Use It
 
 - Shape agent work in Markdown: `postman.md` is a soft harness for roles,
   conversation edges, local instructions, escalation rules, and checklists.
@@ -75,7 +75,7 @@ archived mail outside the agent panes.
 - Avoid missed handoffs: pending replies, status views, and archived Markdown
   messages help operators and agents catch unresolved tasks before they drift.
 
-## Install
+## 3. Install
 
 Prerequisites:
 
@@ -94,7 +94,7 @@ Or run with Nix:
 nix run github:i9wa4/tmux-a2a-postman
 ```
 
-## Quick Start
+## 4. Quick Start
 
 After installing the binary, optionally install the packaged agent skills so
 assistants can discover postman commands while working:
@@ -304,7 +304,7 @@ tmux-a2a-postman get-status-oneline
 Use explicit subcommands. Running `tmux-a2a-postman` without a subcommand only
 prints usage.
 
-## Messaging Rules
+## 5. Messaging Rules
 
 Use `send-heredoc` with a quoted delimiter for agent-safe messages. The quotes
 keep shell-sensitive text literal, including backticks, variables, quotes, code
@@ -341,7 +341,7 @@ and blockers before relaying, approving, or closing work.
 
 `DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
 
-## Configuration
+## 6. Configuration
 
 Most users only maintain `postman.md` under the global config directory:
 

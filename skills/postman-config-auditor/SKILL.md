@@ -15,14 +15,14 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 
 **UTILITY SKILL**. INVOKES: local source inspection and direct file edits.
 
-## USE FOR
+## 1. USE FOR
 
 - Audit or fix `postman.toml`, `postman.md`, or `nodes/*` config.
 - Check Mermaid edges, `ui_node`, role templates, and skill catalogs.
 - Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
   unread backlog symptoms.
 
-## Procedure
+## 2. Procedure
 
 1. Read [the audit guide](references/audit-guide.md) before reporting or editing
    config, topology, templates, skill catalogs, or deployed config.
@@ -32,7 +32,7 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 4. If asked to fix the repository, edit the source files directly; if asked
    only to audit, return findings and concrete recommended patches.
 
-## DO NOT USE FOR
+## 3. DO NOT USE FOR
 
 - Generic CLI usage questions.
 - Live inbox/reply/session workflow operation; use `postman-session-operator`.

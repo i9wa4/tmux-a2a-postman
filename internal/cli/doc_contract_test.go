@@ -373,25 +373,27 @@ func TestMarkdownFormatterHeadingPolicyDocContract(t *testing.T) {
 
 	assertContainsAllNormalized(
 		t, flake,
-		"markdown-formatter-docs",
+		"markdown-formatter = {",
+		"name = \"markdown-formatter (all tracked markdown)\";",
 		"entry = \"${markdownFormatter} --write\";",
-		"files = \"^docs/.*\\\\.md$\";",
-		"markdown-formatter-stable-headings",
-		"entry = \"${markdownFormatter} --no-heading-numbering --write\";",
-		"excludes = [ \"^docs/\" ];",
+		"types = [ \"markdown\" ];",
 	)
+	assertNotContainsNormalized(t, flake, "markdown-formatter-docs")
+	assertNotContainsNormalized(t, flake, "markdown-formatter-stable-headings")
+	assertNotContainsNormalized(t, flake, "--no-heading-numbering")
 	assertContainsAllNormalized(
 		t, contributing,
-		"`docs/**/*.md` is long-form reference material and is formatted with heading numbering enabled.",
-		"`RELEASING.md`, plus `skills/**/*.md`, are formatted with heading numbering disabled",
+		"`markdown-formatter` covers all tracked Markdown files with its default heading-numbering behavior enabled.",
+		"The repository does not maintain separate root-doc or skill exceptions.",
+		"Ignored or generated files such as `.pre-commit-config.yaml` are not repository Markdown policy surfaces.",
 	)
 
 	assertContainsNormalized(t, runtimeDifferences, "## 1. Status Vocabulary")
 	assertContainsNormalized(t, runtimeDifferences, "## 4. Verification")
-	assertContainsNormalized(t, readme, "## Concept")
-	assertNotContainsNormalized(t, readme, "## 1. Concept")
-	assertContainsNormalized(t, operatorSkill, "## USE FOR")
-	assertNotContainsNormalized(t, operatorSkill, "## 1. USE FOR")
+	assertContainsNormalized(t, readme, "## 1. Concept")
+	assertNotContainsNormalized(t, readme, "## Concept")
+	assertContainsNormalized(t, operatorSkill, "## 1. USE FOR")
+	assertNotContainsNormalized(t, operatorSkill, "## USE FOR")
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {

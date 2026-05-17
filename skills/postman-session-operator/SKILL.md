@@ -11,7 +11,7 @@ description: |
 
 **UTILITY SKILL**. INVOKES: status and mailbox commands.
 
-## USE FOR
+## 1. USE FOR
 
 - Interpret pending, waiting, blocked, stale, and dead-letter state.
 - Claim unread mail, read complete archives, and close exact requests.
@@ -19,7 +19,7 @@ description: |
   historical lookup. Use `--path` for the stored Markdown path and `--body` for
   sender-authored body text.
 
-## Procedure
+## 2. Procedure
 
 1. Use `tmux-a2a-postman get-status` for on-demand decisions, not polling.
    After delegation/reply-required mail, wait for pane notifications, exact
@@ -39,13 +39,13 @@ description: |
    `postman-config-auditor` work. Details:
    [Session Flow](references/session-flow.md).
 
-## DO NOT USE FOR
+## 3. DO NOT USE FOR
 
 - First-contact message sending; use `postman-send-message`.
 - Config, topology, or skill catalog audits; use `postman-config-auditor`.
 - Infrastructure management or low-level daemon repair.
 
-## Troubleshooting
+## 4. Troubleshooting
 
 If status remains unavailable or delivery stays stuck after route checks, send
 `BLOCKED` to the operator instead of manually editing mailbox files.

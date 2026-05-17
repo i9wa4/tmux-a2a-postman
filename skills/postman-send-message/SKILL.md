@@ -16,12 +16,12 @@ Send first-contact messages to another node.
 
 **UTILITY SKILL**. INVOKES: `tmux-a2a-postman send-heredoc`.
 
-## USE FOR
+## 1. USE FOR
 
 - Send an initial message to another configured node.
 - Preserve heredoc body text exactly.
 
-## Procedure
+## 2. Procedure
 
 1. Use quoted heredoc stdin:
 
@@ -41,14 +41,14 @@ Send first-contact messages to another node.
    notifies the recipient pane; use status only for explicit status requests,
    timeout/watchdog boundaries, or suspected delivery failure.
 
-## DO NOT USE FOR
+## 3. DO NOT USE FOR
 
 - Inbox reads, reply-required closure, or status decisions; use
   `postman-session-operator`.
 - Topology or route problems; use `postman-config-auditor`.
 - Infrastructure management or low-level repair.
 
-## Troubleshooting
+## 4. Troubleshooting
 
 If delivery fails, trust the command error over stale footer text and audit the
 current route before retrying.
