@@ -35,7 +35,14 @@ When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 - If Nix reports a `vendorHash` mismatch, copy the reported `got:` hash into
   `flake.nix` and rerun the build
 
-## 2. Agent Skills
+## 2. Markdown Formatting
+
+`docs/**/*.md` is long-form reference material and is formatted with heading
+numbering enabled. Root public docs such as `README.md`, `CONTRIBUTING.md`, and
+`RELEASING.md`, plus `skills/**/*.md`, are formatted with heading numbering
+disabled so public anchors and skill section names stay stable.
+
+## 3. Agent Skills
 
 Validate publishable skill metadata with:
 
@@ -48,7 +55,7 @@ command creates a tag and GitHub Release itself. The repository release flow
 uses the pushed `v*` tag plus GoReleaser, while `gh skill install` resolves
 skills from the published repository tag or release.
 
-## 3. Releases
+## 4. Releases
 
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.

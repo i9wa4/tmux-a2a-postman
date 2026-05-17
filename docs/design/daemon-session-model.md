@@ -2,14 +2,14 @@
 
 Design document clarifying the intended daemon/session architecture.
 
-## Four Principles
+## 1. Four Principles
 
-### 1. Daemon Location Independence
+### 1.1. Daemon Location Independence
 
 A daemon can run from ANY tmux pane or session. There is no requirement for the
 daemon to reside in the same tmux session as the agent nodes it serves.
 
-### 2. Single-Daemon Operator Model
+### 1.2. Single-Daemon Operator Model
 
 The default operator workflow assumes one daemon process per Unix user. Startup
 first rejects any already-live `postman.pid` owned by the current user anywhere
@@ -18,7 +18,7 @@ lock so concurrent starts cannot race into two daemons. A different Unix user's
 daemon is still treated as alive for cleanup safety, but it is not treated as
 the current user's owner.
 
-### 3. Exclusive Session Ownership
+### 1.3. Exclusive Session Ownership
 
 Only ONE daemon may have a given tmux session set to ON at a time. This
 constraint is not just a later enable-time guard. The per-user startup lock is
@@ -35,12 +35,12 @@ still live, is owned by the current Unix user, and the session's
 session still counts as owned while it is running, even before any later
 cross-session discovery.
 
-### 4. Cross-Daemon Node Discovery
+### 1.4. Cross-Daemon Node Discovery
 
 Nodes in a tmux session are discoverable by any daemon regardless of where that
 daemon runs from. Discovery is based on tmux pane metadata, not daemon locality.
 
-## Design Intent
+## 2. Design Intent
 
 These principles correct stale documentation that implied a same-session
 constraint between daemon and agent nodes while keeping the default operator

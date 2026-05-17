@@ -13,7 +13,7 @@ shell template expansion in `internal/template/template.go` is also excluded
 because it is not a hardcoded tmux command, but it remains a trust boundary and
 must not become a hidden daemon tmux automation path.
 
-## Policy
+## 1. Policy
 
 - New daemon-side `tmux` executions must document command family, purpose,
   trigger, expected cadence, and expected cost in this file.
@@ -29,7 +29,7 @@ must not become a hidden daemon tmux automation path.
   timeout, logging, and test hooks. Today only discovery has a local runner
   abstraction; most other paths call `exec.Command` directly.
 
-## Polling and Trigger Summary
+## 2. Polling and Trigger Summary
 
 | Surface                  | Owner                                                                 | Default cadence                                                                                                   | tmux work                                                                                              | Minimization note                                                                                |
 | ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
@@ -40,7 +40,7 @@ must not become a hidden daemon tmux automation path.
 | Inbox swallow check      | `daemon.RunDaemonLoop` -> `handleInboxCheckTick`                      | `30s`                                                                                                             | no tmux unless redelivery fires; redelivery uses normal pane notification commands                     | Keep detection filesystem/idle-state based; only delivery touches tmux.                          |
 | Startup and activation   | `cli.RunStart`, `activateStartupSessions`, TUI `send_ping` activation | Once at daemon start, startup re-discovery after `2s`, or operator-triggered activation                           | session marker writes, pane reclaim/claim, discovery, preclaim scans                                   | Acceptable burst at startup; avoid turning reclaim/activation into a periodic loop.              |
 
-## Command Inventory
+## 3. Command Inventory
 
 | Command family and args                                                                                                                                                                                 | Owner function/file                                                                                            | Trigger and cadence                                                                                                                                       | Purpose                                                                                          | Ownership and minimization notes                                                                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -71,7 +71,7 @@ must not become a hidden daemon tmux automation path.
 | `tmux list-panes -a -F "#{pane_id}:#{pane_active}:#{pane_activity}"`, `tmux list-windows -a -F "#{window_id}:#{window_active}:#{window_panes}"`, `tmux display-message -p -t <pane> "#{window_active}"` | `uinode.GetPaneInfo`, `internal/uinode/monitor.go`                                                             | No current production caller except tests                                                                                                                 | Single-pane visibility helper                                                                    | Legacy/unused production surface. If reused, prefer `GetAllPanesInfo` or a batched call.                                                                                 |
 | `tmux list-panes -a -F "#{pane_id} #{pane_title}"`                                                                                                                                                      | `uinode.FindTargetPaneID`, `internal/uinode/monitor.go`                                                        | No current production caller except tests                                                                                                                 | Find pane id by title                                                                            | Legacy/unused production surface. Avoid reintroducing title-only lookup into daemon loops.                                                                               |
 
-## Current Hot Spots
+## 4. Current Hot Spots
 
 The current daemon has four regular sources of tmux load:
 
@@ -88,7 +88,7 @@ calls, the per-inactive-pane `display-message "#{window_active}"` calls, the
 per-node `capture-pane` calls, and the status relay's per-session
 `DiscoverNodesWithCollisions` plus `list-windows`/per-window `list-panes`.
 
-## Existing Test Coverage
+## 5. Existing Test Coverage
 
 The audited command families are mostly covered with fake `tmux` scripts in unit
 tests rather than by a shared runner. Notable coverage includes daemon
@@ -97,7 +97,7 @@ tests, startup activation tests, session-status tests, and config/session-owner
 tests. When a command family moves into a new daemon hot path, add a test that
 asserts the expected `tmux` call count or sequence.
 
-## Known Follow-ups
+## 6. Known Follow-ups
 
 - Make the status relay consume the daemon's shared node snapshot and projected
   pane activity instead of rediscovering global nodes for each session.

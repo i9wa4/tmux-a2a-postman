@@ -3,7 +3,7 @@
 `internal/config/postman.default.toml` is the SSOT for user-configurable
 defaults.
 
-## Policy
+## 1. Policy
 
 - `DefaultConfig()` initializes structural and derived containers only:
   `Edges`, `Nodes`, `NodeOrder`, `PingSkillCatalogs`, and
@@ -48,7 +48,7 @@ defaults.
 - Non-configurable implementation timings must be named constants in code, not
   inline literals or hidden public config fields.
 
-## Why
+## 2. Why
 
 Operators should not need a large generated TOML file just to run postman. A
 minimal setup can keep topology in Markdown and inherit all behavior from the
@@ -62,7 +62,7 @@ Claude Code and Codex CLI runtime differences are tracked separately in
 Do not encode runtime-specific behavior in `postman.toml` defaults unless a
 follow-up issue explicitly changes the public config surface.
 
-## Regression Guards
+## 3. Regression Guards
 
 - `internal/config/config_test.go` asserts `DefaultConfig()` stays limited to
   structural containers.
@@ -71,7 +71,7 @@ follow-up issue explicitly changes the public config surface.
 - Config tests assert CWD-local `.tmux-a2a-postman/` files do not override XDG
   or explicit config.
 
-## Minimal Topology
+## 4. Minimal Topology
 
 ````markdown
 ## `edges`

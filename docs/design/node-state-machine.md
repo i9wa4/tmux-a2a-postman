@@ -31,7 +31,7 @@ Task identity is intentionally not transport metadata. A task may exist in an
 external planner, issue, or markdown artifact, but the daemon does not generate
 or interpret `task_id`.
 
-### Naming Rationale
+### 1.1. Naming Rationale
 
 Identity names are chosen to make lifecycle size visible to a new operator:
 

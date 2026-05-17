@@ -4,7 +4,7 @@ Schema version 4 is the terminology cutover for the canonical status contract.
 The public commands were already `get-status` and `get-status-oneline`; the
 machine-facing contract now uses status names too.
 
-## Canonical Surfaces
+## 1. Canonical Surfaces
 
 Current writers and live machine consumers use:
 
@@ -21,7 +21,7 @@ Do not add health-named aliases for the v4 contract. A status consumer should
 not need to know the old type names, TUI detail key, or current writer event
 name.
 
-## Legacy Archive Replay
+## 2. Legacy Archive Replay
 
 The only retained health-named machine literal is
 `session_health_snapshot`, and it is retained solely as a read-only archive
@@ -38,7 +38,7 @@ Replay behavior:
 This is archive replay support, not public compatibility. Do not document or
 emit `session_health_snapshot` as a supported producer surface.
 
-## Test Strategy
+## 3. Test Strategy
 
 Status contract changes should update:
 

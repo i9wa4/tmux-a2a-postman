@@ -364,6 +364,36 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 	}
 }
 
+func TestMarkdownFormatterHeadingPolicyDocContract(t *testing.T) {
+	flake := readRepoFile(t, "flake.nix")
+	contributing := readRepoFile(t, "CONTRIBUTING.md")
+	runtimeDifferences := readRepoFile(t, "docs/agent-runtime-feature-differences.md")
+	readme := readRepoFile(t, "README.md")
+	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+
+	assertContainsAllNormalized(
+		t, flake,
+		"markdown-formatter-docs",
+		"entry = \"${markdownFormatter} --write\";",
+		"files = \"^docs/.*\\\\.md$\";",
+		"markdown-formatter-stable-headings",
+		"entry = \"${markdownFormatter} --no-heading-numbering --write\";",
+		"excludes = [ \"^docs/\" ];",
+	)
+	assertContainsAllNormalized(
+		t, contributing,
+		"`docs/**/*.md` is long-form reference material and is formatted with heading numbering enabled.",
+		"`RELEASING.md`, plus `skills/**/*.md`, are formatted with heading numbering disabled",
+	)
+
+	assertContainsNormalized(t, runtimeDifferences, "## 1. Status Vocabulary")
+	assertContainsNormalized(t, runtimeDifferences, "## 4. Verification")
+	assertContainsNormalized(t, readme, "## Concept")
+	assertNotContainsNormalized(t, readme, "## 1. Concept")
+	assertContainsNormalized(t, operatorSkill, "## USE FOR")
+	assertNotContainsNormalized(t, operatorSkill, "## 1. USE FOR")
+}
+
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)")

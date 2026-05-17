@@ -9,9 +9,9 @@ complete archived Markdown body before deciding that no action is needed.
 All daemon PING mail is written through the common PING sender, so it also
 sends the normal pane notification when inbox delivery succeeds.
 
-## Events
+## 1. Events
 
-### Startup Auto-PING
+### 1.1. Startup Auto-PING
 
 - Trigger: daemon bootstrap sees already discovered nodes.
 - Timing: queued at startup, due after `auto_ping_delay_seconds` (default
@@ -23,7 +23,7 @@ sends the normal pane notification when inbox delivery succeeds.
 - Notes: journal reason is `startup`. The embedded default
   `ui_node = "messenger"` does not narrow by itself.
 
-### New Node Auto-PING
+### 1.2. New Node Auto-PING
 
 - Trigger: a daemon scan, post wake-up, or session activation discovers a node
   that was not in the known-node set.
@@ -34,7 +34,7 @@ sends the normal pane notification when inbox delivery succeeds.
 - Notes: journal reason is `discovered`. A node that disappeared and later
   returns is treated as newly discovered.
 
-### Replacement Pane PING
+### 1.3. Replacement Pane PING
 
 - Trigger: the same node key reappears with a new pane ID after its old pane
   exits.
@@ -45,7 +45,7 @@ sends the normal pane notification when inbox delivery succeeds.
 - Notes: journal reason is `pane_restart`. The TUI also gets a
   `pane_restart` event.
 
-### Operator TUI PING
+### 1.4. Operator TUI PING
 
 - Trigger: the operator presses `p` on the selected session in the daemon TUI.
 - Timing: sent immediately after cached or fresh discovery. If needed, the
@@ -55,7 +55,7 @@ sends the normal pane notification when inbox delivery succeeds.
 - Notes: not limited by startup `ui_node`. If the session is owned by another
   daemon, the send is blocked.
 
-### Compaction Recovery
+### 1.5. Compaction Recovery
 
 - Trigger: pane capture detects a newer Claude or Codex compaction marker.
 - Timing: checked every `pane_capture_interval_seconds` (default `5`) and
@@ -72,7 +72,7 @@ because the target inbox queue is full, the pending auto-PING remains in the
 journal and the daemon tries again on later scans. One in-flight auto-PING per
 node is allowed at a time.
 
-## Non-PING Traffic
+## 2. Non-PING Traffic
 
 Some traffic can look like ping noise but does not create daemon PING mail.
 
@@ -90,7 +90,7 @@ Some traffic can look like ping noise but does not create daemon PING mail.
   directories. The activation step itself does not send mail; discovery can
   queue a later auto-PING.
 
-## `skill_path.inject`
+## 3. `skill_path.inject`
 
 `skill_path.inject` controls where generated skill catalogs are appended. It
 does not create new ping events.
@@ -107,7 +107,7 @@ PING catalog paths must be explicit user-level paths such as `~/...` or
 absolute paths. Repo-local relative paths remain valid only for normal role
 catalogs.
 
-## Noise Checks
+## 4. Noise Checks
 
 Expected PING mail should line up with one of the events above. Check the
 stored message metadata and daemon logs before treating it as suspicious:

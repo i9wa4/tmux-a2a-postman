@@ -330,10 +330,21 @@
                 entry = "${pkgs.rumdl}/bin/rumdl check --config ${rumdlConfig}";
                 types = [ "markdown" ];
               };
-              markdown-formatter = {
+              # Long-form design/reference docs use numbered headings. Public
+              # root docs and skills keep stable headings because their anchors
+              # and frontmatter-adjacent sections are external-facing surfaces.
+              markdown-formatter-docs = {
                 enable = true;
-                name = "markdown-formatter";
+                name = "markdown-formatter (docs headings numbered)";
+                entry = "${markdownFormatter} --write";
+                files = "^docs/.*\\.md$";
+                types = [ "markdown" ];
+              };
+              markdown-formatter-stable-headings = {
+                enable = true;
+                name = "markdown-formatter (stable public headings)";
                 entry = "${markdownFormatter} --no-heading-numbering --write";
+                excludes = [ "^docs/" ];
                 types = [ "markdown" ];
               };
 

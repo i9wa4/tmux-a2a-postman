@@ -8,7 +8,7 @@ before an issue is closed.
 Scope is documentation and operating policy only. Runtime behavior changes need
 a separate issue.
 
-## Status Vocabulary
+## 1. Status Vocabulary
 
 | Status                 | Meaning                                                                   |
 | ---------------------- | ------------------------------------------------------------------------- |
@@ -18,7 +18,7 @@ a separate issue.
 | Unsupported            | The repo does not plan to support that runtime behavior.                  |
 | Monitor                | The behavior is owned by the external runtime and must be rechecked.      |
 
-## Comparison Table
+## 2. Comparison Table
 
 | Feature / behavior area              | Claude Code behavior                                                                                                                                                                                                                                                                   | Codex CLI behavior                                                                                                                                                                                                                                                                     | Parity status          | Source / reference                                                                                                                                                                            | Owner / update trigger                                                                                       | Last reviewed date |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ |
@@ -47,7 +47,7 @@ their selected skills are combined into one target catalog. Duplicate rendered
 skill names are deduped, and later entries win. Runtime names do not filter
 `skill_path` catalogs.
 
-## Update Workflow
+## 3. Update Workflow
 
 1. When a task artifact, review, release note, or local debugging session finds
    a Claude Code versus Codex CLI difference, add or update a row in the
@@ -67,7 +67,7 @@ skill names are deduped, and later entries win. Runtime names do not filter
 7. Update the `Last reviewed` date for every row whose source was rechecked,
    even if the behavior did not change.
 
-## Verification
+## 4. Verification
 
 Before publishing documentation or GitHub text about runtime differences:
 

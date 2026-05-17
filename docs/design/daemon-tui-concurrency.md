@@ -4,7 +4,7 @@ This document maps the daemon, daemon-submit, delivery, and TUI update paths so
 the implementation can use Go concurrency where work is independent while
 keeping shared state serialized where correctness depends on ordering.
 
-## Ownership model
+## 1. Ownership model
 
 The daemon runtime owns mutable node/session state in a single event loop. That
 loop is the serialization point for:
@@ -18,7 +18,7 @@ loop is the serialization point for:
 Work may run concurrently when it does not mutate this runtime state directly,
 or when results return to the event loop before shared state is updated.
 
-## Path inventory
+## 2. Path inventory
 
 | Component/path             | Mode after change                         | Trigger/cadence                         | Shared state                               | Blocking IO/tmux/filesystem calls                          | Backpressure                              | Safe parallel boundary                         |
 | -------------------------- | ----------------------------------------- | --------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
@@ -33,7 +33,7 @@ or when results return to the event loop before shared state is updated.
 | Swallowed-message redrive  | Inline scan, delivery helper call         | inbox check ticker                      | idle tracker and daemon state              | inbox scans, pane notification                             | ticker cadence                            | notification buffer mutex protects tmux buffer |
 | Auto-ping delivery         | Goroutine per active node                 | discovery, pane restart, startup        | active auto-ping map                       | tmux notification, auto-ping projection                    | per-node active guard                     | different nodes may ping concurrently          |
 
-## Regression contracts
+## 3. Regression contracts
 
 | Contract                         | Guardrail                                                                 |
 | -------------------------------- | ------------------------------------------------------------------------- |
@@ -46,7 +46,7 @@ or when results return to the event loop before shared state is updated.
 | Post delivery completion         | Route reservation and post active guards prevent duplicate completion.    |
 | Notification buffer correctness  | tmux `set-buffer`/`paste-buffer` remains protected by notification mutex. |
 
-## Serialized by design
+## 4. Serialized by design
 
 The following sections should remain serialized unless they are moved behind an
 explicit result channel back into the daemon event loop:
@@ -61,7 +61,7 @@ explicit result channel back into the daemon event loop:
 Parallelizing these directly would risk data races, duplicate delivery
 completion, stale node status, or lost watcher coverage.
 
-## Parallelized paths
+## 5. Parallelized paths
 
 The Go-like concurrency shape is:
 
@@ -82,7 +82,7 @@ The Go-like concurrency shape is:
 This keeps CPU and IO work concurrent without allowing unbounded goroutines or
 direct shared-state mutation outside the owning loop.
 
-## Backpressure rules
+## 6. Backpressure rules
 
 - Daemon-submit concurrency is capped by `daemonSubmitWorkerLimit`.
 - Saturated daemon-submit workers apply filesystem backpressure: the request
@@ -94,7 +94,7 @@ direct shared-state mutation outside the owning loop.
 - Non-session status events may still be dropped if the TUI is not consuming;
   this prevents a stale UI client from blocking the relay.
 
-## Unsafe parallelization boundaries
+## 7. Unsafe parallelization boundaries
 
 Do not parallelize these paths without adding an ownership handoff:
 
