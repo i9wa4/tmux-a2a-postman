@@ -44,13 +44,17 @@ Important merge rules:
 - `inject: ping` generates catalogs for every daemon PING. `inject:
   compaction_ping` generates catalogs only for compaction-triggered daemon
   PINGs. A YAML list containing `ping` and `compaction_ping` routes the same
-  selected catalog to both targets. Non-empty `inject` catalogs stay out of
-  `common_template`.
+  selected catalog to both targets. Flow-style YAML lists such as
+  `inject: [ping, compaction_ping]` are supported for deployed configs, but
+  docs and examples should prefer block-list style. Non-empty `inject` catalogs
+  stay out of `common_template`.
 - PING entries must use `~/...` or absolute paths. Repo-local relative paths
   remain valid only for normal role catalogs.
 - Rendered catalogs are unique by skill frontmatter `name`; later path entries
   override earlier entries with the same rendered name. Multiple configured
   paths are combined when they exist; runtime names do not filter catalogs.
+  Path order controls duplicate precedence and the rendered source-path display
+  order.
 - Nodes referenced by valid `edges` are materialized automatically, even when no
   node template is defined.
 - A `postman.toml` file is optional. Treat a TOML file that only restates
@@ -92,6 +96,8 @@ Important merge rules:
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
 - For `inject: ping`, `inject: compaction_ping`, or a list containing either
   mode, confirm the intent and require `~/...` or absolute paths.
+- For PING timing, trigger source, and operator guidance, use repo doc
+  `docs/ping-events.md` as the source of truth.
 - Prefer omitted `skills` for all-skills catalogs in new or example configs.
   Treat scalar `skills: all` as legacy-only unless compatibility with an
   existing deployed config is the explicit reason.

@@ -343,6 +343,9 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"`inject: ping` stores the generated catalog for every daemon PING",
 		"`inject: compaction_ping` stores the generated catalog for compaction-triggered daemon PING",
 		"a YAML list containing `ping` and `compaction_ping` routes the same selected catalog to each listed daemon PING target.",
+		"Flow-style YAML lists such as `inject: [ping, compaction_ping]` are accepted",
+		"Path order controls duplicate precedence and the rendered source-path display order.",
+		"PING event timing",
 	)
 
 	publicDocs := map[string]string{

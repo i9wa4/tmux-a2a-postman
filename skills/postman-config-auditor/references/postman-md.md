@@ -59,11 +59,15 @@ Rules:
 - For `skill_path` mappings, a YAML list containing `ping` and
   `compaction_ping` routes the same selected catalog to each listed daemon PING
   target.
+- Flow-style YAML lists such as `inject: [ping, compaction_ping]` are accepted
+  by the parser, but examples and documentation should prefer block-list style
+  for multi-inject entries.
 - `runtime` is unsupported under `skill_path`; list explicit path entries for
   the skill catalogs that should be included.
 - Multiple configured paths are combined when they exist; duplicate skills are
   deduped by `SKILL.md` frontmatter `name`, and the later `skill_path` entry
-  wins when names collide.
+  wins when names collide. Path order controls duplicate precedence and the
+  rendered source-path display order.
 - PING paths must be global/user-level:
   `~/...` or absolute. Repo-local relative paths are invalid for PING catalogs
   and remain valid only for normal role catalogs.
@@ -119,12 +123,16 @@ role context, so use them for compact runtime-agnostic catalogs only.
 `skill_path` entries with `inject: compaction_ping` keep their list out of
 `common_template` and append it only to daemon PING role content when pane
 capture detects a context-compaction marker. `inject` may also be a YAML list;
-the same selected catalog is routed to each listed target. PING catalog entries
-are not selected by runtime; list explicit `~/...` or absolute skill tree paths
-for the catalogs that should be included. If multiple configured paths exist,
-their selected skills are combined into one catalog for the target. Skills are
-deduped by `SKILL.md` frontmatter `name`; when names collide, the later
-`skill_path` entry wins. Repo-local relative paths are invalid in this mode.
+the same selected catalog is routed to each listed target. Flow-style YAML
+lists such as `inject: [ping, compaction_ping]` are valid, but examples should
+prefer block-list style. PING catalog entries are not selected by runtime; list
+explicit `~/...` or absolute skill tree paths for the catalogs that should be
+included. If multiple configured paths exist, their selected skills are
+combined into one catalog for the target. Skills are deduped by `SKILL.md`
+frontmatter `name`; when names collide, the later `skill_path` entry wins.
+Path order also controls the rendered source-path display order. Repo-local
+relative paths are invalid in this mode. See repo doc `docs/ping-events.md` for
+PING event timing and trigger details.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 
