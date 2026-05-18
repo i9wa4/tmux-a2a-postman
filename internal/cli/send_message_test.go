@@ -1249,6 +1249,79 @@ func TestRunSendMessage_DefaultEnvelopePreservesSenderMarkdownAfterSeparator(t *
 	}
 }
 
+func TestRunSendMessage_DefaultEnvelopeNormalizesRecipientInstructionHeadings(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := "[postman]\n" +
+		"edges = [\"messenger --- worker\"]\n\n" +
+		"[messenger]\n" +
+		"role = \"messenger\"\n\n" +
+		"[worker]\n" +
+		"role = \"worker\"\n" +
+		"template = \"\"\"### 2.1. Recipient Rule\n\n" +
+		"#### Detail\n\n" +
+		"```text\n" +
+		"### keep role code literal\n" +
+		"```\n" +
+		"\"\"\"\n"
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := "# User Request\n\n## Details\n"
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, body, []string{
+			"--config", configPath,
+			"--context-id", "ctx-heading-envelope",
+			"--to", "worker",
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	contentBytes, err := os.ReadFile(filepath.Join(tmpDir, "ctx-heading-envelope", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	content := string(contentBytes)
+	for _, want := range []string{
+		"## Recipient Instructions\n\n### 2.1. Recipient Rule",
+		"\n#### Detail",
+		"```text\n### keep role code literal\n```",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("content missing %q:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{
+		"## Recipient Instructions\n\n##### 2.1. Recipient Rule",
+		"\n###### Detail",
+		"```text\n##### keep role code literal",
+	} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("content contains unwanted %q:\n%s", unwanted, content)
+		}
+	}
+	senderMessageIndex := strings.Index(content, "## Sender Message")
+	if senderMessageIndex < 0 {
+		t.Fatalf("content missing sender message section:\n%s", content)
+	}
+	separator := "\n---\n\n"
+	separatorOffset := strings.Index(content[senderMessageIndex:], separator)
+	if separatorOffset < 0 {
+		t.Fatalf("content missing visible body separator:\n%s", content)
+	}
+	bodyAfterSeparator := content[senderMessageIndex+separatorOffset+len(separator):]
+	if bodyAfterSeparator != body {
+		t.Fatalf("sender body after separator changed:\n got %q\nwant %q\ncontent:\n%s", bodyAfterSeparator, body, content)
+	}
+}
+
 func TestRunSendMessage_CustomTemplatePlaceholderAfterFrontmatterKeepsFooterVisible(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

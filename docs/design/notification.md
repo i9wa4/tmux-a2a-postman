@@ -112,9 +112,13 @@ keeps recipient instructions, reply guidance, and sender-authored content
 separate. Generated transport/header content appears first under
 `Recipient Instructions` and `Sender Message`; then a visible `---` separator
 introduces the original sender body. Sender body Markdown is inserted verbatim
-after that separator, so headings such as `#` and `##` are not demoted or
-rewritten. Recipient role instructions are still demoted when inserted into the
-generated envelope so they stay visually inside `Recipient Instructions`.
+after that separator, so headings such as `#` and `##` are not normalized or
+rewritten. Recipient role instructions are normalized when inserted into the
+generated envelope: their shallowest ATX heading becomes `###`, relative
+nesting is preserved, and fenced code blocks are left untouched. This keeps
+embedded `postman.md` instructions visually inside `Recipient Instructions`
+without producing `#####` headings immediately under the generated `##`
+envelope heading.
 The default message footer and daemon PING template render `You can talk to:`
 as a concise bullet list of adjacent nodes. When a node has `postman.md` or
 TOML `role` text, only the first non-empty role line is shown as the summary;

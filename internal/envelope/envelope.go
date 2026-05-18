@@ -260,7 +260,7 @@ func BuildRoleContent(cfg *config.Config, nodeName string) string {
 }
 
 // BuildRoleContentWithAppendix returns canonical role content with caller-scoped
-// appendix material appended before heading demotion. This keeps normal role
+// appendix material appended before heading normalization. This keeps normal role
 // rendering compact while allowing special daemon paths, such as compaction
 // recovery pings, to add extra instructions.
 func BuildRoleContentWithAppendix(cfg *config.Config, nodeName string, appendix string) string {
