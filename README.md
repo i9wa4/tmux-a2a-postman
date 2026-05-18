@@ -267,8 +267,10 @@ After changing `postman.md`, `postman.toml`, or `nodes/*` later, restart the
 daemon so topology, role templates, daemon defaults, and skill catalogs are
 reloaded:
 
+Press `q` in the daemon TUI to shut down the running daemon, then start it
+again:
+
 ```sh
-tmux-a2a-postman stop
 tmux-a2a-postman start
 ```
 
