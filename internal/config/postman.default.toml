@@ -177,8 +177,8 @@ You can talk to:
 # The <!-- write here --> placeholder is replaced with sender-authored Markdown
 # exactly after a visible --- separator. Generated footer guidance is kept
 # before that separator. ATX headings in {template} and {role_content} are
-# demoted when inserted so generated instructions remain inside the surrounding
-# envelope section; sender-authored Markdown is not demoted.
+# normalized when inserted so generated instructions remain inside the
+# surrounding envelope section; sender-authored Markdown is not rewritten.
 draft_template = """---
 params:
   contextId: {context_id}

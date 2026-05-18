@@ -323,7 +323,7 @@ func TestContactSectionTruncatesLongRoleSummary(t *testing.T) {
 	}
 }
 
-func TestMarkdownSectionContentDemotesATXHeadingsOutsideFences(t *testing.T) {
+func TestMarkdownSectionContentNormalizesATXHeadingsOutsideFences(t *testing.T) {
 	input := "# Top\n\n## Child\n\n```sh\n# keep shell comment\n```\n\n###### Deep\n"
 
 	got := MarkdownSectionContent(input)
@@ -342,6 +342,31 @@ func TestMarkdownSectionContentDemotesATXHeadingsOutsideFences(t *testing.T) {
 		"\n# Top",
 		"\n## Child",
 		"```sh\n### keep shell comment",
+	} {
+		if strings.Contains("\n"+got, unwanted) {
+			t.Fatalf("MarkdownSectionContent() contains unwanted %q:\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestMarkdownSectionContentNormalizesExistingTemplateHeadingsUnderEnvelope(t *testing.T) {
+	input := "### 2.1. Recipient Rule\n\n#### Detail\n\n```text\n### keep code heading\n```\n"
+
+	got := MarkdownSectionContent(input)
+
+	for _, want := range []string{
+		"### 2.1. Recipient Rule",
+		"#### Detail",
+		"```text\n### keep code heading\n```",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MarkdownSectionContent() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"\n##### 2.1. Recipient Rule",
+		"\n###### Detail",
+		"```text\n##### keep code heading",
 	} {
 		if strings.Contains("\n"+got, unwanted) {
 			t.Fatalf("MarkdownSectionContent() contains unwanted %q:\n%s", unwanted, got)
@@ -384,9 +409,9 @@ func TestMarkdownSectionContentPreservesFenceLikeContentLines(t *testing.T) {
 				"",
 			}, "\n"),
 			wantCode:   "~~~literal fence text\n# still code",
-			wantBody:   "~~~\n#### outside",
+			wantBody:   "~~~\n### outside",
 			unwanted:   "~~~literal fence text\n### still code",
-			wantDemote: "#### outside",
+			wantDemote: "### outside",
 		},
 	}
 
