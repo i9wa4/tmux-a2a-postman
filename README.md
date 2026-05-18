@@ -267,14 +267,12 @@ After changing `postman.md`, `postman.toml`, or `nodes/*` later, restart the
 daemon so topology, role templates, daemon defaults, and skill catalogs are
 reloaded:
 
+Press `q` in the daemon TUI to shut down the running daemon, then start it
+again:
+
 ```sh
-tmux-a2a-postman stop
 tmux-a2a-postman start
 ```
-
-`tmux-a2a-postman stop` is the normal CLI shutdown path. If you are already in
-the daemon TUI, pressing `q` exits the same daemon directly; use that as the
-manual shutdown path if `stop` cannot identify the owned daemon.
 
 Send a message from an agent pane whose title matches a configured role:
 
