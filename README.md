@@ -272,6 +272,10 @@ tmux-a2a-postman stop
 tmux-a2a-postman start
 ```
 
+`tmux-a2a-postman stop` is the normal CLI shutdown path. If you are already in
+the daemon TUI, pressing `q` exits the same daemon directly; use that as the
+manual shutdown path if `stop` cannot identify the owned daemon.
+
 Send a message from an agent pane whose title matches a configured role:
 
 ```sh
