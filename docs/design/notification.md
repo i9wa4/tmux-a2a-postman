@@ -159,5 +159,10 @@ node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline
 `:::ui_node`, frontmatter, and TOML remain explicit override surfaces. When
 empty, startup auto-PING may target all discovered nodes. When explicitly set,
 startup auto-PING is limited to matching roles discovered in enabled sessions.
+The narrowing is intentional startup-noise control: an explicit non-empty
+`ui_node` declares the human-facing bootstrap entry point, so the initial daemon
+PING does not fan out to non-UI agents and consume context before a human or
+operator involves them. Leaving `ui_node` unset or explicitly empty means no
+startup entry point was chosen, so startup auto-PING may fan out.
 `auto_enable_new_sessions` defaults to true, so a single user daemon can
 discover project sessions that already have configured node panes.

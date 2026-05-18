@@ -60,7 +60,8 @@ func RunStop(stdout io.Writer, args []string) error {
 		return err
 	}
 
-	if !config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, sessionName) {
+	daemonSessionName := config.FindContextSessionName(baseDir, contextID)
+	if daemonSessionName == "" || !config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, daemonSessionName) {
 		return json.NewEncoder(stdout).Encode(stopOutput{
 			Status:    "not_owned",
 			Session:   sessionName,
@@ -68,7 +69,7 @@ func RunStop(stdout io.Writer, args []string) error {
 		})
 	}
 
-	pidPath := filepath.Join(baseDir, contextID, sessionName, "postman.pid")
+	pidPath := filepath.Join(baseDir, contextID, daemonSessionName, "postman.pid")
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
 		return fmt.Errorf("reading pid file %s: %w", pidPath, err)
