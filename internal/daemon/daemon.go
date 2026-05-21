@@ -346,15 +346,23 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	swallowedRetryCount           map[string]int             // Issue #282: inbox file path -> re-delivery attempt count
 	swallowedRetryCountMu         sync.Mutex                 // Issue #282
+	clock                         func() time.Time
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 // drainWindowSeconds configures the startup drain window during which
 // IsSessionEnabled returns true for all sessions (#217).
 func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
+	return newDaemonStateWithClock(drainWindowSeconds, contextID, time.Now)
+}
+
+func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock func() time.Time) *DaemonState {
+	if clock == nil {
+		clock = time.Now
+	}
 	return &DaemonState{
 		contextID:                     contextID,
-		startedAt:                     time.Now(),
+		startedAt:                     clock(),
 		drainWindow:                   time.Duration(drainWindowSeconds * float64(time.Second)),
 		enabledSessions:               make(map[string]bool),
 		prevPaneStates:                make(map[string]uinode.PaneInfo), // Issue #98
@@ -362,7 +370,15 @@ func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		reservedDeliveryByRoute:       make(map[string]time.Time),
 		swallowedRetryCount:           make(map[string]int),
+		clock:                         clock,
 	}
+}
+
+func (ds *DaemonState) now() time.Time {
+	if ds.clock == nil {
+		return time.Now()
+	}
+	return ds.clock()
 }
 
 func (ds *DaemonState) reserveDeliveryRoute(route string, gap time.Duration, now time.Time) (time.Duration, time.Time, bool) {
@@ -649,7 +665,7 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessions[sessionName] = enabled
 	ds.enabledSessionsMu.Unlock()
 	log.Printf("postman: session state change: session=%s enabled=%v source=toggle ts=%s\n",
-		sessionName, enabled, time.Now().UTC().Format(time.RFC3339Nano))
+		sessionName, enabled, ds.now().UTC().Format(time.RFC3339Nano))
 	ds.persistSessionEnabledMarker(sessionName, enabled)
 }
 
@@ -676,7 +692,7 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	ds.enabledSessions[sessionName] = true
 	ds.enabledSessionsMu.Unlock()
 	log.Printf("postman: session state change: session=%s enabled=true source=auto-enable ts=%s\n",
-		sessionName, time.Now().UTC().Format(time.RFC3339Nano))
+		sessionName, ds.now().UTC().Format(time.RFC3339Nano))
 	ds.persistSessionEnabledMarker(sessionName, true)
 }
 
@@ -691,7 +707,7 @@ func (ds *DaemonState) hasConfiguredSession(sessionName string) bool {
 // During the startup drain window, returns true for all sessions to prevent
 // the race where messages are rejected before sessions are registered (#217).
 func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
-	if ds.drainWindow > 0 && time.Since(ds.startedAt) < ds.drainWindow {
+	if ds.drainWindow > 0 && ds.now().Sub(ds.startedAt) < ds.drainWindow {
 		return true
 	}
 	ds.enabledSessionsMu.RLock()
