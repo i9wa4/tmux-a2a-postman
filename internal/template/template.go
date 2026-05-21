@@ -41,14 +41,6 @@ func defaultShellExecutor(ctx context.Context, command string) ([]byte, error) {
 	return exec.CommandContext(ctx, "sh", "-c", command).Output()
 }
 
-// expandShellCommands executes $(command) patterns via sh -c.
-// Each command runs with the given timeout. On error or timeout,
-// the expansion is replaced with an empty string.
-// Trailing newlines are stripped from command output.
-func expandShellCommands(template string, timeout time.Duration) string {
-	return expandShellCommandsWithExecutor(template, timeout, defaultShellExecutor)
-}
-
 func expandShellCommandsWithExecutor(template string, timeout time.Duration, executor shellExecutor) string {
 	return shellCommandPattern.ReplaceAllStringFunc(template, func(match string) string {
 		// Extract command (without $(...))
