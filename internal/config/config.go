@@ -325,23 +325,117 @@ func loadEmbeddedConfig() (*Config, error) {
 	return cfg, nil
 }
 
+type configPathResolver struct {
+	getenv      func(string) string
+	userHomeDir func() (string, error)
+	getwd       func() (string, error)
+	stat        func(string) error
+	join        func(...string) string
+}
+
+type configPathResolution struct {
+	configPath   string
+	tomlPath     string
+	markdownPath string
+	overlayDir   string
+}
+
+func defaultConfigPathResolver() configPathResolver {
+	return configPathResolver{
+		getenv:      os.Getenv,
+		userHomeDir: os.UserHomeDir,
+		getwd:       os.Getwd,
+		stat: func(path string) error {
+			_, err := os.Stat(path)
+			return err
+		},
+		join: filepath.Join,
+	}
+}
+
+func (r configPathResolver) withDefaults() configPathResolver {
+	defaults := defaultConfigPathResolver()
+	if r.getenv == nil {
+		r.getenv = defaults.getenv
+	}
+	if r.userHomeDir == nil {
+		r.userHomeDir = defaults.userHomeDir
+	}
+	if r.getwd == nil {
+		r.getwd = defaults.getwd
+	}
+	if r.stat == nil {
+		r.stat = defaults.stat
+	}
+	if r.join == nil {
+		r.join = defaults.join
+	}
+	return r
+}
+
+func (r configPathResolver) resolveConfigPaths(explicitPath string) configPathResolution {
+	r = r.withDefaults()
+	tomlPath, tomlDir := r.resolvePostmanFile("postman.toml")
+	markdownPath, markdownDir := r.resolvePostmanFile("postman.md")
+
+	configPath := explicitPath
+	if configPath == "" {
+		configPath = tomlPath
+	}
+
+	overlayDir := ""
+	if markdownPath != "" {
+		overlayDir = markdownDir
+	} else if tomlPath != "" {
+		overlayDir = tomlDir
+	}
+
+	return configPathResolution{
+		configPath:   configPath,
+		tomlPath:     tomlPath,
+		markdownPath: markdownPath,
+		overlayDir:   overlayDir,
+	}
+}
+
+func (r configPathResolver) resolvePostmanFile(filename string) (string, string) {
+	if xdgConfigHome := r.getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
+		dir := r.join(xdgConfigHome, "tmux-a2a-postman")
+		path := r.join(dir, filename)
+		if r.stat(path) == nil {
+			return path, dir
+		}
+		return "", ""
+	}
+
+	home, err := r.userHomeDir()
+	if err != nil {
+		return "", ""
+	}
+	dir := r.join(home, ".config", "tmux-a2a-postman")
+	path := r.join(dir, filename)
+	if r.stat(path) == nil {
+		return path, dir
+	}
+	return "", ""
+}
+
+func (r configPathResolver) resolveLocalConfigPath(cwd, _ string) (string, error) {
+	r = r.withDefaults()
+	if cwd == "" {
+		if resolvedCWD, err := r.getwd(); err == nil {
+			cwd = resolvedCWD
+		}
+	}
+	_ = cwd
+	return "", nil
+}
+
 // resolveXDGMarkdownPath returns the path to postman.md in the XDG config
 // directory, or "" if not found. Mirrors ResolveConfigPath() for Markdown.
 // Issue #324: Markdown config format support.
 func resolveXDGMarkdownPath() string {
-	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
-		path := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.md")
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.md")
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	return ""
+	return defaultConfigPathResolver().resolveConfigPaths("").markdownPath
 }
 
 // mergeConfig merges override fields into base using "non-zero wins" semantics.
@@ -522,10 +616,10 @@ func mergeConfig(base, override *Config) {
 // If path is empty, tries the XDG config fallback chain.
 // Issue #81: If no file found, loads embedded default configuration.
 func LoadConfig(path string) (*Config, error) {
-	configPath := path
-
-	xdgPath := ResolveConfigPath()
-	xdgMarkdownPath := resolveXDGMarkdownPath() // Issue #324
+	resolvedPaths := defaultConfigPathResolver().resolveConfigPaths(path)
+	configPath := resolvedPaths.configPath
+	xdgPath := resolvedPaths.tomlPath
+	xdgMarkdownPath := resolvedPaths.markdownPath // Issue #324
 
 	if configPath == "" {
 		if xdgPath == "" && xdgMarkdownPath == "" {
@@ -636,12 +730,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Issue #324: XDG Markdown overlay — nodes/*.md then postman.md.
 	// Load order per level: postman.toml → nodes/*.toml → nodes/*.md → postman.md
-	xdgConfigDir := ""
-	if xdgMarkdownPath != "" {
-		xdgConfigDir = filepath.Dir(xdgMarkdownPath)
-	} else if xdgPath != "" {
-		xdgConfigDir = filepath.Dir(xdgPath)
-	}
+	xdgConfigDir := resolvedPaths.overlayDir
 	if xdgConfigDir != "" {
 		xdgMDNodesDir := filepath.Join(xdgConfigDir, "nodes")
 		if info, err := os.Stat(xdgMDNodesDir); err == nil && info.IsDir() {
@@ -704,23 +793,7 @@ func LoadConfig(path string) (*Config, error) {
 // ResolveConfigPath returns the first existing config file in the fallback chain.
 // Returns empty string if no config file is found.
 func ResolveConfigPath() string {
-	// Try XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml
-	if xdgConfigHome := os.Getenv("XDG_CONFIG_HOME"); xdgConfigHome != "" {
-		path := filepath.Join(xdgConfigHome, "tmux-a2a-postman", "postman.toml")
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	// Try ~/.config/tmux-a2a-postman/postman.toml
-	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.toml")
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	return ""
+	return defaultConfigPathResolver().resolveConfigPaths("").tomlPath
 }
 
 // ParseEdges parses edge definitions into an adjacency map.
@@ -855,7 +928,7 @@ func ResolveNodesDir(configPath string) string {
 // ResolveLocalConfigPath is kept for compatibility. Project-local implicit
 // overlays are retired, so it always returns empty.
 func ResolveLocalConfigPath(cwd, xdgPath string) (string, error) {
-	return "", nil
+	return defaultConfigPathResolver().resolveLocalConfigPath(cwd, xdgPath)
 }
 
 // ResolveContextID returns the context ID from the explicit --context-id flag.
