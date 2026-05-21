@@ -431,13 +431,6 @@ func (r configPathResolver) resolveLocalConfigPath(cwd, _ string) (string, error
 	return "", nil
 }
 
-// resolveXDGMarkdownPath returns the path to postman.md in the XDG config
-// directory, or "" if not found. Mirrors ResolveConfigPath() for Markdown.
-// Issue #324: Markdown config format support.
-func resolveXDGMarkdownPath() string {
-	return defaultConfigPathResolver().resolveConfigPaths("").markdownPath
-}
-
 // mergeConfig merges override fields into base using "non-zero wins" semantics.
 // Non-zero override values replace base values. Bool fields cannot be overridden to false.
 // Edges are replaced when override has at least one entry. Nodes are merged field-by-field.
