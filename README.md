@@ -296,6 +296,11 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
+If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
+unknown. The daemon may still commit the side effect after the CLI stops
+waiting, so inspect status, inbox/read state, archived message evidence, or
+recipient-side confirmation before retrying.
+
 Inspect live session state:
 
 ```sh
