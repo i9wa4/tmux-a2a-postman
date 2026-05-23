@@ -48,6 +48,15 @@ type DaemonSubmitResponse struct {
 	Error         string              `json:"error,omitempty"`
 }
 
+type DaemonSubmitResponseTimeoutError struct {
+	RequestID string
+	Timeout   time.Duration
+}
+
+func (e DaemonSubmitResponseTimeoutError) Error() string {
+	return fmt.Sprintf("timed out waiting for daemon submit response %q after %s", e.RequestID, e.Timeout)
+}
+
 func DaemonSubmitRequestsDir(sessionDir string) string {
 	return filepath.Join(sessionDir, "snapshot", string(SubmitPathDaemon), "requests")
 }
@@ -134,7 +143,10 @@ func WaitDaemonSubmitResponse(sessionDir, requestID string, timeout time.Duratio
 			return DaemonSubmitResponse{}, "", err
 		}
 		if time.Now().After(deadline) {
-			return DaemonSubmitResponse{}, "", fmt.Errorf("timed out waiting for daemon submit response %q", requestID)
+			return DaemonSubmitResponse{}, "", DaemonSubmitResponseTimeoutError{
+				RequestID: requestID,
+				Timeout:   timeout,
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

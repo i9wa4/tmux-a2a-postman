@@ -410,6 +410,138 @@ func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *t
 	}
 }
 
+func TestDispatchDaemonSubmitRequest_AllowsSendWhilePopActive(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	popPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(pop): %v", err)
+	}
+	sendPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-send",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260521-093000-r1111-from-orchestrator-to-worker.md",
+		Content:   "hello",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(send): %v", err)
+	}
+
+	started := make(chan projection.DaemonSubmitCommand, 2)
+	releasePop := make(chan struct{})
+	rt := &daemonRuntime{
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started <- request.Command
+			if request.Command == projection.DaemonSubmitPop {
+				<-releasePop
+			}
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(releasePop)
+
+	if status := rt.dispatchDaemonSubmitRequest(popPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch pop status = %v, want dispatched", status)
+	}
+	if got := <-started; got != projection.DaemonSubmitPop {
+		t.Fatalf("first started command = %q, want pop", got)
+	}
+
+	if status := rt.dispatchDaemonSubmitRequest(sendPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch send status = %v, want dispatched while pop is active", status)
+	}
+	select {
+	case got := <-started:
+		if got != projection.DaemonSubmitSend {
+			t.Fatalf("second started command = %q, want send", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("send did not start while unrelated pop was active")
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_SerializesSameNodePopOnly(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	popWorker1, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-worker-1",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(worker 1): %v", err)
+	}
+	popWorker2, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-worker-2",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(worker 2): %v", err)
+	}
+	popReviewer, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-reviewer",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "reviewer",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(reviewer): %v", err)
+	}
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	rt := &daemonRuntime{
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started <- request.RequestID
+			<-release
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(release)
+
+	if status := rt.dispatchDaemonSubmitRequest(popWorker1); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch first worker pop status = %v, want dispatched", status)
+	}
+	if got := <-started; got != "req-pop-worker-1" {
+		t.Fatalf("first started request = %q, want req-pop-worker-1", got)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(popWorker2); status != daemonSubmitDispatchDeferred {
+		t.Fatalf("dispatch second worker pop status = %v, want deferred", status)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(popReviewer); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch reviewer pop status = %v, want dispatched", status)
+	}
+	select {
+	case got := <-started:
+		if got != "req-pop-reviewer" {
+			t.Fatalf("second started request = %q, want req-pop-reviewer", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("different-node pop did not start while worker pop was active")
+	}
+}
+
 func TestHandleSessionScanTick_EmitsRenameAndDeleteSnapshots(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeSessionScanTmux(t, tmpDir, []string{"review"})

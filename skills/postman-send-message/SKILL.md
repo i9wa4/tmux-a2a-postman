@@ -37,9 +37,10 @@ Send first-contact messages to another node.
    before a visible separator.
 4. The sender is auto-detected from the current tmux pane title. Use
    `tmux-a2a-postman help send-heredoc` for details.
-5. After a successful send, do not start a continuous polling loop. The daemon
-   notifies the recipient pane; use status only for explicit status requests,
-   timeout/watchdog boundaries, or suspected delivery failure.
+5. After a successful send, do not eagerly poll or start a continuous
+   `get-status` loop. The daemon notifies the recipient pane; use status only
+   for explicit status requests, timeout/watchdog boundaries, or suspected
+   delivery failure.
 
 ## 3. DO NOT USE FOR
 
