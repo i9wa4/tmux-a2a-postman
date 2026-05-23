@@ -1335,28 +1335,113 @@ func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) 
 	}
 }
 
-func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing.T) {
-	sourceBytes, err := os.ReadFile("runtime.go")
-	if err != nil {
-		t.Fatalf("ReadFile(runtime.go): %v", err)
+func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-fast-session"
+	selfSession := "main"
+	targetSession := "review"
+	contextDir := filepath.Join(baseDir, contextID)
+	selfSessionDir := filepath.Join(contextDir, selfSession)
+	targetSessionDir := filepath.Join(contextDir, targetSession)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
 	}
-	source := string(sourceBytes)
+	if err := config.CreateSessionDirs(targetSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(target): %v", err)
+	}
+	installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker"})
+	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
+	t.Cleanup(journal.ClearProcessManager)
 
-	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)") {
-		t.Fatal("runtime.handleScanTick no longer derives session auto-enable from cfg.AutoEnableNewSessions")
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
 	}
-	if !strings.Contains(source, "newNodes := rt.detectNewNodes(freshNodes)") {
-		t.Fatal("runtime.handleScanTick no longer collects newly discovered node keys from detectNewNodes")
+	defer func() { _ = watcher.Close() }()
+
+	autoEnableNewSessions := false
+	cfg := config.DefaultConfig()
+	cfg.AutoEnableNewSessions = &autoEnableNewSessions
+	cfg.NodeOrder = []string{"worker"}
+	cfg.Nodes = map[string]config.NodeConfig{"worker": {}}
+	events := make(chan tui.DaemonEvent, 8)
+	sendAutoPingCalled := make(chan struct{}, 1)
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       selfSessionDir,
+		contextID:        contextID,
+		selfSession:      selfSession,
+		cfg:              cfg,
+		watcher:          watcher,
+		adjacency:        map[string][]string{},
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       map[string]bool{},
+		events:           events,
+		daemonState:      NewDaemonState(0, contextID),
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      map[string]bool{},
+		claimedPanes:     map[string]bool{},
+		prevSessionNodes: map[string][]string{},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			sendAutoPingCalled <- struct{}{}
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
 	}
-	if !strings.Contains(source, "rt.pruneKnownNodes(freshNodes)") {
-		t.Fatal("runtime.handleScanTick no longer forgets disappeared nodes before detecting newly returned nodes")
+
+	rt.handleScanTick()
+
+	nodeKey := targetSession + ":worker"
+	if !rt.knownNodes[nodeKey] {
+		t.Fatalf("knownNodes[%q] = false, want true", nodeKey)
 	}
-	if !strings.Contains(source, "rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions") {
-		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into dispatchPendingAutoPings")
+	if _, ok := rt.nodes[nodeKey]; !ok {
+		t.Fatalf("rt.nodes missing discovered node %q: %#v", nodeKey, rt.nodes)
 	}
-	if strings.Contains(source, "rt.detectNewNodes(freshNodes, autoEnableSessions)") {
-		t.Fatal("runtime.handleScanTick still pushes auto-enable side effects into detectNewNodes")
+	if rt.daemonState.GetConfiguredSessionEnabled(targetSession) {
+		t.Fatalf("target session %q was auto-enabled despite AutoEnableNewSessions=false", targetSession)
 	}
+	select {
+	case <-sendAutoPingCalled:
+		t.Fatal("auto-PING sender was called for a disabled newly discovered session")
+	default:
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(targetSessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	nodeState, ok := state.Nodes[nodeKey]
+	if !ok {
+		t.Fatalf("auto-PING state missing %q: %#v", nodeKey, state.Nodes)
+	}
+	if !nodeState.Pending {
+		t.Fatalf("auto-PING pending[%s] = false, want true", nodeKey)
+	}
+
+	statusEvent := <-events
+	if statusEvent.Type != "status_update" {
+		t.Fatalf("first event Type = %q, want status_update", statusEvent.Type)
+	}
+	sessions, ok := statusEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", statusEvent.Details["sessions"])
+	}
+	for _, session := range sessions {
+		if session.Name == targetSession {
+			if session.NodeCount != 1 {
+				t.Fatalf("target session NodeCount = %d, want 1", session.NodeCount)
+			}
+			if session.Enabled {
+				t.Fatalf("target session Enabled = true, want false")
+			}
+			return
+		}
+	}
+	t.Fatalf("status sessions missing target session %q: %#v", targetSession, sessions)
 }
 
 func TestDispatchPendingAutoPings_ForeignOwnedSessionStaysPendingAndDisabled(t *testing.T) {
