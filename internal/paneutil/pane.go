@@ -5,26 +5,31 @@ import (
 	"os/exec"
 )
 
+type tmuxCombinedOutputFunc func(args ...string) ([]byte, error)
+
+func runTmuxCombinedOutput(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
 // CaptureContent captures the visible content of a tmux pane.
 // Returns the content as a string, or empty string on error.
 func CaptureContent(paneID string) (string, error) {
-	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
-	}
-	return string(output), nil
+	return captureContent(paneID, 0, runTmuxCombinedOutput)
 }
 
 // CaptureRecentContent captures visible content plus recent scrollback lines.
 func CaptureRecentContent(paneID string, tailLines int) (string, error) {
-	if tailLines <= 0 {
-		return CaptureContent(paneID)
+	return captureContent(paneID, tailLines, runTmuxCombinedOutput)
+}
+
+func captureContent(paneID string, tailLines int, run tmuxCombinedOutputFunc) (string, error) {
+	args := []string{"capture-pane", "-p", "-t", paneID}
+	if tailLines > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", tailLines))
 	}
-	cmd := exec.Command("tmux", "capture-pane", "-p", "-t", paneID, "-S", fmt.Sprintf("-%d", tailLines))
-	output, err := cmd.CombinedOutput()
+	output, err := run(args...)
 	if err != nil {
-		return "", fmt.Errorf("capturing recent pane %s: %w", paneID, err)
+		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
 	}
 	return string(output), nil
 }

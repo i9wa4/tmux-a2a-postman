@@ -410,6 +410,138 @@ func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *t
 	}
 }
 
+func TestDispatchDaemonSubmitRequest_AllowsSendWhilePopActive(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	popPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(pop): %v", err)
+	}
+	sendPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-send",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260521-093000-r1111-from-orchestrator-to-worker.md",
+		Content:   "hello",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(send): %v", err)
+	}
+
+	started := make(chan projection.DaemonSubmitCommand, 2)
+	releasePop := make(chan struct{})
+	rt := &daemonRuntime{
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started <- request.Command
+			if request.Command == projection.DaemonSubmitPop {
+				<-releasePop
+			}
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(releasePop)
+
+	if status := rt.dispatchDaemonSubmitRequest(popPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch pop status = %v, want dispatched", status)
+	}
+	if got := <-started; got != projection.DaemonSubmitPop {
+		t.Fatalf("first started command = %q, want pop", got)
+	}
+
+	if status := rt.dispatchDaemonSubmitRequest(sendPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch send status = %v, want dispatched while pop is active", status)
+	}
+	select {
+	case got := <-started:
+		if got != projection.DaemonSubmitSend {
+			t.Fatalf("second started command = %q, want send", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("send did not start while unrelated pop was active")
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_SerializesSameNodePopOnly(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	popWorker1, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-worker-1",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(worker 1): %v", err)
+	}
+	popWorker2, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-worker-2",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(worker 2): %v", err)
+	}
+	popReviewer, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-reviewer",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "reviewer",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(reviewer): %v", err)
+	}
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	rt := &daemonRuntime{
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started <- request.RequestID
+			<-release
+			return daemonSubmitProcessResult{}, nil
+		},
+	}
+	defer close(release)
+
+	if status := rt.dispatchDaemonSubmitRequest(popWorker1); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch first worker pop status = %v, want dispatched", status)
+	}
+	if got := <-started; got != "req-pop-worker-1" {
+		t.Fatalf("first started request = %q, want req-pop-worker-1", got)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(popWorker2); status != daemonSubmitDispatchDeferred {
+		t.Fatalf("dispatch second worker pop status = %v, want deferred", status)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(popReviewer); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch reviewer pop status = %v, want dispatched", status)
+	}
+	select {
+	case got := <-started:
+		if got != "req-pop-reviewer" {
+			t.Fatalf("second started request = %q, want req-pop-reviewer", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("different-node pop did not start while worker pop was active")
+	}
+}
+
 func TestHandleSessionScanTick_EmitsRenameAndDeleteSnapshots(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeSessionScanTmux(t, tmpDir, []string{"review"})
@@ -1203,28 +1335,113 @@ func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) 
 	}
 }
 
-func TestHandleScanTick_SourceContractUsesAutoEnableNewSessionsConfig(t *testing.T) {
-	sourceBytes, err := os.ReadFile("runtime.go")
-	if err != nil {
-		t.Fatalf("ReadFile(runtime.go): %v", err)
+func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-fast-session"
+	selfSession := "main"
+	targetSession := "review"
+	contextDir := filepath.Join(baseDir, contextID)
+	selfSessionDir := filepath.Join(contextDir, selfSession)
+	targetSessionDir := filepath.Join(contextDir, targetSession)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
 	}
-	source := string(sourceBytes)
+	if err := config.CreateSessionDirs(targetSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(target): %v", err)
+	}
+	installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker"})
+	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
+	t.Cleanup(journal.ClearProcessManager)
 
-	if !strings.Contains(source, "autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)") {
-		t.Fatal("runtime.handleScanTick no longer derives session auto-enable from cfg.AutoEnableNewSessions")
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher(): %v", err)
 	}
-	if !strings.Contains(source, "newNodes := rt.detectNewNodes(freshNodes)") {
-		t.Fatal("runtime.handleScanTick no longer collects newly discovered node keys from detectNewNodes")
+	defer func() { _ = watcher.Close() }()
+
+	autoEnableNewSessions := false
+	cfg := config.DefaultConfig()
+	cfg.AutoEnableNewSessions = &autoEnableNewSessions
+	cfg.NodeOrder = []string{"worker"}
+	cfg.Nodes = map[string]config.NodeConfig{"worker": {}}
+	events := make(chan tui.DaemonEvent, 8)
+	sendAutoPingCalled := make(chan struct{}, 1)
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       selfSessionDir,
+		contextID:        contextID,
+		selfSession:      selfSession,
+		cfg:              cfg,
+		watcher:          watcher,
+		adjacency:        map[string][]string{},
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       map[string]bool{},
+		events:           events,
+		daemonState:      NewDaemonState(0, contextID),
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      map[string]bool{},
+		claimedPanes:     map[string]bool{},
+		prevSessionNodes: map[string][]string{},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			sendAutoPingCalled <- struct{}{}
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
 	}
-	if !strings.Contains(source, "rt.pruneKnownNodes(freshNodes)") {
-		t.Fatal("runtime.handleScanTick no longer forgets disappeared nodes before detecting newly returned nodes")
+
+	rt.handleScanTick()
+
+	nodeKey := targetSession + ":worker"
+	if !rt.knownNodes[nodeKey] {
+		t.Fatalf("knownNodes[%q] = false, want true", nodeKey)
 	}
-	if !strings.Contains(source, "rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions") {
-		t.Fatal("runtime.handleScanTick no longer passes the config-backed auto-enable decision into dispatchPendingAutoPings")
+	if _, ok := rt.nodes[nodeKey]; !ok {
+		t.Fatalf("rt.nodes missing discovered node %q: %#v", nodeKey, rt.nodes)
 	}
-	if strings.Contains(source, "rt.detectNewNodes(freshNodes, autoEnableSessions)") {
-		t.Fatal("runtime.handleScanTick still pushes auto-enable side effects into detectNewNodes")
+	if rt.daemonState.GetConfiguredSessionEnabled(targetSession) {
+		t.Fatalf("target session %q was auto-enabled despite AutoEnableNewSessions=false", targetSession)
 	}
+	select {
+	case <-sendAutoPingCalled:
+		t.Fatal("auto-PING sender was called for a disabled newly discovered session")
+	default:
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(targetSessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	nodeState, ok := state.Nodes[nodeKey]
+	if !ok {
+		t.Fatalf("auto-PING state missing %q: %#v", nodeKey, state.Nodes)
+	}
+	if !nodeState.Pending {
+		t.Fatalf("auto-PING pending[%s] = false, want true", nodeKey)
+	}
+
+	statusEvent := <-events
+	if statusEvent.Type != "status_update" {
+		t.Fatalf("first event Type = %q, want status_update", statusEvent.Type)
+	}
+	sessions, ok := statusEvent.Details["sessions"].([]tui.SessionInfo)
+	if !ok {
+		t.Fatalf("sessions detail type = %T, want []tui.SessionInfo", statusEvent.Details["sessions"])
+	}
+	for _, session := range sessions {
+		if session.Name == targetSession {
+			if session.NodeCount != 1 {
+				t.Fatalf("target session NodeCount = %d, want 1", session.NodeCount)
+			}
+			if session.Enabled {
+				t.Fatalf("target session Enabled = true, want false")
+			}
+			return
+		}
+	}
+	t.Fatalf("status sessions missing target session %q: %#v", targetSession, sessions)
 }
 
 func TestDispatchPendingAutoPings_ForeignOwnedSessionStaysPendingAndDisabled(t *testing.T) {
