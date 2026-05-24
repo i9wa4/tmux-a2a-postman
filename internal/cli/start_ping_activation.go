@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
@@ -60,7 +60,7 @@ func activateStartupSessions(baseDir, contextDir, contextID, selfSession string,
 	return activated
 }
 
-func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetSession string, cfg *config.Config, watcher *fsnotify.Watcher, watchedDirs map[string]bool) (map[string]discovery.NodeInfo, error) {
+func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetSession string, cfg *config.Config, watcher *fswatcher.Watcher, watchedDirs map[string]bool) (map[string]discovery.NodeInfo, error) {
 	if targetSession == "" {
 		return nil, fmt.Errorf("target session is empty")
 	}
@@ -90,7 +90,7 @@ func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetS
 	return refreshed, nil
 }
 
-func registerWatchedSessionDirs(watcher *fsnotify.Watcher, watchedDirs map[string]bool, sessionDir string) {
+func registerWatchedSessionDirs(watcher *fswatcher.Watcher, watchedDirs map[string]bool, sessionDir string) {
 	if watcher == nil || watchedDirs == nil {
 		return
 	}
@@ -100,7 +100,7 @@ func registerWatchedSessionDirs(watcher *fsnotify.Watcher, watchedDirs map[strin
 		if watchedDirs[dirToWatch] {
 			continue
 		}
-		if err := watcher.Add(dirToWatch, fsnotify.All); err != nil {
+		if err := watcher.Add(dirToWatch, fswatcher.All); err != nil {
 			log.Printf("postman: watcher.Add %s: %v\n", dirToWatch, err)
 			continue
 		}

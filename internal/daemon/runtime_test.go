@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -197,7 +197,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 	}
 
 	logPath := installRuntimeSessionScanActivationTmux(t, tmpDir, []string{selfSession, targetSession})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -267,7 +267,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 	}
 
 	logPath := installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker", "critic", "unrelated"})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -377,7 +377,7 @@ func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *t
 
 	done := make(chan struct{})
 	go func() {
-		rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+		rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 		close(done)
 	}()
 
@@ -725,7 +725,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
-	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+	rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
@@ -935,7 +935,7 @@ func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) 
 	}
 
 	start := time.Now()
-	rt.handlePostWatcherEvent(postPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(postPath, fswatcher.Create)
 
 	if _, err := os.Stat(postPath); err != nil {
 		t.Fatalf("rate-limited post file should remain until retry: %v", err)
@@ -1014,8 +1014,8 @@ func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing
 		t.Fatalf("WriteFile(second post): %v", err)
 	}
 
-	rt.handlePostWatcherEvent(firstPostPath, fsnotify.Create)
-	rt.handlePostWatcherEvent(secondPostPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(firstPostPath, fswatcher.Create)
+	rt.handlePostWatcherEvent(secondPostPath, fswatcher.Create)
 
 	firstInboxPath := filepath.Join(sessionDir, "inbox", "messenger", firstFilename)
 	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, 10*time.Second)
@@ -1269,7 +1269,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 			SessionDir:  t.TempDir(),
 		},
 	}
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1295,7 +1295,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 }
 
 func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) {
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1354,7 +1354,7 @@ func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *
 	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
 	t.Cleanup(journal.ClearProcessManager)
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}

@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -36,7 +36,7 @@ type daemonRuntime struct {
 	configPath  string
 	selfSession string
 	cfg         *config.Config
-	watcher     *fsnotify.Watcher
+	watcher     filesystemWatcher
 	adjacency   map[string][]string
 	nodes       map[string]discovery.NodeInfo
 	knownNodes  map[string]bool
@@ -105,7 +105,7 @@ func newDaemonRuntime(
 	sessionDir string,
 	contextID string,
 	cfg *config.Config,
-	watcher *fsnotify.Watcher,
+	watcher filesystemWatcher,
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
@@ -294,16 +294,16 @@ func (rt *daemonRuntime) handleContextDone() {
 	}
 }
 
-func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
+func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 	eventPath := event.Name
 
 	switch {
 	case filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon):
-		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
+		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
 			rt.handleDaemonSubmitRequest(eventPath)
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "post"):
-		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 {
 			rt.wakePostReconciler(eventPath)
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "read"):
@@ -444,8 +444,8 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 	}
 }
 
-func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op) {
-	if op&(fsnotify.Create|fsnotify.Rename) == 0 {
+func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fswatcher.Op) {
+	if op&(fswatcher.Create|fswatcher.Rename) == 0 {
 		return
 	}
 	filename := filepath.Base(eventPath)
@@ -483,7 +483,7 @@ func (rt *daemonRuntime) postReconciler() reconciler.PostReconciler {
 }
 
 func (rt *daemonRuntime) handlePendingPost(post store.PendingPost) {
-	rt.handlePostWatcherEvent(post.Path, fsnotify.Create)
+	rt.handlePostWatcherEvent(post.Path, fswatcher.Create)
 }
 
 func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
@@ -668,8 +668,8 @@ func (rt *daemonRuntime) finishPostEvent(eventPath string) {
 	rt.postEventsMu.Unlock()
 }
 
-func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op) {
-	if op&(fsnotify.Create|fsnotify.Rename) == 0 {
+func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fswatcher.Op) {
+	if op&(fswatcher.Create|fswatcher.Rename) == 0 {
 		return
 	}
 	filename := filepath.Base(eventPath)
@@ -1039,17 +1039,17 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 	nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
 
 	if !rt.watchedDirs[nodePostDir] {
-		if err := rt.watcher.Add(nodePostDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodePostDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodePostDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeInboxDir] {
-		if err := rt.watcher.Add(nodeInboxDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodeInboxDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodeInboxDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeReadDir] {
-		if err := rt.watcher.Add(nodeReadDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodeReadDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodeReadDir] = true
 		}
 	}
@@ -1060,7 +1060,7 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		return
 	}
 	if !rt.watchedDirs[submitRequestsDir] {
-		if err := rt.watcher.Add(submitRequestsDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(submitRequestsDir, fswatcher.All); err == nil {
 			rt.watchedDirs[submitRequestsDir] = true
 		}
 	}
