@@ -1556,6 +1556,67 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
+func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 21, 7, 0, 0, 0, time.UTC)
+	deliveredAt := now.Add(9 * time.Second)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time { return deliveredAt },
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if got, want := state.Nodes["review:worker"].DeliveredAt, deliveredAt.Format(time.RFC3339Nano); got != want {
+		t.Fatalf("DeliveredAt = %q, want %q", got, want)
+	}
+}
+
 func TestDispatchPendingAutoPings_DoesNotBlockDaemonLoopWhilePaneDeliveryRuns(t *testing.T) {
 	baseDir := t.TempDir()
 	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
