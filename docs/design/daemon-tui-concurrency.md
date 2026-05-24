@@ -26,7 +26,7 @@ or when results return to the event loop before shared state is updated.
 | Session status refresh     | Bounded per-session workers, latest gen   | status/config/activity/alive events     | atomic latest status generation            | `refreshProjectedSessionStatus`, tmux pane/window listing  | worker cap, stale generation drop         | emit only matching generation results          |
 | Session scan tick          | Serialized apply                          | `sessionScanInterval` ticker            | previous session snapshot in runtime       | `discovery.DiscoverAllSessions`                            | blocking TUI status send                  | daemon-submit workers cannot block this tick   |
 | Full scan tick             | Serialized apply                          | `ScanInterval` ticker                   | runtime nodes, known nodes, pane snapshots | node discovery, tmux pane state, projection scan           | event-loop ownership                      | collect IO before mutating runtime state       |
-| Daemon-submit requests     | Bounded workers, per-session active guard | fsnotify create/rename, scan recovery   | active submit session map in event loop    | request claim/read, post write, inbox pop, projection sync | worker cap, per-session filesystem queue  | worker result returns to event loop            |
+| Daemon-submit requests     | Bounded workers, per-operation active key | fsnotify create/rename, scan recovery   | active submit key map in event loop        | request claim/read, post write, inbox pop                  | worker cap, per-key filesystem queue      | send and unrelated inbox pops may run together |
 | Submit send post wake      | Serialized result handling                | daemon-submit worker result             | runtime post guards and route state        | post reconciliation, projection sync, node discovery       | event loop ordering                       | worker only writes response and post file      |
 | Post reconciliation        | Serialized reservation                    | post fsnotify, submit result, backlog   | active post events, delivery route state   | projection sync, node discovery                            | same-route retry timer                    | pane delivery starts after reservation         |
 | Pane delivery              | Goroutine per accepted delivery           | post reservation success                | route reservation completed in defer       | tmux notification, inbox/archive filesystem writes         | route gap, active post guard              | different accepted routes may run concurrently |
@@ -35,16 +35,17 @@ or when results return to the event loop before shared state is updated.
 
 ## 3. Regression contracts
 
-| Contract                         | Guardrail                                                                 |
-| -------------------------------- | ------------------------------------------------------------------------- |
-| Raw TUI session snapshots        | A blocked status probe must not delay a newer `status_update`.            |
-| Status batch parallelism         | A slow session status probe must not block a fast session in the batch.   |
-| Status latest-wins               | A stale status generation must not publish after a newer snapshot exists. |
-| Daemon-submit responsiveness     | A blocked submit worker must not block session status scan propagation.   |
-| Daemon-submit durability         | Saturated workers leave request files pending for the next scan/watcher.  |
-| Same-session submit ordering     | Only one daemon-submit worker per session may be active at a time.        |
-| Post delivery completion         | Route reservation and post active guards prevent duplicate completion.    |
-| Notification buffer correctness  | tmux `set-buffer`/`paste-buffer` remains protected by notification mutex. |
+| Contract                         | Guardrail                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| Raw TUI session snapshots        | A blocked status probe must not delay a newer `status_update`.             |
+| Status batch parallelism         | A slow session status probe must not block a fast session in the batch.    |
+| Status latest-wins               | A stale status generation must not publish after a newer snapshot exists.  |
+| Daemon-submit responsiveness     | A blocked submit worker must not block session status scan propagation.    |
+| Daemon-submit durability         | Saturated workers leave request files pending for the next scan/watcher.   |
+| Same-inbox pop ordering          | Only one daemon-submit `pop` per session/node inbox may be active.         |
+| Submit send independence         | `send` must not wait behind an unrelated active `pop` in the same session. |
+| Post delivery completion         | Route reservation and post active guards prevent duplicate completion.     |
+| Notification buffer correctness  | tmux `set-buffer`/`paste-buffer` remains protected by notification mutex.  |
 
 ## 4. Serialized by design
 
@@ -68,8 +69,11 @@ The Go-like concurrency shape is:
 - use bounded workers for daemon-submit request processing
 - leave daemon-submit request files unclaimed when workers are saturated so the
   next watcher or scan pass can pick them up
-- keep only one daemon-submit worker active per session so inbox pops and
-  projection writes for that session remain ordered
+- keep only one daemon-submit `pop` active per session/node inbox, while
+  allowing independent `send` requests and unrelated node inbox pops to run
+  under the global worker cap
+- defer full mailbox projection sync after daemon-submit `pop` responses and
+  coalesce one active projection sync per session
 - return daemon-submit results to the daemon event loop before waking post
   reconciliation
 - use bounded workers inside a session status refresh batch
@@ -87,6 +91,8 @@ direct shared-state mutation outside the owning loop.
 - Daemon-submit concurrency is capped by `daemonSubmitWorkerLimit`.
 - Saturated daemon-submit workers apply filesystem backpressure: the request
   remains pending instead of being claimed and forgotten.
+- A same-inbox `pop` already in flight defers later `pop` requests for that
+  inbox, but it does not defer independent `send` requests.
 - Session status refresh concurrency is capped by
   `sessionStatusRefreshWorkerLimit`.
 - TUI session snapshots retain latest-wins behavior when the TUI channel is

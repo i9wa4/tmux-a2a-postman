@@ -21,6 +21,8 @@ var (
 	shellCommandPattern = regexp.MustCompile(`\$\(([^)]+)\)`)
 )
 
+type shellExecutor func(ctx context.Context, command string) ([]byte, error)
+
 // ExpandVariables replaces {variable} patterns with values from the vars map.
 // Undefined variables remain as-is in the output.
 func ExpandVariables(template string, vars map[string]string) string {
@@ -35,11 +37,11 @@ func ExpandVariables(template string, vars map[string]string) string {
 	})
 }
 
-// expandShellCommands executes $(command) patterns via sh -c.
-// Each command runs with the given timeout. On error or timeout,
-// the expansion is replaced with an empty string.
-// Trailing newlines are stripped from command output.
-func expandShellCommands(template string, timeout time.Duration) string {
+func defaultShellExecutor(ctx context.Context, command string) ([]byte, error) {
+	return exec.CommandContext(ctx, "sh", "-c", command).Output()
+}
+
+func expandShellCommandsWithExecutor(template string, timeout time.Duration, executor shellExecutor) string {
 	return shellCommandPattern.ReplaceAllStringFunc(template, func(match string) string {
 		// Extract command (without $(...))
 		cmd := match[2 : len(match)-1]
@@ -47,7 +49,7 @@ func expandShellCommands(template string, timeout time.Duration) string {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		out, err := exec.CommandContext(ctx, "sh", "-c", cmd).Output()
+		out, err := executor(ctx, cmd)
 		if err != nil {
 			// Command failed or timed out: return empty string
 			return ""
@@ -62,9 +64,13 @@ func expandShellCommands(template string, timeout time.Duration) string {
 // 1. Execute shell commands $(...) — only when allowShell is true
 // 2. Expand variables {variable}
 func ExpandTemplate(tmpl string, vars map[string]string, timeout time.Duration, allowShell bool) string {
+	return expandTemplateWithExecutor(tmpl, vars, timeout, allowShell, defaultShellExecutor)
+}
+
+func expandTemplateWithExecutor(tmpl string, vars map[string]string, timeout time.Duration, allowShell bool, executor shellExecutor) string {
 	expanded := tmpl
 	if allowShell {
-		expanded = expandShellCommands(tmpl, timeout)
+		expanded = expandShellCommandsWithExecutor(tmpl, timeout, executor)
 	}
 	sanitizedVars := make(map[string]string, len(vars))
 	for k, v := range vars {

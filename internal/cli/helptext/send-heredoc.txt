@@ -41,3 +41,9 @@ Status:
 submit_path:
   daemon-submit           Request/response path owned by the running daemon
   post                    Direct write to the session post/ queue
+
+Timeouts:
+  A daemon-submit timeout does not prove failure. The daemon may still commit a
+  side-effecting send after the CLI stops waiting. Do not retry blindly; inspect
+  status, recipient inbox/read evidence, or recipient-side confirmation before
+  resending.
