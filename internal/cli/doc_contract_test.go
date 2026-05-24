@@ -73,6 +73,9 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, popHelp, "pop — claim and archive the next inbox message")
 	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
 	assertContainsNormalized(t, statusHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
+	assertContainsNormalized(t, statusHelp, "--debug adds runtime_diagnostics as an optional object without changing schema_version.")
+	assertContainsNormalized(t, statusHelp, "It requests a point-in-time daemon runtime snapshot with Go memory, GC, goroutine, and count-only daemon cardinality fields.")
+	assertContainsNormalized(t, statusHelp, "This is not a persisted time series.")
 	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
 		"`read`",
