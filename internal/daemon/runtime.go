@@ -45,6 +45,7 @@ type daemonRuntime struct {
 	nodesDirs   []string
 	daemonState *DaemonState
 	idleTracker *idle.IdleTracker
+	clock       func() time.Time
 
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
@@ -62,15 +63,10 @@ type daemonRuntime struct {
 	autoPingEventsMu sync.Mutex
 	activeAutoPings  map[string]bool
 
-	processDaemonSubmit           daemonSubmitProcessor
-	daemonSubmitSem               chan struct{}
-	daemonSubmitResults           chan daemonSubmitRuntimeResult
-	activeDaemonSubmitKeys        map[string]bool
-	mailboxProjectionSyncMu       sync.Mutex
-	activeMailboxProjectionSyncs  map[string]bool
-	pendingMailboxProjectionSyncs map[string]bool
-	mailboxProjectionSyncWG       sync.WaitGroup
-	clock                         func() time.Time
+	processDaemonSubmit        daemonSubmitProcessor
+	daemonSubmitSem            chan struct{}
+	daemonSubmitResults        chan daemonSubmitRuntimeResult
+	activeDaemonSubmitSessions map[string]bool
 }
 
 const daemonSubmitWorkerLimit = 4
@@ -79,7 +75,7 @@ type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, 
 
 type daemonSubmitRuntimeResult struct {
 	requestPath string
-	dispatchKey string
+	sessionKey  string
 	result      daemonSubmitProcessResult
 	err         error
 }
@@ -119,34 +115,31 @@ func newDaemonRuntime(
 	selfSession string,
 ) *daemonRuntime {
 	return &daemonRuntime{
-		baseDir:                       baseDir,
-		sessionDir:                    sessionDir,
-		contextID:                     contextID,
-		configPath:                    configPath,
-		selfSession:                   selfSession,
-		cfg:                           cfg,
-		watcher:                       watcher,
-		adjacency:                     adjacency,
-		nodes:                         nodes,
-		knownNodes:                    knownNodes,
-		events:                        events,
-		configPaths:                   configPaths,
-		nodesDirs:                     nodesDirs,
-		daemonState:                   daemonState,
-		idleTracker:                   idleTracker,
-		sharedNodes:                   sharedNodes,
-		watchedDirs:                   make(map[string]bool),
-		claimedPanes:                  make(map[string]bool),
-		prevSessionNodes:              make(map[string][]string),
-		activePostEvents:              make(map[string]bool),
-		activeAutoPings:               make(map[string]bool),
-		processDaemonSubmit:           processDaemonSubmitRequest,
-		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
-		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
-		activeDaemonSubmitKeys:        make(map[string]bool),
-		activeMailboxProjectionSyncs:  make(map[string]bool),
-		pendingMailboxProjectionSyncs: make(map[string]bool),
-		clock:                         time.Now,
+		baseDir:                    baseDir,
+		sessionDir:                 sessionDir,
+		contextID:                  contextID,
+		configPath:                 configPath,
+		selfSession:                selfSession,
+		cfg:                        cfg,
+		watcher:                    watcher,
+		adjacency:                  adjacency,
+		nodes:                      nodes,
+		knownNodes:                 knownNodes,
+		events:                     events,
+		configPaths:                configPaths,
+		nodesDirs:                  nodesDirs,
+		daemonState:                daemonState,
+		idleTracker:                idleTracker,
+		sharedNodes:                sharedNodes,
+		watchedDirs:                make(map[string]bool),
+		claimedPanes:               make(map[string]bool),
+		prevSessionNodes:           make(map[string][]string),
+		activePostEvents:           make(map[string]bool),
+		activeAutoPings:            make(map[string]bool),
+		processDaemonSubmit:        processDaemonSubmitRequest,
+		daemonSubmitSem:            make(chan struct{}, daemonSubmitWorkerLimit),
+		daemonSubmitResults:        make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
+		activeDaemonSubmitSessions: make(map[string]bool),
 	}
 }
 
@@ -330,8 +323,8 @@ const (
 
 func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonSubmitDispatchStatus {
 	rt.ensureDaemonSubmitRuntime()
-	dispatchKey := daemonSubmitDispatchKey(requestPath)
-	if rt.activeDaemonSubmitKeys[dispatchKey] {
+	sessionKey := daemonSubmitSessionKey(requestPath)
+	if rt.activeDaemonSubmitSessions[sessionKey] {
 		return daemonSubmitDispatchDeferred
 	}
 	select {
@@ -339,13 +332,13 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	default:
 		return daemonSubmitDispatchSaturated
 	}
-	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	rt.activeDaemonSubmitSessions[sessionKey] = true
 	processor := rt.processDaemonSubmit
 
 	go func() {
 		workerResult := daemonSubmitRuntimeResult{
 			requestPath: requestPath,
-			dispatchKey: dispatchKey,
+			sessionKey:  sessionKey,
 		}
 		defer func() {
 			if r := recover(); r != nil {
@@ -370,44 +363,27 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 	if rt.daemonSubmitResults == nil {
 		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit)
 	}
-	if rt.activeDaemonSubmitKeys == nil {
-		rt.activeDaemonSubmitKeys = make(map[string]bool)
+	if rt.activeDaemonSubmitSessions == nil {
+		rt.activeDaemonSubmitSessions = make(map[string]bool)
 	}
 }
 
-func daemonSubmitDispatchKey(requestPath string) string {
+func daemonSubmitSessionKey(requestPath string) string {
 	if sessionDir, ok := daemonSubmitSessionDir(requestPath); ok {
-		request, err := projection.ReadDaemonSubmitRequest(requestPath)
-		if err != nil {
-			return "session:" + sessionDir
-		}
-		switch request.Command {
-		case projection.DaemonSubmitPop:
-			if request.Node == "" {
-				return "pop:" + sessionDir
-			}
-			return "pop:" + sessionDir + ":" + request.Node
-		case projection.DaemonSubmitSend:
-			return "send:" + requestPath
-		default:
-			return "request:" + requestPath
-		}
+		return sessionDir
 	}
-	return "path:" + requestPath
+	return filepath.Dir(requestPath)
 }
 
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
-	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
+	delete(rt.activeDaemonSubmitSessions, workerResult.sessionKey)
 	if workerResult.err != nil {
 		rt.events <- tui.DaemonEvent{
 			Type:    "error",
 			Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(workerResult.requestPath), workerResult.err),
 		}
 		return
-	}
-	if workerResult.result.ProjectionSyncSessionDir != "" {
-		rt.scheduleMailboxProjectionSync(workerResult.result.ProjectionSyncSessionDir)
 	}
 	if workerResult.result.hasPostDispatch() {
 		log.Printf("postman: component=%s event=send_reconcile submit_path=%s session=%s file=%s\n",
@@ -686,7 +662,7 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
-	rt.scheduleMailboxProjectionSync(sourceSessionDir)
+	syncMailboxProjection(sourceSessionDir)
 
 	if info.To == "postman" || info.To == "daemon" {
 		return
@@ -701,55 +677,6 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 			"source": "read_move",
 		},
 	}
-}
-
-func (rt *daemonRuntime) ensureMailboxProjectionSyncRuntime() {
-	if rt.activeMailboxProjectionSyncs == nil {
-		rt.activeMailboxProjectionSyncs = make(map[string]bool)
-	}
-	if rt.pendingMailboxProjectionSyncs == nil {
-		rt.pendingMailboxProjectionSyncs = make(map[string]bool)
-	}
-}
-
-func (rt *daemonRuntime) scheduleMailboxProjectionSync(sessionDir string) {
-	if sessionDir == "" {
-		return
-	}
-	rt.ensureMailboxProjectionSyncRuntime()
-	rt.mailboxProjectionSyncMu.Lock()
-	if rt.activeMailboxProjectionSyncs[sessionDir] {
-		rt.pendingMailboxProjectionSyncs[sessionDir] = true
-		rt.mailboxProjectionSyncMu.Unlock()
-		return
-	}
-	rt.activeMailboxProjectionSyncs[sessionDir] = true
-	rt.mailboxProjectionSyncMu.Unlock()
-
-	rt.mailboxProjectionSyncWG.Add(1)
-	go func() {
-		defer rt.mailboxProjectionSyncWG.Done()
-		rt.runMailboxProjectionSync(sessionDir)
-	}()
-}
-
-func (rt *daemonRuntime) runMailboxProjectionSync(sessionDir string) {
-	for {
-		syncMailboxProjection(sessionDir)
-
-		rt.mailboxProjectionSyncMu.Lock()
-		if !rt.pendingMailboxProjectionSyncs[sessionDir] {
-			delete(rt.activeMailboxProjectionSyncs, sessionDir)
-			rt.mailboxProjectionSyncMu.Unlock()
-			return
-		}
-		delete(rt.pendingMailboxProjectionSyncs, sessionDir)
-		rt.mailboxProjectionSyncMu.Unlock()
-	}
-}
-
-func (rt *daemonRuntime) waitForMailboxProjectionSyncs() {
-	rt.mailboxProjectionSyncWG.Wait()
 }
 
 func (rt *daemonRuntime) handleWatcherError(err error) {

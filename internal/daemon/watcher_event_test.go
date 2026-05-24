@@ -207,7 +207,6 @@ func TestHandleWatcherEvent_ReadRenameMarksRecipientAliveAndSyncsProjection(t *t
 	if got := projected.Read[readKey].Content; got != content {
 		t.Fatalf("projected read content = %q, want %q", got, content)
 	}
-	rt.waitForMailboxProjectionSyncs()
 }
 
 func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *testing.T) {

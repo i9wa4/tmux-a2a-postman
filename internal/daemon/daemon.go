@@ -250,14 +250,14 @@ func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent s
 		filepath.Join("read", filename),
 		content,
 	))
+	syncMailboxProjection(sessionDir)
 }
 
 type daemonSubmitProcessResult struct {
-	Command                  projection.DaemonSubmitCommand
-	SessionDir               string
-	Filename                 string
-	PostPath                 string
-	ProjectionSyncSessionDir string
+	Command    projection.DaemonSubmitCommand
+	SessionDir string
+	Filename   string
+	PostPath   string
 }
 
 func (r daemonSubmitProcessResult) hasPostDispatch() bool {
@@ -296,10 +296,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		Command:    request.Command,
 		SessionDir: sessionDir,
 	}
-	processingStartedAt := time.Now()
-	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
-	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
-		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
+	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename)
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
@@ -311,9 +309,6 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		}
 	case projection.DaemonSubmitPop:
 		response, err = handleDaemonSubmitPop(sessionDir, request)
-		if err == nil && !response.Empty {
-			result.ProjectionSyncSessionDir = sessionDir
-		}
 	default:
 		err = fmt.Errorf("unsupported daemon submit command %q", request.Command)
 		response = projection.DaemonSubmitResponse{
@@ -328,33 +323,12 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
 		return result, writeErr
 	}
-	responseWrittenAt := time.Now()
-	handlerMs := daemonSubmitDurationMillis(responseWrittenAt.Sub(processingStartedAt))
-	totalMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, responseWrittenAt))
-	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t queue_ms=%d handler_ms=%d total_ms=%d\n",
-		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "", queueMs, handlerMs, totalMs)
+	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
 	if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
 	}
 	return result, nil
-}
-
-func daemonSubmitDurationSince(createdAt string, now time.Time) time.Duration {
-	if createdAt == "" {
-		return -1
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
-	if err != nil {
-		return -1
-	}
-	return now.Sub(parsed)
-}
-
-func daemonSubmitDurationMillis(duration time.Duration) int64 {
-	if duration < 0 {
-		return -1
-	}
-	return duration.Milliseconds()
 }
 
 // DaemonState manages daemon state (Issue #71).
@@ -517,17 +491,14 @@ func RunDaemonLoop(
 		select {
 		case <-ctx.Done():
 			runtime.handleContextDone()
-			runtime.waitForMailboxProjectionSyncs()
 			return
 		case event, ok := <-watcher.Events:
 			if !ok {
-				runtime.waitForMailboxProjectionSyncs()
 				return
 			}
 			runtime.handleWatcherEvent(event)
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				runtime.waitForMailboxProjectionSyncs()
 				return
 			}
 			runtime.handleWatcherError(err)
