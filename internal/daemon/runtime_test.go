@@ -1354,7 +1354,7 @@ func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *
 	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
 	t.Cleanup(journal.ClearProcessManager)
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
