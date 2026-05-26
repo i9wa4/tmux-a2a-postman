@@ -20,32 +20,32 @@ or when results return to the event loop before shared state is updated.
 
 ## 2. Path inventory
 
-| Component/path             | Mode after change                         | Trigger/cadence                         | Shared state                               | Blocking IO/tmux/filesystem calls                          | Backpressure                              | Safe parallel boundary                         |
-| -------------------------- | ----------------------------------------- | --------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
-| TUI raw daemon relay       | Serialized event read, latest snapshot    | daemon event channel                    | known session set local to relay           | TUI channel send                                           | snapshot replace, non-session drop        | status refresh requests are side-band          |
-| Session status refresh     | Bounded per-session workers, latest gen   | status/config/activity/alive events     | atomic latest status generation            | `refreshProjectedSessionStatus`, tmux pane/window listing  | worker cap, stale generation drop         | emit only matching generation results          |
-| Session scan tick          | Serialized apply                          | `sessionScanInterval` ticker            | previous session snapshot in runtime       | `discovery.DiscoverAllSessions`                            | blocking TUI status send                  | daemon-submit workers cannot block this tick   |
-| Full scan tick             | Serialized apply                          | `ScanInterval` ticker                   | runtime nodes, known nodes, pane snapshots | node discovery, tmux pane state, projection scan           | event-loop ownership                      | collect IO before mutating runtime state       |
-| Daemon-submit requests     | Bounded workers, per-operation active key | fsnotify create/rename, scan recovery   | active submit key map in event loop        | request claim/read, post write, inbox pop                  | worker cap, per-key filesystem queue      | send and unrelated inbox pops may run together |
-| Submit send post wake      | Serialized result handling                | daemon-submit worker result             | runtime post guards and route state        | post reconciliation, projection sync, node discovery       | event loop ordering                       | worker only writes response and post file      |
-| Post reconciliation        | Serialized reservation                    | post fsnotify, submit result, backlog   | active post events, delivery route state   | projection sync, node discovery                            | same-route retry timer                    | pane delivery starts after reservation         |
-| Pane delivery              | Goroutine per accepted delivery           | post reservation success                | route reservation completed in defer       | tmux notification, inbox/archive filesystem writes         | route gap, active post guard              | different accepted routes may run concurrently |
-| Swallowed-message redrive  | Inline scan, delivery helper call         | inbox check ticker                      | idle tracker and daemon state              | inbox scans, pane notification                             | ticker cadence                            | notification buffer mutex protects tmux buffer |
-| Auto-ping delivery         | Goroutine per active node                 | discovery, pane restart, startup        | active auto-ping map                       | tmux notification, auto-ping projection                    | per-node active guard                     | different nodes may ping concurrently          |
+| Component/path            | Mode after change                         | Trigger/cadence                       | Shared state                               | Blocking IO/tmux/filesystem calls                         | Backpressure                         | Safe parallel boundary                         |
+| ------------------------- | ----------------------------------------- | ------------------------------------- | ------------------------------------------ | --------------------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| TUI raw daemon relay      | Serialized event read, latest snapshot    | daemon event channel                  | known session set local to relay           | TUI channel send                                          | snapshot replace, non-session drop   | status refresh requests are side-band          |
+| Session status refresh    | Bounded per-session workers, latest gen   | status/config/activity/alive events   | atomic latest status generation            | `refreshProjectedSessionStatus`, tmux pane/window listing | worker cap, stale generation drop    | emit only matching generation results          |
+| Session scan tick         | Serialized apply                          | `sessionScanInterval` ticker          | previous session snapshot in runtime       | `discovery.DiscoverAllSessions`                           | blocking TUI status send             | daemon-submit workers cannot block this tick   |
+| Full scan tick            | Serialized apply                          | `ScanInterval` ticker                 | runtime nodes, known nodes, pane snapshots | node discovery, tmux pane state, projection scan          | event-loop ownership                 | collect IO before mutating runtime state       |
+| Daemon-submit requests    | Bounded workers, per-operation active key | fsnotify create/rename, scan recovery | active submit key map in event loop        | request claim/read, post write, inbox pop                 | worker cap, per-key filesystem queue | send and unrelated inbox pops may run together |
+| Submit send post wake     | Serialized result handling                | daemon-submit worker result           | runtime post guards and route state        | post reconciliation, projection sync, node discovery      | event loop ordering                  | worker only writes response and post file      |
+| Post reconciliation       | Serialized reservation                    | post fsnotify, submit result, backlog | active post events, delivery route state   | projection sync, node discovery                           | same-route retry timer               | pane delivery starts after reservation         |
+| Pane delivery             | Goroutine per accepted delivery           | post reservation success              | route reservation completed in defer       | tmux notification, inbox/archive filesystem writes        | route gap, active post guard         | different accepted routes may run concurrently |
+| Swallowed-message redrive | Inline scan, delivery helper call         | inbox check ticker                    | idle tracker and daemon state              | inbox scans, pane notification                            | ticker cadence                       | notification buffer mutex protects tmux buffer |
+| Auto-ping delivery        | Goroutine per active node                 | discovery, pane restart, startup      | active auto-ping map                       | tmux notification, auto-ping projection                   | per-node active guard                | different nodes may ping concurrently          |
 
 ## 3. Regression contracts
 
-| Contract                         | Guardrail                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------- |
-| Raw TUI session snapshots        | A blocked status probe must not delay a newer `status_update`.             |
-| Status batch parallelism         | A slow session status probe must not block a fast session in the batch.    |
-| Status latest-wins               | A stale status generation must not publish after a newer snapshot exists.  |
-| Daemon-submit responsiveness     | A blocked submit worker must not block session status scan propagation.    |
-| Daemon-submit durability         | Saturated workers leave request files pending for the next scan/watcher.   |
-| Same-inbox pop ordering          | Only one daemon-submit `pop` per session/node inbox may be active.         |
-| Submit send independence         | `send` must not wait behind an unrelated active `pop` in the same session. |
-| Post delivery completion         | Route reservation and post active guards prevent duplicate completion.     |
-| Notification buffer correctness  | tmux `set-buffer`/`paste-buffer` remains protected by notification mutex.  |
+| Contract                        | Guardrail                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| Raw TUI session snapshots       | A blocked status probe must not delay a newer `status_update`.             |
+| Status batch parallelism        | A slow session status probe must not block a fast session in the batch.    |
+| Status latest-wins              | A stale status generation must not publish after a newer snapshot exists.  |
+| Daemon-submit responsiveness    | A blocked submit worker must not block session status scan propagation.    |
+| Daemon-submit durability        | Saturated workers leave request files pending for the next scan/watcher.   |
+| Same-inbox pop ordering         | Only one daemon-submit `pop` per session/node inbox may be active.         |
+| Submit send independence        | `send` must not wait behind an unrelated active `pop` in the same session. |
+| Post delivery completion        | Route reservation and post active guards prevent duplicate completion.     |
+| Notification buffer correctness | tmux `set-buffer`/`paste-buffer` remains protected by notification mutex.  |
 
 ## 4. Serialized by design
 
