@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -317,7 +317,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 	}
 
 	logPath := installRuntimeSessionScanActivationTmux(t, tmpDir, []string{selfSession, targetSession})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -387,7 +387,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 	}
 
 	logPath := installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker", "critic", "unrelated"})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -497,7 +497,7 @@ func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *t
 
 	done := make(chan struct{})
 	go func() {
-		rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+		rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 		close(done)
 	}()
 
@@ -845,7 +845,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
-	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+	rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
@@ -1055,7 +1055,7 @@ func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) 
 	}
 
 	start := time.Now()
-	rt.handlePostWatcherEvent(postPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(postPath, fswatcher.Create)
 
 	if _, err := os.Stat(postPath); err != nil {
 		t.Fatalf("rate-limited post file should remain until retry: %v", err)
@@ -1134,8 +1134,8 @@ func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing
 		t.Fatalf("WriteFile(second post): %v", err)
 	}
 
-	rt.handlePostWatcherEvent(firstPostPath, fsnotify.Create)
-	rt.handlePostWatcherEvent(secondPostPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(firstPostPath, fswatcher.Create)
+	rt.handlePostWatcherEvent(secondPostPath, fswatcher.Create)
 
 	firstInboxPath := filepath.Join(sessionDir, "inbox", "messenger", firstFilename)
 	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, 10*time.Second)
@@ -1389,7 +1389,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 			SessionDir:  t.TempDir(),
 		},
 	}
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1415,7 +1415,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 }
 
 func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) {
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1474,7 +1474,7 @@ func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *
 	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
 	t.Cleanup(journal.ClearProcessManager)
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1674,6 +1674,67 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 
 	waitForInboxEntries(t, sessionDir, "worker", 1)
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+}
+
+func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 21, 7, 0, 0, 0, time.UTC)
+	deliveredAt := now.Add(9 * time.Second)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time { return deliveredAt },
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if got, want := state.Nodes["review:worker"].DeliveredAt, deliveredAt.Format(time.RFC3339Nano); got != want {
+		t.Fatalf("DeliveredAt = %q, want %q", got, want)
+	}
 }
 
 func TestDispatchPendingAutoPings_DoesNotBlockDaemonLoopWhilePaneDeliveryRuns(t *testing.T) {

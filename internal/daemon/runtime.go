@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -37,7 +37,7 @@ type daemonRuntime struct {
 	configPath  string
 	selfSession string
 	cfg         *config.Config
-	watcher     *fsnotify.Watcher
+	watcher     filesystemWatcher
 	adjacency   map[string][]string
 	nodes       map[string]discovery.NodeInfo
 	knownNodes  map[string]bool
@@ -46,6 +46,7 @@ type daemonRuntime struct {
 	nodesDirs   []string
 	daemonState *DaemonState
 	idleTracker *idle.IdleTracker
+	clock       func() time.Time
 
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
@@ -105,7 +106,7 @@ func newDaemonRuntime(
 	sessionDir string,
 	contextID string,
 	cfg *config.Config,
-	watcher *fsnotify.Watcher,
+	watcher filesystemWatcher,
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
@@ -147,6 +148,13 @@ func newDaemonRuntime(
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
 	}
+}
+
+func (rt *daemonRuntime) now() time.Time {
+	if rt.clock == nil {
+		return time.Now()
+	}
+	return rt.clock()
 }
 
 func buildRuntimeStatusSnapshot(nodes map[string]discovery.NodeInfo, allSessions []string, isSessionEnabled func(string) bool) runtimeStatusSnapshot {
@@ -260,14 +268,15 @@ func resumeMailboxProjections(primarySessionDir string, nodes map[string]discove
 func (rt *daemonRuntime) bootstrap() {
 	rt.storeSharedNodes()
 
-	installShadowJournalManager(rt.sessionDir, rt.contextID, rt.selfSession, time.Now())
+	now := rt.now()
+	installShadowJournalManager(rt.sessionDir, rt.contextID, rt.selfSession, now)
 	if err := resumeMailboxProjections(rt.sessionDir, rt.nodes); err != nil {
 		log.Printf("postman: WARNING: %v\n", err)
 	}
 	rt.dispatchPendingDaemonSubmitRequests()
-	rt.recordPendingAutoPings(startupAutoPingNodeKeys(rt.nodes, rt.cfg), rt.nodes, "startup", time.Now())
+	rt.recordPendingAutoPings(startupAutoPingNodeKeys(rt.nodes, rt.cfg), rt.nodes, "startup", now)
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
-	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, time.Now())
+	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, now)
 	rt.dispatchPendingPostMessages()
 }
 
@@ -286,16 +295,16 @@ func (rt *daemonRuntime) handleContextDone() {
 	}
 }
 
-func (rt *daemonRuntime) handleWatcherEvent(event fsnotify.Event) {
+func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 	eventPath := event.Name
 
 	switch {
 	case filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon):
-		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
+		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
 			rt.handleDaemonSubmitRequest(eventPath)
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "post"):
-		if event.Op&(fsnotify.Create|fsnotify.Rename) != 0 {
+		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 {
 			rt.wakePostReconciler(eventPath)
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "read"):
@@ -537,8 +546,8 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 	}
 }
 
-func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fsnotify.Op) {
-	if op&(fsnotify.Create|fsnotify.Rename) == 0 {
+func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fswatcher.Op) {
+	if op&(fswatcher.Create|fswatcher.Rename) == 0 {
 		return
 	}
 	filename := filepath.Base(eventPath)
@@ -576,7 +585,7 @@ func (rt *daemonRuntime) postReconciler() reconciler.PostReconciler {
 }
 
 func (rt *daemonRuntime) handlePendingPost(post store.PendingPost) {
-	rt.handlePostWatcherEvent(post.Path, fsnotify.Create)
+	rt.handlePostWatcherEvent(post.Path, fswatcher.Create)
 }
 
 func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
@@ -585,7 +594,8 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, time.Now())
+	now := rt.now()
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	syncMailboxProjection(sourceSessionDir)
 
@@ -594,11 +604,11 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		rt.claimNewPanes(freshNodes)
 		rt.pruneKnownNodes(freshNodes)
 		newNodes := rt.detectNewNodes(freshNodes)
-		rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+		rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", now)
 		rt.logPaneIDChanges(freshNodes)
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
-		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), time.Now())
+		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
 
 		allSessions, _ := discovery.DiscoverAllSessions()
 		if allSessions == nil {
@@ -630,7 +640,7 @@ func (rt *daemonRuntime) reservePostDeliveryOrScheduleRetry(eventPath, filename 
 	}
 
 	gap := time.Duration(rt.cfg.MinDeliveryGapSeconds * float64(time.Second))
-	remaining, reservedAt, ok := rt.daemonState.reserveDeliveryRoute(deliveryKey, gap, time.Now())
+	remaining, reservedAt, ok := rt.daemonState.reserveDeliveryRoute(deliveryKey, gap, rt.now())
 	if !ok {
 		rt.scheduleRateLimitedPostRetry(eventPath, filename, msgInfo.From, msgInfo.To, remaining, rt.cfg.MinDeliveryGapSeconds)
 		return postDeliveryReservation{}, false
@@ -666,7 +676,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		deliveredNormally := false
 		defer func() {
 			if reservation.route != "" {
-				rt.daemonState.finishDeliveryRoute(reservation.route, reservation.reservedAt, reservation.hasReservation, deliveredNormally, time.Now())
+				rt.daemonState.finishDeliveryRoute(reservation.route, reservation.reservedAt, reservation.hasReservation, deliveredNormally, rt.now())
 			}
 			rt.finishPostEvent(eventPath)
 		}()
@@ -760,8 +770,8 @@ func (rt *daemonRuntime) finishPostEvent(eventPath string) {
 	rt.postEventsMu.Unlock()
 }
 
-func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op) {
-	if op&(fsnotify.Create|fsnotify.Rename) == 0 {
+func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fswatcher.Op) {
+	if op&(fswatcher.Create|fswatcher.Rename) == 0 {
 		return
 	}
 	filename := filepath.Base(eventPath)
@@ -774,7 +784,7 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fsnotify.Op
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, time.Now())
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
 	rt.scheduleMailboxProjectionSync(sourceSessionDir)
@@ -873,7 +883,8 @@ func (rt *daemonRuntime) handleScanTick() {
 	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.pruneKnownNodes(freshNodes)
 	newNodes := rt.detectNewNodes(freshNodes)
-	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+	now := rt.now()
+	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", now)
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
 
@@ -909,12 +920,12 @@ func (rt *daemonRuntime) handleScanTick() {
 
 			rt.daemonState.checkPaneDisappearance(paneStates, rt.daemonState.prevPaneToNode, rt.nodes, rt.events)
 			restartedNodes := rt.daemonState.checkPaneRestarts(paneStates, paneToNode, rt.nodes, rt.events)
-			rt.recordPendingAutoPings(restartedNodes, rt.nodes, "pane_restart", time.Now())
+			rt.recordPendingAutoPings(restartedNodes, rt.nodes, "pane_restart", now)
 			rt.prevPaneStatesJSON = currentJSONStr
 		}
 	}
 
-	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, time.Now())
+	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, now)
 	rt.dispatchPendingDaemonSubmitRequests()
 	rt.dispatchPendingPostMessages()
 
@@ -1058,10 +1069,11 @@ func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string
 	}
 	rt.pruneKnownNodes(freshNodes)
 	newNodes := rt.detectNewNodes(freshNodes)
-	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", time.Now())
+	now := rt.now()
+	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", now)
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
-	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), time.Now())
+	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
 	rt.emitStatusUpdateIfChanged(allSessions)
 }
 
@@ -1129,17 +1141,17 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 	nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
 
 	if !rt.watchedDirs[nodePostDir] {
-		if err := rt.watcher.Add(nodePostDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodePostDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodePostDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeInboxDir] {
-		if err := rt.watcher.Add(nodeInboxDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodeInboxDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodeInboxDir] = true
 		}
 	}
 	if !rt.watchedDirs[nodeReadDir] {
-		if err := rt.watcher.Add(nodeReadDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(nodeReadDir, fswatcher.All); err == nil {
 			rt.watchedDirs[nodeReadDir] = true
 		}
 	}
@@ -1150,7 +1162,7 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		return
 	}
 	if !rt.watchedDirs[submitRequestsDir] {
-		if err := rt.watcher.Add(submitRequestsDir, fsnotify.All); err == nil {
+		if err := rt.watcher.Add(submitRequestsDir, fswatcher.All); err == nil {
 			rt.watchedDirs[submitRequestsDir] = true
 		}
 	}
@@ -1404,7 +1416,7 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 				return
 			}
 
-			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, time.Now())
+			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, rt.now())
 		}()
 	}
 }

@@ -12,9 +12,9 @@ import (
 )
 
 func TestUpdateActivity(t *testing.T) {
-	tracker := NewIdleTracker()
+	now := time.Date(2026, time.May, 21, 1, 2, 3, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
 	nodeKey := "test-session:test-node"
-	before := time.Now()
 
 	// Test UpdateSendActivity
 	tracker.UpdateSendActivity(nodeKey)
@@ -27,12 +27,12 @@ func TestUpdateActivity(t *testing.T) {
 		t.Fatalf("send activity not recorded for %s", nodeKey)
 	}
 
-	if activity.LastSent.Before(before) {
-		t.Errorf("send activity time %v is before test start %v", activity.LastSent, before)
+	if !activity.LastSent.Equal(now) {
+		t.Errorf("send activity time %v, want %v", activity.LastSent, now)
 	}
 
 	// Test UpdateReceiveActivity
-	before2 := time.Now()
+	now = now.Add(5 * time.Second)
 	tracker.UpdateReceiveActivity(nodeKey)
 
 	tracker.mu.Lock()
@@ -43,18 +43,18 @@ func TestUpdateActivity(t *testing.T) {
 		t.Fatalf("receive activity not recorded for %s", nodeKey)
 	}
 
-	if activity2.LastReceived.Before(before2) {
-		t.Errorf("receive activity time %v is before test start %v", activity2.LastReceived, before2)
+	if !activity2.LastReceived.Equal(now) {
+		t.Errorf("receive activity time %v, want %v", activity2.LastReceived, now)
 	}
 }
 
 // Issue #123: Test for ExportPaneActivityToFile — verifies new JSON schema (struct format)
 func TestExportPaneActivityToFile(t *testing.T) {
-	tracker := NewIdleTracker()
+	now := time.Date(2026, time.May, 21, 2, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
 	cfg := &config.Config{
 		NodeActiveSeconds: 300.0,
 	}
-	now := time.Now()
 
 	// Set up pane states
 	tracker.mu.Lock()
@@ -376,6 +376,98 @@ func TestFilterPaneCaptureNodes_PreservesBareKeys(t *testing.T) {
 	}
 }
 
+func TestCheckPaneCaptureUsesInjectedClockForPaneTimestamps(t *testing.T) {
+	scriptDir := t.TempDir()
+	capturePath := filepath.Join(scriptDir, "capture.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tcodex'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_CAPTURE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_CAPTURE", capturePath)
+
+	now := time.Date(2026, time.May, 21, 3, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  filepath.Join(t.TempDir(), "review"),
+		},
+	}
+
+	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture ready): %v", err)
+	}
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("initial checkPaneCapture() returned %d targets, want 0", len(targets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if !state.LastChangeAt.Equal(now) {
+		t.Fatalf("initial LastChangeAt = %v, want %v", state.LastChangeAt, now)
+	}
+	if !state.LastCaptureAt.Equal(now) {
+		t.Fatalf("initial LastCaptureAt = %v, want %v", state.LastCaptureAt, now)
+	}
+
+	now = now.Add(10 * time.Second)
+	if err := os.WriteFile(capturePath, []byte("working"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture working): %v", err)
+	}
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 0", len(targets))
+	}
+
+	tracker.mu.Lock()
+	state = tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if !state.LastChangeAt.Equal(now) {
+		t.Fatalf("changed LastChangeAt = %v, want %v", state.LastChangeAt, now)
+	}
+	if !state.LastCaptureAt.Equal(now) {
+		t.Fatalf("changed LastCaptureAt = %v, want %v", state.LastCaptureAt, now)
+	}
+
+	now = now.Add(10 * time.Second)
+	if err := os.WriteFile(capturePath, []byte("working again"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture working again): %v", err)
+	}
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("third checkPaneCapture() returned %d targets, want 0", len(targets))
+	}
+
+	tracker.mu.Lock()
+	state = tracker.paneCaptureState["%11"]
+	activity := tracker.nodeActivity["review:worker"]
+	tracker.mu.Unlock()
+	if !state.LastChangeAt.Equal(now) {
+		t.Fatalf("active LastChangeAt = %v, want %v", state.LastChangeAt, now)
+	}
+	if !state.LastCaptureAt.Equal(now) {
+		t.Fatalf("active LastCaptureAt = %v, want %v", state.LastCaptureAt, now)
+	}
+	if !activity.LastScreenChange.Equal(now) {
+		t.Fatalf("LastScreenChange = %v, want %v", activity.LastScreenChange, now)
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerRecordsInitialMarkerWithoutPing(t *testing.T) {
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
@@ -529,7 +621,8 @@ func TestCheckPaneCapture_CompactionTriggerUsesRecentHistory(t *testing.T) {
 	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
 	t.Setenv("TMUX_A2A_TEST_HISTORY", historyPath)
 
-	tracker := NewIdleTracker()
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
 	cfg := &config.Config{
 		ActivityWindowSeconds: 120,
 		NodeStaleSeconds:      600,
@@ -617,7 +710,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
 	t.Setenv("TMUX_A2A_TEST_HISTORY", historyPath)
 
-	tracker := NewIdleTracker()
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
 	cfg := &config.Config{
 		ActivityWindowSeconds: 120,
 		NodeStaleSeconds:      600,
@@ -664,8 +758,9 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	if state.LastCompactionTrigger == "" {
 		t.Fatal("first checkPaneCapture() did not leave compaction trigger set")
 	}
-	state.LastCompactionPingAt = time.Now().Add(-compactionPingCooldown - time.Second)
-	tracker.paneCaptureState["%11"] = state
+	if !state.LastCompactionPingAt.Equal(now) {
+		t.Fatalf("first LastCompactionPingAt = %v, want %v", state.LastCompactionPingAt, now)
+	}
 	tracker.mu.Unlock()
 
 	secondVisible := "after second compaction"
@@ -676,6 +771,13 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	if err := os.WriteFile(historyPath, []byte(secondHistory), 0o644); err != nil {
 		t.Fatalf("WriteFile(history second): %v", err)
 	}
+
+	withinCooldownTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(withinCooldownTargets) != 0 {
+		t.Fatalf("within-cooldown checkPaneCapture() returned %d targets, want 0", len(withinCooldownTargets))
+	}
+
+	now = now.Add(compactionPingCooldown + time.Second)
 	secondTargets := tracker.checkPaneCapture(cfg, nodes)
 	if len(secondTargets) != 1 {
 		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 for newer compaction marker in retained history", len(secondTargets))
@@ -695,6 +797,9 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	}
 	if state.LastCompactionMarkers != 2 {
 		t.Fatalf("checkPaneCapture() recorded %d compaction markers, want 2", state.LastCompactionMarkers)
+	}
+	if !state.LastCompactionPingAt.Equal(now) {
+		t.Fatalf("second LastCompactionPingAt = %v, want %v", state.LastCompactionPingAt, now)
 	}
 }
 

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
@@ -257,7 +257,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	postDir := filepath.Join(sessionDir, "post")
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("creating watcher: %w", err)
 	}
@@ -355,14 +355,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		nodeInboxDir := filepath.Join(nodeInfo.SessionDir, "inbox")
 
 		if !watchedDirs[nodePostDir] {
-			if err := watcher.Add(nodePostDir, fsnotify.All); err != nil {
+			if err := watcher.Add(nodePostDir, fswatcher.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s post directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodePostDir] = true
 			}
 		}
 		if !watchedDirs[nodeInboxDir] {
-			if err := watcher.Add(nodeInboxDir, fsnotify.All); err != nil {
+			if err := watcher.Add(nodeInboxDir, fswatcher.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s inbox directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodeInboxDir] = true
@@ -370,7 +370,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 		nodeReadDir := filepath.Join(nodeInfo.SessionDir, "read")
 		if !watchedDirs[nodeReadDir] {
-			if err := watcher.Add(nodeReadDir, fsnotify.All); err != nil {
+			if err := watcher.Add(nodeReadDir, fswatcher.All); err != nil {
 				log.Printf("⚠️  postman: warning: could not watch %s read directory: %v\n", nodeName, err)
 			} else {
 				watchedDirs[nodeReadDir] = true
@@ -380,7 +380,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		if err := projection.EnsureDaemonSubmitDirs(nodeInfo.SessionDir); err != nil {
 			log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 		} else if !watchedDirs[submitRequestsDir] {
-			if err := watcher.Add(submitRequestsDir, fsnotify.All); err != nil {
+			if err := watcher.Add(submitRequestsDir, fswatcher.All); err != nil {
 				log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s node=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, nodeName, err)
 			} else {
 				watchedDirs[submitRequestsDir] = true
@@ -390,19 +390,19 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Also watch default session directories (for postman's own messages)
 	if !watchedDirs[postDir] {
-		if err := watcher.Add(postDir, fsnotify.All); err != nil {
+		if err := watcher.Add(postDir, fswatcher.All); err != nil {
 			return fmt.Errorf("watching post directory: %w", err)
 		}
 		watchedDirs[postDir] = true
 	}
 	if !watchedDirs[inboxDir] {
-		if err := watcher.Add(inboxDir, fsnotify.All); err != nil {
+		if err := watcher.Add(inboxDir, fswatcher.All); err != nil {
 			return fmt.Errorf("watching inbox directory: %w", err)
 		}
 		watchedDirs[inboxDir] = true
 	}
 	if !watchedDirs[readDir] {
-		if err := watcher.Add(readDir, fsnotify.All); err != nil {
+		if err := watcher.Add(readDir, fswatcher.All); err != nil {
 			log.Printf("⚠️  postman: warning: could not watch read directory: %v\n", err)
 		} else {
 			watchedDirs[readDir] = true
@@ -412,7 +412,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if err := projection.EnsureDaemonSubmitDirs(sessionDir); err != nil {
 		log.Printf("postman: WARNING: component=%s event=dirs_create_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 	} else if !watchedDirs[submitRequestsDir] {
-		if err := watcher.Add(submitRequestsDir, fsnotify.All); err != nil {
+		if err := watcher.Add(submitRequestsDir, fswatcher.All); err != nil {
 			log.Printf("postman: WARNING: component=%s event=watch_failed submit_path=%s session=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, sessionName, err)
 		} else {
 			watchedDirs[submitRequestsDir] = true

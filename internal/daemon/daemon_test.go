@@ -46,6 +46,73 @@ func TestCheckPaneRestarts_IgnoresWinnerSwapWhileOldPaneStillLive(t *testing.T) 
 	}
 }
 
+func TestDaemonStateDrainWindowUsesInjectedClock(t *testing.T) {
+	now := time.Date(2026, time.May, 21, 5, 0, 0, 0, time.UTC)
+	ds := newDaemonStateWithClock(10, "ctx-main", func() time.Time { return now })
+
+	if !ds.IsSessionEnabled("review") {
+		t.Fatal("session should be enabled during startup drain window")
+	}
+
+	now = now.Add(11 * time.Second)
+	if ds.IsSessionEnabled("review") {
+		t.Fatal("unconfigured session stayed enabled after startup drain window")
+	}
+
+	ds.SetSessionEnabled("review", true)
+	if !ds.IsSessionEnabled("review") {
+		t.Fatal("configured session should be enabled after startup drain window")
+	}
+}
+
+func TestReserveDeliveryRouteUsesExplicitClock(t *testing.T) {
+	ds := NewDaemonState(0, "ctx-main")
+	route := "orchestrator:messenger"
+	gap := 10 * time.Second
+	start := time.Date(2026, time.May, 21, 6, 0, 0, 0, time.UTC)
+
+	remaining, reservedAt, ok := ds.reserveDeliveryRoute(route, gap, start)
+	if !ok {
+		t.Fatal("first reservation was rejected")
+	}
+	if remaining != 0 {
+		t.Fatalf("first reservation remaining = %s, want 0", remaining)
+	}
+	if !reservedAt.Equal(start) {
+		t.Fatalf("reservedAt = %v, want %v", reservedAt, start)
+	}
+
+	remaining, _, ok = ds.reserveDeliveryRoute(route, gap, start.Add(3*time.Second))
+	if ok {
+		t.Fatal("second reservation was allowed while the first was in flight")
+	}
+	if remaining != 7*time.Second {
+		t.Fatalf("in-flight remaining = %s, want 7s", remaining)
+	}
+
+	finishedAt := start.Add(4 * time.Second)
+	ds.finishDeliveryRoute(route, reservedAt, true, true, finishedAt)
+
+	remaining, _, ok = ds.reserveDeliveryRoute(route, gap, start.Add(9*time.Second))
+	if ok {
+		t.Fatal("reservation was allowed before delivery gap elapsed")
+	}
+	if remaining != 5*time.Second {
+		t.Fatalf("post-delivery remaining = %s, want 5s", remaining)
+	}
+
+	remaining, reservedAt, ok = ds.reserveDeliveryRoute(route, gap, start.Add(15*time.Second))
+	if !ok {
+		t.Fatal("reservation was rejected after delivery gap elapsed")
+	}
+	if remaining != 0 {
+		t.Fatalf("post-gap remaining = %s, want 0", remaining)
+	}
+	if !reservedAt.Equal(start.Add(15 * time.Second)) {
+		t.Fatalf("post-gap reservedAt = %v, want %v", reservedAt, start.Add(15*time.Second))
+	}
+}
+
 // TestHasNodeSentSince verifies swallowed-message detection logic (Issue #282).
 // NOTE: checkSwallowedMessages itself is not unit-tested because it depends on
 // filesystem state (real inbox/ directories), tmux (via notification.SendToPane),

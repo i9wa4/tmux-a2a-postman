@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -18,6 +18,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+type testFilesystemWatcher struct{}
+
+func (testFilesystemWatcher) Add(string, fswatcher.Op) error {
+	return nil
+}
 
 func TestHandleWatcherEvent_ConfigAndNodesEventsDoNotMutateStartupSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -62,14 +68,14 @@ func TestHandleWatcherEvent_ConfigAndNodesEventsDoNotMutateStartupSnapshot(t *te
 	}
 
 	writeWatcherReloadConfig(t, configPath, 7)
-	rt.handleWatcherEvent(fsnotify.Event{Name: configPath, Op: fsnotify.Write})
+	rt.handleWatcherEvent(fswatcher.Event{Name: configPath, Op: fswatcher.Write})
 	assertNoConfigReloadEvent(t, events)
 	if got := rt.cfg.ScanInterval; got != 1 {
 		t.Fatalf("config path event mutated ScanInterval = %v, want startup snapshot 1", got)
 	}
 
 	writeWatcherReloadConfig(t, configPath, 11)
-	rt.handleWatcherEvent(fsnotify.Event{Name: filepath.Join(nodesDir, "worker.toml"), Op: fsnotify.Create})
+	rt.handleWatcherEvent(fswatcher.Event{Name: filepath.Join(nodesDir, "worker.toml"), Op: fswatcher.Create})
 	assertNoConfigReloadEvent(t, events)
 	if got := rt.cfg.ScanInterval; got != 1 {
 		t.Fatalf("nodes dir event mutated ScanInterval = %v, want startup snapshot 1", got)
@@ -81,12 +87,12 @@ func TestHandleWatcherEvent_PostCreateAndAtomicRenameDeliverMessages(t *testing.
 
 	cases := []struct {
 		name string
-		op   fsnotify.Op
+		op   fswatcher.Op
 		put  func(path, content string)
 	}{
 		{
 			name: "create",
-			op:   fsnotify.Create,
+			op:   fswatcher.Create,
 			put: func(path, content string) {
 				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 					t.Fatalf("WriteFile(post): %v", err)
@@ -95,7 +101,7 @@ func TestHandleWatcherEvent_PostCreateAndAtomicRenameDeliverMessages(t *testing.
 		},
 		{
 			name: "atomic rename",
-			op:   fsnotify.Rename,
+			op:   fswatcher.Rename,
 			put: func(path, content string) {
 				tmpPath := filepath.Join(t.TempDir(), filepath.Base(path)+".tmp")
 				if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
@@ -115,7 +121,7 @@ func TestHandleWatcherEvent_PostCreateAndAtomicRenameDeliverMessages(t *testing.
 			postPath := filepath.Join(sessionDir, "post", filename)
 			tc.put(postPath, content)
 
-			rt.handleWatcherEvent(fsnotify.Event{Name: postPath, Op: tc.op})
+			rt.handleWatcherEvent(fswatcher.Event{Name: postPath, Op: tc.op})
 
 			inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
 			waitForFileContent(t, inboxPath, content, 10*time.Second)
@@ -135,7 +141,7 @@ func TestHandleWatcherEvent_PostWriteOnlyWaitsForRescan(t *testing.T) {
 		t.Fatalf("WriteFile(post): %v", err)
 	}
 
-	rt.handleWatcherEvent(fsnotify.Event{Name: postPath, Op: fsnotify.Write})
+	rt.handleWatcherEvent(fswatcher.Event{Name: postPath, Op: fswatcher.Write})
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
 	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
@@ -181,7 +187,7 @@ func TestHandleWatcherEvent_ReadRenameMarksRecipientAliveAndSyncsProjection(t *t
 		t.Fatalf("WriteFile(read): %v", err)
 	}
 
-	rt.handleWatcherEvent(fsnotify.Event{Name: readPath, Op: fsnotify.Rename})
+	rt.handleWatcherEvent(fswatcher.Event{Name: readPath, Op: fswatcher.Rename})
 
 	event := waitForDaemonEvent(t, events, "read node_alive", func(event tui.DaemonEvent) bool {
 		return event.Type == "node_alive"
@@ -222,14 +228,8 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 	installShadowJournalManager(sessionDir, contextID, sessionName, time.Now())
 	t.Cleanup(journal.ClearProcessManager)
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		if errors.Is(err, fsnotify.ErrUnsupported) {
-			t.Skipf("fsnotify unsupported on this platform: %v", err)
-		}
-		t.Fatalf("NewWatcher: %v", err)
-	}
-	defer func() { _ = watcher.Close() }()
+	watcherEvents := make(chan fswatcher.Event, 4)
+	watcherErrors := make(chan error, 1)
 
 	cfg := config.DefaultConfig()
 	cfg.ScanInterval = 3600
@@ -239,13 +239,15 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		RunDaemonLoop(
+		runDaemonLoopWithWatcherEvents(
 			ctx,
 			baseDir,
 			sessionDir,
 			contextID,
 			cfg,
-			watcher,
+			testFilesystemWatcher{},
+			watcherEvents,
+			watcherErrors,
 			map[string][]string{},
 			map[string]discovery.NodeInfo{},
 			map[string]bool{},
@@ -273,7 +275,7 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 	if err := os.WriteFile(firstReadPath, []byte("---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nread before error\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(read): %v", err)
 	}
-	watcher.Events <- fsnotify.Event{Name: firstReadPath, Op: fsnotify.Create}
+	watcherEvents <- fswatcher.Event{Name: firstReadPath, Op: fswatcher.Create}
 
 	event := waitForDaemonEvent(t, events, "node_alive before watcher error", func(event tui.DaemonEvent) bool {
 		return event.Type == "node_alive"
@@ -282,7 +284,7 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 		t.Fatalf("node_alive before watcher error node = %#v, want %q", got, sessionName+":worker")
 	}
 
-	watcher.Errors <- errors.New("transient backend error")
+	watcherErrors <- errors.New("transient backend error")
 	waitForDaemonEvent(t, events, "watcher error", func(event tui.DaemonEvent) bool {
 		return event.Type == "error" && strings.Contains(event.Message, "watcher error: transient backend error")
 	})
@@ -292,7 +294,7 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 	if err := os.WriteFile(secondReadPath, []byte("---\nparams:\n  from: orchestrator\n  to: critic\n---\n\nread after error\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(second read): %v", err)
 	}
-	watcher.Events <- fsnotify.Event{Name: secondReadPath, Op: fsnotify.Rename}
+	watcherEvents <- fswatcher.Event{Name: secondReadPath, Op: fswatcher.Rename}
 
 	event = waitForDaemonEvent(t, events, "node_alive after watcher error", func(event tui.DaemonEvent) bool {
 		return event.Type == "node_alive"
@@ -302,24 +304,24 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 	}
 }
 
-func TestFsnotifyWatcherSeesAtomicRenameIntoWatchedPostDir(t *testing.T) {
+func TestFswatcherSeesAtomicRenameIntoWatchedPostDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	postDir := filepath.Join(tmpDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll(post): %v", err)
 	}
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
-		if errors.Is(err, fsnotify.ErrUnsupported) {
-			t.Skipf("fsnotify unsupported on this platform: %v", err)
+		if errors.Is(err, fswatcher.ErrUnsupported) {
+			t.Skipf("fswatcher unsupported on this platform: %v", err)
 		}
 		t.Fatalf("NewWatcher: %v", err)
 	}
 	defer func() { _ = watcher.Close() }()
-	if err := watcher.Add(postDir, fsnotify.All); err != nil {
-		if errors.Is(err, fsnotify.ErrUnsupported) {
-			t.Skipf("fsnotify unsupported on this platform: %v", err)
+	if err := watcher.Add(postDir, fswatcher.All); err != nil {
+		if errors.Is(err, fswatcher.ErrUnsupported) {
+			t.Skipf("fswatcher unsupported on this platform: %v", err)
 		}
 		t.Fatalf("watcher.Add(post): %v", err)
 	}
@@ -333,9 +335,9 @@ func TestFsnotifyWatcherSeesAtomicRenameIntoWatchedPostDir(t *testing.T) {
 		t.Fatalf("Rename(tmp -> post): %v", err)
 	}
 
-	event := waitForFsnotifyEvent(t, watcher, finalPath, fsnotify.Create|fsnotify.Rename)
+	event := waitForFswatcherEvent(t, watcher, finalPath, fswatcher.Create|fswatcher.Rename)
 	if canonicalTestPath(t, event.Name) != canonicalTestPath(t, finalPath) {
-		t.Fatalf("fsnotify event.Name = %q, want %q", event.Name, finalPath)
+		t.Fatalf("fswatcher event.Name = %q, want %q", event.Name, finalPath)
 	}
 }
 
@@ -435,7 +437,7 @@ func waitForDaemonEvent(t *testing.T, events <-chan tui.DaemonEvent, description
 	}
 }
 
-func waitForFsnotifyEvent(t *testing.T, watcher *fsnotify.Watcher, path string, op fsnotify.Op) fsnotify.Event {
+func waitForFswatcherEvent(t *testing.T, watcher *fswatcher.Watcher, path string, op fswatcher.Op) fswatcher.Event {
 	t.Helper()
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()

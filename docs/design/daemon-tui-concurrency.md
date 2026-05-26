@@ -113,3 +113,9 @@ Do not parallelize these paths without adding an ownership handoff:
 
 The safe pattern is worker goroutines for independent IO, followed by result
 delivery back to the daemon event loop for stateful decisions.
+
+## 8. Watcher dependency naming
+
+Runtime filesystem watching uses `github.com/fswatcher/fswatcher`. Use generic
+"watcher" wording for design concepts when the concrete dependency name is not
+required.
