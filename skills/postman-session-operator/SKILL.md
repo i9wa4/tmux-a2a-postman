@@ -26,7 +26,8 @@ description: |
    archived Markdown body before any handling, routing, reply, status decision,
    or no-action or no-op decision.
 3. `messageType: ping`, `replyPolicy: none`, and other metadata do not allow
-   skipping the body; truncated output is incomplete.
+   skipping the body. truncated command output does not count as a complete
+   read.
 4. Filling an input request closes transport, not task acceptance. After exact
    replies, check send JSON `fill`, `required_input`, and `notice`; `DONE` still
    requires `Task artifact: <artifact-reference>`, `Original checklist: PASS`,
