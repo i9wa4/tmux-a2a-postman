@@ -29,11 +29,12 @@ description: |
    skipping the body. truncated command output does not count as a complete
    read.
 4. Filling an input request closes transport, not task acceptance. After exact
-   replies, check send JSON `fill`, `required_input`, and `notice`; `DONE`
-   still requires `Task artifact: <artifact-reference>`, `Original checklist:
-   PASS`, evidence, and `Remaining blockers: none`. Use `BLOCKED` with
-   `Original checklist: FAIL`; receivers should verify checklist status,
-   durable references, evidence, and blockers before relaying, approving, or closing work.
+   replies, check send JSON `fill`, `required_input`, and `notice`; `DONE` still
+   requires `Task artifact: <artifact-reference>`, `Original checklist: PASS`,
+   evidence, and `Remaining blockers: none`. Use `BLOCKED` with
+   `Original checklist: FAIL`; receivers should verify checklist status, durable
+   references, evidence, and blockers before relaying, approving, or closing
+   work.
 5. Route dead letters, missing routes, or stale topology to
    `postman-config-auditor`. Details:
    [Session Flow](references/session-flow.md).
