@@ -24,6 +24,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
@@ -329,6 +330,17 @@ const (
 
 func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonSubmitDispatchStatus {
 	rt.ensureDaemonSubmitRuntime()
+	if rt.isRuntimeDiagnosticsSubmitRequest(requestPath) {
+		if err := rt.processRuntimeDiagnosticsSubmitRequest(requestPath); err != nil {
+			if rt.events != nil {
+				rt.events <- tui.DaemonEvent{
+					Type:    "error",
+					Message: fmt.Sprintf("%s %s: %v", projection.SubmitPathDaemon, filepath.Base(requestPath), err),
+				}
+			}
+		}
+		return daemonSubmitDispatched
+	}
 	dispatchKey := daemonSubmitDispatchKey(requestPath)
 	if rt.activeDaemonSubmitKeys[dispatchKey] {
 		return daemonSubmitDispatchDeferred
@@ -357,6 +369,96 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	}()
 
 	return daemonSubmitDispatched
+}
+
+func (rt *daemonRuntime) isRuntimeDiagnosticsSubmitRequest(requestPath string) bool {
+	request, err := projection.ReadDaemonSubmitRequest(requestPath)
+	return err == nil && request.Command == projection.DaemonSubmitRuntimeDiagnostics
+}
+
+func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath string) error {
+	claimedPath, claimed, err := claimDaemonSubmitRequest(requestPath)
+	if err != nil || !claimed {
+		return err
+	}
+	defer func() {
+		if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
+		}
+	}()
+
+	sessionDir, ok := daemonSubmitSessionDir(claimedPath)
+	if !ok {
+		return nil
+	}
+	request, err := projection.ReadDaemonSubmitRequest(claimedPath)
+	if err != nil {
+		return err
+	}
+	response := projection.DaemonSubmitResponse{
+		RequestID:          request.RequestID,
+		Command:            request.Command,
+		HandledAt:          time.Now().UTC().Format(time.RFC3339Nano),
+		RuntimeDiagnostics: rt.runtimeDiagnostics(time.Now()),
+	}
+	if request.RequestID == "" {
+		response.Error = "daemon submit runtime-diagnostics missing request_id"
+	}
+	_, err = projection.WriteDaemonSubmitResponse(sessionDir, response)
+	return err
+}
+
+func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
+	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), now)
+	return &diag
+}
+
+func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
+	activePostEventCount := 0
+	rt.postEventsMu.Lock()
+	activePostEventCount = len(rt.activePostEvents)
+	rt.postEventsMu.Unlock()
+
+	activeAutoPingCount := 0
+	rt.autoPingEventsMu.Lock()
+	activeAutoPingCount = len(rt.activeAutoPings)
+	rt.autoPingEventsMu.Unlock()
+
+	sessionNames := map[string]bool{}
+	if rt.selfSession != "" {
+		sessionNames[rt.selfSession] = true
+	}
+	if rt.daemonState != nil {
+		rt.daemonState.enabledSessionsMu.RLock()
+		for sessionName := range rt.daemonState.enabledSessions {
+			if sessionName != "" {
+				sessionNames[sessionName] = true
+			}
+		}
+		rt.daemonState.enabledSessionsMu.RUnlock()
+	}
+	for nodeName, nodeInfo := range rt.nodes {
+		sessionName := nodeInfo.SessionName
+		if sessionName == "" {
+			parts := strings.SplitN(nodeName, ":", 2)
+			if len(parts) == 2 {
+				sessionName = parts[0]
+			}
+		}
+		if sessionName != "" {
+			sessionNames[sessionName] = true
+		}
+	}
+
+	return status.DaemonRuntimeCardinality{
+		SessionCount:            len(sessionNames),
+		NodeCount:               len(rt.nodes),
+		WatchedDirCount:         len(rt.watchedDirs),
+		ClaimedPaneCount:        len(rt.claimedPanes),
+		ActivePostEventCount:    activePostEventCount,
+		ActiveAutoPingCount:     activeAutoPingCount,
+		ActiveDaemonSubmitCount: len(rt.activeDaemonSubmitKeys),
+	}
 }
 
 func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {

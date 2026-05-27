@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -73,6 +75,124 @@ func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-diagnostics",
+		Command:   projection.DaemonSubmitRuntimeDiagnostics,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	daemonState := NewDaemonState(0, "ctx-runtime")
+	daemonState.AutoEnableSessionIfNew("review")
+	daemonState.AutoEnableSessionIfNew("qa")
+	rt := &daemonRuntime{
+		selfSession: "review",
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {SessionName: "review"},
+			"qa:critic":     {SessionName: "qa"},
+		},
+		watchedDirs: map[string]bool{
+			"/tmp/private/review/post":  true,
+			"/tmp/private/review/inbox": true,
+		},
+		claimedPanes: map[string]bool{
+			"%42": true,
+		},
+		activePostEvents: map[string]bool{
+			"/tmp/private/review/post/20260524-120000-r1111-from-a-to-b.md": true,
+		},
+		activeAutoPings: map[string]bool{
+			"review:worker": true,
+		},
+		activeDaemonSubmitKeys: map[string]bool{
+			"send:/tmp/private/request.json": true,
+		},
+		daemonState: daemonState,
+	}
+
+	if got := rt.dispatchDaemonSubmitRequest(requestPath); got != daemonSubmitDispatched {
+		t.Fatalf("dispatchDaemonSubmitRequest() = %v, want daemonSubmitDispatched", got)
+	}
+
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-diagnostics"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.RuntimeDiagnostics == nil {
+		t.Fatal("RuntimeDiagnostics = nil")
+	}
+	diagnostics := response.RuntimeDiagnostics
+	if diagnostics.Source != "daemon_runtime" {
+		t.Fatalf("Source = %q, want daemon_runtime", diagnostics.Source)
+	}
+	if !diagnostics.PointInTime {
+		t.Fatal("PointInTime = false, want true")
+	}
+	if diagnostics.GoRuntime.GoroutineCount <= 0 {
+		t.Fatalf("GoroutineCount = %d, want positive", diagnostics.GoRuntime.GoroutineCount)
+	}
+	if diagnostics.Daemon != (status.DaemonRuntimeCardinality{
+		SessionCount:            2,
+		NodeCount:               2,
+		WatchedDirCount:         2,
+		ClaimedPaneCount:        1,
+		ActivePostEventCount:    1,
+		ActiveAutoPingCount:     1,
+		ActiveDaemonSubmitCount: 1,
+	}) {
+		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
+	}
+
+	payload, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal diagnostics: %v", err)
+	}
+	for _, forbidden := range []string{
+		"/tmp/private",
+		"20260524-120000-r1111-from-a-to-b.md",
+		"review:worker",
+		"%42",
+		"request.json",
+	} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("diagnostics leaked %q in %s", forbidden, payload)
+		}
+	}
+	assertRuntimeDiagnosticsHasNoArrays(t, diagnostics)
+}
+
+func assertRuntimeDiagnosticsHasNoArrays(t *testing.T, diagnostics *status.RuntimeDiagnostics) {
+	t.Helper()
+	payload, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal diagnostics: %v", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal diagnostics: %v", err)
+	}
+	var walk func(any)
+	walk = func(value any) {
+		t.Helper()
+		switch typed := value.(type) {
+		case []any:
+			t.Fatalf("diagnostics contained an array: %s", payload)
+		case map[string]any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(decoded)
 }
 
 func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t *testing.T) {
