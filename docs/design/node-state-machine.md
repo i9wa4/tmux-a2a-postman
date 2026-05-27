@@ -89,13 +89,13 @@ legacy archive replay exception.
 
 ## 3. Visible Node States
 
-| State     | Meaning                                             | Source fact                           |
-| --------- | --------------------------------------------------- | ------------------------------------- |
-| `initial` | No positive live evidence has arrived yet           | missing pane/session evidence         |
-| `ready`   | Pane is live with no open action or wait            | positive tmux pane activity evidence  |
-| `waiting` | Node has sent reply-required mail still unresolved  | `waiting_on_input_count > 0`          |
-| `pending` | Node has inbound reply-required action unresolved   | `input_required_count > 0`            |
-| `stale`   | Previously known pane/session evidence is stale     | stale pane/session data               |
+| State     | Meaning                                            | Source fact                          |
+| --------- | -------------------------------------------------- | ------------------------------------ |
+| `initial` | No positive live evidence has arrived yet          | missing pane/session evidence        |
+| `ready`   | Pane is live with no open action or wait           | positive tmux pane activity evidence |
+| `waiting` | Node has sent reply-required mail still unresolved | `waiting_on_input_count > 0`         |
+| `pending` | Node has inbound reply-required action unresolved  | `input_required_count > 0`           |
+| `stale`   | Previously known pane/session evidence is stale    | stale pane/session data              |
 
 Unread no-reply mail is still counted as unread mail, but it does not make a
 node `pending`. This keeps daemon PINGs, `ACK`, `DONE`, and status-only notices
@@ -164,22 +164,22 @@ Each delivered recipient gets its own input request. Required messages with an
 opaque `input_request_id` use exact closure; messages without exact fields use
 the message ID plus participant as the fallback key.
 
-| Fact                       | Meaning                                                       |
-| -------------------------- | ------------------------------------------------------------- |
-| `context_id`               | Durable context namespace for correlating files and events    |
-| `message_id`               | Stable message identifier used by inbox, read, and reply data |
-| `timestamp`                | Sender timestamp preserved from message frontmatter           |
-| `message_type`             | Optional semantic class such as ping or task                  |
-| `thread_id`                | Optional workflow strand for related messages and events      |
-| `reply_policy`             | `required` or `none`, resolved when the message is created    |
-| `input_request_id`         | Exact required-input request opened by a required message     |
-| `fills_input_request_id`   | Exact input request ID this message fills                     |
-| `input_request_set_id`     | Optional aggregate of input requests                          |
-| `reply_to`                 | Optional message ID this message references                   |
-| `unread_count`             | All unread inbox mail, including no-reply notices             |
-| `input_required_count`     | Inbound reply-required messages not yet resolved by a reply   |
-| `waiting_on_input_count`   | Outbound reply-required messages not yet resolved by a reply  |
-| `info_unread_count`        | Unread no-reply mail that does not require action             |
+| Fact                     | Meaning                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `context_id`             | Durable context namespace for correlating files and events    |
+| `message_id`             | Stable message identifier used by inbox, read, and reply data |
+| `timestamp`              | Sender timestamp preserved from message frontmatter           |
+| `message_type`           | Optional semantic class such as ping or task                  |
+| `thread_id`              | Optional workflow strand for related messages and events      |
+| `reply_policy`           | `required` or `none`, resolved when the message is created    |
+| `input_request_id`       | Exact required-input request opened by a required message     |
+| `fills_input_request_id` | Exact input request ID this message fills                     |
+| `input_request_set_id`   | Optional aggregate of input requests                          |
+| `reply_to`               | Optional message ID this message references                   |
+| `unread_count`           | All unread inbox mail, including no-reply notices             |
+| `input_required_count`   | Inbound reply-required messages not yet resolved by a reply   |
+| `waiting_on_input_count` | Outbound reply-required messages not yet resolved by a reply  |
+| `info_unread_count`      | Unread no-reply mail that does not require action             |
 
 `pop` only clears unread state. It does not clear reply-required action, because
 reading a request is not the same as answering it. Sending a resolving reply
@@ -237,16 +237,16 @@ report exists.
 
 `get-status` exposes the evidence as:
 
-| Field                  | Meaning                                         |
-| ---------------------- | ----------------------------------------------- |
-| `severity`             | Worst contextual severity                       |
-| `severity_source`      | Surface that produced the chosen severity       |
-| `severity_reason`      | Short human-readable reason                     |
-| `compact_severity`     | ASCII one-line summary token                    |
-| `delivery`             | Session delivery status                         |
-| `nodes[*].node_local`  | Pane-local activity/staleness status            |
-| `nodes[*].flow`        | Input-request and blocked-report workflow state |
-| `nodes[*].queues`      | Node-local queue counts                         |
+| Field                 | Meaning                                         |
+| --------------------- | ----------------------------------------------- |
+| `severity`            | Worst contextual severity                       |
+| `severity_source`     | Surface that produced the chosen severity       |
+| `severity_reason`     | Short human-readable reason                     |
+| `compact_severity`    | ASCII one-line summary token                    |
+| `delivery`            | Session delivery status                         |
+| `nodes[*].node_local` | Pane-local activity/staleness status            |
+| `nodes[*].flow`       | Input-request and blocked-report workflow state |
+| `nodes[*].queues`     | Node-local queue counts                         |
 
 Open input-request details include `opened_event_id` and `read_event_id` when
 the corresponding journal events are known. These IDs are traceability
@@ -258,14 +258,14 @@ inferred evidence, such as `blocked?:node=worker`.
 
 ## 9. Severity Examples
 
-| Scenario            | Primary evidence                           | Severity             |
-| ------------------- | ------------------------------------------ | -------------------- |
-| Idle                | Positive live pane, no open action or wait | `ok`                 |
-| Active work         | Active pane or changed screen evidence     | `working`            |
-| Approval wait       | Outbound required reply still open         | `expected_wait`      |
-| Reply-required wait | Outbound required reply still open         | `expected_wait`      |
-| Required action     | Inbound required reply open                | `needs_action`       |
-| Blocked             | Structured blocked report or `BLOCKED:`    | `blocked`            |
-| Stale pane          | Stale pane evidence                        | `attention_stale`    |
-| Delivery stuck      | Oldest pending post is at least 180s old   | `delivery_stuck`     |
-| Dead letter         | One or more dead-letter files exist        | `delivery_failure`   |
+| Scenario            | Primary evidence                           | Severity           |
+| ------------------- | ------------------------------------------ | ------------------ |
+| Idle                | Positive live pane, no open action or wait | `ok`               |
+| Active work         | Active pane or changed screen evidence     | `working`          |
+| Approval wait       | Outbound required reply still open         | `expected_wait`    |
+| Reply-required wait | Outbound required reply still open         | `expected_wait`    |
+| Required action     | Inbound required reply open                | `needs_action`     |
+| Blocked             | Structured blocked report or `BLOCKED:`    | `blocked`          |
+| Stale pane          | Stale pane evidence                        | `attention_stale`  |
+| Delivery stuck      | Oldest pending post is at least 180s old   | `delivery_stuck`   |
+| Dead letter         | One or more dead-letter files exist        | `delivery_failure` |

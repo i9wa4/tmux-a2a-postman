@@ -1,0 +1,23 @@
+id: post-send-polling-forbidden-001
+name: Post-Send Polling Forbidden
+description: Reply-required sends should wait for notification or exact reply, not poll the inbox.
+tags:
+  - behavior
+  - post-send
+inputs:
+  prompt: "Use postman-send-message to send a reply-required first-contact message to reviewer, then wait for the reply."
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: sends-without-polling
+    config:
+      contains:
+        - "send-heredoc"
+        - "POSTMAN_BODY"
+        - "wait for daemon notification"
+      not_contains:
+        - "tmux-a2a-postman pop"
+        - "sleep && tmux-a2a-postman pop"
+        - "tmux-a2a-postman get-status"
+        - "poll"

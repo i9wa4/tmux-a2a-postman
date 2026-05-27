@@ -2,13 +2,13 @@
 
 Audit these files when present:
 
-| Purpose                        | Path                                                       |
-| ------------------------------ | ---------------------------------------------------------- |
-| Main TOML config               | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`           |
-| Main Markdown config           | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`             |
-| Split node TOML                | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml`      |
-| Split node Markdown            | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md`        |
-| Embedded defaults and comments | `internal/config/postman.default.toml`                     |
+| Purpose                        | Path                                                  |
+| ------------------------------ | ----------------------------------------------------- |
+| Main TOML config               | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml`      |
+| Main Markdown config           | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`        |
+| Split node TOML                | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.toml` |
+| Split node Markdown            | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md`   |
+| Embedded defaults and comments | `internal/config/postman.default.toml`                |
 
 `$XDG_CONFIG_HOME` defaults to `~/.config` when unset.
 
