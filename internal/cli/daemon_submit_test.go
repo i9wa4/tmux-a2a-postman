@@ -29,7 +29,10 @@ func TestRoundTripDaemonSubmitTimeoutWarnsRequestMayStillCommit(t *testing.T) {
 		"timed out",
 		"may still commit",
 		"do not retry blindly",
-		"inspect status, inbox, read, or recipient-side evidence",
+		"inspect-daemon-submit --id",
+		"inspect status, inbox/read evidence, or recipient-side evidence",
+		"get-status --debug",
+		"daemon_submit pending/claimed/late response counts",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("timeout error missing %q: %q", want, got)

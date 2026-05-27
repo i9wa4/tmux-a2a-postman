@@ -74,7 +74,9 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
 	assertContainsNormalized(t, statusHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
 	assertContainsNormalized(t, statusHelp, "--debug adds runtime_diagnostics as an optional object without changing schema_version.")
-	assertContainsNormalized(t, statusHelp, "It requests a point-in-time daemon runtime snapshot with Go memory, GC, goroutine, and count-only daemon cardinality fields.")
+	assertContainsNormalized(t, statusHelp, "It requests a point-in-time daemon runtime snapshot with Go memory, GC, goroutine, count-only daemon cardinality fields, and daemon_submit queue health.")
+	assertContainsNormalized(t, statusHelp, "daemon_submit includes worker_limit, active_worker_count, active_request_count, pending_request_count")
+	assertContainsNormalized(t, statusHelp, "late_response_count, oldest_late_response_age_seconds, saturation_count, and last_saturated_at")
 	assertContainsNormalized(t, statusHelp, "This is not a persisted time series.")
 	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
@@ -167,6 +169,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"pop",
 		"get-status",
 		"get-status-oneline",
+		"inspect-daemon-submit --id <request_id>",
 		"inspect-message --id <message_id>",
 		"Mermaid",
 		"edges",
@@ -184,6 +187,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"pop",
 		"get-status",
 		"get-status-oneline",
+		"inspect-daemon-submit",
 		"inspect-message",
 		"version",
 		"help [topic]",

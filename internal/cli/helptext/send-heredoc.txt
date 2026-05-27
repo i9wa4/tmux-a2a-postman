@@ -46,4 +46,6 @@ Timeouts:
   A daemon-submit timeout does not prove failure. The daemon may still commit a
   side-effecting send after the CLI stops waiting. Do not retry blindly; inspect
   status, recipient inbox/read evidence, or recipient-side confirmation before
-  resending.
+  resending. Use inspect-daemon-submit --id <request_id> to look up the timed-out
+  request, and get-status --debug for bounded daemon_submit pending, claimed,
+  late response, worker, and saturation counts.

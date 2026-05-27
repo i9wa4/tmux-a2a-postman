@@ -43,6 +43,9 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "inspect-message            Inspect persisted message content by id") {
 		t.Fatalf("stdout missing inspect-message overview line: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "inspect-daemon-submit      Inspect daemon-submit timeout state by id") {
+		t.Fatalf("stdout missing inspect-daemon-submit overview line: %q", stdout.String())
+	}
 	for _, hidden := range []string{"status", "read", "todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(stdout.String(), "  "+hidden) || strings.Contains(stdout.String(), "\n"+hidden+"\n") {
 			t.Fatalf("stdout exposes hidden command %q in the default overview: %q", hidden, stdout.String())
@@ -78,6 +81,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	if !strings.Contains(stdout.String(), "inspect-message") {
 		t.Fatalf("stdout missing inspect-message command: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "inspect-daemon-submit") {
+		t.Fatalf("stdout missing inspect-daemon-submit command: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "Lifecycle and recovery") {
 		t.Fatalf("stdout missing lifecycle section: %q", stdout.String())
 	}
@@ -106,6 +112,9 @@ func TestRunHelp_HelpTopicListsRegisteredTopics(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "\n  inspect-message\n") {
 		t.Fatalf("stdout missing inspect-message help topic: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "\n  inspect-daemon-submit\n") {
+		t.Fatalf("stdout missing inspect-daemon-submit help topic: %q", stdout.String())
 	}
 }
 

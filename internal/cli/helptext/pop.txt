@@ -46,4 +46,7 @@ Body-read invariant:
 Timeouts:
   A daemon-submit timeout does not prove failure. The daemon may still claim and
   archive the message after the CLI stops waiting. Do not retry blindly; inspect
-  status, inbox/read evidence, or the archived message path before retrying.
+  status, inbox/read evidence, or the archived message path before retrying. Use
+  inspect-daemon-submit --id <request_id> to look up the timed-out request, and
+  get-status --debug for bounded daemon_submit pending, claimed, late response,
+  worker, and saturation counts.
