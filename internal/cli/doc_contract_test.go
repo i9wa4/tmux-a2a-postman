@@ -256,6 +256,31 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 	}
 }
 
+func TestReducedSurfaceDocContract_PostmanSendSkillForbidsPostSendPolling(t *testing.T) {
+	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
+	evalTask := readRepoFile(t, "evals/postman-send-message/tasks/post-send-polling-forbidden.yaml")
+
+	assertContainsAllNormalized(
+		t, sendSkill,
+		"After a successful send:",
+		"Informational or terminal send | Stop.",
+		"Reply-required send | Wait for daemon notification or exact reply.",
+		"Timeout/watchdog boundary | One bounded status check/follow-up.",
+		"Suspected delivery/routing trouble | Use `postman-session-operator`.",
+		"`pop` must not be used as a wait or poll mechanism after a successful send.",
+		"Forbidden post-send wait patterns: repeated `pop`, `sleep && pop`, and mixed `pop`/`get-status` loops.",
+		"skills/postman-session-operator/references/session-flow.md",
+		"`waiting` and `expected_wait` handling.",
+	)
+	assertContainsAllNormalized(
+		t, evalTask,
+		"tmux-a2a-postman pop",
+		"sleep && tmux-a2a-postman pop",
+		"tmux-a2a-postman get-status",
+		"wait for daemon notification",
+	)
+}
+
 func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
