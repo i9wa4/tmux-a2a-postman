@@ -46,11 +46,14 @@ func RunGetSessionStatus(args []string) error {
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
+	debug := fs.Bool("debug", false, "Include point-in-time daemon runtime memory, GC, goroutine, and cardinality diagnostics")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	result, ok, err := collectResolvedSessionStatus(*contextID, "", *configPath)
+	result, ok, err := collectResolvedSessionStatusWithOptions(*contextID, "", *configPath, sessionStatusOptions{
+		IncludeRuntimeDiagnostics: *debug,
+	})
 	if err != nil {
 		return err
 	}
@@ -71,6 +74,10 @@ type sessionStatusTarget struct {
 }
 
 type sessionStatusCollector func(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error)
+
+type sessionStatusOptions struct {
+	IncludeRuntimeDiagnostics bool
+}
 
 func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
 	cfg, err := config.LoadConfig(configPath)
@@ -121,6 +128,10 @@ func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (
 }
 
 func collectResolvedSessionStatus(contextIDFlag, sessionFlag, configPath string) (status.SessionStatus, bool, error) {
+	return collectResolvedSessionStatusWithOptions(contextIDFlag, sessionFlag, configPath, sessionStatusOptions{})
+}
+
+func collectResolvedSessionStatusWithOptions(contextIDFlag, sessionFlag, configPath string, options sessionStatusOptions) (status.SessionStatus, bool, error) {
 	target, ok, err := resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath)
 	if isNoActivePostmanError(err) {
 		return emptySessionStatus(target.sessionName), true, nil
@@ -134,7 +145,31 @@ func collectResolvedSessionStatus(contextIDFlag, sessionFlag, configPath string)
 		return status.SessionStatus{}, true, err
 	}
 	normalizeSessionStatus(&result)
+	if options.IncludeRuntimeDiagnostics {
+		diagnostics, err := collectRuntimeDiagnosticsFromDaemon(target)
+		if err != nil {
+			return status.SessionStatus{}, true, err
+		}
+		result.RuntimeDiagnostics = diagnostics
+	}
 	return result, true, nil
+}
+
+func collectRuntimeDiagnosticsFromDaemon(target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
+	if target.baseDir == "" || target.contextID == "" || target.sessionName == "" {
+		return nil, fmt.Errorf("runtime diagnostics require an active daemon context")
+	}
+	sessionDir := filepath.Join(target.baseDir, target.contextID, target.sessionName)
+	response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+		Command: projection.DaemonSubmitRuntimeDiagnostics,
+	}, daemonSubmitTimeout(target.cfg.TmuxTimeout))
+	if err != nil {
+		return nil, err
+	}
+	if response.RuntimeDiagnostics == nil {
+		return nil, fmt.Errorf("daemon runtime diagnostics response missing payload")
+	}
+	return response.RuntimeDiagnostics, nil
 }
 
 func unavailableSessionStatus(contextID, sessionName string) status.SessionStatus {

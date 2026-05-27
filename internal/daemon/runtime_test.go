@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -13,13 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -73,6 +75,124 @@ func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-diagnostics",
+		Command:   projection.DaemonSubmitRuntimeDiagnostics,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	daemonState := NewDaemonState(0, "ctx-runtime")
+	daemonState.AutoEnableSessionIfNew("review")
+	daemonState.AutoEnableSessionIfNew("qa")
+	rt := &daemonRuntime{
+		selfSession: "review",
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {SessionName: "review"},
+			"qa:critic":     {SessionName: "qa"},
+		},
+		watchedDirs: map[string]bool{
+			"/tmp/private/review/post":  true,
+			"/tmp/private/review/inbox": true,
+		},
+		claimedPanes: map[string]bool{
+			"%42": true,
+		},
+		activePostEvents: map[string]bool{
+			"/tmp/private/review/post/20260524-120000-r1111-from-a-to-b.md": true,
+		},
+		activeAutoPings: map[string]bool{
+			"review:worker": true,
+		},
+		activeDaemonSubmitKeys: map[string]bool{
+			"send:/tmp/private/request.json": true,
+		},
+		daemonState: daemonState,
+	}
+
+	if got := rt.dispatchDaemonSubmitRequest(requestPath); got != daemonSubmitDispatched {
+		t.Fatalf("dispatchDaemonSubmitRequest() = %v, want daemonSubmitDispatched", got)
+	}
+
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-diagnostics"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.RuntimeDiagnostics == nil {
+		t.Fatal("RuntimeDiagnostics = nil")
+	}
+	diagnostics := response.RuntimeDiagnostics
+	if diagnostics.Source != "daemon_runtime" {
+		t.Fatalf("Source = %q, want daemon_runtime", diagnostics.Source)
+	}
+	if !diagnostics.PointInTime {
+		t.Fatal("PointInTime = false, want true")
+	}
+	if diagnostics.GoRuntime.GoroutineCount <= 0 {
+		t.Fatalf("GoroutineCount = %d, want positive", diagnostics.GoRuntime.GoroutineCount)
+	}
+	if diagnostics.Daemon != (status.DaemonRuntimeCardinality{
+		SessionCount:            2,
+		NodeCount:               2,
+		WatchedDirCount:         2,
+		ClaimedPaneCount:        1,
+		ActivePostEventCount:    1,
+		ActiveAutoPingCount:     1,
+		ActiveDaemonSubmitCount: 1,
+	}) {
+		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
+	}
+
+	payload, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal diagnostics: %v", err)
+	}
+	for _, forbidden := range []string{
+		"/tmp/private",
+		"20260524-120000-r1111-from-a-to-b.md",
+		"review:worker",
+		"%42",
+		"request.json",
+	} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("diagnostics leaked %q in %s", forbidden, payload)
+		}
+	}
+	assertRuntimeDiagnosticsHasNoArrays(t, diagnostics)
+}
+
+func assertRuntimeDiagnosticsHasNoArrays(t *testing.T, diagnostics *status.RuntimeDiagnostics) {
+	t.Helper()
+	payload, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal diagnostics: %v", err)
+	}
+	var decoded any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal diagnostics: %v", err)
+	}
+	var walk func(any)
+	walk = func(value any) {
+		t.Helper()
+		switch typed := value.(type) {
+		case []any:
+			t.Fatalf("diagnostics contained an array: %s", payload)
+		case map[string]any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(decoded)
 }
 
 func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t *testing.T) {
@@ -197,7 +317,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 	}
 
 	logPath := installRuntimeSessionScanActivationTmux(t, tmpDir, []string{selfSession, targetSession})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -267,7 +387,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 	}
 
 	logPath := installRuntimeSessionScanActivationTmuxWithPanes(t, tmpDir, []string{selfSession, targetSession}, []string{"worker", "critic", "unrelated"})
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -377,7 +497,7 @@ func TestHandleWatcherEvent_DaemonSubmitWorkerDoesNotBlockSessionStatusTick(t *t
 
 	done := make(chan struct{})
 	go func() {
-		rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+		rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 		close(done)
 	}()
 
@@ -725,7 +845,7 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
 	}
 
-	rt.handleWatcherEvent(fsnotify.Event{Name: requestPath, Op: fsnotify.Create})
+	rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
 	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
 
 	inboxPath := filepath.Join(sessionDir, "inbox", "messenger", filename)
@@ -935,7 +1055,7 @@ func TestHandlePostWatcherEvent_RateLimitedMessageRetriesAfterGap(t *testing.T) 
 	}
 
 	start := time.Now()
-	rt.handlePostWatcherEvent(postPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(postPath, fswatcher.Create)
 
 	if _, err := os.Stat(postPath); err != nil {
 		t.Fatalf("rate-limited post file should remain until retry: %v", err)
@@ -1014,8 +1134,8 @@ func TestHandlePostWatcherEvent_SameRouteInFlightDeliveryIsSerialized(t *testing
 		t.Fatalf("WriteFile(second post): %v", err)
 	}
 
-	rt.handlePostWatcherEvent(firstPostPath, fsnotify.Create)
-	rt.handlePostWatcherEvent(secondPostPath, fsnotify.Create)
+	rt.handlePostWatcherEvent(firstPostPath, fswatcher.Create)
+	rt.handlePostWatcherEvent(secondPostPath, fswatcher.Create)
 
 	firstInboxPath := filepath.Join(sessionDir, "inbox", "messenger", firstFilename)
 	firstDeliveredAt := waitForFileContent(t, firstInboxPath, firstContent, 10*time.Second)
@@ -1269,7 +1389,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 			SessionDir:  t.TempDir(),
 		},
 	}
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1295,7 +1415,7 @@ func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 }
 
 func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) {
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1354,7 +1474,7 @@ func TestHandleScanTick_DisabledAutoEnableLeavesNewSessionPendingAndDisabled(t *
 	installShadowJournalManager(targetSessionDir, contextID, targetSession, time.Now())
 	t.Cleanup(journal.ClearProcessManager)
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := fswatcher.NewWatcher()
 	if err != nil {
 		t.Fatalf("NewWatcher(): %v", err)
 	}
@@ -1554,6 +1674,67 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 
 	waitForInboxEntries(t, sessionDir, "worker", 1)
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+}
+
+func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 21, 7, 0, 0, 0, time.UTC)
+	deliveredAt := now.Add(9 * time.Second)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 0,
+		NotBeforeAt:  now.Add(-2 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+		},
+		adjacency:   map[string][]string{},
+		daemonState: NewDaemonState(0, "ctx-self"),
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {
+				PaneID:      "%61",
+				SessionName: "review",
+				SessionDir:  sessionDir,
+			},
+		},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time { return deliveredAt },
+	}
+	rt.daemonState.SetSessionEnabled("review", true)
+
+	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingPending(t, sessionDir, "review:worker", false)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if got, want := state.Nodes["review:worker"].DeliveredAt, deliveredAt.Format(time.RFC3339Nano); got != want {
+		t.Fatalf("DeliveredAt = %q, want %q", got, want)
+	}
 }
 
 func TestDispatchPendingAutoPings_DoesNotBlockDaemonLoopWhilePaneDeliveryRuns(t *testing.T) {

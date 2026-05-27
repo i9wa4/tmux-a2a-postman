@@ -2,6 +2,7 @@ get-status — print canonical session status JSON
 
 Usage:
   tmux-a2a-postman get-status
+  tmux-a2a-postman get-status --debug
   tmux-a2a-postman get-status --help
 
 Output:
@@ -30,3 +31,10 @@ Output:
   nodes[*].screen_progress provides non-content pane evidence:
   evidence_state, last_capture_at, last_screen_change_at, and
   screen_fingerprint. Raw pane text is not included.
+
+Debug diagnostics:
+  --debug adds runtime_diagnostics as an optional object without changing
+  schema_version. It requests a point-in-time daemon runtime snapshot with Go
+  memory, GC, goroutine, and count-only daemon cardinality fields. This is not
+  a persisted time series. It omits mailbox body content, pane content, local
+  absolute paths, per-message identifiers, and unbounded lists.

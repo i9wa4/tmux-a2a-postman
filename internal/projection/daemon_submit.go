@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
 const daemonSubmitSchemaVersion = 1
@@ -21,8 +23,9 @@ const (
 type DaemonSubmitCommand string
 
 const (
-	DaemonSubmitSend DaemonSubmitCommand = "send"
-	DaemonSubmitPop  DaemonSubmitCommand = "pop"
+	DaemonSubmitSend               DaemonSubmitCommand = "send"
+	DaemonSubmitPop                DaemonSubmitCommand = "pop"
+	DaemonSubmitRuntimeDiagnostics DaemonSubmitCommand = "runtime-diagnostics"
 )
 
 type DaemonSubmitRequest struct {
@@ -36,16 +39,17 @@ type DaemonSubmitRequest struct {
 }
 
 type DaemonSubmitResponse struct {
-	SchemaVersion int                 `json:"schema_version"`
-	RequestID     string              `json:"request_id"`
-	Command       DaemonSubmitCommand `json:"command"`
-	HandledAt     string              `json:"handled_at"`
-	Empty         bool                `json:"empty,omitempty"`
-	Filename      string              `json:"filename,omitempty"`
-	Content       string              `json:"content,omitempty"`
-	MarkdownPath  string              `json:"markdown_path,omitempty"`
-	UnreadBefore  int                 `json:"unread_before,omitempty"`
-	Error         string              `json:"error,omitempty"`
+	SchemaVersion      int                        `json:"schema_version"`
+	RequestID          string                     `json:"request_id"`
+	Command            DaemonSubmitCommand        `json:"command"`
+	HandledAt          string                     `json:"handled_at"`
+	Empty              bool                       `json:"empty,omitempty"`
+	Filename           string                     `json:"filename,omitempty"`
+	Content            string                     `json:"content,omitempty"`
+	MarkdownPath       string                     `json:"markdown_path,omitempty"`
+	UnreadBefore       int                        `json:"unread_before,omitempty"`
+	RuntimeDiagnostics *status.RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
+	Error              string                     `json:"error,omitempty"`
 }
 
 type DaemonSubmitResponseTimeoutError struct {
