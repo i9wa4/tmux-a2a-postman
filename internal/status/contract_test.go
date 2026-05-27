@@ -1,6 +1,11 @@
 package status
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestSchemaVersionIsV4StatusContract(t *testing.T) {
 	if SchemaVersion != 4 {
@@ -14,6 +19,45 @@ func TestSchemaVersionIsV4StatusContract(t *testing.T) {
 	}
 	if payload.SchemaVersion != 4 || payload.Nodes[0].Name != "worker" {
 		t.Fatalf("unexpected status payload: %#v", payload)
+	}
+}
+
+func TestNewRuntimeDiagnosticsIsScalarAndPointInTime(t *testing.T) {
+	observedAt := time.Date(2026, 5, 24, 12, 30, 0, 123, time.UTC)
+	diagnostics := NewRuntimeDiagnostics("daemon_runtime", DaemonRuntimeCardinality{
+		SessionCount:            3,
+		NodeCount:               5,
+		WatchedDirCount:         7,
+		ClaimedPaneCount:        2,
+		ActivePostEventCount:    1,
+		ActiveAutoPingCount:     4,
+		ActiveDaemonSubmitCount: 6,
+	}, observedAt)
+
+	if diagnostics.Source != "daemon_runtime" {
+		t.Fatalf("Source = %q, want daemon_runtime", diagnostics.Source)
+	}
+	if !diagnostics.PointInTime {
+		t.Fatal("PointInTime = false, want true")
+	}
+	if diagnostics.ObservedAt != "2026-05-24T12:30:00.000000123Z" {
+		t.Fatalf("ObservedAt = %q", diagnostics.ObservedAt)
+	}
+	if diagnostics.GoRuntime.GoroutineCount <= 0 {
+		t.Fatalf("GoroutineCount = %d, want positive", diagnostics.GoRuntime.GoroutineCount)
+	}
+	if diagnostics.Daemon.SessionCount != 3 || diagnostics.Daemon.ActiveDaemonSubmitCount != 6 {
+		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
+	}
+
+	payload, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal diagnostics: %v", err)
+	}
+	for _, forbidden := range []string{"message_id", "pane_content", "body", "/home/", "/tmp/"} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("diagnostics payload contains forbidden content marker %q: %s", forbidden, payload)
+		}
 	}
 }
 

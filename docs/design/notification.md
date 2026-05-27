@@ -44,13 +44,13 @@ input-request identifiers parsed from the message metadata.
 get-status, get-status-oneline, and the default TUI are three views over the
 same canonical contract.
 
-| State     | Meaning                                       | Compact mark      |
-| --------- | --------------------------------------------- | ----------------- |
-| `initial` | No positive live evidence has arrived yet     | `⚫` black circle  |
-| `ready`   | Pane is live with no open action or wait      | `🟢` green mark    |
-| `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark   |
-| `pending` | Node has inbound reply-required action        | `🔷` blue diamond  |
-| `stale`   | Previously known pane/session is stale        | `🔴` red mark      |
+| State     | Meaning                                       | Compact mark     |
+| --------- | --------------------------------------------- | ---------------- |
+| `initial` | No positive live evidence has arrived yet     | `⚫` black circle |
+| `ready`   | Pane is live with no open action or wait      | `🟢` green mark   |
+| `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark  |
+| `pending` | Node has inbound reply-required action        | `🔷` blue diamond |
+| `stale`   | Previously known pane/session is stale        | `🔴` red mark     |
 
 A live pane that simply has not changed for a long time is internally `idle`
 and remains `ready` in the visible status model.
@@ -78,16 +78,16 @@ Replay keeps a narrow read-only reader for pre-v4 `session_health_snapshot`
 archives, but new writers and live machine consumers use status terminology.
 See [Schema and Event Terminology](schema-event-terminology.md).
 
-| Severity             | Meaning                                           |
-| -------------------- | ------------------------------------------------- |
-| `ok`                 | No open action, wait, local work, or delivery bug |
-| `working`            | Local pane activity or queued delivery is present |
-| `expected_wait`      | Waiting for an expected required reply            |
-| `needs_action`       | Inbound required reply is open                    |
-| `blocked`            | Open blocked report exists                        |
-| `attention_stale`    | Pane or session evidence is stale or unavailable  |
-| `delivery_stuck`     | Pending post delivery is at least 180 seconds old |
-| `delivery_failure`   | Dead-letter delivery failure exists               |
+| Severity           | Meaning                                           |
+| ------------------ | ------------------------------------------------- |
+| `ok`               | No open action, wait, local work, or delivery bug |
+| `working`          | Local pane activity or queued delivery is present |
+| `expected_wait`    | Waiting for an expected required reply            |
+| `needs_action`     | Inbound required reply is open                    |
+| `blocked`          | Open blocked report exists                        |
+| `attention_stale`  | Pane or session evidence is stale or unavailable  |
+| `delivery_stuck`   | Pending post delivery is at least 180 seconds old |
+| `delivery_failure` | Dead-letter delivery failure exists               |
 
 `get-status-oneline` keeps compact visible-state marks by default. Use its
 `--severity` flag when the operator needs an ASCII severity token. Tokens with

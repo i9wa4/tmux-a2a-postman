@@ -2,13 +2,17 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -209,6 +213,9 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := payload["compact"]; got != "🔷🟢" {
 		t.Fatalf("compact = %#v, want %q", got, "🔷🟢")
 	}
+	if _, ok := payload["runtime_diagnostics"]; ok {
+		t.Fatalf("runtime_diagnostics present without --debug: %#v", payload["runtime_diagnostics"])
+	}
 
 	windows, ok := payload["windows"].([]any)
 	if !ok || len(windows) != 1 {
@@ -236,6 +243,166 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := nodeByName["critic"]["visible_state"]; got != "ready" {
 		t.Fatalf("critic visible_state = %#v, want %q", got, "ready")
 	}
+}
+
+func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "20260524-debug"
+	sessionName := "review"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+	t.Setenv("POSTMAN_HOME", tmpDir)
+
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	if err := os.WriteFile(
+		configPath,
+		[]byte("[postman]\nedges = [\"worker --- helper\"]\ntmux_timeout_seconds = 1\n\n[worker]\ntemplate = \"worker\"\nrole = \"worker\"\n\n[helper]\ntemplate = \"helper\"\nrole = \"helper\"\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("WriteFile(postman.toml): %v", err)
+	}
+
+	installSessionStatusDebugTmux(t, contextID, sessionName)
+	serveDone := serveRuntimeDiagnosticsResponse(t, sessionDir, status.NewRuntimeDiagnostics("daemon_runtime", status.DaemonRuntimeCardinality{
+		SessionCount:            1,
+		NodeCount:               1,
+		WatchedDirCount:         4,
+		ClaimedPaneCount:        1,
+		ActivePostEventCount:    0,
+		ActiveAutoPingCount:     0,
+		ActiveDaemonSubmitCount: 1,
+	}, time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)))
+
+	stdout, _, runErr := captureCommandOutput(t, func() error {
+		return RunGetSessionStatus([]string{
+			"--config", configPath,
+			"--context-id", contextID,
+			"--debug",
+		})
+	})
+	if runErr != nil {
+		t.Fatalf("RunGetSessionStatus(--debug): %v", runErr)
+	}
+	if err := <-serveDone; err != nil {
+		t.Fatalf("runtime diagnostics fake daemon: %v", err)
+	}
+
+	var payload struct {
+		RuntimeDiagnostics *status.RuntimeDiagnostics `json:"runtime_diagnostics"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if payload.RuntimeDiagnostics == nil {
+		t.Fatal("runtime_diagnostics = nil")
+	}
+	diagnostics := payload.RuntimeDiagnostics
+	if diagnostics.Source != "daemon_runtime" || !diagnostics.PointInTime {
+		t.Fatalf("runtime_diagnostics header = %#v", diagnostics)
+	}
+	if diagnostics.ObservedAt != "2026-05-24T12:00:00Z" {
+		t.Fatalf("ObservedAt = %q", diagnostics.ObservedAt)
+	}
+	if diagnostics.Daemon.WatchedDirCount != 4 || diagnostics.Daemon.ActiveDaemonSubmitCount != 1 {
+		t.Fatalf("daemon cardinality = %#v", diagnostics.Daemon)
+	}
+	payloadBytes, err := json.Marshal(diagnostics)
+	if err != nil {
+		t.Fatalf("Marshal runtime_diagnostics: %v", err)
+	}
+	for _, forbidden := range []string{
+		"message_id",
+		"pane_capture",
+		"mailbox body",
+		"/tmp/private",
+		"20260524-120000-r1111-from-a-to-b.md",
+	} {
+		if strings.Contains(string(payloadBytes), forbidden) {
+			t.Fatalf("runtime_diagnostics leaked %q in %s", forbidden, payloadBytes)
+		}
+	}
+}
+
+func installSessionStatusDebugTmux(t *testing.T, contextID, sessionName string) {
+	t.Helper()
+	t.Setenv("TMUX_PANE", "%99")
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
+		"  \"list-panes -a -F\"*)\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker'\n" +
+		"    ;;\n" +
+		"  \"list-windows -t " + sessionName + "\"*)\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t " + sessionName + ":0\"*)\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func serveRuntimeDiagnosticsResponse(t *testing.T, sessionDir string, diagnostics status.RuntimeDiagnostics) <-chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
+		for {
+			entries, err := os.ReadDir(requestsDir)
+			if err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+						continue
+					}
+					requestPath := filepath.Join(requestsDir, entry.Name())
+					request, readErr := projection.ReadDaemonSubmitRequest(requestPath)
+					if readErr != nil {
+						done <- readErr
+						return
+					}
+					if request.Command != projection.DaemonSubmitRuntimeDiagnostics {
+						done <- fmt.Errorf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitRuntimeDiagnostics)
+						return
+					}
+					if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+						RequestID:          request.RequestID,
+						Command:            request.Command,
+						HandledAt:          time.Now().UTC().Format(time.RFC3339Nano),
+						RuntimeDiagnostics: &diagnostics,
+					}); writeErr != nil {
+						done <- writeErr
+						return
+					}
+					if removeErr := os.Remove(requestPath); removeErr != nil && !os.IsNotExist(removeErr) {
+						done <- removeErr
+						return
+					}
+					done <- nil
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				done <- fmt.Errorf("timed out waiting for runtime diagnostics request")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	return done
 }
 
 func TestCollectSessionStatus_ExpectedAIPaneWithoutPositiveEvidenceStaysInitial(t *testing.T) {

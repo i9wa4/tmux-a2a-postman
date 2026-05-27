@@ -64,14 +64,30 @@ type IdleTracker struct {
 	nodeActivity     map[string]NodeActivity
 	paneCaptureState map[string]PaneCaptureState // paneKey -> PaneCaptureState
 	mu               sync.Mutex
+	clock            func() time.Time
 }
 
 // NewIdleTracker creates a new IdleTracker instance (Issue #71).
 func NewIdleTracker() *IdleTracker {
+	return newIdleTrackerWithClock(time.Now)
+}
+
+func newIdleTrackerWithClock(clock func() time.Time) *IdleTracker {
+	if clock == nil {
+		clock = time.Now
+	}
 	return &IdleTracker{
 		nodeActivity:     make(map[string]NodeActivity),
 		paneCaptureState: make(map[string]PaneCaptureState),
+		clock:            clock,
 	}
+}
+
+func (t *IdleTracker) now() time.Time {
+	if t.clock == nil {
+		return time.Now()
+	}
+	return t.clock()
 }
 
 // UpdateSendActivity updates the last sent timestamp for a node (Issue #55).
@@ -80,7 +96,7 @@ func (t *IdleTracker) UpdateSendActivity(nodeKey string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	activity := t.nodeActivity[nodeKey]
-	activity.LastSent = time.Now()
+	activity.LastSent = t.now()
 	t.nodeActivity[nodeKey] = activity
 }
 
@@ -90,7 +106,7 @@ func (t *IdleTracker) UpdateReceiveActivity(nodeKey string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	activity := t.nodeActivity[nodeKey]
-	activity.LastReceived = time.Now()
+	activity.LastReceived = t.now()
 	t.nodeActivity[nodeKey] = activity
 }
 
@@ -150,7 +166,7 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 	defer t.mu.Unlock()
 
 	result := make(map[string]string)
-	now := time.Now()
+	now := t.now()
 
 	for paneID, state := range t.paneCaptureState {
 		result[paneID] = statusForState(state, now, cfg)
@@ -164,7 +180,7 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 // Issue #123: Enriched format — writes map[string]PaneActivityExport instead of map[string]string.
 func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath string) error {
 	t.mu.Lock()
-	now := time.Now()
+	now := t.now()
 	export := make(map[string]PaneActivityExport, len(t.paneCaptureState))
 	for paneID, state := range t.paneCaptureState {
 		export[paneID] = PaneActivityExport{
@@ -374,7 +390,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		nodePaneIDs = nodePaneIDs[:maxPanes]
 	}
 
-	now := time.Now()
+	now := t.now()
 	compactionTargets := make(map[string]CompactionPingTarget)
 
 	for _, paneID := range nodePaneIDs {

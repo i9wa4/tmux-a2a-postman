@@ -466,7 +466,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	sourceSessionName := filepath.Base(sourceSessionDir)
 	messageContent := ""
 
-	// Check if file still exists (handles duplicate fsnotify event)
+	// Check if file still exists (handles duplicate filesystem watcher event)
 	if _, err := os.Stat(postPath); os.IsNotExist(err) {
 		return nil // Already processed
 	}
