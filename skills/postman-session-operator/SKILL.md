@@ -9,25 +9,24 @@ description: |
 
 # postman-session-operator
 
-**UTILITY SKILL**. INVOKES: status/mailbox commands.
-
 ## 1. USE FOR
 
-- Interpret pending/waiting/blocked/stale/dead-letter state.
+- Interpret pending, waiting, blocked, stale, and dead-letter state.
 - Claim unread mail, read complete archives, close exact requests.
-- Use `inspect-message --id <message_id>` as a read-only historical lookup.
+- Use `tmux-a2a-postman inspect-message --id <message_id>` as a read-only
+  historical lookup. Use `--path` for the stored Markdown path and `--body` for
+  sender-authored body text.
 
 ## 2. Procedure
 
 1. Use `get-status` for on-demand decisions, not polling. After delegated or
    reply-required mail, wait for pane notifications, exact replies,
-   timeout/watchdog boundaries, or suspected delivery trouble.
+   timeout/watchdog boundaries, or delivery trouble.
 2. After every successful `pop` with `status=message`, read the complete
    archived Markdown body before any handling, routing, reply, status decision,
    or no-action or no-op decision.
 3. `messageType: ping`, `replyPolicy: none`, and other metadata do not allow
-   skipping the body. truncated command output does not count as a complete
-   read.
+   skipping the body; truncated output is incomplete.
 4. Filling an input request closes transport, not task acceptance. After exact
    replies, check send JSON `fill`, `required_input`, and `notice`; `DONE` still
    requires `Task artifact: <artifact-reference>`, `Original checklist: PASS`,
