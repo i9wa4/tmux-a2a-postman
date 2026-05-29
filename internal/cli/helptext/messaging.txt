@@ -27,6 +27,8 @@ Reply-required messages carry an input_request_id. Exact replies use:
 The exact input request id clears the required action; --reply-to is retained for
 traceability and fallback message-link closure. Replies stay on the live
 session daemon automatically.
+After a fill/reply send, check the JSON "fill" and "required_input" fields.
+They show whether the request closed and whether any required input remains open.
 
 Completion gate:
   Filling an input request closes transport, not task acceptance.
