@@ -162,7 +162,9 @@ progress evidence matters.
    output, read verified chunks through EOF.
 5. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-input-request-id <input_request_id>` when available; keep
-   `--reply-to <message_id>` for traceability.
+   `--reply-to <message_id>` for traceability. After sending, check the JSON
+   `fill`, `required_input`, and `notice` fields before treating the input
+   request as closed.
 6. Do not send `DONE` until the completion gate passes. If evidence is missing,
    send `BLOCKED` with the failing original requirement instead.
 7. If your node is `waiting` or `expected_wait`, do not clear it by reading
