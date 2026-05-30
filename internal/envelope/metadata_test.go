@@ -276,6 +276,121 @@ func TestParseMetadataReplyPolicyDuplicatesUseLastWins(t *testing.T) {
 	}
 }
 
+func TestScanFrontmatterPreservesCurrentDelimiterSemantics(t *testing.T) {
+	tests := []struct {
+		name            string
+		content         string
+		wantFrontmatter string
+		wantBody        string
+		wantOK          bool
+		wantErr         string
+	}{
+		{
+			name:            "standard envelope",
+			content:         "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nbody\n",
+			wantFrontmatter: "params:\n  from: orchestrator\n  to: worker",
+			wantBody:        "\n\nbody\n",
+			wantOK:          true,
+		},
+		{
+			name:            "body delimiters remain body content",
+			content:         "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nbody\n---\nnot frontmatter\n",
+			wantFrontmatter: "params:\n  from: orchestrator\n  to: worker",
+			wantBody:        "\n\nbody\n---\nnot frontmatter\n",
+			wantOK:          true,
+		},
+		{
+			name:            "leading text before first delimiter is ignored",
+			content:         "prefix\n---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nbody\n",
+			wantFrontmatter: "params:\n  from: orchestrator\n  to: worker",
+			wantBody:        "\n\nbody\n",
+			wantOK:          true,
+		},
+		{
+			name:            "leading bom before first delimiter is ignored",
+			content:         "\ufeff---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nbody\n",
+			wantFrontmatter: "params:\n  from: orchestrator\n  to: worker",
+			wantBody:        "\n\nbody\n",
+			wantOK:          true,
+		},
+		{
+			name:    "crlf opening delimiter does not match current scanner",
+			content: "---\r\nparams:\r\n  from: orchestrator\r\n  to: worker\r\n---\r\nbody\r\n",
+		},
+		{
+			name:    "bom before crlf opening delimiter does not match current scanner",
+			content: "\ufeff---\r\nparams:\r\n  from: orchestrator\r\n  to: worker\r\n---\r\nbody\r\n",
+		},
+		{
+			name:    "missing frontmatter",
+			content: "plain body\n",
+		},
+		{
+			name:    "unclosed frontmatter",
+			content: "---\nparams:\n  from: orchestrator\n",
+			wantErr: "frontmatter not closed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFrontmatter, gotBody, gotOK, err := ScanFrontmatter(tt.content)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("ScanFrontmatter() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ScanFrontmatter() error = %v", err)
+			}
+			if gotOK != tt.wantOK {
+				t.Fatalf("ScanFrontmatter() ok = %v, want %v", gotOK, tt.wantOK)
+			}
+			if gotFrontmatter != tt.wantFrontmatter {
+				t.Fatalf("frontmatter = %q, want %q", gotFrontmatter, tt.wantFrontmatter)
+			}
+			if gotBody != tt.wantBody {
+				t.Fatalf("body = %q, want %q", gotBody, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestDecodeEnvelopeMetadataPreservesParamsSemantics(t *testing.T) {
+	frontmatter := "params:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  replyPolicy: none\n" +
+		"  reply_policy: required\n" +
+		"  blocked_reason: \"value: with colon\"\n" +
+		"  blocked_scope: >\n" +
+		"    generated\n" +
+		"    value\n" +
+		"  audit:\n" +
+		"    replyPolicy: none\n"
+
+	got, err := DecodeEnvelopeMetadata(frontmatter, "\n\nbody\n")
+	if err != nil {
+		t.Fatalf("DecodeEnvelopeMetadata() error = %v", err)
+	}
+	if got.From != "orchestrator" || got.To != "worker" {
+		t.Fatalf("from/to = %q/%q, want orchestrator/worker", got.From, got.To)
+	}
+	if got.ReplyPolicy != "required" {
+		t.Fatalf("ReplyPolicy = %q, want required", got.ReplyPolicy)
+	}
+	if got.BlockedReason != "\"value: with colon\"" {
+		t.Fatalf("BlockedReason = %q, want quoted colon value", got.BlockedReason)
+	}
+	if got.BlockedScope != ">" {
+		t.Fatalf("BlockedScope = %q, want current folded marker value", got.BlockedScope)
+	}
+	if got.Body != "body" {
+		t.Fatalf("Body = %q, want body", got.Body)
+	}
+}
+
 func TestEnsureParamsUpdatesManagedFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: old.md\n  replyPolicy: none\n---\n\nplease review\n"
 
