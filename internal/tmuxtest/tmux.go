@@ -271,7 +271,7 @@ func fakeScript(logPath string, commands []Command) string {
 		if command.Stderr != "" {
 			b.WriteString("  printf '%s' " + shQuote(command.Stderr) + " >&2\n")
 		}
-		b.WriteString(fmt.Sprintf("  exit %d\n", command.ExitCode))
+		fmt.Fprintf(&b, "  exit %d\n", command.ExitCode)
 		b.WriteString("fi\n")
 	}
 	b.WriteString("case \"$1\" in\n")
