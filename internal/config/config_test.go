@@ -1355,9 +1355,9 @@ func pidFileOwnerUID(t *testing.T, baseDir, contextName, sessionName string) int
 
 func withCurrentUID(t *testing.T, uid int) {
 	t.Helper()
-	orig := currentUID
-	currentUID = func() int { return uid }
-	t.Cleanup(func() { currentUID = orig })
+	orig := sessionPIDs
+	sessionPIDs.currentUID = func() int { return uid }
+	t.Cleanup(func() { sessionPIDs = orig })
 }
 
 func TestResolveContextIDFromSession(t *testing.T) {
