@@ -269,12 +269,13 @@ func TestReducedSurfaceDocContract_PostmanSendSkillForbidsPostSendPolling(t *tes
 		"After a successful send:",
 		"Informational or terminal send | Stop.",
 		"Reply-required send | Wait for daemon notification or exact reply.",
-		"Timeout/watchdog boundary | One bounded status check/follow-up.",
+		"Timeout/watchdog boundary | Use `postman-session-operator`; inspect daemon-submit request ids.",
 		"Suspected delivery/routing trouble | Use `postman-session-operator`.",
 		"`pop` must not be used as a wait or poll mechanism after a successful send.",
 		"Forbidden post-send wait patterns: repeated `pop`, `sleep && pop`, and mixed `pop`/`get-status` loops.",
 		"skills/postman-session-operator/references/session-flow.md",
 		"`waiting` and `expected_wait` handling.",
+		"tmux-a2a-postman inspect-daemon-submit --id <request_id>",
 	)
 	assertContainsAllNormalized(
 		t, evalTask,
