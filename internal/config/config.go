@@ -2,7 +2,6 @@ package config
 
 import (
 	_ "embed"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,13 +10,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/BurntSushi/toml"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
-
-var currentUID = os.Getuid
 
 //go:embed postman.default.toml
 var defaultConfigBytes []byte
@@ -961,11 +957,7 @@ func ValidateSessionName(name string) (string, error) {
 // Issue #249: liveness check for context disambiguation.
 func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
-	sigErr, ok := sessionPIDSignal(pidPath)
-	if !ok {
-		return false
-	}
-	return sigErr == nil || errors.Is(sigErr, syscall.EPERM)
+	return sessionPIDs.isPIDAlive(pidPath)
 }
 
 // IsSessionPIDOwnedByCurrentUser reads postman.pid from
@@ -975,47 +967,7 @@ func IsSessionPIDAlive(baseDir, contextName, sessionName string) bool {
 // stop/ownership decisions.
 func IsSessionPIDOwnedByCurrentUser(baseDir, contextName, sessionName string) bool {
 	pidPath := filepath.Join(baseDir, contextName, sessionName, "postman.pid")
-	if !pidFileOwnedByCurrentUser(pidPath) {
-		return false
-	}
-	sigErr, ok := sessionPIDSignal(pidPath)
-	return ok && sigErr == nil
-}
-
-func sessionPIDSignal(pidPath string) (error, bool) {
-	pid, ok := readSessionPID(pidPath)
-	if !ok {
-		return nil, false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return nil, false
-	}
-	return proc.Signal(syscall.Signal(0)), true
-}
-
-func readSessionPID(pidPath string) (int, bool) {
-	data, err := os.ReadFile(pidPath)
-	if err != nil {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	return pid, true
-}
-
-func pidFileOwnedByCurrentUser(pidPath string) bool {
-	info, err := os.Stat(pidPath)
-	if err != nil {
-		return false
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false
-	}
-	return int(stat.Uid) == currentUID()
+	return sessionPIDs.isPIDOwnedByCurrentUser(pidPath)
 }
 
 // isContextDaemonAlive checks if any session subdirectory under
@@ -1066,7 +1018,7 @@ func ContextHasLiveDaemon(baseDir, contextName string) bool {
 }
 
 func CurrentUserDaemonLockPath(baseDir string) string {
-	return filepath.Join(baseDir, "lock", fmt.Sprintf("user-%d.lock", currentUID()))
+	return filepath.Join(baseDir, "lock", fmt.Sprintf("user-%d.lock", sessionPIDs.currentUserID()))
 }
 
 func FindCurrentUserDaemon(baseDir string) (string, string, bool) {
