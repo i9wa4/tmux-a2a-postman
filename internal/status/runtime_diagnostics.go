@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func NewRuntimeDiagnostics(source string, cardinality DaemonRuntimeCardinality, observedAt time.Time) RuntimeDiagnostics {
+func NewRuntimeDiagnostics(source string, cardinality DaemonRuntimeCardinality, daemonSubmit DaemonSubmitRuntimeDiagnostics, observedAt time.Time) RuntimeDiagnostics {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 
@@ -36,6 +36,7 @@ func NewRuntimeDiagnostics(source string, cardinality DaemonRuntimeCardinality, 
 			},
 			GoroutineCount: runtime.NumGoroutine(),
 		},
-		Daemon: cardinality,
+		Daemon:       cardinality,
+		DaemonSubmit: daemonSubmit,
 	}
 }

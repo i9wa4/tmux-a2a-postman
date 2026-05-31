@@ -35,6 +35,12 @@ Output:
 Debug diagnostics:
   --debug adds runtime_diagnostics as an optional object without changing
   schema_version. It requests a point-in-time daemon runtime snapshot with Go
-  memory, GC, goroutine, and count-only daemon cardinality fields. This is not
-  a persisted time series. It omits mailbox body content, pane content, local
-  absolute paths, per-message identifiers, and unbounded lists.
+  memory, GC, goroutine, count-only daemon cardinality fields, and
+  daemon_submit queue health. daemon_submit includes worker_limit,
+  active_worker_count, active_request_count, pending_request_count,
+  oldest_pending_age_seconds, claimed_request_count,
+  oldest_claimed_age_seconds, late_response_count,
+  oldest_late_response_age_seconds, saturation_count, and last_saturated_at
+  when present. This is not a persisted time series. It omits mailbox body
+  content, pane content, local absolute paths, per-message identifiers, and
+  unbounded lists.

@@ -1,0 +1,20 @@
+inspect-daemon-submit — inspect daemon-submit request state by request_id
+
+Usage:
+  tmux-a2a-postman inspect-daemon-submit --id <request_id>
+  tmux-a2a-postman inspect-daemon-submit --id <request_id> --help
+
+Output:
+  JSON lookup for one daemon-submit request_id from a timeout message.
+  status is one of not_found, pending, claimed, or response.
+  request.state distinguishes pending queued requests from claimed in-flight
+  requests. response.state=response means the daemon wrote a response after
+  the request was submitted; it may be a late response from a timed-out CLI.
+  The output includes command, created_at or handled_at, age_seconds, and
+  booleans for empty, error_present, and runtime_diagnostics_present when
+  relevant.
+
+Safety:
+  This command omits mailbox body content, pane content, local absolute paths,
+  message filenames, and response content. Use get-status --debug for bounded
+  aggregate daemon_submit queue health.

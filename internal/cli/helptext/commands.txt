@@ -43,6 +43,12 @@ inspect-input
   Usage:
     tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
 
+inspect-daemon-submit
+  Inspect daemon-submit timeout state by request_id.
+  Output: JSON
+  Usage:
+    tmux-a2a-postman inspect-daemon-submit --id <request_id>
+
 inspect-message
   Inspect persisted message metadata or content by message_id.
   Output: JSON by default; --path and --body print focused text.
@@ -71,4 +77,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, inspect-input, inspect-message, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, version, help
