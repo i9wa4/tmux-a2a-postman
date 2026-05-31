@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,19 @@ func TestDeadLetterPath(t *testing.T) {
 	want := filepath.Join("/state/ctx/review", "dead-letter", "20260502-120000-from-a-to-b-dl-test.md")
 	if got != want {
 		t.Fatalf("DeadLetterPath() = %q, want %q", got, want)
+	}
+}
+
+func TestPlanDeadLetterMessage(t *testing.T) {
+	plan := PlanDeadLetterMessage("/state/ctx/review", "20260502-120000-from-a-to-b.md", "-dl-test")
+	if plan.DeadLetterDir != filepath.Join("/state/ctx/review", "dead-letter") {
+		t.Fatalf("DeadLetterDir = %q", plan.DeadLetterDir)
+	}
+	if plan.DestinationPath != filepath.Join("/state/ctx/review", "dead-letter", "20260502-120000-from-a-to-b-dl-test.md") {
+		t.Fatalf("DestinationPath = %q", plan.DestinationPath)
+	}
+	if plan.Filename != "20260502-120000-from-a-to-b.md" || plan.Suffix != "-dl-test" {
+		t.Fatalf("filename/suffix = %q/%q", plan.Filename, plan.Suffix)
 	}
 }
 
@@ -31,6 +45,32 @@ func TestMoveToDeadLetterRejectsSymlinkedTargetDir(t *testing.T) {
 
 	if err := MoveToDeadLetter(src, filepath.Join(linkDir, "post-dl-test.md")); err == nil {
 		t.Fatal("MoveToDeadLetter() error = nil, want symlink rejection")
+	}
+}
+
+func TestWriteDeadLetterFileWithOpsReturnsWriteErrorWithoutCreatingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	deadLetterDir := filepath.Join(tmpDir, "dead-letter")
+	if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(dead-letter): %v", err)
+	}
+	dst := filepath.Join(deadLetterDir, "post-dl-test.md")
+	writeErr := errors.New("write failed")
+
+	err := writeDeadLetterFileWithOps(dst, []byte("payload"), deadLetterFileOps{
+		lstat: os.Lstat,
+		writeFile: func(name string, data []byte, perm os.FileMode) error {
+			if name != dst {
+				t.Fatalf("write path = %q, want %q", name, dst)
+			}
+			return writeErr
+		},
+	})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writeDeadLetterFileWithOps() error = %v, want %v", err, writeErr)
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("dead-letter file exists or wrong error: %v", err)
 	}
 }
 
@@ -64,6 +104,61 @@ func TestDeliverPostToInboxAndCountInboxMessages(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("CountInboxMessages() = %d, want 1", count)
+	}
+}
+
+func TestPlanArchiveInboxMessage(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	filename := "20260502-120000-r1111-from-a-to-b.md"
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+
+	plan, err := PlanArchiveInboxMessage(inboxPath, filename)
+	if err != nil {
+		t.Fatalf("PlanArchiveInboxMessage() error = %v", err)
+	}
+	if plan.SourcePath != inboxPath {
+		t.Fatalf("SourcePath = %q, want %q", plan.SourcePath, inboxPath)
+	}
+	if plan.SessionDir != sessionDir {
+		t.Fatalf("SessionDir = %q, want %q", plan.SessionDir, sessionDir)
+	}
+	if plan.ReadDir != filepath.Join(sessionDir, "read") {
+		t.Fatalf("ReadDir = %q", plan.ReadDir)
+	}
+	if plan.ReadPath != filepath.Join(sessionDir, "read", filename) {
+		t.Fatalf("ReadPath = %q", plan.ReadPath)
+	}
+	if _, err := os.Stat(plan.ReadDir); !os.IsNotExist(err) {
+		t.Fatalf("plan created read dir or wrong error: %v", err)
+	}
+}
+
+func TestArchiveInboxMessageMalformedAbsolutePathRejectedBeforeMutation(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	filename := "20260502-120000-r1111-from-a-to-b.md"
+	malformedPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(malformedPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(read): %v", err)
+	}
+	if err := os.WriteFile(malformedPath, []byte("payload"), 0o600); err != nil {
+		t.Fatalf("WriteFile(read): %v", err)
+	}
+
+	if _, err := ArchiveInboxMessage(malformedPath, filename); err == nil {
+		t.Fatal("ArchiveInboxMessage() error = nil, want malformed path rejection")
+	}
+	got, err := os.ReadFile(malformedPath)
+	if err != nil {
+		t.Fatalf("ReadFile(malformedPath): %v", err)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("malformed source content changed: %q", got)
+	}
+	unexpectedReadPath := filepath.Join(tmpDir, "ctx", "read", filename)
+	if _, err := os.Stat(unexpectedReadPath); !os.IsNotExist(err) {
+		t.Fatalf("unexpected read artifact or wrong error: %v", err)
 	}
 }
 
@@ -101,5 +196,50 @@ func TestArchiveInboxMessageMovesToReadAndRemovesDuplicate(t *testing.T) {
 	}
 	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
 		t.Fatalf("duplicate inbox still exists or wrong error: %v", err)
+	}
+}
+
+func TestArchiveInboxMessageFailedRenamePreservesOriginalContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	filename := "20260502-120000-r1111-from-a-to-b.md"
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	if err := os.MkdirAll(filepath.Dir(inboxPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(inbox): %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte("payload"), 0o600); err != nil {
+		t.Fatalf("WriteFile(inbox): %v", err)
+	}
+	plan, err := PlanArchiveInboxMessage(inboxPath, filename)
+	if err != nil {
+		t.Fatalf("PlanArchiveInboxMessage() error = %v", err)
+	}
+	renameErr := errors.New("rename failed")
+
+	readPath, err := archiveInboxMessageWithOps(plan, archiveFileOps{
+		mkdirAll: os.MkdirAll,
+		stat: func(name string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		},
+		remove: os.Remove,
+		rename: func(oldPath, newPath string) error {
+			if oldPath != inboxPath || newPath != plan.ReadPath {
+				t.Fatalf("rename = %q -> %q, want %q -> %q", oldPath, newPath, inboxPath, plan.ReadPath)
+			}
+			return renameErr
+		},
+	})
+	if readPath != "" {
+		t.Fatalf("readPath = %q, want empty on failure", readPath)
+	}
+	if !errors.Is(err, renameErr) {
+		t.Fatalf("archiveInboxMessageWithOps() error = %v, want %v", err, renameErr)
+	}
+	got, readErr := os.ReadFile(inboxPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(inbox): %v", readErr)
+	}
+	if string(got) != "payload" {
+		t.Fatalf("source content changed: %q", got)
 	}
 }
