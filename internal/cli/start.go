@@ -173,11 +173,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
 
-	if ownerContext, ownerSession, ok := config.FindCurrentUserDaemon(baseDir); ok {
-		return fmt.Errorf(
-			"a postman daemon is already running for this user in tmux session %q (context: %s); stop it first",
-			ownerSession, ownerContext,
-		)
+	startPreflight := planStartPreflight(startPreflightInput{
+		BaseDir:         baseDir,
+		ContextID:       contextID,
+		SessionName:     sessionName,
+		TmuxSessionName: tmuxSessionName,
+	})
+	if startPreflight.Err != nil {
+		return startPreflight.Err
 	}
 
 	lockDir := filepath.Join(baseDir, "lock")
@@ -203,16 +206,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if tmuxSessionName == "" {
 		log.Println("warning: postman: could not determine tmux session name; running without session lock")
 	} else {
-		// Issue #249: Startup guard — detect duplicate daemon for this context+session.
-		// Scope check to contextID only: same-context duplicates are rejected via postman.pid,
-		// and a tmux-session-wide lock below blocks cross-context same-session startups.
-		if config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, tmuxSessionName) {
-			return fmt.Errorf(
-				"a postman daemon is already running in tmux session %q (context: %s); stop it first",
-				tmuxSessionName, contextID,
-			)
-		}
-
 		lockObj, err := lock.NewSessionLock(filepath.Join(lockDir, tmuxSessionName+".lock"))
 		if err != nil {
 			return fmt.Errorf("acquiring lock: %w", err)
