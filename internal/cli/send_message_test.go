@@ -1322,6 +1322,85 @@ func TestRunSendMessage_DefaultEnvelopeNormalizesRecipientInstructionHeadings(t 
 	}
 }
 
+func TestRunSendMessage_AttachesRuntimeContextSnapshotAndPreservesSenderBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := writeSendBodySourceConfig(t, tmpDir)
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	body := "# User Request\n\nKeep this body verbatim.\n"
+	stdout, stderr, err := captureSendHeredocWithBody(t, body, []string{
+		"--config", configPath,
+		"--context-id", "ctx-runtime-context-send",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	contentBytes, err := os.ReadFile(filepath.Join(tmpDir, "ctx-runtime-context-send", "test-session", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile post: %v", err)
+	}
+	content := string(contentBytes)
+	runtimeIndex := strings.Index(content, "## Sender Runtime Context")
+	senderMessageIndex := strings.Index(content, "## Sender Message")
+	if runtimeIndex < 0 {
+		t.Fatalf("content missing Sender Runtime Context block:\n%s", content)
+	}
+	if senderMessageIndex < 0 {
+		t.Fatalf("content missing Sender Message block:\n%s", content)
+	}
+	if runtimeIndex > senderMessageIndex {
+		t.Fatalf("runtime context block appears after sender message:\n%s", content)
+	}
+	if !strings.Contains(content, "metadata_not_instructions") {
+		t.Fatalf("runtime context block missing non-instructional semantics:\n%s", content)
+	}
+	separator := "\n---\n\n"
+	separatorOffset := strings.Index(content[senderMessageIndex:], separator)
+	if separatorOffset < 0 {
+		t.Fatalf("content missing visible body separator:\n%s", content)
+	}
+	if got := content[senderMessageIndex+separatorOffset+len(separator):]; got != body {
+		t.Fatalf("sender body after separator changed:\n got %q\nwant %q\ncontent:\n%s", got, body, content)
+	}
+
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	if metadata.RuntimeContextID == "" {
+		t.Fatalf("RuntimeContextID is empty in metadata:\n%s", content)
+	}
+	if metadata.RuntimeContextScope != "sender" {
+		t.Fatalf("RuntimeContextScope = %q, want sender", metadata.RuntimeContextScope)
+	}
+	if metadata.RuntimeContextCapturedAt == "" || metadata.RuntimeContextHash == "" {
+		t.Fatalf("runtime context refs missing captured/hash: %#v", metadata)
+	}
+	snapshotPath := filepath.Join(tmpDir, "ctx-runtime-context-send", "test-session", "snapshot", "runtime-context", metadata.RuntimeContextID+".json")
+	snapshotBytes, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("ReadFile runtime context snapshot: %v", err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(snapshotBytes, &snapshot); err != nil {
+		t.Fatalf("json.Unmarshal snapshot: %v", err)
+	}
+	if snapshot["semantics"] != "metadata_not_instructions" {
+		t.Fatalf("snapshot semantics = %#v, want metadata_not_instructions", snapshot["semantics"])
+	}
+	if snapshot["content_hash"] != metadata.RuntimeContextHash {
+		t.Fatalf("snapshot content_hash = %#v, metadata hash = %q", snapshot["content_hash"], metadata.RuntimeContextHash)
+	}
+	if _, ok := snapshot["content"].(string); ok {
+		t.Fatalf("snapshot unexpectedly stores sender body content: %s", snapshotBytes)
+	}
+}
+
 func TestRunSendMessage_CustomTemplatePlaceholderAfterFrontmatterKeepsFooterVisible(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

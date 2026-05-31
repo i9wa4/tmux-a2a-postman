@@ -65,6 +65,8 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]⚫")
 	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}`)
 	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true`)
+	assertContainsNormalized(t, popHelp, `"session_diagnostics":{"source":"projection","active_task_count":1`)
+	assertContainsNormalized(t, popHelp, "session_diagnostics Compact status-like counts after the pop operation")
 	assertContainsNormalized(t, popHelp, "Use markdown_absolute_path when present for programmatic file/body reads.")
 	assertContainsNormalized(t, popHelp, "pop claims and archives the message; it never embeds full body text inline.")
 	assertContainsNormalized(t, popHelp, "After every successful pop with status=message, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")

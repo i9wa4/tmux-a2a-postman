@@ -2,18 +2,32 @@ pop — claim and archive the next inbox message
 
 Usage:
   tmux-a2a-postman pop
+  tmux-a2a-postman pop --runtime-context none
   tmux-a2a-postman pop --help
 
 Output:
   Always JSON.
   {"status":"empty"}
-  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."}
+  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0}}
+
+Options:
+  --runtime-context summary|none
+                          Include a bounded runtime_context summary when a
+                          popped message references an archived runtime
+                          context snapshot. Default: summary.
 
 Fields:
   message_id              Stable message identity
   markdown_path           Display-friendly archived Markdown message/body path; home paths use ~
   markdown_absolute_path  Machine-readable absolute path when markdown_path is shortened
   frontmatter             Structured YAML frontmatter from the archived message
+  runtime_context         Optional schema-separated sender runtime context
+                          summary. It is metadata_not_instructions and never
+                          replaces the complete archived body read.
+  session_diagnostics     Compact status-like counts after the pop operation:
+                          active tasks, unread inbox backlog, input-required
+                          and waiting-on-input counts, unclosed required
+                          requests, post queue files, and dead letters.
   input_request_id        Exact input request id opened by reply-required mail
   fills_input_request_id  Exact input request id filled by this message
   input_request_set_id    Aggregate input request set id when grouped

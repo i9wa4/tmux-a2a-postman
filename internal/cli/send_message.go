@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 )
 
@@ -270,9 +271,22 @@ func RunSendHeredoc(args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n{sender_runtime_context}\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
+	runtimeSnapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
+		Now:         now,
+		Scope:       "sender",
+		ContextID:   resolvedContextID,
+		MessageID:   filename,
+		TmuxSession: sessionName,
+		Node:        sender,
+		PaneID:      config.GetTmuxPaneID(),
+	})
+	savedRuntimeContext, err := runtimecontext.SaveSnapshot(sessionDir, runtimeSnapshot)
+	if err != nil {
+		return err
+	}
 
 	vars := map[string]string{
 		"context_id":                     resolvedContextID,
@@ -294,6 +308,11 @@ func RunSendHeredoc(args []string) error {
 		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
 		"session_name":                   sessionName,
 		"sender_pane_id":                 config.GetTmuxPaneID(),
+		"sender_runtime_context":         runtimecontext.RenderSenderMarkdown(savedRuntimeContext.Snapshot),
+		"runtime_context_id":             savedRuntimeContext.Snapshot.SnapshotID,
+		"runtime_context_scope":          savedRuntimeContext.Snapshot.Scope,
+		"runtime_context_captured_at":    savedRuntimeContext.Snapshot.CapturedAt,
+		"runtime_context_hash":           savedRuntimeContext.Snapshot.ContentHash,
 	}
 
 	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
@@ -328,11 +347,15 @@ func RunSendHeredoc(args []string) error {
 	vars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 	vars["required_reply_completion_gate"] = requiredReplyCompletionGateForPolicy(replyPolicy)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":              filename,
-		"replyPolicy":            replyPolicy,
-		"replyTo":                *replyTo,
-		"input_request_id":       inputRequestID,
-		"fills_input_request_id": *fillsInputRequestID,
+		"messageId":                filename,
+		"replyPolicy":              replyPolicy,
+		"replyTo":                  *replyTo,
+		"input_request_id":         inputRequestID,
+		"fills_input_request_id":   *fillsInputRequestID,
+		"runtimeContextId":         savedRuntimeContext.Snapshot.SnapshotID,
+		"runtimeContextScope":      savedRuntimeContext.Snapshot.Scope,
+		"runtimeContextCapturedAt": savedRuntimeContext.Snapshot.CapturedAt,
+		"runtimeContextHash":       savedRuntimeContext.Snapshot.ContentHash,
 	})
 
 	footer := ""
