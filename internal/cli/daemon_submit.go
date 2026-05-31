@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -26,12 +27,16 @@ func roundTripDaemonSubmit(sessionDir string, request projection.DaemonSubmitReq
 		return projection.DaemonSubmitResponse{}, err
 	}
 	request.RequestID = requestID
-	request.CreatedAt = now.UTC().Format(time.RFC3339)
+	request.CreatedAt = now.UTC().Format(time.RFC3339Nano)
 	if _, err := projection.WriteDaemonSubmitRequest(sessionDir, request); err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
 	response, responsePath, err := projection.WaitDaemonSubmitResponse(sessionDir, requestID, timeout)
 	if err != nil {
+		var timeoutErr projection.DaemonSubmitResponseTimeoutError
+		if errors.As(err, &timeoutErr) {
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon-submit %s request %q timed out after %s; the request may still commit after this timeout; do not retry blindly; use `tmux-a2a-postman inspect-daemon-submit --id %s` to look up this request, inspect status, inbox/read evidence, or recipient-side evidence, and use `tmux-a2a-postman get-status --debug` for daemon_submit pending/claimed/late response counts before retrying", request.Command, requestID, timeoutErr.Timeout, requestID)
+		}
 		return projection.DaemonSubmitResponse{}, err
 	}
 	if removeErr := os.Remove(responsePath); removeErr != nil && !os.IsNotExist(removeErr) {

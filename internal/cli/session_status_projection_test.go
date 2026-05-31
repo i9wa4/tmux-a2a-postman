@@ -249,6 +249,7 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	worker := nodeByName["worker"].ScreenProgress
 	if worker == nil {
 		t.Fatal("worker ScreenProgress is nil, want unchanged evidence")
+		return
 	}
 	if worker.EvidenceState != "unchanged" {
 		t.Fatalf("worker evidence_state = %q, want unchanged", worker.EvidenceState)
@@ -266,6 +267,7 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
 		t.Fatal("critic ScreenProgress is nil, want changed evidence")
+		return
 	}
 	if critic.EvidenceState != "changed" {
 		t.Fatalf("critic evidence_state = %q, want changed", critic.EvidenceState)
@@ -306,6 +308,7 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	worker := nodeByName["worker"].ScreenProgress
 	if worker == nil {
 		t.Fatal("worker ScreenProgress is nil, want missing evidence")
+		return
 	}
 	if worker.EvidenceState != "missing" {
 		t.Fatalf("worker evidence_state = %q, want missing", worker.EvidenceState)
@@ -317,6 +320,7 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
 		t.Fatal("critic ScreenProgress is nil, want stale evidence")
+		return
 	}
 	if critic.EvidenceState != "stale" {
 		t.Fatalf("critic evidence_state = %q, want stale", critic.EvidenceState)

@@ -134,25 +134,82 @@ type SessionQueues struct {
 }
 
 type SessionStatus struct {
-	SchemaVersion   int             `json:"schema_version"`
-	ContextID       string          `json:"context_id"`
-	SessionName     string          `json:"session_name"`
-	NodeCount       int             `json:"node_count"`
-	VisibleState    string          `json:"visible_state"`
-	Severity        string          `json:"severity,omitempty"`
-	SeveritySource  string          `json:"severity_source,omitempty"`
-	SeverityReason  string          `json:"severity_reason,omitempty"`
-	Compact         string          `json:"compact"`
-	CompactSeverity string          `json:"compact_severity,omitempty"`
-	Queues          SessionQueues   `json:"queues"`
-	Delivery        *DeliveryStatus `json:"delivery,omitempty"`
-	Nodes           []NodeStatus    `json:"nodes"`
-	Windows         []SessionWindow `json:"windows"`
+	SchemaVersion      int                 `json:"schema_version"`
+	ContextID          string              `json:"context_id"`
+	SessionName        string              `json:"session_name"`
+	NodeCount          int                 `json:"node_count"`
+	VisibleState       string              `json:"visible_state"`
+	Severity           string              `json:"severity,omitempty"`
+	SeveritySource     string              `json:"severity_source,omitempty"`
+	SeverityReason     string              `json:"severity_reason,omitempty"`
+	Compact            string              `json:"compact"`
+	CompactSeverity    string              `json:"compact_severity,omitempty"`
+	Queues             SessionQueues       `json:"queues"`
+	Delivery           *DeliveryStatus     `json:"delivery,omitempty"`
+	RuntimeDiagnostics *RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
+	Nodes              []NodeStatus        `json:"nodes"`
+	Windows            []SessionWindow     `json:"windows"`
 }
 
 type DaemonOwner struct {
 	ContextID   string `json:"context_id"`
 	SessionName string `json:"session_name"`
+}
+
+type RuntimeMemoryDiagnostics struct {
+	HeapAllocBytes   uint64 `json:"heap_alloc_bytes"`
+	HeapSysBytes     uint64 `json:"heap_sys_bytes"`
+	HeapObjects      uint64 `json:"heap_objects"`
+	StackInuseBytes  uint64 `json:"stack_inuse_bytes"`
+	TotalAllocBytes  uint64 `json:"total_alloc_bytes"`
+	MemorySysBytes   uint64 `json:"memory_sys_bytes"`
+	MemoryFreesCount uint64 `json:"memory_frees_count"`
+}
+
+type RuntimeGCDiagnostics struct {
+	Count        uint32 `json:"count"`
+	NextGCBytes  uint64 `json:"next_gc_bytes"`
+	PauseTotalNS uint64 `json:"pause_total_ns"`
+	LastPauseNS  uint64 `json:"last_pause_ns"`
+}
+
+type GoRuntimeDiagnostics struct {
+	Memory         RuntimeMemoryDiagnostics `json:"memory"`
+	GC             RuntimeGCDiagnostics     `json:"gc"`
+	GoroutineCount int                      `json:"goroutine_count"`
+}
+
+type DaemonRuntimeCardinality struct {
+	SessionCount            int `json:"session_count"`
+	NodeCount               int `json:"node_count"`
+	WatchedDirCount         int `json:"watched_dir_count"`
+	ClaimedPaneCount        int `json:"claimed_pane_count"`
+	ActivePostEventCount    int `json:"active_post_event_count"`
+	ActiveAutoPingCount     int `json:"active_auto_ping_count"`
+	ActiveDaemonSubmitCount int `json:"active_daemon_submit_count"`
+}
+
+type DaemonSubmitRuntimeDiagnostics struct {
+	WorkerLimit                  int    `json:"worker_limit"`
+	ActiveWorkerCount            int    `json:"active_worker_count"`
+	ActiveRequestCount           int    `json:"active_request_count"`
+	PendingRequestCount          int    `json:"pending_request_count"`
+	OldestPendingAgeSeconds      int    `json:"oldest_pending_age_seconds,omitempty"`
+	ClaimedRequestCount          int    `json:"claimed_request_count"`
+	OldestClaimedAgeSeconds      int    `json:"oldest_claimed_age_seconds,omitempty"`
+	LateResponseCount            int    `json:"late_response_count"`
+	OldestLateResponseAgeSeconds int    `json:"oldest_late_response_age_seconds,omitempty"`
+	SaturationCount              int    `json:"saturation_count"`
+	LastSaturatedAt              string `json:"last_saturated_at,omitempty"`
+}
+
+type RuntimeDiagnostics struct {
+	Source       string                         `json:"source"`
+	PointInTime  bool                           `json:"point_in_time"`
+	ObservedAt   string                         `json:"observed_at"`
+	GoRuntime    GoRuntimeDiagnostics           `json:"go_runtime"`
+	Daemon       DaemonRuntimeCardinality       `json:"daemon"`
+	DaemonSubmit DaemonSubmitRuntimeDiagnostics `json:"daemon_submit"`
 }
 
 type AllSessionStatus struct {

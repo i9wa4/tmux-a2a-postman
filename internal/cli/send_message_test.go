@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -1601,6 +1602,172 @@ role = "worker"
 	}
 	if strings.Contains(string(content), "\n  "+"satisfies"+"_obligation"+"_id:") {
 		t.Fatalf("content contains unexpected legacy reply identity field:\n%s", string(content))
+	}
+}
+
+func TestRunSendMessage_ExactFillOutputReportsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["critic --- worker"]
+
+[critic]
+role = "critic"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	const contextID = "ctx-exact-fill-output"
+	const originalMessageID = "20260503-090000-sabcd-r1234-from-critic-to-worker.md"
+	const inputRequestID = "ireq_exact_123"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll sessionDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	now := time.Date(2026, time.May, 3, 9, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, contextID, "test-session", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	requestContent := sessionStatusMessageContent("critic", "worker", originalMessageID, map[string]string{
+		"replyPolicy":      "required",
+		"input_request_id": inputRequestID,
+	}, "please finish")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, originalMessageID, "critic", "worker", requestContent, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, originalMessageID, "critic", "worker", requestContent, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionReadEventType, originalMessageID, "critic", "worker", requestContent, now.Add(3*time.Second))
+
+	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
+	go func() {
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+		requestSeen <- request
+		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, request.Filename, "worker", "critic", request.Content, now.Add(4*time.Second))
+		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, request.Filename, "worker", "critic", request.Content, now.Add(5*time.Second))
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+			RequestID: request.RequestID,
+			Command:   request.Command,
+			HandledAt: time.Now().UTC().Format(time.RFC3339),
+			Filename:  request.Filename,
+		}); err != nil {
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, "DONE: complete", []string{
+			"--config", configPath,
+			"--context-id", contextID,
+			"--to", "critic",
+			"--reply-to", originalMessageID,
+			"--fills-input-request-id", inputRequestID,
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	request := <-requestSeen
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Sent != request.Filename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	}
+	if payload.Fill == nil {
+		t.Fatalf("payload.Fill = nil, want fill summary: %#v", payload)
+	}
+	if payload.Fill.Requested != inputRequestID || payload.Fill.State != "closed" || payload.Fill.Closed == nil || !*payload.Fill.Closed {
+		t.Fatalf("payload.Fill = %#v, want closed exact fill", payload.Fill)
+	}
+	if payload.RequiredInput == nil || payload.RequiredInput.State != "known" || payload.RequiredInput.Open != 0 {
+		t.Fatalf("payload.RequiredInput = %#v, want known open=0", payload.RequiredInput)
+	}
+	if payload.Notice != "" {
+		t.Fatalf("payload.Notice = %q, want empty", payload.Notice)
+	}
+}
+
+func TestRunSendMessage_TerminalWrongReplyToOutputShowsOpenRequiredInput(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["critic --- worker"]
+
+[critic]
+role = "critic"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	const contextID = "ctx-wrong-reply-to-output"
+	const originalMessageID = "20260503-090000-sabcd-r1234-from-critic-to-worker.md"
+	const wrongMessageID = "20260503-090100-sabcd-r5678-from-critic-to-worker.md"
+	const inputRequestID = "ireq_exact_123"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	now := time.Date(2026, time.May, 3, 9, 10, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, contextID, "test-session", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	requestContent := sessionStatusMessageContent("critic", "worker", originalMessageID, map[string]string{
+		"replyPolicy":      "required",
+		"input_request_id": inputRequestID,
+	}, "please finish")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, originalMessageID, "critic", "worker", requestContent, now.Add(time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, originalMessageID, "critic", "worker", requestContent, now.Add(2*time.Second))
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionReadEventType, originalMessageID, "critic", "worker", requestContent, now.Add(3*time.Second))
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return runSendHeredocWithBody(t, "DONE: complete", []string{
+			"--config", configPath,
+			"--context-id", contextID,
+			"--to", "critic",
+			"--reply-to", wrongMessageID,
+			"--fills-input-request-id", inputRequestID,
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
+	}
+	payload := decodeSendOutputForTest(t, stdout)
+	if payload.Fill == nil {
+		t.Fatalf("payload.Fill = nil, want fill summary: %#v", payload)
+	}
+	if payload.Fill.Requested != inputRequestID || payload.Fill.State != "open" || payload.Fill.Closed == nil || *payload.Fill.Closed || payload.Fill.Reason != "wrong_reply_to" {
+		t.Fatalf("payload.Fill = %#v, want open wrong_reply_to", payload.Fill)
+	}
+	if payload.RequiredInput == nil || payload.RequiredInput.State != "known" || payload.RequiredInput.Open != 1 {
+		t.Fatalf("payload.RequiredInput = %#v, want known open=1", payload.RequiredInput)
+	}
+	if got := payload.RequiredInput.Remaining; len(got) != 1 || got[0].InputRequestID != inputRequestID || got[0].MessageID != originalMessageID {
+		t.Fatalf("payload.RequiredInput.Remaining = %#v, want original open input request", got)
+	}
+	if !strings.Contains(payload.Notice, "required input remains open") {
+		t.Fatalf("payload.Notice = %q, want remaining-input notice", payload.Notice)
+	}
+	for _, want := range []string{"send-heredoc", "--fills-input-request-id " + inputRequestID, "--reply-to " + originalMessageID, "POSTMAN_BODY"} {
+		if !strings.Contains(payload.SuggestedNextAction, want) {
+			t.Fatalf("payload.SuggestedNextAction = %q, want %q", payload.SuggestedNextAction, want)
+		}
 	}
 }
 

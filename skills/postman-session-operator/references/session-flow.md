@@ -90,6 +90,14 @@ as follow-up boundaries, not proof of failure. Below the boundary, prefer
 `waiting`; at or beyond it, send one bounded follow-up before declaring the
 recipient blocked.
 
+For daemon-submit timeouts, a client-side timeout does not prove that the daemon
+failed to claim or commit the request. When the timeout output includes a
+request id, inspect that specific request with
+`tmux-a2a-postman inspect-daemon-submit --id <request_id>` before retrying or
+resending. Use `tmux-a2a-postman get-status --debug` for bounded aggregate
+`daemon_submit` queue health such as pending, claimed, late response, and
+abandoned counts.
+
 ## 5. Queue Signals
 
 | Field                      | Meaning                                  |
@@ -162,12 +170,15 @@ progress evidence matters.
    output, read verified chunks through EOF.
 5. If the popped message has `reply_policy: required`, handle it and reply with
    `--fills-input-request-id <input_request_id>` when available; keep
-   `--reply-to <message_id>` for traceability.
+   `--reply-to <message_id>` for traceability. After sending, check the JSON
+   `fill`, `required_input`, and `notice` fields before treating the input
+   request as closed.
 6. Do not send `DONE` until the completion gate passes. If evidence is missing,
    send `BLOCKED` with the failing original requirement instead.
 7. If your node is `waiting` or `expected_wait`, do not clear it by reading
    mail. Wait for an exact reply or send a bounded follow-up if the workflow
-   timeout requires it.
+   timeout requires it. For daemon-submit timeout output with a request id,
+   inspect that request before deciding to retry or resend.
 8. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
 9. If a node is `stale` or `attention_stale`, verify the tmux pane and session

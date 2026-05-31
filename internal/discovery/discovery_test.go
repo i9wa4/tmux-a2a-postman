@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxrunner"
 )
 
 func TestDiscoverNodes_WithChildProcess(t *testing.T) {
@@ -320,7 +322,7 @@ func TestReduceCollisions_NoCollision(t *testing.T) {
 // listPanesOut is returned verbatim for "list-panes" calls.
 // Since M2 batches @a2a_context_id into the list-panes format string,
 // show-options is no longer called; any call to it causes the test to fail.
-func mockTmuxRunner(listPanesOut string) tmuxRunner {
+func mockTmuxRunner(listPanesOut string) tmuxrunner.Runner {
 	return func(args ...string) ([]byte, error) {
 		if len(args) == 0 {
 			return nil, fmt.Errorf("mockTmuxRunner: no args")

@@ -53,8 +53,40 @@ type sendOutput struct {
 	ReplyTo             string                `json:"reply_to,omitempty"`
 	InputRequestID      string                `json:"input_request_id,omitempty"`
 	FillsInputRequestID string                `json:"fills_input_request_id,omitempty"`
+	Fill                *sendFillOutput       `json:"fill,omitempty"`
+	RequiredInput       *sendRequiredInput    `json:"required_input,omitempty"`
+	Notice              string                `json:"notice,omitempty"`
+	SuggestedNextAction string                `json:"suggested_next_action,omitempty"`
 	SubmitPath          projection.SubmitPath `json:"submit_path,omitempty"`
 	Notify              string                `json:"notify,omitempty"`
+}
+
+type sendFillOutput struct {
+	Requested string `json:"requested,omitempty"`
+	ReplyTo   string `json:"reply_to,omitempty"`
+	State     string `json:"state"`
+	Closed    *bool  `json:"closed,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type sendRequiredInput struct {
+	State     string                   `json:"state"`
+	Open      int                      `json:"open"`
+	Remaining []sendInputRequestDetail `json:"remaining,omitempty"`
+}
+
+type sendInputRequestDetail struct {
+	Direction      string `json:"direction"`
+	MessageID      string `json:"message_id"`
+	InputRequestID string `json:"input_request_id,omitempty"`
+	Sender         string `json:"sender"`
+	Recipient      string `json:"recipient"`
+	ReplyPolicy    string `json:"reply_policy,omitempty"`
+	OpenedAt       string `json:"opened_at,omitempty"`
+	OpenedAtSource string `json:"opened_at_source,omitempty"`
+	OpenedEventID  string `json:"opened_event_id,omitempty"`
+	ReadAt         string `json:"read_at,omitempty"`
+	ReadEventID    string `json:"read_event_id,omitempty"`
 }
 
 type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
@@ -253,6 +285,7 @@ func RunSendHeredoc(args []string) error {
 			sender, *to, canTalkTo)
 	}
 	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
+	beforeInputRequests, beforeInputRequestsOK := projectSendInputRequestState(sessionDir, sessionName)
 	draftDir := filepath.Join(sessionDir, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		return fmt.Errorf("creating draft directory: %w", err)
@@ -399,7 +432,7 @@ func RunSendHeredoc(args []string) error {
 		if err != nil {
 			return fmt.Errorf("send outcome: %w", err)
 		}
-		return writeSendOutput(sendOutput{
+		output := sendOutput{
 			Sent:                deliveredFilename,
 			Status:              string(status),
 			ContextID:           resolvedContextID,
@@ -411,7 +444,9 @@ func RunSendHeredoc(args []string) error {
 			InputRequestID:      inputRequestID,
 			FillsInputRequestID: *fillsInputRequestID,
 			SubmitPath:          projection.SubmitPathDaemon,
-		})
+		}
+		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
+		return writeSendOutput(output)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -454,7 +489,7 @@ func RunSendHeredoc(args []string) error {
 		verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
 		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
 	}
-	return writeSendOutput(sendOutput{
+	output := sendOutput{
 		Sent:                filename,
 		Status:              string(status),
 		ContextID:           resolvedContextID,
@@ -467,7 +502,192 @@ func RunSendHeredoc(args []string) error {
 		FillsInputRequestID: *fillsInputRequestID,
 		SubmitPath:          projection.SubmitPathPost,
 		Notify:              notifyOutputValue(notifyStatus),
-	})
+	}
+	attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
+	return writeSendOutput(output)
+}
+
+func projectSendInputRequestState(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {
+	state, ok, err := projection.ProjectMessageInputRequestState(sessionDir, sessionName)
+	if err != nil || !ok {
+		return projection.MessageInputRequestState{}, false
+	}
+	return state, true
+}
+
+func attachSendInputRequestSummary(output *sendOutput, sessionDir, sessionName, sender, to, replyTo, fillsInputRequestID, body string, before projection.MessageInputRequestState, beforeOK bool) {
+	if output == nil {
+		return
+	}
+	shouldReport := fillsInputRequestID != "" || replyTo != "" || isTerminalLookingSendBody(body)
+	if !shouldReport {
+		return
+	}
+
+	after, afterOK := projectSendInputRequestState(sessionDir, sessionName)
+	if fillsInputRequestID != "" {
+		output.Fill = buildSendFillOutput(before, beforeOK, after, afterOK, sender, to, replyTo, fillsInputRequestID)
+	}
+	if afterOK {
+		requiredInput := buildSendRequiredInput(after, sender)
+		output.RequiredInput = &requiredInput
+		if isTerminalLookingSendBody(body) && requiredInput.Open > 0 {
+			output.Notice = "terminal-looking reply was sent, but required input remains open"
+			if len(requiredInput.Remaining) > 0 {
+				output.SuggestedNextAction = suggestedInputRequestReplyCommand(requiredInput.Remaining[0])
+			}
+		}
+		return
+	}
+	if beforeOK {
+		requiredInput := buildSendRequiredInput(before, sender)
+		requiredInput.State = "unknown"
+		output.RequiredInput = &requiredInput
+	}
+}
+
+func buildSendFillOutput(before projection.MessageInputRequestState, beforeOK bool, after projection.MessageInputRequestState, afterOK bool, sender, to, replyTo, fillsInputRequestID string) *sendFillOutput {
+	fill := &sendFillOutput{
+		Requested: fillsInputRequestID,
+		ReplyTo:   replyTo,
+		State:     "unknown",
+	}
+	beforeDetail, beforeFound := findInputRequestDetail(before, fillsInputRequestID, sender)
+	if beforeOK {
+		if !beforeFound {
+			closed := false
+			fill.State = "open"
+			fill.Closed = &closed
+			fill.Reason = "input_request_not_open"
+			return fill
+		}
+		if reason := fillContradictionReason(beforeDetail, sender, to, replyTo); reason != "" {
+			closed := false
+			fill.State = "open"
+			fill.Closed = &closed
+			fill.Reason = reason
+			return fill
+		}
+	}
+
+	if !afterOK {
+		fill.Reason = "input_request_state_unavailable"
+		return fill
+	}
+	if _, found := findInputRequestDetail(after, fillsInputRequestID, sender); found {
+		closed := false
+		fill.State = "open"
+		fill.Closed = &closed
+		fill.Reason = "input_request_still_open"
+		return fill
+	}
+	if !beforeOK {
+		fill.Reason = "input_request_state_unavailable"
+		return fill
+	}
+
+	closed := true
+	fill.State = "closed"
+	fill.Closed = &closed
+	return fill
+}
+
+func findInputRequestDetail(state projection.MessageInputRequestState, inputRequestID, sender string) (projection.InputRequestDetail, bool) {
+	if inputRequestID == "" {
+		return projection.InputRequestDetail{}, false
+	}
+	for _, inputRequest := range state.InputRequired {
+		if inputRequest.InputRequestID == inputRequestID && inputRequest.Recipient == sender {
+			return inputRequest, true
+		}
+	}
+	for _, inputRequest := range state.InputRequired {
+		if inputRequest.InputRequestID == inputRequestID {
+			return inputRequest, true
+		}
+	}
+	for _, inputRequest := range state.WaitingOnInput {
+		if inputRequest.InputRequestID == inputRequestID {
+			return inputRequest, true
+		}
+	}
+	return projection.InputRequestDetail{}, false
+}
+
+func fillContradictionReason(inputRequest projection.InputRequestDetail, sender, to, replyTo string) string {
+	if inputRequest.Recipient != "" && inputRequest.Recipient != sender {
+		return "wrong_participant"
+	}
+	if inputRequest.Sender != "" && !sameNodeForSendSummary(inputRequest.Sender, to) {
+		return "wrong_recipient"
+	}
+	if replyTo != "" && inputRequest.MessageID != "" && replyTo != inputRequest.MessageID {
+		return "wrong_reply_to"
+	}
+	return ""
+}
+
+func sameNodeForSendSummary(left, right string) bool {
+	if left == right {
+		return true
+	}
+	return nodeaddr.Simple(left) == nodeaddr.Simple(right)
+}
+
+func buildSendRequiredInput(state projection.MessageInputRequestState, sender string) sendRequiredInput {
+	result := sendRequiredInput{State: "known"}
+	for _, inputRequest := range state.InputRequired {
+		if inputRequest.Recipient != sender {
+			continue
+		}
+		result.Remaining = append(result.Remaining, sendInputRequestDetail{
+			Direction:      inputRequest.Direction,
+			MessageID:      inputRequest.MessageID,
+			InputRequestID: inputRequest.InputRequestID,
+			Sender:         inputRequest.Sender,
+			Recipient:      inputRequest.Recipient,
+			ReplyPolicy:    inputRequest.ReplyPolicy,
+			OpenedAt:       inputRequest.OpenedAt,
+			OpenedAtSource: inputRequest.OpenedAtSource,
+			OpenedEventID:  inputRequest.OpenedEventID,
+			ReadAt:         inputRequest.ReadAt,
+			ReadEventID:    inputRequest.ReadEventID,
+		})
+	}
+	result.Open = len(result.Remaining)
+	return result
+}
+
+func isTerminalLookingSendBody(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return false
+	}
+	upper := strings.ToUpper(trimmed)
+	for _, prefix := range []string{"DONE:", "BLOCKED:", "APPROVED:", "NOT APPROVED:"} {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func suggestedInputRequestReplyCommand(inputRequest sendInputRequestDetail) string {
+	if inputRequest.Sender == "" || inputRequest.MessageID == "" {
+		return "tmux-a2a-postman inspect-input --id " + inputRequestIDOrMessageID(inputRequest)
+	}
+	args := " --reply-to " + inputRequest.MessageID
+	if inputRequest.InputRequestID != "" {
+		args = " --fills-input-request-id " + inputRequest.InputRequestID + args
+	}
+	return "tmux-a2a-postman send-heredoc --to " + inputRequest.Sender + args + " <<'POSTMAN_BODY'"
+}
+
+func inputRequestIDOrMessageID(inputRequest sendInputRequestDetail) string {
+	if inputRequest.InputRequestID != "" {
+		return inputRequest.InputRequestID
+	}
+	return inputRequest.MessageID
 }
 
 func talksToListForFooter(adjacency map[string][]string, nodeName string) []string {

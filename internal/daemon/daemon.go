@@ -15,9 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gofsnotify/fsnotify"
+	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -28,6 +29,10 @@ import (
 )
 
 const inboxCheckInterval = 30 * time.Second
+
+type filesystemWatcher interface {
+	Add(string, fswatcher.Op) error
+}
 
 func sessionScanInterval(cfg *config.Config) time.Duration {
 	if cfg == nil {
@@ -67,16 +72,11 @@ func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, 
 }
 
 func frontmatterValue(content, key string) string {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	frontmatter, _, ok, err := envelope.ScanFrontmatter(content)
+	if !ok || err != nil {
 		return ""
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return ""
-	}
-	for _, line := range strings.Split(rest[:second], "\n") {
+	for _, line := range strings.Split(frontmatter, "\n") {
 		prefix := key + ": "
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
@@ -250,14 +250,14 @@ func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent s
 		filepath.Join("read", filename),
 		content,
 	))
-	syncMailboxProjection(sessionDir)
 }
 
 type daemonSubmitProcessResult struct {
-	Command    projection.DaemonSubmitCommand
-	SessionDir string
-	Filename   string
-	PostPath   string
+	Command                  projection.DaemonSubmitCommand
+	SessionDir               string
+	Filename                 string
+	PostPath                 string
+	ProjectionSyncSessionDir string
 }
 
 func (r daemonSubmitProcessResult) hasPostDispatch() bool {
@@ -296,8 +296,10 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		Command:    request.Command,
 		SessionDir: sessionDir,
 	}
-	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s\n",
-		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename)
+	processingStartedAt := time.Now()
+	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
+	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
@@ -309,6 +311,9 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		}
 	case projection.DaemonSubmitPop:
 		response, err = handleDaemonSubmitPop(sessionDir, request)
+		if err == nil && !response.Empty {
+			result.ProjectionSyncSessionDir = sessionDir
+		}
 	default:
 		err = fmt.Errorf("unsupported daemon submit command %q", request.Command)
 		response = projection.DaemonSubmitResponse{
@@ -323,12 +328,33 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
 		return result, writeErr
 	}
-	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t\n",
-		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "")
+	responseWrittenAt := time.Now()
+	handlerMs := daemonSubmitDurationMillis(responseWrittenAt.Sub(processingStartedAt))
+	totalMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, responseWrittenAt))
+	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t queue_ms=%d handler_ms=%d total_ms=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "", queueMs, handlerMs, totalMs)
 	if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
 	}
 	return result, nil
+}
+
+func daemonSubmitDurationSince(createdAt string, now time.Time) time.Duration {
+	if createdAt == "" {
+		return -1
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return -1
+	}
+	return now.Sub(parsed)
+}
+
+func daemonSubmitDurationMillis(duration time.Duration) int64 {
+	if duration < 0 {
+		return -1
+	}
+	return duration.Milliseconds()
 }
 
 // DaemonState manages daemon state (Issue #71).
@@ -346,15 +372,23 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	swallowedRetryCount           map[string]int             // Issue #282: inbox file path -> re-delivery attempt count
 	swallowedRetryCountMu         sync.Mutex                 // Issue #282
+	clock                         func() time.Time
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
 // drainWindowSeconds configures the startup drain window during which
 // IsSessionEnabled returns true for all sessions (#217).
 func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
+	return newDaemonStateWithClock(drainWindowSeconds, contextID, time.Now)
+}
+
+func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock func() time.Time) *DaemonState {
+	if clock == nil {
+		clock = time.Now
+	}
 	return &DaemonState{
 		contextID:                     contextID,
-		startedAt:                     time.Now(),
+		startedAt:                     clock(),
 		drainWindow:                   time.Duration(drainWindowSeconds * float64(time.Second)),
 		enabledSessions:               make(map[string]bool),
 		prevPaneStates:                make(map[string]uinode.PaneInfo), // Issue #98
@@ -362,7 +396,15 @@ func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		reservedDeliveryByRoute:       make(map[string]time.Time),
 		swallowedRetryCount:           make(map[string]int),
+		clock:                         clock,
 	}
+}
+
+func (ds *DaemonState) now() time.Time {
+	if ds.clock == nil {
+		return time.Now()
+	}
+	return ds.clock()
 }
 
 func (ds *DaemonState) reserveDeliveryRoute(route string, gap time.Duration, now time.Time) (time.Duration, time.Time, bool) {
@@ -426,7 +468,51 @@ func RunDaemonLoop(
 	sessionDir string,
 	contextID string,
 	cfg *config.Config,
-	watcher *fsnotify.Watcher,
+	watcher *fswatcher.Watcher,
+	adjacency map[string][]string,
+	nodes map[string]discovery.NodeInfo,
+	knownNodes map[string]bool,
+	events chan<- tui.DaemonEvent,
+	configPath string,
+	configPaths []string,
+	nodesDirs []string,
+	daemonState *DaemonState,
+	idleTracker *idle.IdleTracker,
+	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
+	selfSession string,
+) {
+	runDaemonLoopWithWatcherEvents(
+		ctx,
+		baseDir,
+		sessionDir,
+		contextID,
+		cfg,
+		watcher,
+		watcher.Events,
+		watcher.Errors,
+		adjacency,
+		nodes,
+		knownNodes,
+		events,
+		configPath,
+		configPaths,
+		nodesDirs,
+		daemonState,
+		idleTracker,
+		sharedNodes,
+		selfSession,
+	)
+}
+
+func runDaemonLoopWithWatcherEvents(
+	ctx context.Context,
+	baseDir string,
+	sessionDir string,
+	contextID string,
+	cfg *config.Config,
+	watcher filesystemWatcher,
+	watcherEvents <-chan fswatcher.Event,
+	watcherErrors <-chan error,
 	adjacency map[string][]string,
 	nodes map[string]discovery.NodeInfo,
 	knownNodes map[string]bool,
@@ -475,14 +561,17 @@ func RunDaemonLoop(
 		select {
 		case <-ctx.Done():
 			runtime.handleContextDone()
+			runtime.waitForMailboxProjectionSyncs()
 			return
-		case event, ok := <-watcher.Events:
+		case event, ok := <-watcherEvents:
 			if !ok {
+				runtime.waitForMailboxProjectionSyncs()
 				return
 			}
 			runtime.handleWatcherEvent(event)
-		case err, ok := <-watcher.Errors:
+		case err, ok := <-watcherErrors:
 			if !ok {
+				runtime.waitForMailboxProjectionSyncs()
 				return
 			}
 			runtime.handleWatcherError(err)
@@ -649,7 +738,7 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 	ds.enabledSessions[sessionName] = enabled
 	ds.enabledSessionsMu.Unlock()
 	log.Printf("postman: session state change: session=%s enabled=%v source=toggle ts=%s\n",
-		sessionName, enabled, time.Now().UTC().Format(time.RFC3339Nano))
+		sessionName, enabled, ds.now().UTC().Format(time.RFC3339Nano))
 	ds.persistSessionEnabledMarker(sessionName, enabled)
 }
 
@@ -676,7 +765,7 @@ func (ds *DaemonState) AutoEnableSessionIfNew(sessionName string) {
 	ds.enabledSessions[sessionName] = true
 	ds.enabledSessionsMu.Unlock()
 	log.Printf("postman: session state change: session=%s enabled=true source=auto-enable ts=%s\n",
-		sessionName, time.Now().UTC().Format(time.RFC3339Nano))
+		sessionName, ds.now().UTC().Format(time.RFC3339Nano))
 	ds.persistSessionEnabledMarker(sessionName, true)
 }
 
@@ -691,7 +780,7 @@ func (ds *DaemonState) hasConfiguredSession(sessionName string) bool {
 // During the startup drain window, returns true for all sessions to prevent
 // the race where messages are rejected before sessions are registered (#217).
 func (ds *DaemonState) IsSessionEnabled(sessionName string) bool {
-	if ds.drainWindow > 0 && time.Since(ds.startedAt) < ds.drainWindow {
+	if ds.drainWindow > 0 && ds.now().Sub(ds.startedAt) < ds.drainWindow {
 		return true
 	}
 	ds.enabledSessionsMu.RLock()

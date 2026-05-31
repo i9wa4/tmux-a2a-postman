@@ -30,6 +30,12 @@ type PaneInfo struct {
 	LastChecked  time.Time
 }
 
+type tmuxOutputFunc func(args ...string) ([]byte, error)
+
+func runTmuxOutput(args ...string) ([]byte, error) {
+	return exec.Command("tmux", args...).Output()
+}
+
 // NotificationLog tracks notification timestamps per context.
 type NotificationLog struct {
 	mu            sync.RWMutex
@@ -76,62 +82,27 @@ func (nl *NotificationLog) GetNotifications(contextID string) []NotificationEntr
 // Returns map[paneID]PaneInfo with optimized batch processing.
 // Only queries window_active for panes where pane_active=0.
 func GetAllPanesInfo() (map[string]PaneInfo, error) {
+	return getAllPanesInfo(runTmuxOutput, time.Now)
+}
+
+func getAllPanesInfo(run tmuxOutputFunc, now func() time.Time) (map[string]PaneInfo, error) {
 	// Get all pane info: pane_id, pane_active, pane_activity
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}:#{pane_active}:#{pane_activity}")
-	output, err := cmd.Output()
+	output, err := run("list-panes", "-a", "-F", "#{pane_id}:#{pane_active}:#{pane_activity}")
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes failed: %w", err)
 	}
 
-	result := make(map[string]PaneInfo)
-	inactivePanes := []string{}
-
-	// First pass: collect all panes, identify inactive ones
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ":")
-		if len(parts) != 3 {
-			continue
-		}
-
-		paneID := parts[0]
-		paneActive := parts[1] == "1"
-		paneActivity, _ := strconv.ParseInt(parts[2], 10, 64)
-
-		if paneActive {
-			result[paneID] = PaneInfo{
-				PaneID:       paneID,
-				PaneActive:   true,
-				PaneActivity: paneActivity,
-				Status:       StatusVisible,
-				LastChecked:  time.Now(),
-			}
-		} else {
-			// Mark as inactive, will check window_active later
-			result[paneID] = PaneInfo{
-				PaneID:       paneID,
-				PaneActive:   false,
-				PaneActivity: paneActivity,
-				Status:       StatusUnknown,
-				LastChecked:  time.Now(),
-			}
-			inactivePanes = append(inactivePanes, paneID)
-		}
-	}
+	result, inactivePanes := parseListPanesInfo(output, now())
 
 	// Second pass: check window_active only for inactive panes (Issue #94 optimization)
 	for _, paneID := range inactivePanes {
-		cmd := exec.Command("tmux", "display-message", "-p", "-t", paneID, "#{window_active}")
-		windowActiveOutput, err := cmd.Output()
+		windowActiveOutput, err := run("display-message", "-p", "-t", paneID, "#{window_active}")
 		if err != nil {
 			// Keep StatusUnknown
 			continue
 		}
 
-		windowActive := strings.TrimSpace(string(windowActiveOutput)) == "1"
+		windowActive := parseWindowActive(windowActiveOutput)
 		paneInfo := result[paneID]
 		paneInfo.WindowActive = windowActive
 		if windowActive {
@@ -148,20 +119,58 @@ func GetAllPanesInfo() (map[string]PaneInfo, error) {
 // GetPaneInfo retrieves target pane information using tmux commands.
 // Returns PaneInfo with status based on pane and window active states.
 func GetPaneInfo(targetPaneID string) (*PaneInfo, error) {
+	return getPaneInfo(targetPaneID, runTmuxOutput, time.Now)
+}
+
+func getPaneInfo(targetPaneID string, run tmuxOutputFunc, now func() time.Time) (*PaneInfo, error) {
 	if targetPaneID == "" {
-		return &PaneInfo{Status: StatusUnknown, LastChecked: time.Now()}, nil
+		return &PaneInfo{Status: StatusUnknown, LastChecked: now()}, nil
 	}
 
 	// Get pane info: pane_id, pane_active, pane_activity
-	cmd := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id}:#{pane_active}:#{pane_activity}")
-	output, err := cmd.Output()
+	output, err := run("list-panes", "-a", "-F", "#{pane_id}:#{pane_active}:#{pane_activity}")
 	if err != nil {
-		return &PaneInfo{Status: StatusUnknown, LastChecked: time.Now()}, fmt.Errorf("tmux list-panes failed: %w", err)
+		return &PaneInfo{Status: StatusUnknown, LastChecked: now()}, fmt.Errorf("tmux list-panes failed: %w", err)
 	}
 
-	var paneActive bool
-	var paneActivity int64
-	found := false
+	panes, _ := parseListPanesInfo(output, now())
+	paneInfo, found := panes[targetPaneID]
+	if !found {
+		return &PaneInfo{Status: StatusUnknown, LastChecked: now()}, nil
+	}
+
+	// If pane is active, it's visible
+	if paneInfo.PaneActive {
+		return &paneInfo, nil
+	}
+
+	// Pane not active, check window activity
+	_, err = run("list-windows", "-a", "-F", "#{window_id}:#{window_active}:#{window_panes}")
+	if err != nil {
+		return &paneInfo, nil
+	}
+
+	// Find which window contains our pane
+	windowActiveOutput, err := run("display-message", "-p", "-t", targetPaneID, "#{window_active}")
+	if err != nil {
+		return &paneInfo, nil
+	}
+
+	windowActive := parseWindowActive(windowActiveOutput)
+
+	status := StatusNotVisible
+	if windowActive {
+		status = StatusWindowVisible
+	}
+
+	paneInfo.WindowActive = windowActive
+	paneInfo.Status = status
+	return &paneInfo, nil
+}
+
+func parseListPanesInfo(output []byte, checkedAt time.Time) (map[string]PaneInfo, []string) {
+	result := make(map[string]PaneInfo)
+	var inactivePanes []string
 
 	for _, line := range strings.Split(string(output), "\n") {
 		line = strings.TrimSpace(line)
@@ -172,70 +181,31 @@ func GetPaneInfo(targetPaneID string) (*PaneInfo, error) {
 		if len(parts) != 3 {
 			continue
 		}
-		if parts[0] == targetPaneID {
-			found = true
-			paneActive = parts[1] == "1"
-			paneActivity, _ = strconv.ParseInt(parts[2], 10, 64)
-			break
+
+		paneID := parts[0]
+		paneActive := parts[1] == "1"
+		paneActivity, _ := strconv.ParseInt(parts[2], 10, 64)
+
+		paneInfo := PaneInfo{
+			PaneID:       paneID,
+			PaneActive:   paneActive,
+			PaneActivity: paneActivity,
+			LastChecked:  checkedAt,
 		}
+		if paneActive {
+			paneInfo.Status = StatusVisible
+		} else {
+			paneInfo.Status = StatusUnknown
+			inactivePanes = append(inactivePanes, paneID)
+		}
+		result[paneID] = paneInfo
 	}
 
-	if !found {
-		return &PaneInfo{Status: StatusUnknown, LastChecked: time.Now()}, nil
-	}
+	return result, inactivePanes
+}
 
-	// If pane is active, it's visible
-	if paneActive {
-		return &PaneInfo{
-			PaneID:       targetPaneID,
-			PaneActive:   true,
-			PaneActivity: paneActivity,
-			Status:       StatusVisible,
-			LastChecked:  time.Now(),
-		}, nil
-	}
-
-	// Pane not active, check window activity
-	cmd = exec.Command("tmux", "list-windows", "-a", "-F", "#{window_id}:#{window_active}:#{window_panes}")
-	_, err = cmd.Output()
-	if err != nil {
-		return &PaneInfo{
-			PaneID:       targetPaneID,
-			PaneActive:   false,
-			PaneActivity: paneActivity,
-			Status:       StatusUnknown,
-			LastChecked:  time.Now(),
-		}, nil
-	}
-
-	// Find which window contains our pane
-	cmd = exec.Command("tmux", "display-message", "-p", "-t", targetPaneID, "#{window_active}")
-	windowActiveOutput, err := cmd.Output()
-	if err != nil {
-		return &PaneInfo{
-			PaneID:       targetPaneID,
-			PaneActive:   false,
-			PaneActivity: paneActivity,
-			Status:       StatusUnknown,
-			LastChecked:  time.Now(),
-		}, nil
-	}
-
-	windowActive := strings.TrimSpace(string(windowActiveOutput)) == "1"
-
-	status := StatusNotVisible
-	if windowActive {
-		status = StatusWindowVisible
-	}
-
-	return &PaneInfo{
-		PaneID:       targetPaneID,
-		PaneActive:   false,
-		WindowActive: windowActive,
-		PaneActivity: paneActivity,
-		Status:       status,
-		LastChecked:  time.Now(),
-	}, nil
+func parseWindowActive(output []byte) bool {
+	return strings.TrimSpace(string(output)) == "1"
 }
 
 // FindTargetPaneID finds the pane_id for the pane whose title matches nodeName.

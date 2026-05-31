@@ -296,6 +296,14 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
+If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
+unknown. The daemon may still commit the side effect after the CLI stops
+waiting, so inspect status, inbox/read state, archived message evidence, or
+recipient-side confirmation before retrying. Use
+`inspect-daemon-submit --id <request_id>` to look up the timed-out request, and
+use `get-status --debug` for bounded `daemon_submit` queue health, including
+pending, claimed, late response, worker, and saturation counts.
+
 Inspect live session state:
 
 ```sh
@@ -335,6 +343,11 @@ Evidence: <commands or links>
 Remaining blockers: none
 POSTMAN_BODY
 ```
+
+After a fill/reply send, check the JSON `fill` and `required_input` fields.
+They show whether the request closed and whether any required input remains
+open. Terminal-looking replies such as `DONE:` also include a `notice` when
+required input is still open.
 
 Filling an input request closes transport, not task acceptance. For required
 work, send `DONE` only after checking the original requirements against

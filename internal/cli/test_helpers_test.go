@@ -11,6 +11,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
 
 func TestMain(m *testing.M) {
@@ -40,19 +41,11 @@ func installFakeTmuxForCLI(t *testing.T, postmanHome, sessionName, paneTitle str
 	t.Helper()
 	t.Setenv("POSTMAN_HOME", postmanHome)
 	t.Setenv("TMUX_PANE", "%99")
-	scriptDir := t.TempDir()
-	scriptPath := filepath.Join(scriptDir, "tmux")
-	script := "#!/bin/sh\n" +
-		"case \"$*\" in\n" +
-		"  *\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
-		"  *\"#{pane_title}\"*) printf '%s\\n' \"" + paneTitle + "\" ;;\n" +
-		"  *\"#{pane_id}\"*) printf '%s\\n' \"%99\" ;;\n" +
-		"  *) exit 1 ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("WriteFile fake tmux: %v", err)
-	}
-	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	tmuxtest.Install(t, tmuxtest.WithPane(tmuxtest.Pane{
+		ID:          "%99",
+		SessionName: sessionName,
+		Title:       paneTitle,
+	}))
 }
 
 func messageFixture(from, to, body string) string {
