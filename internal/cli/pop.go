@@ -2,18 +2,21 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,8 +26,12 @@ func RunPop(args []string) error {
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
 	configPath := fs.String("config", "", "path to config file (optional)")
+	runtimeContextMode := fs.String("runtime-context", "summary", "runtime context output mode: summary or none")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *runtimeContextMode != "summary" && *runtimeContextMode != "none" {
+		return fmt.Errorf("--runtime-context must be summary or none")
 	}
 
 	inboxArgs := fs.Args()
@@ -58,7 +65,7 @@ func RunPop(args []string) error {
 			return fmt.Errorf("daemon submit pop: %w", err)
 		}
 		if response.Empty {
-			return writeEmptyPopOutput()
+			return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
 		}
 		remaining := response.UnreadBefore - 1
 		if remaining < 0 {
@@ -68,12 +75,12 @@ func RunPop(args []string) error {
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
-		return writePopMessageOutput(response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining))
+		return writePopMessageOutput(response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
-		return writeEmptyPopOutput()
+		return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -86,7 +93,7 @@ func RunPop(args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
-				return writeEmptyPopOutput()
+				return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
 			}
 			sort.Slice(msgs, func(i, j int) bool {
 				return msgs[i].Filename < msgs[j].Filename
@@ -95,7 +102,7 @@ func RunPop(args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
-					return writeEmptyPopOutput()
+					return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
 				}
 				return fmt.Errorf("reading message: %w", err)
 			}
@@ -110,7 +117,7 @@ func RunPop(args []string) error {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining))
+	return writePopMessageOutput(string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -118,48 +125,118 @@ func archivePoppedMessage(absPath, filename string) (string, error) {
 }
 
 type popEmptyOutput struct {
-	Status string `json:"status"`
+	Status             string                 `json:"status"`
+	SessionDiagnostics *popSessionDiagnostics `json:"session_diagnostics,omitempty"`
 }
 
 type popMessageOutput struct {
-	Status                      string         `json:"status"`
-	MessageID                   string         `json:"message_id,omitempty"`
-	MarkdownPath                string         `json:"markdown_path,omitempty"`
-	MarkdownAbsolutePath        string         `json:"markdown_absolute_path,omitempty"`
-	Frontmatter                 map[string]any `json:"frontmatter,omitempty"`
-	From                        string         `json:"from"`
-	To                          string         `json:"to"`
-	ReplyPolicy                 string         `json:"reply_policy,omitempty"`
-	ReplyTo                     string         `json:"reply_to,omitempty"`
-	InputRequestID              string         `json:"input_request_id,omitempty"`
-	FillsInputRequestID         string         `json:"fills_input_request_id,omitempty"`
-	InputRequestSetID           string         `json:"input_request_set_id,omitempty"`
-	BranchID                    string         `json:"branch_id,omitempty"`
-	CompletionRule              string         `json:"completion_rule,omitempty"`
-	Timestamp                   string         `json:"timestamp"`
-	UnreadBefore                *int           `json:"unread_before,omitempty"`
-	Remaining                   *int           `json:"remaining,omitempty"`
-	ArchivedBodyReadRequired    bool           `json:"archived_body_read_required,omitempty"`
-	ArchivedBodyReadInstruction string         `json:"archived_body_read_instruction,omitempty"`
+	Status                      string                  `json:"status"`
+	MessageID                   string                  `json:"message_id,omitempty"`
+	MarkdownPath                string                  `json:"markdown_path,omitempty"`
+	MarkdownAbsolutePath        string                  `json:"markdown_absolute_path,omitempty"`
+	Frontmatter                 map[string]any          `json:"frontmatter,omitempty"`
+	From                        string                  `json:"from"`
+	To                          string                  `json:"to"`
+	ReplyPolicy                 string                  `json:"reply_policy,omitempty"`
+	ReplyTo                     string                  `json:"reply_to,omitempty"`
+	InputRequestID              string                  `json:"input_request_id,omitempty"`
+	FillsInputRequestID         string                  `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID           string                  `json:"input_request_set_id,omitempty"`
+	BranchID                    string                  `json:"branch_id,omitempty"`
+	CompletionRule              string                  `json:"completion_rule,omitempty"`
+	Timestamp                   string                  `json:"timestamp"`
+	UnreadBefore                *int                    `json:"unread_before,omitempty"`
+	Remaining                   *int                    `json:"remaining,omitempty"`
+	ArchivedBodyReadRequired    bool                    `json:"archived_body_read_required,omitempty"`
+	ArchivedBodyReadInstruction string                  `json:"archived_body_read_instruction,omitempty"`
+	RuntimeContext              *runtimecontext.Summary `json:"runtime_context,omitempty"`
+	RuntimeContextError         string                  `json:"runtime_context_error,omitempty"`
+	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
+}
+
+type popSessionDiagnostics struct {
+	Source                       string `json:"source"`
+	ActiveTaskCount              int    `json:"active_task_count"`
+	UnreadInboxCount             int    `json:"unread_inbox_count"`
+	InputRequiredCount           int    `json:"input_required_count"`
+	WaitingOnInputCount          int    `json:"waiting_on_input_count"`
+	UnclosedRequiredRequestCount int    `json:"unclosed_required_request_count"`
+	PostCount                    int    `json:"post_count"`
+	DeadLetterCount              int    `json:"dead_letter_count"`
 }
 
 const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
-func writeEmptyPopOutput() error {
-	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty"})
+func writeEmptyPopOutput(diagnostics *popSessionDiagnostics) error {
+	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
 }
 
-func writePopMessageOutput(content, filename, markdownPath string, unreadBefore, remaining *int) error {
+func writePopMessageOutput(content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
 		output.MarkdownAbsolutePath = markdownPath
 	}
+	if runtimeContextMode == "summary" {
+		output.RuntimeContext, output.RuntimeContextError = runtimeContextSummaryForMessage(content, markdownPath)
+	}
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
+	output.SessionDiagnostics = diagnostics
 	return json.NewEncoder(os.Stdout).Encode(output)
+}
+
+func popSessionDiagnosticsForSession(sessionDir string) *popSessionDiagnostics {
+	queues := collectSessionQueues(sessionDir)
+	diagnostics := &popSessionDiagnostics{
+		Source:           "filesystem",
+		UnreadInboxCount: queues.InboxCount,
+		PostCount:        queues.PostCount,
+		DeadLetterCount:  queues.DeadLetterCount,
+	}
+
+	sessionName := filepath.Base(sessionDir)
+	inputRequests, ok := projectedInputRequestCounts(sessionDir, sessionName)
+	if !ok {
+		return diagnostics
+	}
+	inputRequired := len(inputRequests.InputRequired)
+	waitingOnInput := len(inputRequests.WaitingOnInput)
+	unclosedRequiredRequests := uniqueOpenInputRequestCount(inputRequests)
+	diagnostics.Source = "projection"
+	diagnostics.InputRequiredCount = inputRequired
+	diagnostics.WaitingOnInputCount = waitingOnInput
+	diagnostics.UnclosedRequiredRequestCount = unclosedRequiredRequests
+	diagnostics.ActiveTaskCount = diagnostics.UnclosedRequiredRequestCount
+	return diagnostics
+}
+
+func uniqueOpenInputRequestCount(inputRequests projection.MessageInputRequestState) int {
+	seen := make(map[string]struct{})
+	add := func(details []projection.InputRequestDetail) {
+		for _, detail := range details {
+			key := openInputRequestIdentity(detail)
+			if key == "" {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+	}
+	add(inputRequests.InputRequired)
+	add(inputRequests.WaitingOnInput)
+	return len(seen)
+}
+
+func openInputRequestIdentity(detail projection.InputRequestDetail) string {
+	if detail.InputRequestID != "" {
+		return "exact:" + detail.InputRequestID
+	}
+	if detail.MessageID == "" && detail.Recipient == "" {
+		return ""
+	}
+	return "fallback:" + detail.MessageID + "\x00" + detail.Recipient
 }
 
 func intPtr(value int) *int {
@@ -191,6 +268,42 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	result.CompletionRule = metadata.CompletionRule
 	result.Timestamp = metadata.Timestamp
 	return result
+}
+
+func runtimeContextSummaryForMessage(content, markdownPath string) (*runtimecontext.Summary, string) {
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil || metadata.RuntimeContextID == "" {
+		return nil, ""
+	}
+	if markdownPath == "" {
+		return nil, "runtime_context_unavailable: archived message path unavailable"
+	}
+	sessionDir := sessionDirFromArchivedMarkdownPath(markdownPath)
+	if sessionDir == "" {
+		return nil, "runtime_context_unavailable: archived message path is not in read/"
+	}
+	summary, err := runtimecontext.LoadSummary(sessionDir, metadata.RuntimeContextID, time.Now())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "runtime_context_unavailable: referenced snapshot not found"
+		}
+		return nil, "runtime_context_unavailable: referenced snapshot could not be loaded"
+	}
+	if metadata.RuntimeContextHash != "" && summary.ContentHash != "" && metadata.RuntimeContextHash != summary.ContentHash {
+		return nil, "runtime_context_hash_mismatch: envelope runtimeContextHash does not match archived runtime context content_hash"
+	}
+	return summary, ""
+}
+
+func sessionDirFromArchivedMarkdownPath(markdownPath string) string {
+	if markdownPath == "" {
+		return ""
+	}
+	parent := filepath.Base(filepath.Dir(markdownPath))
+	if parent != "read" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(markdownPath))
 }
 
 func displayMarkdownPath(markdownPath string) string {
