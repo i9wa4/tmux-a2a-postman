@@ -290,6 +290,7 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
 	defaultConfig := readRepoFile(t, "internal/config/postman.default.toml")
 	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+	operatorFlow := readRepoFile(t, "skills/postman-session-operator/references/session-flow.md")
 
 	assertContainsAllNormalized(
 		t, defaultConfig,
@@ -321,7 +322,12 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 		"Original checklist: PASS",
 		"Remaining blockers: none",
 		"Use `BLOCKED` with `Original checklist: FAIL`",
+		"check send JSON `fill`, `required_input`, and `notice`",
 		"verify checklist status, durable references, evidence, and blockers before relaying, approving, or closing work",
+	)
+	assertContainsAllNormalized(
+		t, operatorFlow,
+		"`fill`, `required_input`, and `notice` fields before treating the input request as closed.",
 	)
 }
 

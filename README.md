@@ -344,6 +344,11 @@ Remaining blockers: none
 POSTMAN_BODY
 ```
 
+After a fill/reply send, check the JSON `fill` and `required_input` fields.
+They show whether the request closed and whether any required input remains
+open. Terminal-looking replies such as `DONE:` also include a `notice` when
+required input is still open.
+
 Filling an input request closes transport, not task acceptance. For required
 work, send `DONE` only after checking the original requirements against
 evidence. Receivers verify the checklist status, durable references, evidence,

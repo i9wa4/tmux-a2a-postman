@@ -18,6 +18,7 @@ import (
 	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -71,16 +72,11 @@ func safeAfterFunc(d time.Duration, name string, events chan<- tui.DaemonEvent, 
 }
 
 func frontmatterValue(content, key string) string {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	frontmatter, _, ok, err := envelope.ScanFrontmatter(content)
+	if !ok || err != nil {
 		return ""
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return ""
-	}
-	for _, line := range strings.Split(rest[:second], "\n") {
+	for _, line := range strings.Split(frontmatter, "\n") {
 		prefix := key + ": "
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimSpace(strings.TrimPrefix(line, prefix))

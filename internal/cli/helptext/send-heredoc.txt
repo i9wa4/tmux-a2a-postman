@@ -33,6 +33,12 @@ Output:
   {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
   Reply-required sends include "input_request_id".
   Exact replies include "fills_input_request_id".
+  Fill/reply sends may also include:
+    "fill"                  requested input request, closed state, and reason
+    "required_input"        current open required input for the sender
+    "notice"                visible warning when terminal-looking text leaves
+                            required input open
+    "suggested_next_action" safe command prefix when an open request is known
 
 Status:
   processed               Daemon-side handling was observed

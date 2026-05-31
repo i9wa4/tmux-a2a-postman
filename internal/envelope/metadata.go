@@ -28,6 +28,41 @@ type Metadata struct {
 	Body                string
 }
 
+type frontmatterScan struct {
+	frontmatter      string
+	body             string
+	frontmatterStart int
+	closeStart       int
+}
+
+func ScanFrontmatter(content string) (frontmatter, body string, ok bool, err error) {
+	scan, ok, err := scanFrontmatter(content)
+	if !ok || err != nil {
+		return "", "", ok, err
+	}
+	return scan.frontmatter, scan.body, true, nil
+}
+
+func scanFrontmatter(content string) (frontmatterScan, bool, error) {
+	first := strings.Index(content, "---\n")
+	if first < 0 {
+		return frontmatterScan{}, false, nil
+	}
+	frontmatterStart := first + 4
+	rest := content[frontmatterStart:]
+	second := strings.Index(rest, "\n---")
+	if second < 0 {
+		return frontmatterScan{}, false, fmt.Errorf("frontmatter not closed")
+	}
+	closeStart := frontmatterStart + second
+	return frontmatterScan{
+		frontmatter:      content[frontmatterStart:closeStart],
+		body:             content[closeStart+4:],
+		frontmatterStart: frontmatterStart,
+		closeStart:       closeStart,
+	}, true, nil
+}
+
 func BodyFromContent(content string) string {
 	body, ok := rawBodyFromContent(content)
 	if !ok {
@@ -48,16 +83,11 @@ func SenderBodyFromContent(content string) (string, bool) {
 }
 
 func rawBodyFromContent(content string) (string, bool) {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	_, body, ok, err := ScanFrontmatter(content)
+	if err != nil {
 		return "", false
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return "", false
-	}
-	return rest[second+4:], true
+	return body, ok
 }
 
 func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
@@ -101,18 +131,18 @@ func hasGeneratedSendEnvelopeContext(prefix string) bool {
 }
 
 func ParseMetadata(content string) (Metadata, error) {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	frontmatter, body, ok, err := ScanFrontmatter(content)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if !ok {
 		return Metadata{}, fmt.Errorf("no frontmatter block found")
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return Metadata{}, fmt.Errorf("frontmatter not closed")
-	}
-	frontmatter := rest[:second]
+	return DecodeEnvelopeMetadata(frontmatter, body)
+}
 
-	metadata := Metadata{Body: strings.TrimSpace(rest[second+4:])}
+func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
+	metadata := Metadata{Body: strings.TrimSpace(body)}
 	lines := strings.Split(frontmatter, "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex >= 0 {
@@ -226,16 +256,11 @@ type paramsReplyPolicyField struct {
 }
 
 func paramsReplyPolicyFields(content string) []paramsReplyPolicyField {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	frontmatter, _, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
 		return nil
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return nil
-	}
-	lines := strings.Split(rest[:second], "\n")
+	lines := strings.Split(frontmatter, "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex < 0 {
 		return nil
@@ -321,16 +346,11 @@ func IsNoReplyBody(content string) bool {
 }
 
 func EnsureParams(content string, fields map[string]string) string {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	scan, ok, err := scanFrontmatter(content)
+	if !ok || err != nil {
 		return content
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return content
-	}
-	frontmatter := rest[:second]
+	frontmatter := scan.frontmatter
 	lines := strings.Split(frontmatter, "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex < 0 {
@@ -378,27 +398,22 @@ func EnsureParams(content string, fields map[string]string) string {
 		if !changed {
 			return content
 		}
-		return content[:first+4] + strings.Join(lines, "\n") + rest[second:]
+		return content[:scan.frontmatterStart] + strings.Join(lines, "\n") + content[scan.closeStart:]
 	}
 
 	updated := make([]string, 0, len(lines)+len(insert))
 	updated = append(updated, lines[:paramsIndex+1]...)
 	updated = append(updated, insert...)
 	updated = append(updated, lines[paramsIndex+1:]...)
-	return content[:first+4] + strings.Join(updated, "\n") + rest[second:]
+	return content[:scan.frontmatterStart] + strings.Join(updated, "\n") + content[scan.closeStart:]
 }
 
 func ParamsReplyPolicyUsesPlaceholder(content string) bool {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
+	frontmatter, _, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
 		return false
 	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
-		return false
-	}
-	lines := strings.Split(rest[:second], "\n")
+	lines := strings.Split(frontmatter, "\n")
 	paramsIndex, paramsEnd := paramsBlockRange(lines)
 	if paramsIndex < 0 {
 		return false
