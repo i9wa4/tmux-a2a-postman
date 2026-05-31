@@ -212,17 +212,12 @@ func displayMarkdownPath(markdownPath string) string {
 }
 
 func frontmatterFromContent(content string) map[string]any {
-	first := strings.Index(content, "---\n")
-	if first < 0 {
-		return nil
-	}
-	rest := content[first+4:]
-	second := strings.Index(rest, "\n---")
-	if second < 0 {
+	frontmatterContent, _, ok, err := envelope.ScanFrontmatter(content)
+	if !ok || err != nil {
 		return nil
 	}
 	var frontmatter map[string]any
-	if err := yaml.Unmarshal([]byte(rest[:second]), &frontmatter); err != nil {
+	if err := yaml.Unmarshal([]byte(frontmatterContent), &frontmatter); err != nil {
 		return nil
 	}
 	return frontmatter
