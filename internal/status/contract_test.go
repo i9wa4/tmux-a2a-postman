@@ -32,6 +32,17 @@ func TestNewRuntimeDiagnosticsIsScalarAndPointInTime(t *testing.T) {
 		ActivePostEventCount:    1,
 		ActiveAutoPingCount:     4,
 		ActiveDaemonSubmitCount: 6,
+	}, DaemonSubmitRuntimeDiagnostics{
+		WorkerLimit:                  4,
+		ActiveWorkerCount:            2,
+		ActiveRequestCount:           2,
+		PendingRequestCount:          3,
+		OldestPendingAgeSeconds:      90,
+		ClaimedRequestCount:          1,
+		LateResponseCount:            2,
+		OldestLateResponseAgeSeconds: 120,
+		SaturationCount:              1,
+		LastSaturatedAt:              "2026-05-24T12:29:00Z",
 	}, observedAt)
 
 	if diagnostics.Source != "daemon_runtime" {
@@ -48,6 +59,9 @@ func TestNewRuntimeDiagnosticsIsScalarAndPointInTime(t *testing.T) {
 	}
 	if diagnostics.Daemon.SessionCount != 3 || diagnostics.Daemon.ActiveDaemonSubmitCount != 6 {
 		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
+	}
+	if diagnostics.DaemonSubmit.PendingRequestCount != 3 || diagnostics.DaemonSubmit.LateResponseCount != 2 {
+		t.Fatalf("DaemonSubmit diagnostics = %#v", diagnostics.DaemonSubmit)
 	}
 
 	payload, err := json.Marshal(diagnostics)

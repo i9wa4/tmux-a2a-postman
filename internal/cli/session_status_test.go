@@ -276,6 +276,15 @@ func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T)
 		ActivePostEventCount:    0,
 		ActiveAutoPingCount:     0,
 		ActiveDaemonSubmitCount: 1,
+	}, status.DaemonSubmitRuntimeDiagnostics{
+		WorkerLimit:                  4,
+		ActiveWorkerCount:            1,
+		ActiveRequestCount:           1,
+		PendingRequestCount:          2,
+		OldestPendingAgeSeconds:      30,
+		LateResponseCount:            1,
+		OldestLateResponseAgeSeconds: 45,
+		SaturationCount:              0,
 	}, time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)))
 
 	stdout, _, runErr := captureCommandOutput(t, func() error {
@@ -310,6 +319,9 @@ func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T)
 	}
 	if diagnostics.Daemon.WatchedDirCount != 4 || diagnostics.Daemon.ActiveDaemonSubmitCount != 1 {
 		t.Fatalf("daemon cardinality = %#v", diagnostics.Daemon)
+	}
+	if diagnostics.DaemonSubmit.PendingRequestCount != 2 || diagnostics.DaemonSubmit.LateResponseCount != 1 {
+		t.Fatalf("daemon_submit diagnostics = %#v", diagnostics.DaemonSubmit)
 	}
 	payloadBytes, err := json.Marshal(diagnostics)
 	if err != nil {

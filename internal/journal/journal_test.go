@@ -2,10 +2,12 @@ package journal
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -95,6 +97,59 @@ func TestRecordMailboxPayloadPersistsExactInputRequestFields(t *testing.T) {
 	}
 	if payload.BranchID != "branch_1" || payload.CompletionRule != "all" {
 		t.Fatalf("group fields = %q/%q, want branch_1/all", payload.BranchID, payload.CompletionRule)
+	}
+}
+
+func TestRecordProcessHelpers_NoManagerNoop(t *testing.T) {
+	ClearProcessManager()
+	t.Cleanup(ClearProcessManager)
+
+	now := time.Date(2026, time.April, 14, 17, 3, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		record func(sessionDir string) error
+	}{
+		{
+			name: "mailbox event",
+			record: func(sessionDir string) error {
+				return RecordProcessMailboxEvent(sessionDir, "main", "mailbox_projection_read", VisibilityOperatorVisible, "m1.md", "worker", "orchestrator", filepath.Join("read", "m1.md"), now)
+			},
+		},
+		{
+			name: "event",
+			record: func(sessionDir string) error {
+				return RecordProcessEvent(sessionDir, "main", "mailbox_projection_posted", VisibilityMailboxProjection, map[string]string{"path": "post/m1.md"}, now)
+			},
+		},
+		{
+			name: "event with options",
+			record: func(sessionDir string) error {
+				return RecordProcessEventWithOptions(sessionDir, "main", "approval_requested", VisibilityOperatorVisible, map[string]string{"path": "post/m1.md"}, AppendOptions{ThreadID: "thread-1"}, now)
+			},
+		},
+		{
+			name: "mailbox payload",
+			record: func(sessionDir string) error {
+				return RecordProcessMailboxPayload(sessionDir, "main", "mailbox_projection_delivered", VisibilityMailboxProjection, MailboxEventPayload{
+					MessageID: "m1.md",
+					From:      "worker",
+					To:        "orchestrator",
+					Path:      filepath.Join("inbox", "orchestrator", "m1.md"),
+				}, now)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionDir := t.TempDir()
+			if err := tt.record(sessionDir); err != nil {
+				t.Fatalf("record() error = %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(sessionDir, "journal")); !os.IsNotExist(err) {
+				t.Fatalf("process helper wrote journal state without manager: Stat() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -273,6 +328,26 @@ func TestAppendEvent_FencesLeaseAuthorityThroughCommit(t *testing.T) {
 	}
 }
 
+func TestWithAppendAuthorityFence_ReturnsLockFailure(t *testing.T) {
+	lockCalls := 0
+	err := withAppendAuthorityFenceLock(t.TempDir(), func(fd int, how int) error {
+		if how != syscall.LOCK_EX {
+			t.Fatalf("lock called with how = %d, want LOCK_EX", how)
+		}
+		lockCalls++
+		return errors.New("lock denied")
+	}, func() error {
+		t.Fatal("critical section ran after lock failure")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "locking append authority fence: lock denied") {
+		t.Fatalf("withAppendAuthorityFenceLock() error = %v, want lock denied", err)
+	}
+	if lockCalls != 1 {
+		t.Fatalf("lockCalls = %d, want 1", lockCalls)
+	}
+}
+
 func TestReplay_FailsClosedOnSequenceAndLeaseDefects(t *testing.T) {
 	t.Run("sequence gap", func(t *testing.T) {
 		sessionDir := t.TempDir()
@@ -315,6 +390,16 @@ func TestReplay_FailsClosedOnSequenceAndLeaseDefects(t *testing.T) {
 
 		if _, err := Replay(sessionDir); err == nil || !strings.Contains(err.Error(), "lease mismatch") {
 			t.Fatalf("Replay() error = %v, want lease mismatch", err)
+		}
+	})
+
+	t.Run("non monotonic lease epoch", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writeCommittedRecord(t, sessionDir, 1, leaseAcquiredEventType, "lease-a", 2)
+		writeCommittedRecord(t, sessionDir, 2, leaseAcquiredEventType, "lease-b", 1)
+
+		if _, err := Replay(sessionDir); err == nil || !strings.Contains(err.Error(), "non-monotonic lease epoch") {
+			t.Fatalf("Replay() error = %v, want non-monotonic lease epoch", err)
 		}
 	})
 }

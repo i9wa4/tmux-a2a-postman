@@ -189,12 +189,27 @@ type DaemonRuntimeCardinality struct {
 	ActiveDaemonSubmitCount int `json:"active_daemon_submit_count"`
 }
 
+type DaemonSubmitRuntimeDiagnostics struct {
+	WorkerLimit                  int    `json:"worker_limit"`
+	ActiveWorkerCount            int    `json:"active_worker_count"`
+	ActiveRequestCount           int    `json:"active_request_count"`
+	PendingRequestCount          int    `json:"pending_request_count"`
+	OldestPendingAgeSeconds      int    `json:"oldest_pending_age_seconds,omitempty"`
+	ClaimedRequestCount          int    `json:"claimed_request_count"`
+	OldestClaimedAgeSeconds      int    `json:"oldest_claimed_age_seconds,omitempty"`
+	LateResponseCount            int    `json:"late_response_count"`
+	OldestLateResponseAgeSeconds int    `json:"oldest_late_response_age_seconds,omitempty"`
+	SaturationCount              int    `json:"saturation_count"`
+	LastSaturatedAt              string `json:"last_saturated_at,omitempty"`
+}
+
 type RuntimeDiagnostics struct {
-	Source      string                   `json:"source"`
-	PointInTime bool                     `json:"point_in_time"`
-	ObservedAt  string                   `json:"observed_at"`
-	GoRuntime   GoRuntimeDiagnostics     `json:"go_runtime"`
-	Daemon      DaemonRuntimeCardinality `json:"daemon"`
+	Source       string                         `json:"source"`
+	PointInTime  bool                           `json:"point_in_time"`
+	ObservedAt   string                         `json:"observed_at"`
+	GoRuntime    GoRuntimeDiagnostics           `json:"go_runtime"`
+	Daemon       DaemonRuntimeCardinality       `json:"daemon"`
+	DaemonSubmit DaemonSubmitRuntimeDiagnostics `json:"daemon_submit"`
 }
 
 type AllSessionStatus struct {
