@@ -3,13 +3,13 @@ package discovery
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/router"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxrunner"
 )
 
 // NodeInfo holds information about a discovered node.
@@ -99,16 +99,6 @@ func reduceCollisions(nodeKeyOrder []string, candidates map[string][]paneCandida
 	return nodes, collisions
 }
 
-// tmuxRunner runs a tmux subcommand with the given arguments and returns the
-// combined output. Abstracted so unit tests can inject mock output without
-// requiring a live tmux process.
-type tmuxRunner func(args ...string) ([]byte, error)
-
-// defaultTmuxRunner executes tmux with the given arguments.
-func defaultTmuxRunner(args ...string) ([]byte, error) {
-	return exec.Command("tmux", args...).CombinedOutput()
-}
-
 // DiscoverNodesWithCollisions scans tmux panes and returns nodes, collision reports, and any error.
 // For panes sharing the same sessionName:paneTitle key, the winner is the pane with the
 // highest numeric pane ID (e.g., %31 beats %26). N-1 CollisionReports are emitted per collision group.
@@ -117,12 +107,12 @@ func defaultTmuxRunner(args ...string) ([]byte, error) {
 // selfSession is the daemon's own tmux session name. Unclaimed panes in foreign sessions
 // are excluded (F3: unclaimed-pane guard).
 func DiscoverNodesWithCollisions(baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
-	return discoverNodesWithCollisionsUsing(defaultTmuxRunner, baseDir, contextID, selfSession)
+	return discoverNodesWithCollisionsUsing(tmuxrunner.CombinedOutput, baseDir, contextID, selfSession)
 }
 
 // discoverNodesWithCollisionsUsing is the testable implementation of DiscoverNodesWithCollisions.
 // runner is called for both list-panes and show-options invocations, dispatched by args[0].
-func discoverNodesWithCollisionsUsing(runner tmuxRunner, baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
+func discoverNodesWithCollisionsUsing(runner tmuxrunner.Runner, baseDir, contextID, selfSession string) (map[string]NodeInfo, []CollisionReport, error) {
 	// Format: tab-delimited pane_id, @a2a_context_id, session_name, pane_title.
 	// Tab delimiter avoids ambiguity with pane titles that contain spaces.
 	// #{@a2a_context_id} is empty when unset (unclaimed); non-empty means claimed.
@@ -245,7 +235,7 @@ func ResolveNodeName(nodeName, sourceSessionName string, knownNodes map[string]N
 // DiscoverAllSessions returns all tmux session names.
 // Issue #117: Returns ALL sessions (not just those with A2A nodes).
 func DiscoverAllSessions() ([]string, error) {
-	return discoverAllSessionsUsing(defaultTmuxRunner)
+	return discoverAllSessionsUsing(tmuxrunner.CombinedOutput)
 }
 
 type discoveredSession struct {
@@ -254,7 +244,7 @@ type discoveredSession struct {
 	hasID bool
 }
 
-func discoverAllSessionsUsing(runner tmuxRunner) ([]string, error) {
+func discoverAllSessionsUsing(runner tmuxrunner.Runner) ([]string, error) {
 	out, err := runner("list-sessions", "-F", "#{session_name}\t#{session_id}")
 	if err != nil {
 		// If no server running, return empty list (not an error)

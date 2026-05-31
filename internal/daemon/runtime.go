@@ -68,6 +68,8 @@ type daemonRuntime struct {
 	daemonSubmitSem               chan struct{}
 	daemonSubmitResults           chan daemonSubmitRuntimeResult
 	activeDaemonSubmitKeys        map[string]bool
+	daemonSubmitSaturationCount   int
+	daemonSubmitLastSaturatedAt   time.Time
 	mailboxProjectionSyncMu       sync.Mutex
 	activeMailboxProjectionSyncs  map[string]bool
 	pendingMailboxProjectionSyncs map[string]bool
@@ -320,6 +322,11 @@ func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
 	}
 }
 
+func (rt *daemonRuntime) recordDaemonSubmitSaturation() {
+	rt.daemonSubmitSaturationCount++
+	rt.daemonSubmitLastSaturatedAt = rt.now()
+}
+
 type daemonSubmitDispatchStatus int
 
 const (
@@ -348,6 +355,7 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	select {
 	case rt.daemonSubmitSem <- struct{}{}:
 	default:
+		rt.recordDaemonSubmitSaturation()
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
@@ -409,7 +417,7 @@ func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath stri
 }
 
 func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
-	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), now)
+	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), now)
 	return &diag
 }
 
@@ -459,6 +467,115 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 		ActiveAutoPingCount:     activeAutoPingCount,
 		ActiveDaemonSubmitCount: len(rt.activeDaemonSubmitKeys),
 	}
+}
+
+func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
+	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
+		WorkerLimit:        daemonSubmitWorkerLimit,
+		ActiveWorkerCount:  len(rt.daemonSubmitSem),
+		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
+		SaturationCount:    rt.daemonSubmitSaturationCount,
+	}
+	if !rt.daemonSubmitLastSaturatedAt.IsZero() {
+		diagnostics.LastSaturatedAt = rt.daemonSubmitLastSaturatedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
+		scanDaemonSubmitRequests(sessionDir, now, &diagnostics)
+		scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
+	}
+	return diagnostics
+}
+
+func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
+	entries, err := os.ReadDir(projection.DaemonSubmitRequestsDir(sessionDir))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		requestPath := filepath.Join(projection.DaemonSubmitRequestsDir(sessionDir), entry.Name())
+		state := ""
+		switch {
+		case strings.HasSuffix(entry.Name(), ".json"):
+			state = "pending"
+		case strings.HasSuffix(entry.Name(), ".processing"):
+			state = "claimed"
+		default:
+			continue
+		}
+
+		request, err := projection.ReadDaemonSubmitRequest(requestPath)
+		if err == nil && request.Command == projection.DaemonSubmitRuntimeDiagnostics {
+			continue
+		}
+		switch state {
+		case "pending":
+			diagnostics.PendingRequestCount++
+			if err == nil {
+				diagnostics.OldestPendingAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestPendingAgeSeconds, request.CreatedAt, now)
+			}
+		case "claimed":
+			diagnostics.ClaimedRequestCount++
+			if err == nil {
+				diagnostics.OldestClaimedAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestClaimedAgeSeconds, request.CreatedAt, now)
+			}
+		}
+	}
+}
+
+func scanDaemonSubmitResponses(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
+	entries, err := os.ReadDir(projection.DaemonSubmitResponsesDir(sessionDir))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		responsePath := filepath.Join(projection.DaemonSubmitResponsesDir(sessionDir), entry.Name())
+		response, err := projection.ReadDaemonSubmitResponse(responsePath)
+		if err == nil && response.Command == projection.DaemonSubmitRuntimeDiagnostics {
+			continue
+		}
+
+		diagnostics.LateResponseCount++
+		if err == nil {
+			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestLateResponseAgeSeconds, response.HandledAt, now)
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil {
+			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSecondsFromTime(diagnostics.OldestLateResponseAgeSeconds, info.ModTime(), now)
+		}
+	}
+}
+
+func oldestDaemonSubmitAgeSeconds(current int, timestamp string, now time.Time) int {
+	if timestamp == "" {
+		return current
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return current
+	}
+	return oldestDaemonSubmitAgeSecondsFromTime(current, parsed, now)
+}
+
+func oldestDaemonSubmitAgeSecondsFromTime(current int, timestamp time.Time, now time.Time) int {
+	if timestamp.IsZero() {
+		return current
+	}
+	age := 0
+	if timestamp.Before(now) {
+		age = int(now.Sub(timestamp).Seconds())
+	}
+	if age > current {
+		return age
+	}
+	return current
 }
 
 func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
