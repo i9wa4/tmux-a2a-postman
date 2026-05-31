@@ -18,6 +18,7 @@ Topics:
   get-status
   get-status-oneline
   inspect-input
+  inspect-daemon-submit
   inspect-message
   version
   help

@@ -82,19 +82,46 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
+	now := time.Now().UTC()
 	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-diagnostics",
 		Command:   projection.DaemonSubmitRuntimeDiagnostics,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt: now.Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pending",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(pending): %v", err)
+	}
+	claimedPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-claimed",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: now.Add(-3 * time.Minute).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(claimed): %v", err)
+	}
+	if err := os.Rename(claimedPath, claimedPath+".processing"); err != nil {
+		t.Fatalf("Rename claimed request: %v", err)
+	}
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-late",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-4 * time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse(late): %v", err)
 	}
 
 	daemonState := NewDaemonState(0, "ctx-runtime")
 	daemonState.AutoEnableSessionIfNew("review")
 	daemonState.AutoEnableSessionIfNew("qa")
 	rt := &daemonRuntime{
+		sessionDir:  sessionDir,
 		selfSession: "review",
 		nodes: map[string]discovery.NodeInfo{
 			"review:worker": {SessionName: "review"},
@@ -116,7 +143,9 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 		activeDaemonSubmitKeys: map[string]bool{
 			"send:/tmp/private/request.json": true,
 		},
-		daemonState: daemonState,
+		daemonSubmitSaturationCount: 2,
+		daemonSubmitLastSaturatedAt: now.Add(-time.Minute),
+		daemonState:                 daemonState,
 	}
 
 	if got := rt.dispatchDaemonSubmitRequest(requestPath); got != daemonSubmitDispatched {
@@ -151,6 +180,21 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 	}) {
 		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
 	}
+	if diagnostics.DaemonSubmit.WorkerLimit != daemonSubmitWorkerLimit ||
+		diagnostics.DaemonSubmit.ActiveWorkerCount != 0 ||
+		diagnostics.DaemonSubmit.ActiveRequestCount != 1 ||
+		diagnostics.DaemonSubmit.PendingRequestCount != 1 ||
+		diagnostics.DaemonSubmit.ClaimedRequestCount != 1 ||
+		diagnostics.DaemonSubmit.LateResponseCount != 1 ||
+		diagnostics.DaemonSubmit.SaturationCount != 2 {
+		t.Fatalf("DaemonSubmit diagnostics = %#v", diagnostics.DaemonSubmit)
+	}
+	if diagnostics.DaemonSubmit.OldestPendingAgeSeconds <= 0 ||
+		diagnostics.DaemonSubmit.OldestClaimedAgeSeconds <= 0 ||
+		diagnostics.DaemonSubmit.OldestLateResponseAgeSeconds <= 0 ||
+		diagnostics.DaemonSubmit.LastSaturatedAt == "" {
+		t.Fatalf("DaemonSubmit age diagnostics = %#v", diagnostics.DaemonSubmit)
+	}
 
 	payload, err := json.Marshal(diagnostics)
 	if err != nil {
@@ -162,6 +206,9 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 		"review:worker",
 		"%42",
 		"request.json",
+		"req-pending",
+		"req-claimed",
+		"req-late",
 	} {
 		if strings.Contains(string(payload), forbidden) {
 			t.Fatalf("diagnostics leaked %q in %s", forbidden, payload)
