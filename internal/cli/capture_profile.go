@@ -57,7 +57,7 @@ func runCaptureProfileWithContext(ctx commandContext, args []string) error {
 	}
 	sessionDir := filepath.Join(target.baseDir, target.contextID, target.sessionName)
 	destination := "file"
-	outputPath := *output
+	var outputPath string
 	displayOutputPath := *output
 	if *output == "-" {
 		destination = "stdout"
