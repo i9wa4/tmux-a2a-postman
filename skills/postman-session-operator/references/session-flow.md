@@ -5,17 +5,20 @@ triggered and you need command details for live mailbox decisions.
 
 ## 1. First Commands
 
-Use `tmux-a2a-postman get-status` for the canonical JSON status contract. Use
-`tmux-a2a-postman get-status-oneline` for a compact scan across sessions. Add
-`--severity` when you need contextual severity instead of compact visible-state
-marks.
+Do not use this section as a polling loop. Use
+`tmux-a2a-postman get-status` only for an explicit user status request,
+watchdog boundary, or concrete delivery trouble. Use
+`tmux-a2a-postman get-status-oneline` only for the same bounded cases when a
+compact scan across sessions is sufficient. Add `--severity` when you need
+contextual severity instead of compact visible-state marks.
 
 Use `tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>` when
 you need the concrete open reply-required item behind `pending` or `waiting`
 without reading inbox mail.
 
-Use `tmux-a2a-postman pop` only when you intend to claim and archive the next
-inbox message. `pop` never embeds sender-authored body text inline. Read the
+Use `tmux-a2a-postman pop` only when explicit notification or current evidence
+shows there is mail to claim. `pop` is not a wait mechanism and must not be run
+speculatively. `pop` never embeds sender-authored body text inline. Read the
 archived path after `pop`; prefer `markdown_absolute_path` when present.
 
 ## 2. Command Semantics
@@ -91,8 +94,8 @@ or any message where the sender needs a later resolving answer. Use
 wait.
 
 When a local role template defines watchdog or timeout thresholds, treat them
-as follow-up boundaries, not proof of failure. Below the boundary, prefer
-`waiting`; at or beyond it, send one bounded follow-up before declaring the
+as follow-up boundaries, not proof of failure. Below the boundary, wait
+passively; at or beyond it, send one bounded follow-up before declaring the
 recipient blocked.
 
 For daemon-submit timeouts, a client-side timeout does not prove that the daemon
@@ -158,12 +161,30 @@ text in status output.
 `get-status-oneline` omits this detail to stay compact; use `get-status` when
 progress evidence matters.
 
+When a message, footer, status field, or user request names a concrete tmux pane
+id, treat that id as a live target that must be verified before content claims:
+
+```sh
+tmux display-message -t %N -p '#{session_name}:#{window_index}.#{pane_index} #{pane_id} #{pane_title} #{pane_current_command} #{pane_current_path}'
+tmux capture-pane -t %N -p -S -200 -E -1
+```
+
+If tmux reports `can't find pane: %N`, record the direct failure and capture the
+current inventory with `tmux list-panes -a`. That is stale pane evidence. Do
+not infer the missing pane's contents from messenger analysis, role names, pane
+titles, or a nearby current pane id unless the task explicitly asks for the
+current equivalent.
+
 ## 8. Safe Operator Flow
 
-1. Run `tmux-a2a-postman get-status`.
-2. If `severity` is `delivery_failure` or `delivery_stuck`, inspect delivery
+1. Start from the current trigger. If the trigger is an exact notification,
+   claim the named mail. If the trigger is an explicit user status request,
+   watchdog boundary, or concrete delivery trouble, run one bounded status
+   command. Otherwise wait passively.
+2. If bounded status shows `severity` is `delivery_failure` or
+   `delivery_stuck`, inspect delivery
    and topology before creating more messages.
-3. If your node is `pending` or `needs_action`, inspect
+3. If bounded status shows your node is `pending` or `needs_action`, inspect
    `nodes[*].flow.input_requests.input_required` or run
    `tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>` when
    you need the exact open item before reading. Then run
@@ -181,8 +202,9 @@ progress evidence matters.
 6. Do not send `DONE` until the completion gate passes. If evidence is missing,
    send `BLOCKED` with the failing original requirement instead.
 7. If your node is `waiting` or `expected_wait`, do not clear it by reading
-   mail. Wait for an exact reply or send a bounded follow-up if the workflow
-   timeout requires it. For daemon-submit timeout output with a request id,
+   mail and do not status-poll. Wait for an exact reply or send a bounded
+   follow-up if the workflow timeout requires it. For daemon-submit timeout
+   output with a request id,
    inspect that request before deciding to retry or resend.
 8. If a node is `blocked`, inspect the blocked report and resolve the named
    blocker before treating the node as stale.
