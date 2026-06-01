@@ -60,11 +60,12 @@ type Config struct {
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                 []string `toml:"edges"`
-	ReplyCommand          string   `toml:"reply_command"`
-	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
-	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
+	Edges                 []string                `toml:"edges"`
+	ReplyCommand          string                  `toml:"reply_command"`
+	UINode                string                  `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions *bool                   `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	AutoEnableNewAgents   *bool                   `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
+	CommandApproval       []CommandApprovalPolicy `toml:"command_approval"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -79,6 +80,15 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+}
+
+type CommandApprovalPolicy struct {
+	Requester          string  `toml:"requester"`
+	Label              string  `toml:"label"`
+	Category           string  `toml:"category"`
+	Reviewer           string  `toml:"reviewer"`
+	Mode               string  `toml:"mode"`
+	ApprovalTTLSeconds float64 `toml:"approval_ttl_seconds"`
 }
 
 // NodeConfig holds per-node configuration.
@@ -490,6 +500,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.AutoEnableNewAgents != nil {
 		base.AutoEnableNewAgents = override.AutoEnableNewAgents
+	}
+	if len(override.CommandApproval) > 0 {
+		base.CommandApproval = override.CommandApproval
 	}
 
 	// Float64 fields
