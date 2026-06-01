@@ -1,0 +1,28 @@
+capture-profile - capture an explicit daemon runtime profile
+
+Captures one Go runtime profile from the running daemon through daemon-submit.
+There is no default listener, endpoint, or background collector; every capture
+requires this explicit operator command.
+
+Usage:
+  tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof
+  tmux-a2a-postman capture-profile --type goroutine --output ./postman-goroutine.pprof
+  tmux-a2a-postman capture-profile --type goroutine --output - > goroutine.pprof
+
+Flags:
+  --type heap|goroutine   Profile type to capture (required)
+  --output -|PATH         Explicit destination: stdout with -, or a file path
+                          written by the daemon (required)
+  --max-bytes N           Maximum profile bytes to return or write
+                          (default: 16777216)
+
+Output:
+  --output PATH prints JSON metadata after the daemon writes the profile.
+  --output - writes raw profile bytes to stdout.
+
+Operational notes:
+  Heap profiles are useful when memory telemetry shows heap growth or retained
+  objects. Goroutine profiles are useful when goroutine counts grow or work
+  appears stuck. Captures are point-in-time and may briefly add CPU and memory
+  pressure proportional to profile size. Generated profile artifacts can include
+  code paths and stack/function names; handle them as local diagnostics.

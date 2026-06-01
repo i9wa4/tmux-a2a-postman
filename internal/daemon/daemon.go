@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
@@ -240,6 +242,87 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	}, nil
 }
 
+func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+	response := projection.DaemonSubmitResponse{
+		RequestID: request.RequestID,
+		Command:   request.Command,
+		HandledAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if request.RequestID == "" {
+		return response, fmt.Errorf("daemon submit runtime-profile missing request_id")
+	}
+	kind, err := runtimeprofile.NormalizeKind(request.ProfileKind)
+	if err != nil {
+		return response, err
+	}
+	maxBytes := request.ProfileMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = runtimeprofile.DefaultMaxBytes
+	}
+	data, err := runtimeprofile.Capture(kind, maxBytes)
+	if err != nil {
+		return response, err
+	}
+
+	switch request.ProfileDestination {
+	case "stdout":
+		response.RuntimeProfile = &projection.RuntimeProfileCapture{
+			Kind:          kind,
+			Destination:   "stdout",
+			Encoding:      "base64",
+			ContentBase64: base64.StdEncoding.EncodeToString(data),
+			Bytes:         len(data),
+			MaxBytes:      maxBytes,
+		}
+	case "file":
+		if request.ProfileOutputPath == "" {
+			return response, fmt.Errorf("daemon submit runtime-profile file destination missing output path")
+		}
+		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data); err != nil {
+			return response, err
+		}
+		response.RuntimeProfile = &projection.RuntimeProfileCapture{
+			Kind:        kind,
+			Destination: "file",
+			Bytes:       len(data),
+			MaxBytes:    maxBytes,
+			OutputPath:  request.ProfileOutputPath,
+		}
+	default:
+		return response, fmt.Errorf("daemon submit runtime-profile requires explicit destination stdout or file")
+	}
+	return response, nil
+}
+
+func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
+	if outputPath == "" {
+		return fmt.Errorf("profile output path is required")
+	}
+	if strings.ContainsAny(filepath.Base(outputPath), `/\`) {
+		return fmt.Errorf("profile output path must name a file")
+	}
+	dir := filepath.Dir(outputPath)
+	if dir == "." {
+		dir = ""
+	}
+	if dir != "" {
+		if info, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("profile output directory: %w", err)
+		} else if !info.IsDir() {
+			return fmt.Errorf("profile output directory is not a directory")
+		}
+	}
+	tmpPath := outputPath + "." + requestID + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("writing profile temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("publishing profile file: %w", err)
+	}
+	return nil
+}
+
 func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) {
 	content := fallbackContent
 	if readContent, err := os.ReadFile(readPath); err == nil {
@@ -314,6 +397,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		if err == nil && !response.Empty {
 			result.ProjectionSyncSessionDir = sessionDir
 		}
+	case projection.DaemonSubmitRuntimeProfile:
+		response, err = handleDaemonSubmitRuntimeProfile(sessionDir, request)
 	default:
 		err = fmt.Errorf("unsupported daemon submit command %q", request.Command)
 		response = projection.DaemonSubmitResponse{
