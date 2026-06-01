@@ -37,6 +37,9 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "get-status-oneline         Print compact all-session status") {
 		t.Fatalf("stdout missing get-status-oneline overview line: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "watch-status               Watch live all-session status") {
+		t.Fatalf("stdout missing watch-status overview line: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
 		t.Fatalf("stdout missing version overview line: %q", stdout.String())
 	}
@@ -74,6 +77,9 @@ func TestRunHelp_CommandsShowsOperatorAndLifecycleSections(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "get-status-oneline") {
 		t.Fatalf("stdout missing get-status-oneline command: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "watch-status") {
+		t.Fatalf("stdout missing watch-status command: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "version") {
 		t.Fatalf("stdout missing version command: %q", stdout.String())
@@ -115,6 +121,9 @@ func TestRunHelp_HelpTopicListsRegisteredTopics(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "\n  inspect-daemon-submit\n") {
 		t.Fatalf("stdout missing inspect-daemon-submit help topic: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "\n  watch-status\n") {
+		t.Fatalf("stdout missing watch-status help topic: %q", stdout.String())
 	}
 }
 

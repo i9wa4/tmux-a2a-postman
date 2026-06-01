@@ -28,6 +28,7 @@ Default operator surface:
   pop                        Claim and archive the oldest unread inbox message
   get-status                 Print canonical session status JSON
   get-status-oneline         Print compact all-session status
+  watch-status               Watch live all-session status
   inspect-input              Inspect open reply-required work by id
   inspect-daemon-submit      Inspect daemon-submit timeout state by id
   inspect-message            Inspect persisted message content by id
@@ -43,6 +44,7 @@ Messaging Protocol:
   pop                                        Claim and archive oldest message
   get-status                                Inspect agent-readable session status
   get-status-oneline                        Inspect compact all-session status
+  watch-status                              Watch live all-session status
   inspect-input --id <id>                   Inspect an open input request by id
   inspect-daemon-submit --id <request_id>   Inspect daemon-submit timeout state by id
   inspect-message --id <message_id>         Inspect persisted message content by id
@@ -60,6 +62,7 @@ Topics:
   pop                  tmux-a2a-postman help pop
   get-status           tmux-a2a-postman help get-status
   get-status-oneline   tmux-a2a-postman help get-status-oneline
+  watch-status         tmux-a2a-postman help watch-status
   inspect-input        tmux-a2a-postman help inspect-input
   inspect-daemon-submit tmux-a2a-postman help inspect-daemon-submit
   inspect-message      tmux-a2a-postman help inspect-message

@@ -60,7 +60,7 @@ func planStartPreflight(in startPreflightInput) startPreflightPlan {
 				OwnerSession:    ownerSession,
 			}},
 			Err: fmt.Errorf(
-				"a postman daemon is already running for this user in tmux session %q (context: %s); stop it first",
+				"a postman daemon is already running for this user in tmux session %q (context: %s); TUI and no-TUI daemon modes are exclusive; use `tmux-a2a-postman watch-status` to observe the running daemon or `tmux-a2a-postman stop` before switching modes",
 				ownerSession, ownerContext,
 			),
 		}
@@ -92,7 +92,7 @@ func planStartPreflight(in startPreflightInput) startPreflightPlan {
 				OwnerSession:    in.TmuxSessionName,
 			}},
 			Err: fmt.Errorf(
-				"a postman daemon is already running in tmux session %q (context: %s); stop it first",
+				"a postman daemon is already running in tmux session %q (context: %s); TUI and no-TUI daemon modes are exclusive; use `tmux-a2a-postman watch-status` to observe the running daemon or `tmux-a2a-postman stop` before switching modes",
 				in.TmuxSessionName, in.ContextID,
 			),
 		}

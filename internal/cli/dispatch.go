@@ -14,6 +14,7 @@ type Handlers struct {
 	Pop                     func(args []string) error
 	GetSessionStatus        func(args []string) error
 	GetSessionStatusOneline func(args []string) error
+	WatchStatus             func(args []string) error
 	InspectInput            func(args []string) error
 	InspectMessage          func(args []string) error
 	InspectDaemonSubmit     func(args []string) error
@@ -62,6 +63,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman get-status-oneline",
 			Err:   handlers.GetSessionStatusOneline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "watch-status":
+		return Result{
+			Label: "postman watch-status",
+			Err:   handlers.WatchStatus(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "inspect-input":
 		return Result{

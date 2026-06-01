@@ -37,6 +37,14 @@ get-status-oneline
   Shape: [0]🔷🟡:🟢 [1]🔴
   Window groups are colon-separated emoji runs with no literal window labels.
 
+watch-status
+  Watch live all-session status without starting a daemon or taking ownership.
+  Output: text snapshots by default, or JSON Lines with --format jsonl.
+  Usage:
+    tmux-a2a-postman watch-status
+    tmux-a2a-postman watch-status --interval 2s --severity
+    tmux-a2a-postman watch-status --format jsonl
+
 inspect-input
   Inspect open reply-required work by message_id or input_request_id.
   Output: JSON
@@ -77,4 +85,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, watch-status, inspect-input, inspect-daemon-submit, inspect-message, version, help

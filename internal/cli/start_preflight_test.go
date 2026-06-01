@@ -28,6 +28,10 @@ func TestPlanStartPreflightRefusesCurrentUserDaemon(t *testing.T) {
 	if !strings.Contains(plan.Err.Error(), "already running for this user") {
 		t.Fatalf("plan.Err = %q, want current-user wording", plan.Err)
 	}
+	if !strings.Contains(plan.Err.Error(), "TUI and no-TUI daemon modes are exclusive") ||
+		!strings.Contains(plan.Err.Error(), "tmux-a2a-postman watch-status") {
+		t.Fatalf("plan.Err = %q, want exclusive-mode watch-status guidance", plan.Err)
+	}
 	if len(plan.Diagnostics) != 1 {
 		t.Fatalf("len(plan.Diagnostics) = %d, want 1", len(plan.Diagnostics))
 	}
@@ -68,6 +72,10 @@ func TestPlanStartPreflightRefusesCurrentUserSessionPID(t *testing.T) {
 	}
 	if !strings.Contains(plan.Err.Error(), `already running in tmux session "main"`) {
 		t.Fatalf("plan.Err = %q, want same-session wording", plan.Err)
+	}
+	if !strings.Contains(plan.Err.Error(), "TUI and no-TUI daemon modes are exclusive") ||
+		!strings.Contains(plan.Err.Error(), "tmux-a2a-postman watch-status") {
+		t.Fatalf("plan.Err = %q, want exclusive-mode watch-status guidance", plan.Err)
 	}
 	if len(plan.Diagnostics) != 1 {
 		t.Fatalf("len(plan.Diagnostics) = %d, want 1", len(plan.Diagnostics))
