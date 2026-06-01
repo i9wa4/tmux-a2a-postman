@@ -34,7 +34,7 @@
 #   {reply_to}       - Message id this message references, when supplied
 #   {input_request_id}  - Exact input request id for reply-required messages
 #   {fills_input_request_id} - Exact input request id this message fills
-#   {sender_runtime_context} - Generated compact sender runtime context block
+#   {sender_runtime_context} - Optional compatibility sender runtime context block
 #   {runtime_context_id} - Runtime context snapshot id
 #   {runtime_context_scope} - Runtime context scope, usually sender
 #   {runtime_context_captured_at} - Runtime context capture timestamp
@@ -206,7 +206,6 @@ params:
 
 {template}
 
-{sender_runtime_context}
 ## Sender Message
 
 ---

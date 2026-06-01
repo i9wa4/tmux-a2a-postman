@@ -1323,7 +1323,7 @@ func TestRunSendMessage_DefaultEnvelopeNormalizesRecipientInstructionHeadings(t 
 	}
 }
 
-func TestRunSendMessage_AttachesRuntimeContextSnapshotAndPreservesSenderBody(t *testing.T) {
+func TestRunSendMessage_AttachesSnapshotWithoutSenderRuntimeMarkdownAndPreservesSenderBody(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1346,19 +1346,12 @@ func TestRunSendMessage_AttachesRuntimeContextSnapshotAndPreservesSenderBody(t *
 		t.Fatalf("ReadFile post: %v", err)
 	}
 	content := string(contentBytes)
-	runtimeIndex := strings.Index(content, "## Sender Runtime Context")
 	senderMessageIndex := strings.Index(content, "## Sender Message")
-	if runtimeIndex < 0 {
-		t.Fatalf("content missing Sender Runtime Context block:\n%s", content)
+	if strings.Contains(content, "## Sender Runtime Context") {
+		t.Fatalf("content rendered noisy Sender Runtime Context block:\n%s", content)
 	}
 	if senderMessageIndex < 0 {
 		t.Fatalf("content missing Sender Message block:\n%s", content)
-	}
-	if runtimeIndex > senderMessageIndex {
-		t.Fatalf("runtime context block appears after sender message:\n%s", content)
-	}
-	if !strings.Contains(content, "metadata_not_instructions") {
-		t.Fatalf("runtime context block missing non-instructional semantics:\n%s", content)
 	}
 	separator := "\n---\n\n"
 	separatorOffset := strings.Index(content[senderMessageIndex:], separator)

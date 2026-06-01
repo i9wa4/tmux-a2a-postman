@@ -698,6 +698,8 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+	receiverLaunchCommand := "/usr/bin/codex --yolo --add-dir /receiver/internal --model gpt-5.5"
+	t.Setenv("TMUX_A2A_POSTMAN_LAUNCH_COMMAND", receiverLaunchCommand)
 
 	contextID := "ctx-pop-runtime-context"
 	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
@@ -707,7 +709,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	filename := "20260520-010103-from-orchestrator-to-worker.md"
 	capturedAt := time.Date(2026, time.May, 20, 1, 1, 3, 0, time.UTC)
-	launchCommand := "/usr/bin/codex --yolo --add-dir /workspace/internal --model gpt-5.5"
+	senderLaunchCommand := "/usr/bin/codex --yolo --add-dir /sender/internal --model gpt-5.5"
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:         capturedAt,
 		Scope:       "sender",
@@ -717,7 +719,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		Node:        "orchestrator",
 		PaneID:      "%42",
 		CWD:         filepath.Join(tmpDir, "workspace"),
-		Runtime:     runtimecontext.RuntimeMetadata{LaunchCommand: launchCommand},
+		Runtime:     runtimecontext.RuntimeMetadata{LaunchCommand: senderLaunchCommand},
 	})
 	if _, err := runtimecontext.SaveSnapshot(sessionDir, snapshot); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
@@ -758,6 +760,13 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	if err != nil {
 		t.Fatalf("ReadFile pop receipt: %v", err)
 	}
+	receiptInfo, err := os.Stat(receiptPath)
+	if err != nil {
+		t.Fatalf("Stat pop receipt: %v", err)
+	}
+	if got := receiptInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("pop receipt permissions = %v, want 0600", got)
+	}
 	if string(receiptBytes) != stdout {
 		t.Fatalf("pop receipt did not persist exact stdout:\nreceipt=%s\nstdout=%s", string(receiptBytes), stdout)
 	}
@@ -770,14 +779,35 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	if payload.RuntimeContext.Fields.Role != "orchestrator" {
 		t.Fatalf("runtime context role = %q, want orchestrator", payload.RuntimeContext.Fields.Role)
 	}
-	if payload.RuntimeContext.YouWereLaunchedWith != launchCommand {
-		t.Fatalf("runtime context launch command = %q, want %q", payload.RuntimeContext.YouWereLaunchedWith, launchCommand)
+	if payload.RuntimeContext.YouWereLaunchedWith != senderLaunchCommand {
+		t.Fatalf("runtime context launch command = %q, want %q", payload.RuntimeContext.YouWereLaunchedWith, senderLaunchCommand)
 	}
-	if payload.RuntimeContext.Fields.Runtime == nil || payload.RuntimeContext.Fields.Runtime.LaunchCommand != launchCommand {
+	if payload.RuntimeContext.Fields.Runtime == nil || payload.RuntimeContext.Fields.Runtime.LaunchCommand != senderLaunchCommand {
 		t.Fatalf("runtime context fields runtime = %#v, want launch command", payload.RuntimeContext.Fields.Runtime)
+	}
+	if payload.ReceiverRuntimeContext == nil {
+		t.Fatalf("payload.ReceiverRuntimeContext is nil; stdout=%s", stdout)
+	}
+	if payload.ReceiverRuntimeContext.Scope != "receiver" {
+		t.Fatalf("receiver runtime context scope = %q, want receiver", payload.ReceiverRuntimeContext.Scope)
+	}
+	if payload.ReceiverRuntimeContext.Fields.Role != "worker" {
+		t.Fatalf("receiver runtime context role = %q, want worker", payload.ReceiverRuntimeContext.Fields.Role)
+	}
+	if payload.ReceiverRuntimeContext.YouWereLaunchedWith != receiverLaunchCommand {
+		t.Fatalf("receiver launch command = %q, want %q", payload.ReceiverRuntimeContext.YouWereLaunchedWith, receiverLaunchCommand)
+	}
+	if payload.ReceiverRuntimeContext.Fields.Runtime == nil || payload.ReceiverRuntimeContext.Fields.Runtime.LaunchCommand != receiverLaunchCommand {
+		t.Fatalf("receiver runtime fields = %#v, want launch command", payload.ReceiverRuntimeContext.Fields.Runtime)
+	}
+	if payload.ReceiverRuntimeContext.Fields.Runtime.AddDir != nil {
+		t.Fatalf("receiver runtime add_dir = %#v, want omitted", payload.ReceiverRuntimeContext.Fields.Runtime.AddDir)
 	}
 	if !strings.Contains(stdout, `"you_were_launched_with"`) {
 		t.Fatalf("pop JSON missing you_were_launched_with key:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"receiver_runtime_context"`) {
+		t.Fatalf("pop JSON missing receiver_runtime_context key:\n%s", stdout)
 	}
 	if payload.RuntimeContext.ContentHash != snapshot.ContentHash {
 		t.Fatalf("runtime context hash = %q, want %q", payload.RuntimeContext.ContentHash, snapshot.ContentHash)
@@ -1097,6 +1127,9 @@ func TestRunPop_RuntimeContextNoneOmitsSummary(t *testing.T) {
 	payload := decodePopMessageOutputForTest(t, stdout)
 	if payload.RuntimeContext != nil {
 		t.Fatalf("RuntimeContext = %#v, want nil", payload.RuntimeContext)
+	}
+	if payload.ReceiverRuntimeContext != nil {
+		t.Fatalf("ReceiverRuntimeContext = %#v, want nil", payload.ReceiverRuntimeContext)
 	}
 }
 
