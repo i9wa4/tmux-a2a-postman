@@ -1,6 +1,10 @@
 capture-profile - capture an explicit daemon runtime profile
 
 Captures one Go runtime profile from the running daemon through daemon-submit.
+Use this as an explicit follow-up diagnostic after passive postman.log memory
+snapshots or get-status --debug point to heap growth, retained objects,
+goroutine growth, or stuck work.
+
 There is no default listener, endpoint, or background collector; every capture
 requires this explicit operator command.
 

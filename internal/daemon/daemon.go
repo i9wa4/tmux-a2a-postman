@@ -30,7 +30,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
-const inboxCheckInterval = 30 * time.Second
+const (
+	inboxCheckInterval            = 30 * time.Second
+	runtimeDiagnosticsLogInterval = 10 * time.Minute
+)
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -639,8 +642,11 @@ func runDaemonLoopWithWatcherEvents(
 	defer sessionScanTicker.Stop()
 	inboxCheckTicker := time.NewTicker(inboxCheckInterval)
 	defer inboxCheckTicker.Stop()
+	runtimeDiagnosticsTicker := time.NewTicker(runtimeDiagnosticsLogInterval)
+	defer runtimeDiagnosticsTicker.Stop()
 
 	runtime.bootstrap()
+	runtime.logRuntimeDiagnosticsSnapshot("startup", runtime.now())
 
 	for {
 		select {
@@ -668,6 +674,8 @@ func runDaemonLoopWithWatcherEvents(
 			runtime.handleSessionScanTick()
 		case <-inboxCheckTicker.C:
 			runtime.handleInboxCheckTick()
+		case <-runtimeDiagnosticsTicker.C:
+			runtime.logRuntimeDiagnosticsSnapshot("interval", runtime.now())
 		}
 	}
 }
