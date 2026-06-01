@@ -340,6 +340,11 @@ func TestTUI_Update_DefaultSurfacePingDispatchesCommand(t *testing.T) {
 	default:
 		t.Fatal("expected send_ping command after pressing p")
 	}
+
+	view := m.View().Content
+	if !strings.Contains(view, "[status]\nSending ping...") {
+		t.Fatalf("view missing visible ping feedback: %q", view)
+	}
 }
 
 func TestTUI_Update_DefaultSurfacePingLockedDuringStartupReadiness(t *testing.T) {
