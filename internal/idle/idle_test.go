@@ -1021,8 +1021,11 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if state.LastCompactionMarkers != 1 {
 		t.Fatalf("checkPaneCapture() recorded %d compaction markers, want 1", state.LastCompactionMarkers)
 	}
-	if state.LastCompactionPrefix != "• Context compacted" {
-		t.Fatalf("checkPaneCapture() recorded compaction prefix %q, want marker-only prefix", state.LastCompactionPrefix)
+	if state.LastCompactionPrefixLines != 1 {
+		t.Fatalf("checkPaneCapture() recorded %d compaction prefix lines, want marker-only prefix", state.LastCompactionPrefixLines)
+	}
+	if state.LastCompactionPrefixHash != hashContentCRC32("• Context compacted") {
+		t.Fatal("checkPaneCapture() did not record the marker-only prefix hash")
 	}
 
 	state.LastCompactionPingAt = time.Now().Add(-compactionPingCooldown - time.Second)
@@ -1058,8 +1061,11 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if state.LastCompactionMarkers != 1 {
 		t.Fatalf("checkPaneCapture() recorded %d compaction markers after third poll, want 1", state.LastCompactionMarkers)
 	}
-	if state.LastCompactionPrefix != "• Context compacted" {
-		t.Fatalf("checkPaneCapture() recorded third compaction prefix %q, want marker-only prefix", state.LastCompactionPrefix)
+	if state.LastCompactionPrefixLines != 1 {
+		t.Fatalf("checkPaneCapture() recorded %d third compaction prefix lines, want marker-only prefix", state.LastCompactionPrefixLines)
+	}
+	if state.LastCompactionPrefixHash != hashContentCRC32("• Context compacted") {
+		t.Fatal("checkPaneCapture() did not record the third marker-only prefix hash")
 	}
 }
 

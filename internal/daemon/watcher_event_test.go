@@ -25,6 +25,10 @@ func (testFilesystemWatcher) Add(string, fswatcher.Op) error {
 	return nil
 }
 
+func (testFilesystemWatcher) Remove(string) error {
+	return nil
+}
+
 func TestHandleWatcherEvent_ConfigAndNodesEventsDoNotMutateStartupSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
 
