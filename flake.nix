@@ -87,6 +87,7 @@
             goreleaser
           ];
           markdownFormatter = "${inputs.markdown-formatter.packages.${system}.default}/bin/mdfmt";
+          skillMetadataCheck = "${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh skills";
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -189,9 +190,10 @@
               type = "app";
               program = "${pkgs.writeShellScriptBin "skill-check" ''
                 set -euo pipefail
+                ${skillMetadataCheck}
                 exec ${pkgs.gh}/bin/gh skill publish --dry-run "$@"
               ''}/bin/skill-check";
-              meta.description = "Validate agent skills without publishing.";
+              meta.description = "Validate agent skill metadata and publish packaging without publishing.";
             };
 
             skill-publish = {
@@ -337,6 +339,15 @@
                 name = "markdown-formatter (all tracked markdown)";
                 entry = "${markdownFormatter} --write";
                 types = [ "markdown" ];
+              };
+
+              # === Agent skills ===
+              skill-metadata = {
+                enable = true;
+                name = "validate agent skill metadata";
+                entry = skillMetadataCheck;
+                files = "^skills/[^/]+/SKILL\\.md$";
+                pass_filenames = false;
               };
 
               # === Shell ===

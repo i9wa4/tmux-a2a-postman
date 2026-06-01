@@ -707,6 +707,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	filename := "20260520-010103-from-orchestrator-to-worker.md"
 	capturedAt := time.Date(2026, time.May, 20, 1, 1, 3, 0, time.UTC)
+	launchCommand := "/usr/bin/codex --yolo --add-dir /workspace/internal --model gpt-5.5"
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:         capturedAt,
 		Scope:       "sender",
@@ -716,6 +717,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		Node:        "orchestrator",
 		PaneID:      "%42",
 		CWD:         filepath.Join(tmpDir, "workspace"),
+		Runtime:     runtimecontext.RuntimeMetadata{LaunchCommand: launchCommand},
 	})
 	if _, err := runtimecontext.SaveSnapshot(sessionDir, snapshot); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
@@ -742,6 +744,23 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
+	receiptPath := payload.PopReceiptAbsolutePath
+	if receiptPath == "" {
+		receiptPath = payload.PopReceiptPath
+	}
+	if receiptPath == "" {
+		t.Fatalf("payload missing pop receipt path: %#v", payload)
+	}
+	if filepath.Base(receiptPath) != "20260520-010103-from-orchestrator-to-worker.pop.json" {
+		t.Fatalf("receipt path = %q, want filename.pop.json", receiptPath)
+	}
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("ReadFile pop receipt: %v", err)
+	}
+	if string(receiptBytes) != stdout {
+		t.Fatalf("pop receipt did not persist exact stdout:\nreceipt=%s\nstdout=%s", string(receiptBytes), stdout)
+	}
 	if payload.RuntimeContext == nil {
 		t.Fatalf("payload.RuntimeContext is nil; stdout=%s", stdout)
 	}
@@ -750,6 +769,15 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	if payload.RuntimeContext.Fields.Role != "orchestrator" {
 		t.Fatalf("runtime context role = %q, want orchestrator", payload.RuntimeContext.Fields.Role)
+	}
+	if payload.RuntimeContext.YouWereLaunchedWith != launchCommand {
+		t.Fatalf("runtime context launch command = %q, want %q", payload.RuntimeContext.YouWereLaunchedWith, launchCommand)
+	}
+	if payload.RuntimeContext.Fields.Runtime == nil || payload.RuntimeContext.Fields.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("runtime context fields runtime = %#v, want launch command", payload.RuntimeContext.Fields.Runtime)
+	}
+	if !strings.Contains(stdout, `"you_were_launched_with"`) {
+		t.Fatalf("pop JSON missing you_were_launched_with key:\n%s", stdout)
 	}
 	if payload.RuntimeContext.ContentHash != snapshot.ContentHash {
 		t.Fatalf("runtime context hash = %q, want %q", payload.RuntimeContext.ContentHash, snapshot.ContentHash)
