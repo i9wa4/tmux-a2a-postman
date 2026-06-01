@@ -913,10 +913,6 @@ func writeSendOutput(stdout io.Writer, output sendOutput) error {
 	return json.NewEncoder(stdout).Encode(output)
 }
 
-func observeSendOutcome(baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
-	return observeSendOutcomeWithContext(defaultCommandContext(), baseDir, contextID, sessionDir, filename)
-}
-
 func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
 	ctx = ctx.withDefaults()
 	if deadLetterBasename, ok, err := findMatchingDeadLetter(sessionDir, filename); err != nil {

@@ -83,10 +83,6 @@ type sessionStatusOptions struct {
 	IncludeRuntimeDiagnostics bool
 }
 
-func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
-	return resolveSessionStatusTargetWithContext(defaultCommandContext(), contextIDFlag, sessionFlag, configPath)
-}
-
 func resolveSessionStatusTargetWithContext(ctx commandContext, contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
 	ctx = ctx.withDefaults()
 	cfg, err := ctx.loadConfig(configPath)
@@ -167,10 +163,6 @@ func collectResolvedSessionStatusWithContext(ctx commandContext, contextIDFlag, 
 		result.RuntimeDiagnostics = diagnostics
 	}
 	return result, true, nil
-}
-
-func collectRuntimeDiagnosticsFromDaemon(target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
-	return collectRuntimeDiagnosticsFromDaemonWithContext(defaultCommandContext(), target)
 }
 
 func collectRuntimeDiagnosticsFromDaemonWithContext(ctx commandContext, target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
