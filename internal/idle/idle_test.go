@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,6 +332,25 @@ func TestContainsCompactionTrigger(t *testing.T) {
 				t.Fatalf("containsCompactionTrigger(%q, %q) = %v, want %v", tt.runtime, tt.content, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCompactionTriggerScanBoundsLatestMarkerPrefix(t *testing.T) {
+	historyLine := "ordinary retained output " + strings.Repeat("x", 48)
+	content := strings.Repeat(historyLine+"\n", 20) + "• Context compacted\npost-compaction output"
+
+	scan := compactionTriggerScan("codex", content)
+	if scan.Trigger != "codex:context-compaction" {
+		t.Fatalf("compactionTriggerScan() trigger = %q, want codex context compaction", scan.Trigger)
+	}
+	if scan.MarkerCount != 1 {
+		t.Fatalf("compactionTriggerScan() marker count = %d, want 1", scan.MarkerCount)
+	}
+	if len(scan.LatestMarkerPrefix) > maxCompactionPrefixTailBytes {
+		t.Fatalf("compactionTriggerScan() retained %d prefix bytes, want at most %d", len(scan.LatestMarkerPrefix), maxCompactionPrefixTailBytes)
+	}
+	if !strings.HasSuffix(scan.LatestMarkerPrefix, "• Context compacted") {
+		t.Fatalf("compactionTriggerScan() prefix tail = %q, want marker suffix", scan.LatestMarkerPrefix)
 	}
 }
 
