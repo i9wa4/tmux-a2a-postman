@@ -31,6 +31,8 @@ Default operator surface:
   inspect-input              Inspect open reply-required work by id
   inspect-daemon-submit      Inspect daemon-submit timeout state by id
   inspect-message            Inspect persisted message content by id
+  execute-bash               Run bash through command approval choreography
+  inspect-command-approvals  Inspect command approval threads
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -46,6 +48,9 @@ Messaging Protocol:
   inspect-input --id <id>                   Inspect an open input request by id
   inspect-daemon-submit --id <request_id>   Inspect daemon-submit timeout state by id
   inspect-message --id <message_id>         Inspect persisted message content by id
+  execute-bash --label <label> --command <bash>
+                                           Run bash through approval choreography
+  inspect-command-approvals                 Inspect command approval threads
   version                                   Print the build version JSON
 
 Topics:
@@ -63,6 +68,8 @@ Topics:
   inspect-input        tmux-a2a-postman help inspect-input
   inspect-daemon-submit tmux-a2a-postman help inspect-daemon-submit
   inspect-message      tmux-a2a-postman help inspect-message
+  execute-bash         tmux-a2a-postman help execute-bash
+  inspect-command-approvals tmux-a2a-postman help inspect-command-approvals
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

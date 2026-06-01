@@ -1,0 +1,34 @@
+execute-bash — run bash through command approval choreography
+
+Usage:
+  tmux-a2a-postman execute-bash --label <label> --command <bash>
+  tmux-a2a-postman execute-bash --label <label> --mode blocking --reviewer <node> --command <bash>
+  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved --reviewer <node>
+
+Execution flags:
+  --label <label>              Command label used for policy matching and audit
+  --category <category>        Optional category used for policy matching
+  --requester <node>           Requesting node; defaults to current pane title
+  --reviewer <node>            Reviewer override
+  --mode <mode>                advisory, warn-only, or blocking
+  --reason <text>              Reason stored on approval requests and decisions
+  --command <bash>             Bash string run with bash -lc
+  --approval-ttl-seconds <n>   Approval request expiry; default is 900
+  --override-approval          Continue in warn-only mode without approval
+  --store-command-text         Store full command text in audit events
+  --json                       Emit wrapper metadata as JSON on stderr
+
+Decision flags:
+  --thread-id <thread>         Approval thread id to decide or reuse
+  --record-decision <decision> approved or rejected
+
+Modes:
+  advisory   Records request and audit metadata, then runs even without approval.
+  warn-only  Records request and blocks unless --override-approval is supplied.
+  blocking   Runs only when the matching thread has a non-expired approved decision
+             from the configured reviewer for the exact command digest.
+
+Bypass boundary:
+  This wrapper coordinates command review through Postman. It does not sandbox
+  bash, prevent direct shell execution, or enforce OS-level policy. Use it for
+  local agent choreography and durable audit trails, not as a security boundary.

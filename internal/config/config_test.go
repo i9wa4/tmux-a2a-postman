@@ -238,6 +238,46 @@ edges = [
 	}
 }
 
+func TestLoadConfig_CommandApprovalPolicies(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+base_dir = "/tmp/postman-state"
+edges = ["worker --- orchestrator"]
+
+[[postman.command_approval]]
+requester = "worker"
+label = "nix-build"
+category = "verification"
+reviewer = "orchestrator"
+mode = "blocking"
+approval_ttl_seconds = 900
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.CommandApproval) != 1 {
+		t.Fatalf("CommandApproval length = %d, want 1", len(cfg.CommandApproval))
+	}
+	got := cfg.CommandApproval[0]
+	if got.Requester != "worker" || got.Label != "nix-build" || got.Category != "verification" {
+		t.Fatalf("CommandApproval match fields = %#v", got)
+	}
+	if got.Reviewer != "orchestrator" || got.Mode != "blocking" || got.ApprovalTTLSeconds != 900 {
+		t.Fatalf("CommandApproval policy fields = %#v", got)
+	}
+}
+
 func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

@@ -16,7 +16,9 @@ type Handlers struct {
 	GetSessionStatusOneline func(args []string) error
 	InspectInput            func(args []string) error
 	InspectMessage          func(args []string) error
+	InspectCommandApprovals func(args []string) error
 	InspectDaemonSubmit     func(args []string) error
+	ExecuteBash             func(args []string) error
 	SendMessage             func(args []string) error
 	SendHeredoc             func(args []string) error
 	Stop                    func(args []string) error
@@ -73,10 +75,20 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 			Label: "postman inspect-message",
 			Err:   handlers.InspectMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
+	case "inspect-command-approvals":
+		return Result{
+			Label: "postman inspect-command-approvals",
+			Err:   handlers.InspectCommandApprovals(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
 	case "inspect-daemon-submit":
 		return Result{
 			Label: "postman inspect-daemon-submit",
 			Err:   handlers.InspectDaemonSubmit(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "execute-bash":
+		return Result{
+			Label: "postman execute-bash",
+			Err:   handlers.ExecuteBash(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "send":
 		return Result{

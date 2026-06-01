@@ -237,6 +237,60 @@ func TestDispatch_InspectDaemonSubmitPrependsContextAndConfig(t *testing.T) {
 	}
 }
 
+func TestDispatch_InspectCommandApprovalsPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"inspect-command-approvals",
+		nil,
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			InspectCommandApprovals: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman inspect-command-approvals" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman inspect-command-approvals")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("inspect-command-approvals args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestDispatch_ExecuteBashPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"execute-bash",
+		[]string{"--label", "nix-build", "--command", "nix build"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			ExecuteBash: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman execute-bash" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman execute-bash")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--label", "nix-build", "--command", "nix build"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("execute-bash args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_StopPrependsConfigOnly(t *testing.T) {
 	var gotArgs []string
 
