@@ -423,6 +423,63 @@ func TestSendToPane_RejectsEmptyNotificationBody(t *testing.T) {
 	}
 }
 
+func TestPaneNotifierCooldownIsInstanceScoped(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifierA, callsA := paneNotifierForTest(now, time.Minute)
+	if err := notifierA.SendToPane("%1", "hello", 0, 0, 1, false, 0, 0); err != nil {
+		t.Fatalf("notifierA first SendToPane: %v", err)
+	}
+	if err := notifierA.SendToPane("%1", "hello again", 0, 0, 1, false, 0, 0); err != nil {
+		t.Fatalf("notifierA second SendToPane: %v", err)
+	}
+	if *callsA != 3 {
+		t.Fatalf("notifierA tmux calls = %d, want 3 because second send is within cooldown", *callsA)
+	}
+
+	notifierB, callsB := paneNotifierForTest(now, time.Minute)
+	if err := notifierB.SendToPane("%1", "independent hello", 0, 0, 1, false, 0, 0); err != nil {
+		t.Fatalf("notifierB SendToPane: %v", err)
+	}
+	if *callsB != 3 {
+		t.Fatalf("notifierB tmux calls = %d, want 3 with independent cooldown state", *callsB)
+	}
+}
+
+func TestPaneNotifierBypassCooldown(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, calls := paneNotifierForTest(now, time.Minute)
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 0, 0); err != nil {
+		t.Fatalf("first SendToPane: %v", err)
+	}
+	if err := notifier.SendToPane("%1", "hello again", 0, 0, 1, true, 0, 0); err != nil {
+		t.Fatalf("second SendToPane: %v", err)
+	}
+	if *calls != 6 {
+		t.Fatalf("tmux calls = %d, want 6 because bypass sends both notifications", *calls)
+	}
+}
+
+func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, _ := paneNotifierForTest(now, 0)
+	sendKeys := 0
+	notifier.runTmux = func(args ...string) error {
+		if len(args) > 0 && args[0] == "send-keys" {
+			sendKeys++
+		}
+		return nil
+	}
+	notifier.capture = func(paneID string) (string, error) {
+		return "unchanged", nil
+	}
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane: %v", err)
+	}
+	if sendKeys != 3 {
+		t.Fatalf("send-keys calls = %d, want initial send plus 2 verify retries", sendKeys)
+	}
+}
+
 func TestSendToPane_EnterCount2(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
@@ -653,4 +710,19 @@ esac
 	if strings.Contains(string(stderrBytes), "enter verify") {
 		t.Fatalf("SendToPane leaked enter-verify warning to stderr: %q", string(stderrBytes))
 	}
+}
+
+func paneNotifierForTest(now time.Time, cooldown time.Duration) (*PaneNotifier, *int) {
+	calls := 0
+	notifier := NewPaneNotifier(cooldown)
+	notifier.now = func() time.Time {
+		return now
+	}
+	notifier.sleep = func(time.Duration) {}
+	notifier.stderr = io.Discard
+	notifier.runTmux = func(args ...string) error {
+		calls++
+		return nil
+	}
+	return notifier, &calls
 }
