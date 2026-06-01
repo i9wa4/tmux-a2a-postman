@@ -94,15 +94,7 @@ type sendToPaneFunc func(paneID, message string, enterDelay, tmuxTimeout time.Du
 var (
 	sendBodyStdin           io.Reader = os.Stdin
 	sendBodyStdinIsTerminal           = func() bool {
-		stdinFile, ok := sendBodyStdin.(*os.File)
-		if !ok {
-			return false
-		}
-		info, err := stdinFile.Stat()
-		if err != nil {
-			return false
-		}
-		return info.Mode()&os.ModeCharDevice != 0
+		return defaultStdinIsTerminal(sendBodyStdin)
 	}
 )
 
@@ -145,7 +137,18 @@ func RunSendMessage(args []string) error {
 }
 
 func RunSendHeredoc(args []string) error {
+	return runSendHeredocWithContext(commandContext{
+		stdin: sendBodyStdin,
+		stdinIsTerminal: func(io.Reader) bool {
+			return sendBodyStdinIsTerminal()
+		},
+	}, args)
+}
+
+func runSendHeredocWithContext(ctx commandContext, args []string) error {
+	ctx = ctx.withDefaults()
 	fs := flag.NewFlagSet("send-heredoc", flag.ContinueOnError)
+	fs.SetOutput(ctx.stderr)
 	cliutil.SetUsageWithoutContextID(fs)
 	to := fs.String("to", "", "recipient node name (required)")
 	noReply := fs.Bool("no-reply", false, "mark message as not requiring a reply")
@@ -166,7 +169,7 @@ func RunSendHeredoc(args []string) error {
 	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
 		return err
 	}
-	bodyText, err := resolveSendHeredocBody(sendBodyStdin, sendBodyStdinIsTerminal())
+	bodyText, err := resolveSendHeredocBody(ctx.stdin, ctx.stdinIsTerminal(ctx.stdin))
 	if err != nil {
 		return err
 	}
@@ -182,13 +185,13 @@ func RunSendHeredoc(args []string) error {
 	if err := validateInputRequestFillFlag("--fills-input-request-id", *fillsInputRequestID); err != nil {
 		return err
 	}
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := ctx.loadConfig(*configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	sender := config.GetTmuxPaneName()
+	sender := ctx.getTmuxPaneName()
 	if sender == "" {
 		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
 	}
@@ -196,7 +199,7 @@ func RunSendHeredoc(args []string) error {
 		return err
 	}
 
-	sessionName := config.GetTmuxSessionName()
+	sessionName := ctx.getTmuxSessionName()
 	if sessionName == "" {
 		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
@@ -207,12 +210,12 @@ func RunSendHeredoc(args []string) error {
 
 	var resolvedContextID string
 	if *contextID != "" {
-		resolvedContextID, err = config.ResolveContextID(*contextID)
+		resolvedContextID, err = ctx.resolveContextID(*contextID)
 		if err != nil {
 			return err
 		}
 	} else {
-		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		resolvedContextID, err = ctx.resolveContextSession(baseDir, sessionName)
 		if err != nil {
 			return err
 		}
@@ -314,7 +317,7 @@ func RunSendHeredoc(args []string) error {
 		MessageID:   filename,
 		TmuxSession: sessionName,
 		Node:        sender,
-		PaneID:      config.GetTmuxPaneID(),
+		PaneID:      ctx.getTmuxPaneID(),
 	})
 	savedRuntimeContext, err := runtimecontext.SaveSnapshot(sessionDir, runtimeSnapshot)
 	if err != nil {
@@ -340,7 +343,7 @@ func RunSendHeredoc(args []string) error {
 		"required_reply_completion_gate": "",
 		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
 		"session_name":                   sessionName,
-		"sender_pane_id":                 config.GetTmuxPaneID(),
+		"sender_pane_id":                 ctx.getTmuxPaneID(),
 		"sender_runtime_context":         runtimecontext.RenderSenderMarkdown(savedRuntimeContext.Snapshot),
 		"runtime_context_id":             savedRuntimeContext.Snapshot.SnapshotID,
 		"runtime_context_scope":          savedRuntimeContext.Snapshot.Scope,
@@ -415,8 +418,8 @@ func RunSendHeredoc(args []string) error {
 	}
 	content = renderSendBody(content, stripped, footer)
 
-	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
+		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command:  projection.DaemonSubmitSend,
 			Filename: filename,
 			Content:  content,
@@ -428,7 +431,7 @@ func RunSendHeredoc(args []string) error {
 		if response.Filename != "" {
 			deliveredFilename = response.Filename
 		}
-		status, err := observeSendOutcome(baseDir, resolvedContextID, sessionDir, deliveredFilename)
+		status, err := observeSendOutcomeWithContext(ctx, baseDir, resolvedContextID, sessionDir, deliveredFilename)
 		if err != nil {
 			return fmt.Errorf("send outcome: %w", err)
 		}
@@ -446,7 +449,7 @@ func RunSendHeredoc(args []string) error {
 			SubmitPath:          projection.SubmitPathDaemon,
 		}
 		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
-		return writeSendOutput(output)
+		return writeSendOutput(ctx.stdout, output)
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
@@ -461,13 +464,13 @@ func RunSendHeredoc(args []string) error {
 	if err := os.Rename(draftPath, dst); err != nil {
 		return fmt.Errorf("sending draft: %w", err)
 	}
-	status, err := observeSendOutcome(baseDir, resolvedContextID, sessionDir, filename)
+	status, err := observeSendOutcomeWithContext(ctx, baseDir, resolvedContextID, sessionDir, filename)
 	if err != nil {
 		return fmt.Errorf("send outcome: %w", err)
 	}
 	var notifyStatus cliNotifyStatus
 	if status == sendStatusProcessed {
-		freshNodes, _ := discovery.DiscoverNodes(baseDir, resolvedContextID, sessionName)
+		freshNodes, _ := ctx.discoverNodes(baseDir, resolvedContextID, sessionName)
 		var paneID string
 		if freshNodes != nil {
 			fullKey := discovery.ResolveNodeName(*to, sessionName, freshNodes)
@@ -504,7 +507,7 @@ func RunSendHeredoc(args []string) error {
 		Notify:              notifyOutputValue(notifyStatus),
 	}
 	attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
-	return writeSendOutput(output)
+	return writeSendOutput(ctx.stdout, output)
 }
 
 func projectSendInputRequestState(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {
@@ -886,7 +889,7 @@ func getNodeTemplate(cfg *config.Config, nodeName string) string {
 }
 
 func writeSendResult(filename string, status sendStatus, notifyStatus cliNotifyStatus) error {
-	return writeSendOutput(sendOutput{
+	return writeSendOutput(os.Stdout, sendOutput{
 		Sent:   filename,
 		Status: string(status),
 		Notify: notifyOutputValue(notifyStatus),
@@ -906,17 +909,22 @@ func notifyOutputValue(notifyStatus cliNotifyStatus) string {
 	}
 }
 
-func writeSendOutput(output sendOutput) error {
-	return json.NewEncoder(os.Stdout).Encode(output)
+func writeSendOutput(stdout io.Writer, output sendOutput) error {
+	return json.NewEncoder(stdout).Encode(output)
 }
 
 func observeSendOutcome(baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
+	return observeSendOutcomeWithContext(defaultCommandContext(), baseDir, contextID, sessionDir, filename)
+}
+
+func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessionDir, filename string) (sendStatus, error) {
+	ctx = ctx.withDefaults()
 	if deadLetterBasename, ok, err := findMatchingDeadLetter(sessionDir, filename); err != nil {
 		return "", err
 	} else if ok {
 		return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
 	}
-	if !config.ContextHasLiveDaemon(baseDir, contextID) {
+	if !ctx.contextHasLiveDaemon(baseDir, contextID) {
 		return sendStatusQueued, nil
 	}
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
-	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -42,7 +40,13 @@ func emptyAllSessionStatus() status.AllSessionStatus {
 
 // RunGetSessionStatus prints the canonical session status JSON payload (#220).
 func RunGetSessionStatus(args []string) error {
+	return runGetSessionStatusWithContext(defaultCommandContext(), args)
+}
+
+func runGetSessionStatusWithContext(ctx commandContext, args []string) error {
+	ctx = ctx.withDefaults()
 	fs := flag.NewFlagSet("get-status", flag.ExitOnError)
+	fs.SetOutput(ctx.stderr)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
@@ -51,7 +55,7 @@ func RunGetSessionStatus(args []string) error {
 		return err
 	}
 
-	result, ok, err := collectResolvedSessionStatusWithOptions(*contextID, "", *configPath, sessionStatusOptions{
+	result, ok, err := collectResolvedSessionStatusWithContext(ctx, *contextID, "", *configPath, sessionStatusOptions{
 		IncludeRuntimeDiagnostics: *debug,
 	})
 	if err != nil {
@@ -61,7 +65,7 @@ func RunGetSessionStatus(args []string) error {
 		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
 
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(ctx.stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(result)
 }
@@ -80,7 +84,12 @@ type sessionStatusOptions struct {
 }
 
 func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
-	cfg, err := config.LoadConfig(configPath)
+	return resolveSessionStatusTargetWithContext(defaultCommandContext(), contextIDFlag, sessionFlag, configPath)
+}
+
+func resolveSessionStatusTargetWithContext(ctx commandContext, contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
+	ctx = ctx.withDefaults()
+	cfg, err := ctx.loadConfig(configPath)
 	if err != nil {
 		return sessionStatusTarget{}, false, fmt.Errorf("loading config: %w", err)
 	}
@@ -89,7 +98,7 @@ func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (
 
 	sessionName := sessionFlag
 	if sessionName == "" {
-		sessionName = config.GetTmuxSessionName()
+		sessionName = ctx.getTmuxSessionName()
 	}
 	if sessionName == "" {
 		return sessionStatusTarget{}, false, nil
@@ -101,12 +110,12 @@ func resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath string) (
 
 	resolvedContextID := contextIDFlag
 	if resolvedContextID != "" {
-		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		resolvedContextID, err = ctx.resolveContextID(resolvedContextID)
 		if err != nil {
 			return sessionStatusTarget{}, false, err
 		}
 	} else {
-		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		resolvedContextID, err = ctx.resolveContextSession(baseDir, sessionName)
 		if err != nil {
 			if isNoActivePostmanError(err) {
 				return sessionStatusTarget{
@@ -132,7 +141,12 @@ func collectResolvedSessionStatus(contextIDFlag, sessionFlag, configPath string)
 }
 
 func collectResolvedSessionStatusWithOptions(contextIDFlag, sessionFlag, configPath string, options sessionStatusOptions) (status.SessionStatus, bool, error) {
-	target, ok, err := resolveSessionStatusTarget(contextIDFlag, sessionFlag, configPath)
+	return collectResolvedSessionStatusWithContext(defaultCommandContext(), contextIDFlag, sessionFlag, configPath, options)
+}
+
+func collectResolvedSessionStatusWithContext(ctx commandContext, contextIDFlag, sessionFlag, configPath string, options sessionStatusOptions) (status.SessionStatus, bool, error) {
+	ctx = ctx.withDefaults()
+	target, ok, err := resolveSessionStatusTargetWithContext(ctx, contextIDFlag, sessionFlag, configPath)
 	if isNoActivePostmanError(err) {
 		return emptySessionStatus(target.sessionName), true, nil
 	}
@@ -140,13 +154,13 @@ func collectResolvedSessionStatusWithOptions(contextIDFlag, sessionFlag, configP
 		return status.SessionStatus{}, ok, err
 	}
 
-	result, err := collectSessionStatus(target.baseDir, target.contextID, target.sessionName, target.cfg)
+	result, err := ctx.collectSessionStatus(target.baseDir, target.contextID, target.sessionName, target.cfg)
 	if err != nil {
 		return status.SessionStatus{}, true, err
 	}
 	normalizeSessionStatus(&result)
 	if options.IncludeRuntimeDiagnostics {
-		diagnostics, err := collectRuntimeDiagnosticsFromDaemon(target)
+		diagnostics, err := collectRuntimeDiagnosticsFromDaemonWithContext(ctx, target)
 		if err != nil {
 			return status.SessionStatus{}, true, err
 		}
@@ -156,11 +170,16 @@ func collectResolvedSessionStatusWithOptions(contextIDFlag, sessionFlag, configP
 }
 
 func collectRuntimeDiagnosticsFromDaemon(target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
+	return collectRuntimeDiagnosticsFromDaemonWithContext(defaultCommandContext(), target)
+}
+
+func collectRuntimeDiagnosticsFromDaemonWithContext(ctx commandContext, target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
+	ctx = ctx.withDefaults()
 	if target.baseDir == "" || target.contextID == "" || target.sessionName == "" {
 		return nil, fmt.Errorf("runtime diagnostics require an active daemon context")
 	}
 	sessionDir := filepath.Join(target.baseDir, target.contextID, target.sessionName)
-	response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+	response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 		Command: projection.DaemonSubmitRuntimeDiagnostics,
 	}, daemonSubmitTimeout(target.cfg.TmuxTimeout))
 	if err != nil {
@@ -241,7 +260,12 @@ func collectAllLiveSessionStatus(contextIDFlag, sessionFlag, configPath string) 
 }
 
 func collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath string, collector sessionStatusCollector) (status.AllSessionStatus, *config.Config, bool, error) {
-	cfg, err := config.LoadConfig(configPath)
+	return collectAllSessionStatusWithContext(defaultCommandContext(), contextIDFlag, sessionFlag, configPath, collector)
+}
+
+func collectAllSessionStatusWithContext(ctx commandContext, contextIDFlag, sessionFlag, configPath string, collector sessionStatusCollector) (status.AllSessionStatus, *config.Config, bool, error) {
+	ctx = ctx.withDefaults()
+	cfg, err := ctx.loadConfig(configPath)
 	if err != nil {
 		return status.AllSessionStatus{}, nil, false, fmt.Errorf("loading config: %w", err)
 	}
@@ -249,14 +273,14 @@ func collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 	resolvedContextID := contextIDFlag
 	if resolvedContextID != "" {
-		resolvedContextID, err = config.ResolveContextID(resolvedContextID)
+		resolvedContextID, err = ctx.resolveContextID(resolvedContextID)
 		if err != nil {
 			return status.AllSessionStatus{}, nil, false, err
 		}
 	} else {
 		sessionName := sessionFlag
 		if sessionName == "" {
-			sessionName = config.GetTmuxSessionName()
+			sessionName = ctx.getTmuxSessionName()
 		}
 		if sessionName == "" {
 			return status.AllSessionStatus{}, cfg, false, nil
@@ -265,7 +289,7 @@ func collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath
 		if err != nil {
 			return status.AllSessionStatus{}, nil, false, err
 		}
-		resolvedContextID, err = config.ResolveContextIDFromSession(baseDir, sessionName)
+		resolvedContextID, err = ctx.resolveContextSession(baseDir, sessionName)
 		if err != nil {
 			if isNoActivePostmanError(err) {
 				return emptyAllSessionStatus(), cfg, true, nil
@@ -274,7 +298,7 @@ func collectAllSessionStatusWithCollector(contextIDFlag, sessionFlag, configPath
 		}
 	}
 
-	sessionNames, err := discovery.DiscoverAllSessions()
+	sessionNames, err := ctx.discoverAllSessions()
 	if err != nil {
 		return status.AllSessionStatus{}, nil, true, err
 	}

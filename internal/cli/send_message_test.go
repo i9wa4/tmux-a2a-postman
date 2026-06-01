@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -59,6 +60,118 @@ func captureSendHeredocWithBody(t *testing.T, body string, args []string) (strin
 	return captureCommandOutput(t, func() error {
 		return runSendHeredocWithBody(t, body, args)
 	})
+}
+
+func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) commandContext {
+	return commandContext{
+		stdin:  stdin,
+		stdout: stdout,
+		stderr: io.Discard,
+		stdinIsTerminal: func(io.Reader) bool {
+			return false
+		},
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				BaseDir: baseDir,
+				Edges:   []string{"messenger --- worker"},
+			}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		contextHasLiveDaemon: func(string, string) bool {
+			return false
+		},
+		getTmuxPaneName: func() string {
+			return "messenger"
+		},
+		getTmuxSessionName: func() string {
+			return "review"
+		},
+		getTmuxPaneID: func() string {
+			return "%1"
+		},
+	}
+}
+
+func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+
+	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("hello from context"), &stdout), []string{
+		"--context-id", "ctx-send-context",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.Status != string(sendStatusQueued) {
+		t.Fatalf("Status = %q, want %q", payload.Status, sendStatusQueued)
+	}
+	if payload.ContextID != "ctx-send-context" || payload.Session != "review" || payload.From != "messenger" || payload.To != "worker" {
+		t.Fatalf("send output routing fields = %#v", payload)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-context", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	if !strings.Contains(string(content), "hello from context") {
+		t.Fatalf("sent message missing configured stdin body:\n%s", string(content))
+	}
+}
+
+func TestRunSendHeredocWithContextRejectsConfiguredTerminalStdin(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("ignored"), &stdout)
+	ctx.stdinIsTerminal = func(io.Reader) bool { return true }
+
+	err := runSendHeredocWithContext(ctx, []string{"--to", "worker"})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want terminal stdin rejection")
+	}
+	if !strings.Contains(err.Error(), "quoted heredoc") {
+		t.Fatalf("error = %v, want quoted heredoc guidance", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestRunSendHeredocWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	var captured projection.DaemonSubmitRequest
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("daemon body"), &stdout)
+	ctx.contextOwnsSession = func(string, string, string) bool { return true }
+	ctx.roundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		captured = request
+		return projection.DaemonSubmitResponse{
+			Filename: request.Filename,
+		}, nil
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-send-daemon",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	if captured.Command != projection.DaemonSubmitSend {
+		t.Fatalf("captured.Command = %q, want %q", captured.Command, projection.DaemonSubmitSend)
+	}
+	if !strings.Contains(captured.Content, "daemon body") {
+		t.Fatalf("daemon-submit content missing body:\n%s", captured.Content)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
 }
 
 func writeSendBodySourceConfig(t *testing.T, dir string) string {
