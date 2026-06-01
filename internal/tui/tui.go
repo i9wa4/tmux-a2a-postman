@@ -711,6 +711,18 @@ func (m Model) renderNodesSection() string {
 	return b.String()
 }
 
+func (m Model) renderSelectedSessionStatus() string {
+	selectedSession := m.getSelectedSessionName()
+	if selectedSession == "" {
+		return ""
+	}
+	message := strings.TrimSpace(m.sessionStatus[selectedSession])
+	if message == "" {
+		return ""
+	}
+	return "\n[status]\n" + message + "\n"
+}
+
 func visibleStateLabel(node status.NodeStatus) string {
 	if node.VisibleState != "" {
 		return node.VisibleState
@@ -800,6 +812,7 @@ func (m Model) View() tea.View {
 	b.WriteString(m.renderSessionsSection())
 	b.WriteString("\n")
 	b.WriteString(m.renderNodesSection())
+	b.WriteString(m.renderSelectedSessionStatus())
 	view.Content = b.String()
 	return view
 }
