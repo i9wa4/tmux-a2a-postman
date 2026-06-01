@@ -71,15 +71,16 @@ func newLoadedPaneCaptureTracker(panes int) *IdleTracker {
 	for i := 0; i < panes; i++ {
 		paneID := fmt.Sprintf("%%%d", 1000+i)
 		tracker.paneCaptureState[paneID] = PaneCaptureState{
-			LastHash:              uint32(i + 1),
-			LastChangeAt:          now.Add(-time.Duration(i%120) * time.Second),
-			ChangeCount:           i % 3,
-			LastCaptureAt:         now.Add(-time.Duration(i%30) * time.Second),
-			LastCompactionPingAt:  now.Add(-time.Duration(i%300) * time.Second),
-			LastCompactionTrigger: "codex:context-compaction",
-			LastCompactionHash:    uint32(10000 + i),
-			LastCompactionMarkers: i % 5,
-			LastCompactionPrefix:  "Context compacted",
+			LastHash:                  uint32(i + 1),
+			LastChangeAt:              now.Add(-time.Duration(i%120) * time.Second),
+			ChangeCount:               i % 3,
+			LastCaptureAt:             now.Add(-time.Duration(i%30) * time.Second),
+			LastCompactionPingAt:      now.Add(-time.Duration(i%300) * time.Second),
+			LastCompactionTrigger:     "codex:context-compaction",
+			LastCompactionHash:        uint32(10000 + i),
+			LastCompactionMarkers:     i % 5,
+			LastCompactionPrefixHash:  hashContentCRC32("Context compacted"),
+			LastCompactionPrefixLines: 1,
 		}
 	}
 	return tracker

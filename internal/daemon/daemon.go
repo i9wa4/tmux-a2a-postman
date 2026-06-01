@@ -37,6 +37,7 @@ const (
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
+	Remove(string) error
 }
 
 func sessionScanInterval(cfg *config.Config) time.Duration {
