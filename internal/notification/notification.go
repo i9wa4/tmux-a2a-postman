@@ -88,7 +88,7 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	}
 	if strings.TrimSpace(message) == "" {
 		err := fmt.Errorf("empty notification body for pane %s", paneID)
-		fmt.Fprintf(n.stderrWriter(), "postman: notification: %v\n", err)
+		n.warnf("postman: notification: %v\n", err)
 		return err
 	}
 	// Rate limit: skip if pane was notified within cooldown window (#273).
@@ -102,7 +102,7 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	if !bypassCooldown && cooldown > 0 {
 		if last, ok := n.lastNotified[paneID]; ok && now.Sub(last) < cooldown {
 			n.mu.Unlock()
-			fmt.Fprintf(n.stderrWriter(), "postman: notification: cooldown active for pane %s (last=%s, cooldown=%s)\n", paneID, last.Format(time.RFC3339), cooldown)
+			n.warnf("postman: notification: cooldown active for pane %s (last=%s, cooldown=%s)\n", paneID, last.Format(time.RFC3339), cooldown)
 			return nil
 		}
 	}
@@ -113,7 +113,7 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	// Security: Sanitize message for tmux set-buffer (#301)
 	sanitized, err := sanitizeForTmux(message)
 	if err != nil {
-		fmt.Fprintf(n.stderrWriter(), "⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
+		n.warnf("⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
 		return err
 	}
 
@@ -122,12 +122,12 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	bufferMu.Lock()
 	if err := n.run("set-buffer", sanitized); err != nil {
 		bufferMu.Unlock()
-		fmt.Fprintf(n.stderrWriter(), "⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
+		n.warnf("⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
 		return err
 	}
 	if err := n.run("paste-buffer", "-t", paneID); err != nil {
 		bufferMu.Unlock()
-		fmt.Fprintf(n.stderrWriter(), "⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
+		n.warnf("⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
 		return err
 	}
 	bufferMu.Unlock()
@@ -138,7 +138,7 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	// 4. Send C-m to submit. C-m (carriage return) submits reliably in both Codex CLI and claude-chill.
 	// "Enter" key name adds a newline in Codex CLI multi-line readline instead of submitting (#126).
 	if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
-		fmt.Fprintf(n.stderrWriter(), "⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
+		n.warnf("⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
 		return err
 	}
 
@@ -208,6 +208,10 @@ func (n *PaneNotifier) stderrWriter() io.Writer {
 		return n.stderr
 	}
 	return os.Stderr
+}
+
+func (n *PaneNotifier) warnf(format string, args ...any) {
+	_, _ = fmt.Fprintf(n.stderrWriter(), format, args...)
 }
 
 // ResolveEnterCount returns the effective enter count for pane delivery.
