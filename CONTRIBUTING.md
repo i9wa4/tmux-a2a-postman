@@ -53,6 +53,12 @@ Validate publishable skill metadata with:
 nix run '.#skill-check'
 ```
 
+The local/CI skill check validates `skills/*/SKILL.md` frontmatter,
+name-to-directory matching, license and description metadata, `USE FOR` /
+`DO NOT USE FOR` discovery text, and then runs the GitHub skill publish
+dry-run. `nix flake check` also runs the metadata validation through
+pre-commit.
+
 Do not use `gh skill publish --tag` in the tag-push release workflow. That
 command creates a tag and GitHub Release itself. The repository release flow
 uses the pushed `v*` tag plus GoReleaser, while `gh skill install` resolves
