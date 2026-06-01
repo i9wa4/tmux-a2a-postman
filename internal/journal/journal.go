@@ -99,6 +99,8 @@ type Manager struct {
 	writers   map[string]*Writer
 }
 
+type appendAuthorityLockFunc func(fd int, how int) error
+
 var processManager struct {
 	sync.RWMutex
 	manager *Manager
@@ -139,10 +141,15 @@ func ClearProcessManager() {
 	processManager.Unlock()
 }
 
-func RecordProcessMailboxEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, messageID, from, to, relativePath string, now time.Time) error {
+func currentProcessManager() *Manager {
 	processManager.RLock()
 	manager := processManager.manager
 	processManager.RUnlock()
+	return manager
+}
+
+func RecordProcessMailboxEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, messageID, from, to, relativePath string, now time.Time) error {
+	manager := currentProcessManager()
 	if manager == nil {
 		return nil
 	}
@@ -150,9 +157,7 @@ func RecordProcessMailboxEvent(sessionDir, tmuxSessionName, eventType string, vi
 }
 
 func RecordProcessEvent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, now time.Time) error {
-	processManager.RLock()
-	manager := processManager.manager
-	processManager.RUnlock()
+	manager := currentProcessManager()
 	if manager == nil {
 		return nil
 	}
@@ -160,9 +165,7 @@ func RecordProcessEvent(sessionDir, tmuxSessionName, eventType string, visibilit
 }
 
 func RecordProcessEventWithOptions(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time) error {
-	processManager.RLock()
-	manager := processManager.manager
-	processManager.RUnlock()
+	manager := currentProcessManager()
 	if manager == nil {
 		return nil
 	}
@@ -596,6 +599,13 @@ func ensureOwnerOnlyDir(path string) error {
 }
 
 func withAppendAuthorityFence(sessionDir string, fn func() error) error {
+	return withAppendAuthorityFenceLock(sessionDir, syscall.Flock, fn)
+}
+
+func withAppendAuthorityFenceLock(sessionDir string, lock appendAuthorityLockFunc, fn func() error) error {
+	if lock == nil {
+		lock = syscall.Flock
+	}
 	if err := ensureOwnerOnlyDir(leaseDir(sessionDir)); err != nil {
 		return fmt.Errorf("ensuring lease dir: %w", err)
 	}
@@ -610,11 +620,11 @@ func withAppendAuthorityFence(sessionDir string, fn func() error) error {
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("chmod append authority fence: %w", err)
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("locking append authority fence: %w", err)
 	}
 	defer func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = lock(int(file.Fd()), syscall.LOCK_UN)
 	}()
 
 	return fn()

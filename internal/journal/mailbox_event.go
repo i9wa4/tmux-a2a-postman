@@ -27,9 +27,7 @@ type MailboxEventPayload struct {
 }
 
 func RecordProcessMailboxPayload(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, now time.Time) error {
-	processManager.RLock()
-	manager := processManager.manager
-	processManager.RUnlock()
+	manager := currentProcessManager()
 	if manager == nil {
 		return nil
 	}

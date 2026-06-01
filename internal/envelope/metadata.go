@@ -7,25 +7,29 @@ import (
 )
 
 type Metadata struct {
-	ContextID           string
-	From                string
-	To                  string
-	MessageID           string
-	ReplyPolicy         string
-	ReplyTo             string
-	MessageType         string
-	Timestamp           string
-	ThreadID            string
-	InputRequestID      string
-	FillsInputRequestID string
-	InputRequestSetID   string
-	BranchID            string
-	CompletionRule      string
-	BlockedReportID     string
-	BlockedScope        string
-	BlockedScopeID      string
-	BlockedReason       string
-	Body                string
+	ContextID                string
+	From                     string
+	To                       string
+	MessageID                string
+	ReplyPolicy              string
+	ReplyTo                  string
+	MessageType              string
+	Timestamp                string
+	ThreadID                 string
+	InputRequestID           string
+	FillsInputRequestID      string
+	InputRequestSetID        string
+	BranchID                 string
+	CompletionRule           string
+	RuntimeContextID         string
+	RuntimeContextScope      string
+	RuntimeContextCapturedAt string
+	RuntimeContextHash       string
+	BlockedReportID          string
+	BlockedScope             string
+	BlockedScopeID           string
+	BlockedReason            string
+	Body                     string
 }
 
 type frontmatterScan struct {
@@ -181,6 +185,14 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.BranchID = value
 			case "completion_rule":
 				metadata.CompletionRule = value
+			case "runtimeContextId", "runtime_context_id":
+				metadata.RuntimeContextID = value
+			case "runtimeContextScope", "runtime_context_scope":
+				metadata.RuntimeContextScope = value
+			case "runtimeContextCapturedAt", "runtime_context_captured_at":
+				metadata.RuntimeContextCapturedAt = value
+			case "runtimeContextHash", "runtime_context_hash":
+				metadata.RuntimeContextHash = value
 			case "blocked_report_id":
 				metadata.BlockedReportID = value
 			case "blocked_scope":
@@ -387,7 +399,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
@@ -516,6 +528,14 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "branch_id", true
 	case "completion_rule":
 		return "completion_rule", true
+	case "runtimeContextId", "runtime_context_id":
+		return "runtimeContextId", true
+	case "runtimeContextScope", "runtime_context_scope":
+		return "runtimeContextScope", true
+	case "runtimeContextCapturedAt", "runtime_context_captured_at":
+		return "runtimeContextCapturedAt", true
+	case "runtimeContextHash", "runtime_context_hash":
+		return "runtimeContextHash", true
 	default:
 		return "", false
 	}
@@ -546,6 +566,14 @@ func managedParamFieldAliases(fieldKey string) []string {
 		return []string{"input_request_set_id"}
 	case "branch_id", "completion_rule":
 		return []string{fieldKey}
+	case "runtimeContextId":
+		return []string{"runtimeContextId", "runtime_context_id"}
+	case "runtimeContextScope":
+		return []string{"runtimeContextScope", "runtime_context_scope"}
+	case "runtimeContextCapturedAt":
+		return []string{"runtimeContextCapturedAt", "runtime_context_captured_at"}
+	case "runtimeContextHash":
+		return []string{"runtimeContextHash", "runtime_context_hash"}
 	default:
 		return []string{fieldKey}
 	}

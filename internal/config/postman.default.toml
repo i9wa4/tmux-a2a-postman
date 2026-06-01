@@ -34,6 +34,11 @@
 #   {reply_to}       - Message id this message references, when supplied
 #   {input_request_id}  - Exact input request id for reply-required messages
 #   {fills_input_request_id} - Exact input request id this message fills
+#   {sender_runtime_context} - Generated compact sender runtime context block
+#   {runtime_context_id} - Runtime context snapshot id
+#   {runtime_context_scope} - Runtime context scope, usually sender
+#   {runtime_context_captured_at} - Runtime context capture timestamp
+#   {runtime_context_hash} - Runtime context snapshot content hash
 #   {template}       - Recipient's role template from config
 #   {sender_pane_id} - tmux pane ID of the sender (e.g. %42)
 #
@@ -173,7 +178,8 @@ You can talk to:
 # Variables: {context_id}, {sender}, {recipient}, {timestamp},
 #   {session_name}, {template}, {can_talk_to}, {contacts_section}, {reply_command},
 #   {message_id}, {reply_policy}, {reply_to}, {input_request_id},
-#   {fills_input_request_id}
+#   {fills_input_request_id}, {sender_runtime_context}, {runtime_context_id},
+#   {runtime_context_scope}, {runtime_context_captured_at}, {runtime_context_hash}
 # The <!-- write here --> placeholder is replaced with sender-authored Markdown
 # exactly after a visible --- separator. Generated footer guidance is kept
 # before that separator. ATX headings in {template} and {role_content} are
@@ -188,6 +194,10 @@ params:
   replyPolicy: {reply_policy}
   timestamp: {timestamp}
   tmuxSession: {session_name}
+  runtimeContextId: {runtime_context_id}
+  runtimeContextScope: {runtime_context_scope}
+  runtimeContextCapturedAt: {runtime_context_captured_at}
+  runtimeContextHash: {runtime_context_hash}
 ---
 
 # Message
@@ -196,6 +206,7 @@ params:
 
 {template}
 
+{sender_runtime_context}
 ## Sender Message
 
 ---
