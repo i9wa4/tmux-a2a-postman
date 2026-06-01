@@ -2,6 +2,7 @@ package notification
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,9 +18,7 @@ import (
 )
 
 var (
-	paneNotifyMu       sync.Mutex
-	paneLastNotified   = map[string]time.Time{}
-	paneNotifyCooldown = 10 * time.Minute
+	defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
 
 	// bufferMu serializes tmux set-buffer + paste-buffer pairs.
 	// tmux uses a single global paste buffer; concurrent SendToPane calls
@@ -28,12 +27,38 @@ var (
 	bufferMu sync.Mutex
 )
 
+// PaneNotifier sends notifications to tmux panes with instance-scoped cooldown state.
+type PaneNotifier struct {
+	mu           sync.Mutex
+	lastNotified map[string]time.Time
+	cooldown     time.Duration
+
+	now     func() time.Time
+	sleep   func(time.Duration)
+	runTmux func(args ...string) error
+	capture func(paneID string) (string, error)
+	stderr  io.Writer
+}
+
+// NewPaneNotifier creates a pane notifier with the given per-pane cooldown.
+func NewPaneNotifier(cooldown time.Duration) *PaneNotifier {
+	return &PaneNotifier{
+		lastNotified: make(map[string]time.Time),
+		cooldown:     cooldown,
+	}
+}
+
 // InitPaneCooldown sets the per-pane notification cooldown duration.
 // Must be called once at startup before any SendToPane calls.
 func InitPaneCooldown(d time.Duration) {
-	paneNotifyMu.Lock()
-	paneNotifyCooldown = d
-	paneNotifyMu.Unlock()
+	defaultPaneNotifier.InitCooldown(d)
+}
+
+// InitCooldown sets this notifier's per-pane cooldown duration.
+func (n *PaneNotifier) InitCooldown(d time.Duration) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cooldown = d
 }
 
 // BuildNotification builds a notification message using notification_template.
@@ -53,65 +78,74 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
 // captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+	return defaultPaneNotifier.SendToPane(paneID, message, enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries)
+}
+
+// SendToPane sends a message to a tmux pane using this notifier's dependencies and cooldown state.
+func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+	if n == nil {
+		n = defaultPaneNotifier
+	}
 	if strings.TrimSpace(message) == "" {
 		err := fmt.Errorf("empty notification body for pane %s", paneID)
-		fmt.Fprintf(os.Stderr, "postman: notification: %v\n", err)
+		n.warnf("postman: notification: %v\n", err)
 		return err
 	}
 	// Rate limit: skip if pane was notified within cooldown window (#273).
 	// paneNotifyCooldown <= 0 disables the limiter (used in tests).
-	paneNotifyMu.Lock()
-	if !bypassCooldown && paneNotifyCooldown > 0 {
-		if last, ok := paneLastNotified[paneID]; ok && time.Since(last) < paneNotifyCooldown {
-			paneNotifyMu.Unlock()
-			fmt.Fprintf(os.Stderr, "postman: notification: cooldown active for pane %s (last=%s, cooldown=%s)\n", paneID, last.Format(time.RFC3339), paneNotifyCooldown)
+	now := n.nowTime()
+	n.mu.Lock()
+	if n.lastNotified == nil {
+		n.lastNotified = make(map[string]time.Time)
+	}
+	cooldown := n.cooldown
+	if !bypassCooldown && cooldown > 0 {
+		if last, ok := n.lastNotified[paneID]; ok && now.Sub(last) < cooldown {
+			n.mu.Unlock()
+			n.warnf("postman: notification: cooldown active for pane %s (last=%s, cooldown=%s)\n", paneID, last.Format(time.RFC3339), cooldown)
 			return nil
 		}
 	}
-	paneLastNotified[paneID] = time.Now()
-	paneNotifyMu.Unlock()
+	n.lastNotified[paneID] = now
+	n.mu.Unlock()
 	// Wrap with protocol sentinels so all pane output is clearly delimited.
 	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
 	// Security: Sanitize message for tmux set-buffer (#301)
 	sanitized, err := sanitizeForTmux(message)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
+		n.warnf("⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
 		return err
 	}
 
 	// 1-2. Set buffer + paste buffer (serialized via bufferMu to prevent
 	// global tmux paste-buffer race when deliveries run concurrently).
 	bufferMu.Lock()
-	cmd := exec.Command("tmux", "set-buffer", sanitized)
-	if err := cmd.Run(); err != nil {
+	if err := n.run("set-buffer", sanitized); err != nil {
 		bufferMu.Unlock()
-		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
+		n.warnf("⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
 		return err
 	}
-	cmd = exec.Command("tmux", "paste-buffer", "-t", paneID)
-	if err := cmd.Run(); err != nil {
+	if err := n.run("paste-buffer", "-t", paneID); err != nil {
 		bufferMu.Unlock()
-		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
+		n.warnf("⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
 		return err
 	}
 	bufferMu.Unlock()
 
 	// 3. Wait enter_delay (runs outside bufferMu — parallel across panes)
-	time.Sleep(enterDelay)
+	n.sleepFor(enterDelay)
 
 	// 4. Send C-m to submit. C-m (carriage return) submits reliably in both Codex CLI and claude-chill.
 	// "Enter" key name adds a newline in Codex CLI multi-line readline instead of submitting (#126).
-	cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
+	if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
+		n.warnf("⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
 		return err
 	}
 
 	// 5. Send additional C-m keystrokes up to enterCount total
 	for i := 1; i < enterCount; i++ {
-		time.Sleep(enterDelay)
-		cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
-		if err := cmd.Run(); err != nil {
+		n.sleepFor(enterDelay)
+		if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
 			return fmt.Errorf("failed to send C-m %d to pane %s: %w", i+1, paneID, err)
 		}
 	}
@@ -119,13 +153,13 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter
 	if verifyDelay > 0 && maxRetries > 0 {
 		for retry := 0; retry < maxRetries; retry++ {
-			time.Sleep(verifyDelay)
-			snapA, errA := paneutil.CaptureContent(paneID)
+			n.sleepFor(verifyDelay)
+			snapA, errA := n.capturePane(paneID)
 			if errA != nil {
 				break // cannot verify; skip
 			}
-			time.Sleep(verifyDelay)
-			snapB, errB := paneutil.CaptureContent(paneID)
+			n.sleepFor(verifyDelay)
+			snapB, errB := n.capturePane(paneID)
 			if errB != nil {
 				break
 			}
@@ -133,12 +167,51 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 				break // pane content changed; Enter was accepted
 			}
 			// Pane unchanged — retry C-m silently so alt-screen TUI panes stay clean.
-			cmd = exec.Command("tmux", "send-keys", "-t", paneID, "C-m")
-			_ = cmd.Run()
+			_ = n.run("send-keys", "-t", paneID, "C-m")
 		}
 	}
 
 	return nil
+}
+
+func (n *PaneNotifier) nowTime() time.Time {
+	if n.now != nil {
+		return n.now()
+	}
+	return time.Now()
+}
+
+func (n *PaneNotifier) sleepFor(d time.Duration) {
+	if n.sleep != nil {
+		n.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+func (n *PaneNotifier) run(args ...string) error {
+	if n.runTmux != nil {
+		return n.runTmux(args...)
+	}
+	return exec.Command("tmux", args...).Run()
+}
+
+func (n *PaneNotifier) capturePane(paneID string) (string, error) {
+	if n.capture != nil {
+		return n.capture(paneID)
+	}
+	return paneutil.CaptureContent(paneID)
+}
+
+func (n *PaneNotifier) stderrWriter() io.Writer {
+	if n.stderr != nil {
+		return n.stderr
+	}
+	return os.Stderr
+}
+
+func (n *PaneNotifier) warnf(format string, args ...any) {
+	_, _ = fmt.Fprintf(n.stderrWriter(), format, args...)
 }
 
 // ResolveEnterCount returns the effective enter count for pane delivery.

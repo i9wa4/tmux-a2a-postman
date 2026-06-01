@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
-	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -22,6 +22,11 @@ import (
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
 func RunPop(args []string) error {
+	return runPopWithContext(defaultCommandContext(), args)
+}
+
+func runPopWithContext(ctx commandContext, args []string) error {
+	ctx = ctx.withDefaults()
 	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "context ID") // Issue #315: forward global --context-id
@@ -41,7 +46,7 @@ func RunPop(args []string) error {
 	if *configPath != "" {
 		inboxArgs = append([]string{"--config", *configPath}, inboxArgs...)
 	}
-	inboxPath, err := cliutil.ResolveInboxPath(inboxArgs)
+	inboxPath, err := ctx.resolveInboxPath(inboxArgs)
 	if err != nil {
 		return err
 	}
@@ -52,12 +57,12 @@ func RunPop(args []string) error {
 	sessionName := filepath.Base(sessionDir)
 	nodeName := filepath.Base(inboxPath)
 
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := ctx.loadConfig(*configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if config.ContextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
+		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command: projection.DaemonSubmitPop,
 			Node:    nodeName,
 		}, daemonSubmitTimeout(cfg.TmuxTimeout))
@@ -65,7 +70,7 @@ func RunPop(args []string) error {
 			return fmt.Errorf("daemon submit pop: %w", err)
 		}
 		if response.Empty {
-			return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
+			return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
 		}
 		remaining := response.UnreadBefore - 1
 		if remaining < 0 {
@@ -75,12 +80,12 @@ func RunPop(args []string) error {
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
-		return writePopMessageOutput(response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
-		return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
+		return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -93,7 +98,7 @@ func RunPop(args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
-				return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
+				return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
 			}
 			sort.Slice(msgs, func(i, j int) bool {
 				return msgs[i].Filename < msgs[j].Filename
@@ -102,7 +107,7 @@ func RunPop(args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
-					return writeEmptyPopOutput(popSessionDiagnosticsForSession(sessionDir))
+					return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
 				}
 				return fmt.Errorf("reading message: %w", err)
 			}
@@ -117,7 +122,7 @@ func RunPop(args []string) error {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -151,6 +156,8 @@ type popMessageOutput struct {
 	ArchivedBodyReadInstruction string                  `json:"archived_body_read_instruction,omitempty"`
 	RuntimeContext              *runtimecontext.Summary `json:"runtime_context,omitempty"`
 	RuntimeContextError         string                  `json:"runtime_context_error,omitempty"`
+	PopReceiptPath              string                  `json:"pop_receipt_path,omitempty"`
+	PopReceiptAbsolutePath      string                  `json:"pop_receipt_absolute_path,omitempty"`
 	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
 }
 
@@ -167,11 +174,11 @@ type popSessionDiagnostics struct {
 
 const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
-func writeEmptyPopOutput(diagnostics *popSessionDiagnostics) error {
-	return json.NewEncoder(os.Stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
+func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics) error {
+	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
 }
 
-func writePopMessageOutput(content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics) error {
+func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
@@ -185,7 +192,28 @@ func writePopMessageOutput(content, filename, markdownPath string, unreadBefore,
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
-	return json.NewEncoder(os.Stdout).Encode(output)
+	receiptPath, err := popReceiptPath(markdownPath)
+	if err != nil {
+		return err
+	}
+	if receiptPath != "" {
+		output.PopReceiptPath = displayMarkdownPath(receiptPath)
+		if output.PopReceiptPath != receiptPath {
+			output.PopReceiptAbsolutePath = receiptPath
+		}
+	}
+	payload, err := json.Marshal(output)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if receiptPath != "" {
+		if err := os.WriteFile(receiptPath, payload, 0o600); err != nil {
+			return fmt.Errorf("writing pop receipt: %w", err)
+		}
+	}
+	_, err = stdout.Write(payload)
+	return err
 }
 
 func popSessionDiagnosticsForSession(sessionDir string) *popSessionDiagnostics {
@@ -304,6 +332,26 @@ func sessionDirFromArchivedMarkdownPath(markdownPath string) string {
 		return ""
 	}
 	return filepath.Dir(filepath.Dir(markdownPath))
+}
+
+func popReceiptPath(markdownPath string) (string, error) {
+	if markdownPath == "" {
+		return "", nil
+	}
+	dir := filepath.Dir(markdownPath)
+	if filepath.Base(dir) != "read" {
+		return "", nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("creating pop receipt directory: %w", err)
+	}
+	filename := filepath.Base(markdownPath)
+	ext := filepath.Ext(filename)
+	stem := strings.TrimSuffix(filename, ext)
+	if stem == "" {
+		stem = filename
+	}
+	return filepath.Join(dir, stem+".pop.json"), nil
 }
 
 func displayMarkdownPath(markdownPath string) string {

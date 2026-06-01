@@ -2,21 +2,59 @@ package store
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// DeadLetterPlan is the pure path plan for writing or moving a message to dead-letter/.
+type DeadLetterPlan struct {
+	SessionDir      string
+	Filename        string
+	Suffix          string
+	DeadLetterDir   string
+	DestinationPath string
+}
+
 // DeadLetterPath builds the dead-letter destination path with a reason suffix.
 func DeadLetterPath(sessionDir, filename, suffix string) string {
+	return PlanDeadLetterMessage(sessionDir, filename, suffix).DestinationPath
+}
+
+// PlanDeadLetterMessage builds the dead-letter destination path without touching the filesystem.
+func PlanDeadLetterMessage(sessionDir, filename, suffix string) DeadLetterPlan {
 	base := strings.TrimSuffix(filename, ".md")
-	return filepath.Join(sessionDir, "dead-letter", base+suffix+".md")
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	return DeadLetterPlan{
+		SessionDir:      sessionDir,
+		Filename:        filename,
+		Suffix:          suffix,
+		DeadLetterDir:   deadLetterDir,
+		DestinationPath: filepath.Join(deadLetterDir, base+suffix+".md"),
+	}
+}
+
+type deadLetterFileOps struct {
+	lstat     func(string) (fs.FileInfo, error)
+	rename    func(string, string) error
+	writeFile func(string, []byte, fs.FileMode) error
+}
+
+var osDeadLetterFileOps = deadLetterFileOps{
+	lstat:     os.Lstat,
+	rename:    os.Rename,
+	writeFile: os.WriteFile,
 }
 
 // ValidateDeadLetterTarget rejects symlinked dead-letter destinations.
 func ValidateDeadLetterTarget(dstPath string) error {
+	return validateDeadLetterTargetWithOps(dstPath, osDeadLetterFileOps)
+}
+
+func validateDeadLetterTargetWithOps(dstPath string, ops deadLetterFileOps) error {
 	deadLetterDir := filepath.Dir(dstPath)
-	dirInfo, err := os.Lstat(deadLetterDir)
+	dirInfo, err := ops.lstat(deadLetterDir)
 	if err != nil {
 		return fmt.Errorf("lstat dead-letter dir: %w", err)
 	}
@@ -24,7 +62,7 @@ func ValidateDeadLetterTarget(dstPath string) error {
 		return fmt.Errorf("dead-letter target dir is symlink: %s", deadLetterDir)
 	}
 
-	dstInfo, err := os.Lstat(dstPath)
+	dstInfo, err := ops.lstat(dstPath)
 	if err == nil {
 		if dstInfo.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("dead-letter target is symlink: %s", dstPath)
@@ -37,18 +75,26 @@ func ValidateDeadLetterTarget(dstPath string) error {
 
 // MoveToDeadLetter moves a live mailbox file to a validated dead-letter path.
 func MoveToDeadLetter(srcPath, dstPath string) error {
-	if err := ValidateDeadLetterTarget(dstPath); err != nil {
+	return moveToDeadLetterWithOps(srcPath, dstPath, osDeadLetterFileOps)
+}
+
+func moveToDeadLetterWithOps(srcPath, dstPath string, ops deadLetterFileOps) error {
+	if err := validateDeadLetterTargetWithOps(dstPath, ops); err != nil {
 		return err
 	}
-	return os.Rename(srcPath, dstPath)
+	return ops.rename(srcPath, dstPath)
 }
 
 // WriteDeadLetterFile writes a dead-letter record to a validated path.
 func WriteDeadLetterFile(dstPath string, content []byte) error {
-	if err := ValidateDeadLetterTarget(dstPath); err != nil {
+	return writeDeadLetterFileWithOps(dstPath, content, osDeadLetterFileOps)
+}
+
+func writeDeadLetterFileWithOps(dstPath string, content []byte, ops deadLetterFileOps) error {
+	if err := validateDeadLetterTargetWithOps(dstPath, ops); err != nil {
 		return err
 	}
-	return os.WriteFile(dstPath, content, 0o600)
+	return ops.writeFile(dstPath, content, 0o600)
 }
 
 // DeliverPostToInbox moves a live post file into a recipient inbox.
@@ -95,23 +141,86 @@ func ShadowRelativePath(sessionDir, fullPath string) string {
 	return rel
 }
 
+// InboxArchivePlan is the pure path plan for moving an inbox message to read/.
+type InboxArchivePlan struct {
+	SourcePath string
+	Filename   string
+	SessionDir string
+	ReadDir    string
+	ReadPath   string
+}
+
+// PlanArchiveInboxMessage derives the read archive path from an absolute inbox message path.
+func PlanArchiveInboxMessage(absPath, filename string) (InboxArchivePlan, error) {
+	if absPath == "" {
+		return InboxArchivePlan{}, fmt.Errorf("archive inbox message: source path is empty")
+	}
+	if !filepath.IsAbs(absPath) {
+		return InboxArchivePlan{}, fmt.Errorf("archive inbox message: source path must be absolute: %s", absPath)
+	}
+	if filename == "" || filename != filepath.Base(filename) {
+		return InboxArchivePlan{}, fmt.Errorf("archive inbox message: filename must be a base name: %s", filename)
+	}
+
+	sourcePath := filepath.Clean(absPath)
+	if filepath.Base(sourcePath) != filename {
+		return InboxArchivePlan{}, fmt.Errorf("archive inbox message: source filename %q does not match %q", filepath.Base(sourcePath), filename)
+	}
+
+	nodeInboxDir := filepath.Dir(sourcePath)
+	inboxDir := filepath.Dir(nodeInboxDir)
+	sessionDir := filepath.Dir(inboxDir)
+	if filepath.Base(inboxDir) != "inbox" || sessionDir == "." || sessionDir == string(filepath.Separator) {
+		return InboxArchivePlan{}, fmt.Errorf("archive inbox message: source path is not under <session>/inbox/<node>: %s", sourcePath)
+	}
+
+	readDir := filepath.Join(sessionDir, "read")
+	return InboxArchivePlan{
+		SourcePath: sourcePath,
+		Filename:   filename,
+		SessionDir: sessionDir,
+		ReadDir:    readDir,
+		ReadPath:   filepath.Join(readDir, filename),
+	}, nil
+}
+
+type archiveFileOps struct {
+	mkdirAll func(string, fs.FileMode) error
+	stat     func(string) (fs.FileInfo, error)
+	remove   func(string) error
+	rename   func(string, string) error
+}
+
+var osArchiveFileOps = archiveFileOps{
+	mkdirAll: os.MkdirAll,
+	stat:     os.Stat,
+	remove:   os.Remove,
+	rename:   os.Rename,
+}
+
 // ArchiveInboxMessage moves an inbox message to read/ or removes duplicates.
 func ArchiveInboxMessage(absPath, filename string) (string, error) {
-	readDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(absPath))), "read")
-	if err := os.MkdirAll(readDir, 0o700); err != nil {
+	plan, err := PlanArchiveInboxMessage(absPath, filename)
+	if err != nil {
+		return "", err
+	}
+	return archiveInboxMessageWithOps(plan, osArchiveFileOps)
+}
+
+func archiveInboxMessageWithOps(plan InboxArchivePlan, ops archiveFileOps) (string, error) {
+	if err := ops.mkdirAll(plan.ReadDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating read directory: %w", err)
 	}
-	dst := filepath.Join(readDir, filename)
-	if _, err := os.Stat(dst); err == nil {
-		if err := os.Remove(absPath); err != nil {
+	if _, err := ops.stat(plan.ReadPath); err == nil {
+		if err := ops.remove(plan.SourcePath); err != nil {
 			return "", fmt.Errorf("archiving message: %w", err)
 		}
-		return dst, nil
+		return plan.ReadPath, nil
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("archiving message: %w", err)
 	}
-	if err := os.Rename(absPath, dst); err != nil {
+	if err := ops.rename(plan.SourcePath, plan.ReadPath); err != nil {
 		return "", fmt.Errorf("archiving message: %w", err)
 	}
-	return dst, nil
+	return plan.ReadPath, nil
 }

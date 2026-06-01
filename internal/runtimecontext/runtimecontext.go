@@ -1,6 +1,7 @@
 package runtimecontext
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -54,9 +55,16 @@ type GitContext struct {
 }
 
 type RuntimeMetadata struct {
-	Name    string `json:"name,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Profile string `json:"profile,omitempty"`
+	Name          string          `json:"name,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	Profile       string          `json:"profile,omitempty"`
+	LaunchCommand string          `json:"launch_command,omitempty"`
+	AddDir        *AddDirMetadata `json:"add_dir,omitempty"`
+}
+
+type AddDirMetadata struct {
+	Path    string `json:"path,omitempty"`
+	Context string `json:"context,omitempty"`
 }
 
 type Freshness struct {
@@ -76,6 +84,7 @@ type Summary struct {
 	Scope                       string        `json:"scope"`
 	SnapshotID                  string        `json:"snapshot_id"`
 	CapturedAt                  string        `json:"captured_at"`
+	YouWereLaunchedWith         string        `json:"you_were_launched_with,omitempty"`
 	ConsumerPrecedence          []string      `json:"consumer_precedence"`
 	Freshness                   Freshness     `json:"freshness"`
 	Fields                      SummaryFields `json:"fields"`
@@ -142,7 +151,11 @@ func BuildSnapshot(opts BuildOptions) Snapshot {
 	tracker := redactionTracker{}
 	displayCWD := displayPath(cwd)
 	displayCWD = tracker.sanitizeString(displayCWD, defaultStringLimit)
-	runtimeMetadata := sanitizeRuntimeMetadata(opts.Runtime, &tracker)
+	runtimeMetadata := opts.Runtime
+	if runtimeMetadata == (RuntimeMetadata{}) {
+		runtimeMetadata = CollectRuntimeMetadata(opts.PaneID)
+	}
+	runtimeMetadataPtr := sanitizeRuntimeMetadata(runtimeMetadata, &tracker)
 	gitContext := collectGitContext(cwd, &tracker)
 	capturedAt := now.Format(time.RFC3339)
 	snapshot := Snapshot{
@@ -158,7 +171,7 @@ func BuildSnapshot(opts BuildOptions) Snapshot {
 		PaneID:        tracker.sanitizeString(opts.PaneID, defaultStringLimit),
 		CWD:           displayCWD,
 		Git:           gitContext,
-		Runtime:       runtimeMetadata,
+		Runtime:       runtimeMetadataPtr,
 		Freshness:     Freshness{State: "fresh", AgeSeconds: 0},
 		Redaction:     tracker.redaction(),
 	}
@@ -270,12 +283,17 @@ func SummaryFromSnapshot(snapshot Snapshot, absolutePath string, sizeBytes int, 
 	if now.IsZero() {
 		now = time.Now()
 	}
+	youWereLaunchedWith := ""
+	if snapshot.Runtime != nil {
+		youWereLaunchedWith = snapshot.Runtime.LaunchCommand
+	}
 	return Summary{
-		SchemaVersion: SchemaVersion,
-		Semantics:     SemanticsMetadataNotInstructions,
-		Scope:         snapshot.Scope,
-		SnapshotID:    snapshot.SnapshotID,
-		CapturedAt:    snapshot.CapturedAt,
+		SchemaVersion:       SchemaVersion,
+		Semantics:           SemanticsMetadataNotInstructions,
+		Scope:               snapshot.Scope,
+		SnapshotID:          snapshot.SnapshotID,
+		CapturedAt:          snapshot.CapturedAt,
+		YouWereLaunchedWith: youWereLaunchedWith,
 		ConsumerPrecedence: []string{
 			"system_developer_rules",
 			"repository_rules",
@@ -349,6 +367,18 @@ func RenderSenderMarkdown(snapshot Snapshot) string {
 		if runtime != "" {
 			lines = append(lines, "- runtime: "+escapeMarkdown(runtime))
 		}
+		if snapshot.Runtime.LaunchCommand != "" {
+			lines = append(lines, "- launch_command: "+escapeMarkdown(snapshot.Runtime.LaunchCommand))
+		}
+		if snapshot.Runtime.AddDir != nil {
+			addDir := strings.TrimSpace(snapshot.Runtime.AddDir.Path)
+			if snapshot.Runtime.AddDir.Context != "" {
+				addDir = strings.TrimSpace(addDir + " - " + snapshot.Runtime.AddDir.Context)
+			}
+			if addDir != "" {
+				lines = append(lines, "- add_dir: "+escapeMarkdown(addDir))
+			}
+		}
 	}
 	lines = append(
 		lines,
@@ -421,10 +451,137 @@ func sanitizeRuntimeMetadata(runtime RuntimeMetadata, tracker *redactionTracker)
 	runtime.Name = tracker.sanitizeString(runtime.Name, defaultStringLimit)
 	runtime.Model = tracker.sanitizeString(runtime.Model, defaultStringLimit)
 	runtime.Profile = tracker.sanitizeString(runtime.Profile, defaultStringLimit)
-	if runtime.Name == "" && runtime.Model == "" && runtime.Profile == "" {
+	runtime.LaunchCommand = tracker.sanitizeString(runtime.LaunchCommand, defaultStringLimit)
+	if runtime.AddDir != nil {
+		addDir := *runtime.AddDir
+		addDir.Path = tracker.sanitizeString(displayPath(addDir.Path), defaultStringLimit)
+		addDir.Context = tracker.sanitizeString(addDir.Context, defaultStringLimit)
+		if addDir.Path == "" && addDir.Context == "" {
+			runtime.AddDir = nil
+		} else {
+			runtime.AddDir = &addDir
+		}
+	}
+	if runtime.Name == "" && runtime.Model == "" && runtime.Profile == "" && runtime.LaunchCommand == "" && runtime.AddDir == nil {
 		return nil
 	}
 	return &runtime
+}
+
+func CollectRuntimeMetadata(paneID string) RuntimeMetadata {
+	launchCommand := detectLaunchCommand(paneID)
+	return RuntimeMetadataFromLaunchCommand(launchCommand, os.Getenv("SUBDIR"))
+}
+
+func RuntimeMetadataFromLaunchCommand(launchCommand, fallbackSubdir string) RuntimeMetadata {
+	metadata := RuntimeMetadata{
+		LaunchCommand: launchCommand,
+	}
+	addDir := resolveAddDir(launchCommand, fallbackSubdir)
+	if addDir != "" {
+		metadata.AddDir = &AddDirMetadata{
+			Path:    addDir,
+			Context: readAddDirSummary(addDir),
+		}
+	}
+	return metadata
+}
+
+func detectLaunchCommand(paneID string) string {
+	if override := strings.TrimSpace(os.Getenv("TMUX_A2A_POSTMAN_LAUNCH_COMMAND")); override != "" {
+		return override
+	}
+	if paneID == "" {
+		paneID = os.Getenv("TMUX_PANE")
+	}
+	if paneID == "" {
+		return ""
+	}
+	paneTTY := strings.TrimSpace(commandOutput("", "tmux", "display-message", "-t", paneID, "-p", "#{pane_tty}"))
+	paneTTY = strings.TrimPrefix(paneTTY, "/dev/")
+	if paneTTY == "" {
+		return ""
+	}
+	launchPID := firstLine(commandOutput("", "pgrep", "-f", "-t", paneTTY, `(^|/)(claude|codex)( |$)`))
+	if launchPID == "" {
+		return ""
+	}
+	return strings.TrimSpace(commandOutput("", "ps", "-o", "command=", "-p", launchPID))
+}
+
+func resolveAddDir(launchCommand, fallbackSubdir string) string {
+	addDir := extractAddDir(launchCommand)
+	if addDir != "" && isDir(addDir) {
+		return addDir
+	}
+	if fallbackSubdir != "" && isDir(fallbackSubdir) {
+		return fallbackSubdir
+	}
+	return ""
+}
+
+func extractAddDir(launchCommand string) string {
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`--add-dir[[:space:]]+"([^"]+)"`),
+		regexp.MustCompile(`--add-dir[[:space:]]+'([^']+)'`),
+		regexp.MustCompile(`--add-dir[[:space:]]+([^[:space:]]+)`),
+	} {
+		match := pattern.FindStringSubmatch(launchCommand)
+		if len(match) == 2 {
+			return strings.TrimSpace(match[1])
+		}
+	}
+	return ""
+}
+
+func readAddDirSummary(addDir string) string {
+	readmePath := filepath.Join(addDir, "README.md")
+	file, err := os.Open(readmePath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var paragraph []string
+	inFrontmatter := false
+	firstLine := true
+	flush := func() string {
+		text := strings.TrimSpace(strings.Join(paragraph, " "))
+		paragraph = nil
+		if text == "" || strings.HasPrefix(text, "#") || strings.HasPrefix(text, "![") || strings.HasPrefix(text, "[![") {
+			return ""
+		}
+		return text
+	}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if firstLine && line == "---" {
+			inFrontmatter = true
+			firstLine = false
+			continue
+		}
+		firstLine = false
+		if inFrontmatter {
+			if line == "---" || line == "..." {
+				inFrontmatter = false
+			}
+			continue
+		}
+		if line == "" {
+			if text := flush(); text != "" {
+				return text
+			}
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	return flush()
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func collectGitContext(cwd string, tracker *redactionTracker) *GitContext {
@@ -446,11 +603,27 @@ func collectGitContext(cwd string, tracker *redactionTracker) *GitContext {
 
 func gitOutput(cwd string, args ...string) string {
 	cmdArgs := append([]string{"-C", cwd}, args...)
-	out, err := exec.Command("git", cmdArgs...).Output()
+	return commandOutput("", "git", cmdArgs...)
+}
+
+func commandOutput(dir, name string, args ...string) string {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func firstLine(value string) string {
+	value = strings.TrimSpace(value)
+	if idx := strings.IndexByte(value, '\n'); idx >= 0 {
+		return strings.TrimSpace(value[:idx])
+	}
+	return value
 }
 
 func freshness(capturedAt string, now time.Time) Freshness {
@@ -586,6 +759,8 @@ func compactSummaryJSON(summary Summary, limit int) ([]byte, error) {
 		summary.Fields.Runtime.Name = ""
 		summary.Fields.Runtime.Model = ""
 		summary.Fields.Runtime.Profile = ""
+		summary.Fields.Runtime.LaunchCommand = ""
+		summary.Fields.Runtime.AddDir = nil
 	}
 	payload, err = marshalSummary(summary)
 	if err != nil || len(payload) <= limit {
@@ -608,6 +783,7 @@ func clampSummaryStrings(summary *Summary, limit int) {
 	summary.Scope = truncateUTF8(summary.Scope, limit)
 	summary.SnapshotID = truncateUTF8(summary.SnapshotID, limit)
 	summary.CapturedAt = truncateUTF8(summary.CapturedAt, limit)
+	summary.YouWereLaunchedWith = truncateUTF8(summary.YouWereLaunchedWith, limit)
 	summary.ContentHash = truncateUTF8(summary.ContentHash, limit)
 	summary.ArchivedContextPath = truncateUTF8(summary.ArchivedContextPath, limit)
 	summary.Fields.Role = truncateUTF8(summary.Fields.Role, limit)
@@ -628,6 +804,11 @@ func clampSummaryStrings(summary *Summary, limit int) {
 		summary.Fields.Runtime.Name = truncateUTF8(summary.Fields.Runtime.Name, limit)
 		summary.Fields.Runtime.Model = truncateUTF8(summary.Fields.Runtime.Model, limit)
 		summary.Fields.Runtime.Profile = truncateUTF8(summary.Fields.Runtime.Profile, limit)
+		summary.Fields.Runtime.LaunchCommand = truncateUTF8(summary.Fields.Runtime.LaunchCommand, limit)
+		if summary.Fields.Runtime.AddDir != nil {
+			summary.Fields.Runtime.AddDir.Path = truncateUTF8(summary.Fields.Runtime.AddDir.Path, limit)
+			summary.Fields.Runtime.AddDir.Context = truncateUTF8(summary.Fields.Runtime.AddDir.Context, limit)
+		}
 	}
 }
 

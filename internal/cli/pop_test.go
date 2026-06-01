@@ -63,6 +63,99 @@ func TestRunPop_HelpHidesContextIDFlag(t *testing.T) {
 	}
 }
 
+func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-context"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	inboxPath := filepath.Join(inboxDir, filename)
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte(messageFixture("orchestrator", "worker", "context stdout payload")), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			if strings.Join(args, " ") != "--context-id "+contextID {
+				t.Fatalf("resolveInboxPath args = %#v", args)
+			}
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			if path != "" {
+				t.Fatalf("config path = %q, want empty", path)
+			}
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			if baseDir != tmpDir || resolvedContextID != contextID || sessionName != "test-session" {
+				t.Fatalf("ownership args = %q/%q/%q", baseDir, resolvedContextID, sessionName)
+			}
+			return false
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout.String())
+	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
+		t.Fatalf("MarkdownPath = %q, want read path", payload.MarkdownPath)
+	}
+	if !strings.Contains(readPopArchiveForTest(t, payload), "context stdout payload") {
+		t.Fatalf("archived body missing expected payload")
+	}
+}
+
+func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-submit-context"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+
+	var stdout bytes.Buffer
+	var gotRequest projection.DaemonSubmitRequest
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			if gotSessionDir != sessionDir {
+				t.Fatalf("sessionDir = %q, want %q", gotSessionDir, sessionDir)
+			}
+			gotRequest = request
+			return projection.DaemonSubmitResponse{
+				Command:      request.Command,
+				Filename:     filename,
+				Content:      messageFixture("orchestrator", "worker", "daemon dependency payload"),
+				UnreadBefore: 1,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	if gotRequest.Command != projection.DaemonSubmitPop || gotRequest.Node != "worker" {
+		t.Fatalf("daemon request = %#v, want pop for worker", gotRequest)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout.String())
+	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
+		t.Fatalf("MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+	}
+}
+
 func TestRunPop_RequeuedMessagePreservesOriginalPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
@@ -307,10 +400,10 @@ func TestRunPop_IncludesFilesystemSessionDiagnostics(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	diag := payload.SessionDiagnostics
-	if diag == nil {
+	if payload.SessionDiagnostics == nil {
 		t.Fatalf("SessionDiagnostics missing: %s", stdout)
 	}
+	diag := *payload.SessionDiagnostics
 	if diag.Source != "filesystem" {
 		t.Fatalf("diagnostics source = %q, want filesystem", diag.Source)
 	}
@@ -343,10 +436,12 @@ func TestPopSessionDiagnosticsUsesInputRequestProjection(t *testing.T) {
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
 
-	diag := popSessionDiagnosticsForSession(sessionDir)
-	if diag == nil {
+	diagnostics := popSessionDiagnosticsForSession(sessionDir)
+	if diagnostics == nil {
 		t.Fatal("popSessionDiagnosticsForSession returned nil")
+		return
 	}
+	diag := *diagnostics
 	if diag.Source != "projection" {
 		t.Fatalf("diagnostics source = %q, want projection", diag.Source)
 	}
@@ -612,6 +707,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	filename := "20260520-010103-from-orchestrator-to-worker.md"
 	capturedAt := time.Date(2026, time.May, 20, 1, 1, 3, 0, time.UTC)
+	launchCommand := "/usr/bin/codex --yolo --add-dir /workspace/internal --model gpt-5.5"
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:         capturedAt,
 		Scope:       "sender",
@@ -621,6 +717,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		Node:        "orchestrator",
 		PaneID:      "%42",
 		CWD:         filepath.Join(tmpDir, "workspace"),
+		Runtime:     runtimecontext.RuntimeMetadata{LaunchCommand: launchCommand},
 	})
 	if _, err := runtimecontext.SaveSnapshot(sessionDir, snapshot); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
@@ -647,6 +744,23 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
+	receiptPath := payload.PopReceiptAbsolutePath
+	if receiptPath == "" {
+		receiptPath = payload.PopReceiptPath
+	}
+	if receiptPath == "" {
+		t.Fatalf("payload missing pop receipt path: %#v", payload)
+	}
+	if filepath.Base(receiptPath) != "20260520-010103-from-orchestrator-to-worker.pop.json" {
+		t.Fatalf("receipt path = %q, want filename.pop.json", receiptPath)
+	}
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("ReadFile pop receipt: %v", err)
+	}
+	if string(receiptBytes) != stdout {
+		t.Fatalf("pop receipt did not persist exact stdout:\nreceipt=%s\nstdout=%s", string(receiptBytes), stdout)
+	}
 	if payload.RuntimeContext == nil {
 		t.Fatalf("payload.RuntimeContext is nil; stdout=%s", stdout)
 	}
@@ -655,6 +769,15 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	if payload.RuntimeContext.Fields.Role != "orchestrator" {
 		t.Fatalf("runtime context role = %q, want orchestrator", payload.RuntimeContext.Fields.Role)
+	}
+	if payload.RuntimeContext.YouWereLaunchedWith != launchCommand {
+		t.Fatalf("runtime context launch command = %q, want %q", payload.RuntimeContext.YouWereLaunchedWith, launchCommand)
+	}
+	if payload.RuntimeContext.Fields.Runtime == nil || payload.RuntimeContext.Fields.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("runtime context fields runtime = %#v, want launch command", payload.RuntimeContext.Fields.Runtime)
+	}
+	if !strings.Contains(stdout, `"you_were_launched_with"`) {
+		t.Fatalf("pop JSON missing you_were_launched_with key:\n%s", stdout)
 	}
 	if payload.RuntimeContext.ContentHash != snapshot.ContentHash {
 		t.Fatalf("runtime context hash = %q, want %q", payload.RuntimeContext.ContentHash, snapshot.ContentHash)
