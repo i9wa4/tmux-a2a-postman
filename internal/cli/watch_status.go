@@ -64,14 +64,12 @@ func RunWatchStatus(stdout io.Writer, args []string) error {
 	defer stop()
 
 	return runWatchStatus(ctx, stdout, watchStatusRunOptions{
-		Interval: *interval,
-		Format:   *outputFormat,
-		Severity: *severity,
-		NoColor:  *noColor,
-		NoClear:  *noClear,
-		Collector: func() (status.AllSessionStatus, error) {
-			return target.collect()
-		},
+		Interval:  *interval,
+		Format:    *outputFormat,
+		Severity:  *severity,
+		NoColor:   *noColor,
+		NoClear:   *noClear,
+		Collector: target.collect,
 	})
 }
 
