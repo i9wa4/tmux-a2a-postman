@@ -400,10 +400,10 @@ func TestRunPop_IncludesFilesystemSessionDiagnostics(t *testing.T) {
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
-	diag := payload.SessionDiagnostics
-	if diag == nil {
+	if payload.SessionDiagnostics == nil {
 		t.Fatalf("SessionDiagnostics missing: %s", stdout)
 	}
+	diag := *payload.SessionDiagnostics
 	if diag.Source != "filesystem" {
 		t.Fatalf("diagnostics source = %q, want filesystem", diag.Source)
 	}
@@ -436,10 +436,12 @@ func TestPopSessionDiagnosticsUsesInputRequestProjection(t *testing.T) {
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, "m1.md", "critic", "worker", content, now.Add(time.Second))
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "m1.md", "critic", "worker", content, now.Add(2*time.Second))
 
-	diag := popSessionDiagnosticsForSession(sessionDir)
-	if diag == nil {
+	diagnostics := popSessionDiagnosticsForSession(sessionDir)
+	if diagnostics == nil {
 		t.Fatal("popSessionDiagnosticsForSession returned nil")
+		return
 	}
+	diag := *diagnostics
 	if diag.Source != "projection" {
 		t.Fatalf("diagnostics source = %q, want projection", diag.Source)
 	}
