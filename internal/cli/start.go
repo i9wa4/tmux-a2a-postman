@@ -127,6 +127,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	if noTUI {
+		daemon.ApplyHeadlessAutoPingDelay(cfg)
+	}
 
 	// Parse edge definitions for routing
 	adjacency, err := config.ParseEdges(cfg.Edges)

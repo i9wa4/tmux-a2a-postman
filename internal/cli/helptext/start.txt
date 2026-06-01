@@ -2,8 +2,21 @@ start — start the daemon
 
 Usage:
   tmux-a2a-postman start
+  tmux-a2a-postman start --no-tui
   tmux-a2a-postman start --help
 
 Output:
   Starts the daemon with the default TUI surface and writes operational logs
   to postman.log.
+
+No-TUI operation:
+  `start --no-tui` runs the same daemon loop without the TUI. Startup and
+  newly discovered auto-PINGs use a short headless delay cap so discovered
+  nodes can wake without pressing `p`; `auto_ping_delay_seconds = 0` still
+  makes them immediate.
+
+Diagnostics:
+  If daemon PING mail is absent, delayed, or stale, inspect `postman.log` and
+  `tmux-a2a-postman get-status --debug`. Auto-PING evidence distinguishes
+  pending, delivered, cooldown-suppressed, ownership-blocked, and retrying
+  full-inbox cases.
