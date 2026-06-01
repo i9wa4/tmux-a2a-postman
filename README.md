@@ -282,6 +282,15 @@ Implement the requested change and report DONE or BLOCKED.
 POSTMAN_BODY
 ```
 
+When `postman.toml` registers workspace roots, `send-heredoc` also accepts
+tree aliases and writes the compiled explicit recipient into the message:
+
+```sh
+tmux-a2a-postman send-heredoc --to @parent/orchestrator <<'POSTMAN_BODY'
+Coordinate this project with the nearest registered parent session.
+POSTMAN_BODY
+```
+
 Read the next inbox message:
 
 ```sh
@@ -364,11 +373,32 @@ Most users only maintain `postman.md` under the global config directory:
 - `~/.config/tmux-a2a-postman/` fallback when `XDG_CONFIG_HOME` is unset
 
 `postman.toml` is optional. Embedded defaults are enough for the daemon to run;
-add TOML only when you need to change daemon-level defaults.
+add TOML only when you need to change daemon-level defaults or register
+workspace roots for tree aliases.
 
 The daemon reads global configuration once at startup. Restart it after editing
 `postman.md`, `postman.toml`, or `nodes/*`; runtime watchers continue to handle
 mail delivery, read/archive moves, and daemon submit queues.
+
+Workspace roots are explicit TOML registrations; they are not inferred from
+checkout layout or live pane cwd. Status output reports root labels and stable
+IDs, not root paths. Duplicate root paths are reported as ambiguous. The nearest
+registered parent and nearest registered children are used for aliases:
+
+```toml
+[[postman.workspace_roots]]
+session = "repo"
+label = "repo"
+root = "/path/to/repo"
+
+[[postman.workspace_roots]]
+session = "project"
+label = "api"
+root = "/path/to/repo/apps/api"
+```
+
+Supported aliases are `@parent/<node>`, `@child/<node>` when there is exactly
+one nearest child, and `@child/<label-or-session-or-id>/<node>`.
 
 In `postman.md`, keep conversation edges in the Mermaid `edges` graph, durable
 role guidance under role headings, and optional `skill_path` catalogs in the

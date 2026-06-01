@@ -24,6 +24,11 @@ archived path after `pop`; prefer `markdown_absolute_path` when present.
 and recipient before delivery. A failed `send-heredoc` is stronger evidence
 than stale footer text.
 
+When workspace roots are registered in `postman.toml`, `send-heredoc --to`
+accepts tree aliases (`@parent/<node>`, `@child/<node>`, or
+`@child/<label-or-session-or-id>/<node>`). The CLI compiles a successful alias
+to an explicit `session:node` recipient before writing the message.
+
 Use `--reply-required` when the recipient must answer. Use `--no-reply` for
 terminal or informational mail. Without either flag, reply policy is resolved
 from message metadata and ordinary message bodies are usually no-reply.

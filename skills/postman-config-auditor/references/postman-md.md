@@ -287,6 +287,8 @@ Important rules:
 - Split `nodes/*.md` files update only non-empty role and template fields.
 - `postman.md` edges replace lower-layer edges only when the parsed edge list is
   non-empty.
+- `workspace_roots` is TOML-only. `postman.md` does not parse or override
+  registered workspace roots.
 - A Mermaid `ui_node` class in the `edges` graph sets `ui_node` when
   frontmatter does not set it. Frontmatter `ui_node` wins within the same
   Markdown file.

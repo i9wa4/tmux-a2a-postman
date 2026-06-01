@@ -238,6 +238,54 @@ edges = [
 	}
 }
 
+func TestLoadConfig_WorkspaceRoots(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+edges = ["messenger --- worker"]
+
+[[postman.workspace_roots]]
+session = "repo"
+label = "repo"
+root = "/workspace/repo"
+id = "repo-root"
+
+[[postman.workspace_roots]]
+session = "project"
+label = "api"
+root = "/workspace/repo/apps/api"
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if len(cfg.WorkspaceRoots) != 2 {
+		t.Fatalf("WorkspaceRoots length = %d, want 2", len(cfg.WorkspaceRoots))
+	}
+	if got := cfg.WorkspaceRoots[0]; got.SessionName != "repo" || got.Label != "repo" || got.Root != "/workspace/repo" || got.RootID != "repo-root" {
+		t.Fatalf("WorkspaceRoots[0] = %#v, want repo root", got)
+	}
+	if got := cfg.WorkspaceRoots[1]; got.SessionName != "project" || got.Label != "api" || got.Root != "/workspace/repo/apps/api" {
+		t.Fatalf("WorkspaceRoots[1] = %#v, want project root", got)
+	}
+}
+
 func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

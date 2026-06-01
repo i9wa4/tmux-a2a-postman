@@ -245,6 +245,84 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	}
 }
 
+func TestCollectLiveSessionStatus_IncludesRedactedWorkspaceTree(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "20260601-tree"
+	sessionName := "repo-session"
+	repoRoot := filepath.Join(tmpDir, "repo")
+	apiRoot := filepath.Join(repoRoot, "apps", "api")
+	pkgRoot := filepath.Join(apiRoot, "pkg")
+	docsRoot := filepath.Join(repoRoot, "docs")
+
+	for _, session := range []string{"repo-session", "api-session", "pkg-session", "docs-session"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, contextID, session, "inbox", "worker"), 0o755); err != nil {
+			t.Fatalf("MkdirAll inbox for %s: %v", session, err)
+		}
+	}
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  \"list-panes -a -F\"*)\n" +
+		"    printf '%s\\n' '%11\t" + contextID + "\trepo-session\tworker' '%12\t" + contextID + "\tapi-session\tworker' '%13\t" + contextID + "\tpkg-session\tworker' '%14\t" + contextID + "\tdocs-session\tworker'\n" +
+		"    ;;\n" +
+		"  \"list-windows -t repo-session\"*)\n" +
+		"    printf '%s\\n' '0'\n" +
+		"    ;;\n" +
+		"  \"list-panes -t repo-session:0\"*)\n" +
+		"    printf '%s\\n' '0\t0\t%11\tworker\tclaude'\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	health, err := collectLiveSessionStatus(tmpDir, contextID, sessionName, &config.Config{
+		Edges: []string{"worker --- orchestrator"},
+		WorkspaceRoots: []config.WorkspaceRootConfig{
+			{SessionName: "repo-session", Label: "repo", Root: repoRoot},
+			{SessionName: "api-session", Label: "api", Root: apiRoot},
+			{SessionName: "pkg-session", Label: "pkg", Root: pkgRoot},
+			{SessionName: "docs-session", Label: "docs", Root: docsRoot},
+		},
+	})
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus: %v", err)
+	}
+	if health.WorkspaceTree == nil || health.WorkspaceTree.Root == nil {
+		t.Fatalf("WorkspaceTree = %#v, want root", health.WorkspaceTree)
+	}
+	if health.WorkspaceTree.Root.SessionName != "repo-session" || health.WorkspaceTree.Root.Label != "repo" || health.WorkspaceTree.Root.RootID == "" {
+		t.Fatalf("workspace root = %#v, want redacted repo-session root", health.WorkspaceTree.Root)
+	}
+	childSessions := []string{}
+	for _, child := range health.WorkspaceTree.Children {
+		childSessions = append(childSessions, child.SessionName)
+		if child.RootID == "" {
+			t.Fatalf("child missing root_id: %#v", child)
+		}
+	}
+	wantChildren := []string{"api-session", "docs-session"}
+	if strings.Join(childSessions, ",") != strings.Join(wantChildren, ",") {
+		t.Fatalf("workspace children = %v, want nearest children %v", childSessions, wantChildren)
+	}
+
+	payload, err := json.Marshal(health)
+	if err != nil {
+		t.Fatalf("Marshal health: %v", err)
+	}
+	for _, forbidden := range []string{repoRoot, apiRoot, pkgRoot, docsRoot} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("workspace status leaked root path %q in %s", forbidden, string(payload))
+		}
+	}
+}
+
 func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "20260524-debug"

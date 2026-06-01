@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 type sendStatus string
@@ -163,8 +164,14 @@ func RunSendHeredoc(args []string) error {
 	if *to == "" {
 		return fmt.Errorf("--to is required")
 	}
-	if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
-		return err
+	if workspacetree.IsAlias(*to) {
+		if err := workspacetree.ValidateAliasSyntax(*to); err != nil {
+			return fmt.Errorf("--to %q: workspace tree alias: %w", *to, err)
+		}
+	} else {
+		if err := cliutil.ValidateNodeAddress("--to", *to); err != nil {
+			return err
+		}
 	}
 	bodyText, err := resolveSendHeredocBody(sendBodyStdin, sendBodyStdinIsTerminal())
 	if err != nil {
@@ -204,6 +211,17 @@ func RunSendHeredoc(args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid session name: %w", err)
 	}
+	recipient := *to
+	if workspacetree.IsAlias(recipient) {
+		resolution := workspacetree.BuildFromConfig(cfg).ResolveAlias(recipient, sessionName, nil)
+		if !resolution.Found {
+			return fmt.Errorf("workspace tree alias %q failed: %s", recipient, resolution.FailureReason)
+		}
+		recipient = resolution.Address
+	}
+	if err := cliutil.ValidateNodeAddress("--to", recipient); err != nil {
+		return err
+	}
 
 	var resolvedContextID string
 	if *contextID != "" {
@@ -222,7 +240,7 @@ func RunSendHeredoc(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
-	recipientSessionName, recipientSimpleName, recipientHasSession := nodeaddr.Split(*to)
+	recipientSessionName, recipientSimpleName, recipientHasSession := nodeaddr.Split(recipient)
 	senderCandidates := []string{sender}
 	senderFullName := nodeaddr.Full(sender, sessionName)
 	if senderFullName != sender {
@@ -245,10 +263,10 @@ func RunSendHeredoc(args []string) error {
 			talksToList = append(talksToList, neighbor)
 		}
 	}
-	recipientCandidates := []string{*to}
+	recipientCandidates := []string{recipient}
 	if !recipientHasSession {
 		recipientFullName := nodeaddr.Full(recipientSimpleName, sessionName)
-		if recipientFullName != *to {
+		if recipientFullName != recipient {
 			recipientCandidates = append(recipientCandidates, recipientFullName)
 		}
 	} else if recipientSessionName == sessionName {
@@ -266,7 +284,7 @@ func RunSendHeredoc(args []string) error {
 		}
 	}
 	if !recipientPresent {
-		return fmt.Errorf("missing receiver: %q is not present in configured edges", *to)
+		return fmt.Errorf("missing receiver: %q is not present in configured edges", recipient)
 	}
 	recipientAllowed := false
 	for _, n := range talksToList {
@@ -282,7 +300,7 @@ func RunSendHeredoc(args []string) error {
 	}
 	if !recipientAllowed {
 		return fmt.Errorf("edge violation: %q cannot send to %q — not allowed; allowed recipients: %s",
-			sender, *to, canTalkTo)
+			sender, recipient, canTalkTo)
 	}
 	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
 	beforeInputRequests, beforeInputRequestsOK := projectSendInputRequestState(sessionDir, sessionName)
@@ -293,7 +311,7 @@ func RunSendHeredoc(args []string) error {
 
 	now := time.Now()
 	ts := now.Format("20060102-150405")
-	filename, err := message.GenerateFilename(ts, sender, *to, sessionName)
+	filename, err := message.GenerateFilename(ts, sender, recipient, sessionName)
 	if err != nil {
 		return fmt.Errorf("generating filename: %w", err)
 	}
@@ -324,12 +342,12 @@ func RunSendHeredoc(args []string) error {
 	vars := map[string]string{
 		"context_id":                     resolvedContextID,
 		"sender":                         sender,
-		"recipient":                      *to,
+		"recipient":                      recipient,
 		"timestamp":                      now.Format(time.RFC3339),
 		"can_talk_to":                    canTalkTo,
 		"contacts_section":               envelope.ContactSection(cfg, talksToList),
 		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
-		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, *to), "<recipient>", *to),
+		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, recipient), "<recipient>", recipient),
 		"message_id":                     filename,
 		"reply_policy":                   generatedReplyPolicyMarker,
 		"reply_to":                       *replyTo,
@@ -338,7 +356,7 @@ func RunSendHeredoc(args []string) error {
 		"input_request_set_id":           "",
 		"reply_arguments":                "",
 		"required_reply_completion_gate": "",
-		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, *to)),
+		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, recipient)),
 		"session_name":                   sessionName,
 		"sender_pane_id":                 config.GetTmuxPaneID(),
 		"sender_runtime_context":         runtimecontext.RenderSenderMarkdown(savedRuntimeContext.Snapshot),
@@ -397,7 +415,7 @@ func RunSendHeredoc(args []string) error {
 		for k, v := range vars {
 			footerVars[k] = v
 		}
-		footerTalksToList := talksToListForFooter(adjacency, *to)
+		footerTalksToList := talksToListForFooter(adjacency, recipient)
 		footerVars["can_talk_to"] = strings.Join(footerTalksToList, ", ")
 		footerVars["contacts_section"] = envelope.ContactSection(cfg, footerTalksToList)
 		footerVars["reply_command"] = strings.ReplaceAll(
@@ -438,14 +456,14 @@ func RunSendHeredoc(args []string) error {
 			ContextID:           resolvedContextID,
 			Session:             sessionName,
 			From:                sender,
-			To:                  *to,
+			To:                  recipient,
 			ReplyPolicy:         replyPolicy,
 			ReplyTo:             *replyTo,
 			InputRequestID:      inputRequestID,
 			FillsInputRequestID: *fillsInputRequestID,
 			SubmitPath:          projection.SubmitPathDaemon,
 		}
-		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
+		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, recipient, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
 		return writeSendOutput(output)
 	}
 
@@ -470,13 +488,13 @@ func RunSendHeredoc(args []string) error {
 		freshNodes, _ := discovery.DiscoverNodes(baseDir, resolvedContextID, sessionName)
 		var paneID string
 		if freshNodes != nil {
-			fullKey := discovery.ResolveNodeName(*to, sessionName, freshNodes)
+			fullKey := discovery.ResolveNodeName(recipient, sessionName, freshNodes)
 			if nodeInfo, ok := freshNodes[fullKey]; ok {
 				paneID = nodeInfo.PaneID
 			}
 		}
-		notificationMsg := notification.BuildNotification(cfg, adjacency, freshNodes, resolvedContextID, *to, sender, sessionName, filename, nil)
-		recipientSimpleName := nodeaddr.Simple(*to)
+		notificationMsg := notification.BuildNotification(cfg, adjacency, freshNodes, resolvedContextID, recipient, sender, sessionName, filename, nil)
+		recipientSimpleName := nodeaddr.Simple(recipient)
 		enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 		if nd := cfg.GetNodeConfig(recipientSimpleName).EnterDelay; nd != 0 {
 			enterDelay = time.Duration(nd * float64(time.Second))
@@ -495,7 +513,7 @@ func RunSendHeredoc(args []string) error {
 		ContextID:           resolvedContextID,
 		Session:             sessionName,
 		From:                sender,
-		To:                  *to,
+		To:                  recipient,
 		ReplyPolicy:         replyPolicy,
 		ReplyTo:             *replyTo,
 		InputRequestID:      inputRequestID,
@@ -503,7 +521,7 @@ func RunSendHeredoc(args []string) error {
 		SubmitPath:          projection.SubmitPathPost,
 		Notify:              notifyOutputValue(notifyStatus),
 	}
-	attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, *to, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
+	attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, recipient, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
 	return writeSendOutput(output)
 }
 

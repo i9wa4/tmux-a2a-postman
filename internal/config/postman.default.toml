@@ -97,6 +97,25 @@ base_dir = ""                      # Override session dir (default: XDG_STATE_HO
 # ]
 edges = []
 
+# Optional workspace tree registrations for cross-session tree aliases.
+# Roots are captured from this explicit config at daemon/CLI load time; pane cwd
+# changes do not affect routing eligibility. Public status reports labels and
+# stable root IDs only, never root paths.
+# Alias syntax:
+#   @parent/<node>
+#   @child/<node>                         # only when there is one nearest child
+#   @child/<label-or-session-or-id>/<node>
+#
+# [[postman.workspace_roots]]
+# session = "repo"
+# label = "repo"
+# root = "/path/to/repo"
+#
+# [[postman.workspace_roots]]
+# session = "project"
+# label = "api"
+# root = "/path/to/repo/apps/api"
+
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 ui_node = "messenger"            # Optional target filter for startup auto-PING

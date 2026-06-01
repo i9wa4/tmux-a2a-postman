@@ -251,3 +251,37 @@ func TestValidateConfig_DuplicateEdges_ReverseUndirectedDuplicate(t *testing.T) 
 		t.Fatalf("expected duplicate warning for reversed edge, got: %v", errors)
 	}
 }
+
+func TestValidateConfig_WorkspaceRoots(t *testing.T) {
+	cfg := &Config{
+		Edges: []string{"worker --- orchestrator"},
+		Nodes: map[string]NodeConfig{
+			"worker":       {},
+			"orchestrator": {},
+		},
+		WorkspaceRoots: []WorkspaceRootConfig{
+			{SessionName: "repo", Label: "repo", Root: "/workspace/repo", RootID: "repo-root"},
+			{SessionName: "", Root: "/workspace/repo/apps/api"},
+			{SessionName: "project", Label: "bad_label", Root: "/workspace/repo/apps/api"},
+			{SessionName: "docs", RootID: "bad_id", Root: ""},
+		},
+	}
+
+	errors := ValidateConfig(cfg)
+	wantFields := map[string]bool{
+		"workspace_roots[1].session": false,
+		"workspace_roots[2].label":   false,
+		"workspace_roots[3].root":    false,
+		"workspace_roots[3].id":      false,
+	}
+	for _, err := range errors {
+		if _, ok := wantFields[err.Field]; ok && err.Severity == "error" {
+			wantFields[err.Field] = true
+		}
+	}
+	for field, found := range wantFields {
+		if !found {
+			t.Fatalf("missing workspace root validation error for %s in %#v", field, errors)
+		}
+	}
+}

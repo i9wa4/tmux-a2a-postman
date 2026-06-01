@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
 // ValidationError represents a configuration validation issue (Issue #70).
@@ -104,6 +106,43 @@ func ValidateConfig(cfg *Config) []ValidationError {
 
 	// Rule 4: Deprecated fields (none currently, placeholder for future)
 	// Add deprecated field checks here as needed
+	for i, root := range cfg.WorkspaceRoots {
+		field := fmt.Sprintf("workspace_roots[%d]", i)
+		if strings.TrimSpace(root.SessionName) == "" {
+			errors = append(errors, ValidationError{
+				Field:    field + ".session",
+				Message:  "session is required",
+				Severity: "error",
+			})
+		} else if _, err := ValidateSessionName(root.SessionName); err != nil {
+			errors = append(errors, ValidationError{
+				Field:    field + ".session",
+				Message:  err.Error(),
+				Severity: "error",
+			})
+		}
+		if strings.TrimSpace(root.Root) == "" {
+			errors = append(errors, ValidationError{
+				Field:    field + ".root",
+				Message:  "root is required",
+				Severity: "error",
+			})
+		}
+		if root.Label != "" && !binding.ValidateNodeName(root.Label) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".label",
+				Message:  fmt.Sprintf("label %q must match %s", root.Label, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
+		if root.RootID != "" && !binding.ValidateNodeName(root.RootID) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".id",
+				Message:  fmt.Sprintf("id %q must match %s", root.RootID, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
+	}
 
 	return errors
 }

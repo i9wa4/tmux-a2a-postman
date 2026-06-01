@@ -31,6 +31,8 @@ Important merge rules:
 - Non-empty scalar values override lower layers.
 - `edges` replaces lower-layer edges only when the override has at least one
   edge.
+- `workspace_roots` is configured only in `postman.toml`; roots are explicit
+  registrations captured at daemon or CLI load time, not inferred from pane cwd.
 - Node configs merge field by field for main config files.
 - Split `nodes/*.toml` files replace that node at their layer.
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from
@@ -72,6 +74,10 @@ Important merge rules:
   overrides or clears `ui_node`.
 - Confirm missing routes explain dead-letter behavior before blaming role
   templates.
+- If tree aliases such as `@parent/<node>` or
+  `@child/<label-or-session-or-id>/<node>` fail, inspect `workspace_tree`
+  diagnostics in `get-status` and check for duplicate root paths or ambiguous
+  child selectors.
 - Confirm node names in templates are reachable from the sender when the text
   instructs an agent to contact that node.
 - Treat node names as local protocol identifiers, not generic job titles.
