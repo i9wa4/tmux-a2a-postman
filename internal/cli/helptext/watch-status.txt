@@ -1,0 +1,35 @@
+watch-status — watch live all-session status
+
+Usage:
+  tmux-a2a-postman watch-status
+  tmux-a2a-postman watch-status --interval 2s
+  tmux-a2a-postman watch-status --format text
+  tmux-a2a-postman watch-status --format jsonl
+  tmux-a2a-postman watch-status --severity
+  tmux-a2a-postman watch-status --no-color
+  tmux-a2a-postman watch-status --no-clear
+  tmux-a2a-postman watch-status --help
+
+Output:
+  Repeatedly renders the existing all-session status contract without starting
+  a daemon or taking daemon ownership. The text view includes the daemon owner,
+  per-session compact token, worst severity, queue counts, delivery state,
+  oldest stuck post age when present, node counts, and short non-ok node
+  summaries.
+
+Formats:
+  text   Human-readable multi-line snapshots. TTY output clears between
+         refreshes unless --no-clear is set. Non-TTY output appends plain
+         snapshots and disables ANSI color and clearing automatically.
+  jsonl  One compact JSON all-session status snapshot per refresh.
+
+Flags:
+  --interval <duration>  Refresh interval (default: 2s)
+  --format text|jsonl    Output format (default: text)
+  --severity             Use compact severity tokens in text session lines
+  --no-color             Disable ANSI color
+  --no-clear             Append snapshots instead of clearing the terminal
+
+The command exits nonzero when no active daemon can be resolved. It does not
+create daemon lock files, daemon PID files, enabled-session markers, mailbox
+messages, or PINGs.

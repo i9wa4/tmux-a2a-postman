@@ -65,6 +65,7 @@ func main() {
 			Pop:                     cli.RunPop,
 			GetSessionStatus:        cli.RunGetSessionStatus,
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
+			WatchStatus:             func(args []string) error { return cli.RunWatchStatus(os.Stdout, args) },
 			InspectInput:            cli.RunInspectInput,
 			InspectMessage:          cli.RunInspectMessage,
 			InspectDaemonSubmit:     cli.RunInspectDaemonSubmit,

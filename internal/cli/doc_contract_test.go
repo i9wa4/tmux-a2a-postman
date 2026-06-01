@@ -57,9 +57,11 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	popHelp := readRepoFile(t, "internal/cli/helptext/pop.txt")
 	statusHelp := readRepoFile(t, "internal/cli/helptext/get-status.txt")
 	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-status-oneline.txt")
+	watchHelp := readRepoFile(t, "internal/cli/helptext/watch-status.txt")
 	assertContainsNormalized(t, commandsHelp, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
 	assertContainsNormalized(t, commandsHelp, "get-status Print canonical session status JSON for agents and scripts.")
 	assertContainsNormalized(t, commandsHelp, "get-status-oneline Print compact all-session status for quick agent coordination.")
+	assertContainsNormalized(t, commandsHelp, "watch-status Watch live all-session status without starting a daemon or taking ownership.")
 	assertContainsNormalized(t, commandsHelp, "version Print the build version JSON.")
 	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
 	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]⚫")
@@ -80,7 +82,10 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, statusHelp, "daemon_submit includes worker_limit, active_worker_count, active_request_count, pending_request_count")
 	assertContainsNormalized(t, statusHelp, "late_response_count, oldest_late_response_age_seconds, saturation_count, and last_saturated_at")
 	assertContainsNormalized(t, statusHelp, "This is not a persisted time series.")
-	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
+	assertContainsNormalized(t, watchHelp, "Repeatedly renders the existing all-session status contract without starting a daemon or taking daemon ownership.")
+	assertContainsNormalized(t, watchHelp, "jsonl One compact JSON all-session status snapshot per refresh.")
+	assertContainsNormalized(t, watchHelp, "It does not create daemon lock files, daemon PID files, enabled-session markers, mailbox messages, or PINGs.")
+	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp + "\n" + watchHelp
 	for _, hidden := range []string{
 		"`read`",
 		"`todo`",

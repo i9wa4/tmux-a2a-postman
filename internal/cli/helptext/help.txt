@@ -17,6 +17,7 @@ Topics:
   pop
   get-status
   get-status-oneline
+  watch-status
   inspect-input
   inspect-daemon-submit
   inspect-message

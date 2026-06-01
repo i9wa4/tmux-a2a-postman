@@ -19,6 +19,7 @@ var helpTopicFiles = map[string]string{
 	"get-status":            "helptext/get-status.txt",
 	"get-status-oneline":    "helptext/get-status-oneline.txt",
 	"help":                  "helptext/help.txt",
+	"watch-status":          "helptext/watch-status.txt",
 	"inspect-input":         "helptext/inspect-input.txt",
 	"inspect-daemon-submit": "helptext/inspect-daemon-submit.txt",
 	"inspect-message":       "helptext/inspect-message.txt",

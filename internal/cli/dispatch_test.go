@@ -154,6 +154,33 @@ func TestDispatch_StatusCommandsArePublic(t *testing.T) {
 			t.Fatalf("get-status-oneline args = %#v, want %#v", gotArgs, wantArgs)
 		}
 	})
+
+	t.Run("watch-status", func(t *testing.T) {
+		var gotArgs []string
+
+		result := Dispatch(
+			"watch-status",
+			[]string{"--interval", "2s"},
+			Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+			Handlers{
+				WatchStatus: func(args []string) error {
+					gotArgs = append([]string(nil), args...)
+					return nil
+				},
+			},
+		)
+
+		if result.Err != nil {
+			t.Fatalf("Dispatch returned error: %v", result.Err)
+		}
+		if result.Label != "postman watch-status" {
+			t.Fatalf("label = %q, want %q", result.Label, "postman watch-status")
+		}
+		wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--interval", "2s"}
+		if !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("watch-status args = %#v, want %#v", gotArgs, wantArgs)
+		}
+	})
 }
 
 func TestDispatch_InspectInputPrependsContextAndConfig(t *testing.T) {

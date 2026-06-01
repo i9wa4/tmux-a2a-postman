@@ -309,6 +309,7 @@ Inspect live session state:
 ```sh
 tmux-a2a-postman get-status
 tmux-a2a-postman get-status-oneline
+tmux-a2a-postman watch-status
 ```
 
 Use explicit subcommands. Running `tmux-a2a-postman` without a subcommand only

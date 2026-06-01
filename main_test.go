@@ -125,6 +125,9 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "get-status-oneline         Print compact all-session status") {
 		t.Fatalf("usage missing get-status-oneline command: %q", got)
 	}
+	if !strings.Contains(got, "watch-status               Watch live all-session status") {
+		t.Fatalf("usage missing watch-status command: %q", got)
+	}
 	if !strings.Contains(got, "version                    Print the build version JSON") {
 		t.Fatalf("usage missing version command: %q", got)
 	}
