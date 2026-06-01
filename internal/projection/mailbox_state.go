@@ -2,12 +2,15 @@ package projection
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
+
+var errInvalidMailboxStateProjection = errors.New("invalid mailbox state projection")
 
 type MailboxState struct {
 	InboxCounts map[string]int
@@ -19,11 +22,6 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 		return MailboxState{}, false, nil
 	}
 
-	events, err := journal.Replay(sessionDir)
-	if err != nil || len(events) == 0 {
-		return MailboxState{}, false, nil
-	}
-
 	projected := MailboxState{
 		InboxCounts: make(map[string]int),
 	}
@@ -31,12 +29,14 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 	deliveredMessages := make(map[string]bool)
 	readMessages := make(map[string]bool)
 	sawDelivery := false
+	sawEvent := false
 	sawLease := false
 	sawResolution := false
 
-	for _, event := range events {
+	err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
+		sawEvent = true
 		if event.SessionKey != state.SessionKey || event.Generation != state.Generation {
-			continue
+			return nil
 		}
 
 		switch event.Type {
@@ -45,54 +45,58 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 		case "session_resolved":
 			sawResolution = true
 		case MailboxProjectionDeliveredEventType:
-			payload, ok := projectedMailboxPayload(event.Payload)
+			payload, ok := projectedMailboxStatePayload(event.Payload)
 			if !ok {
-				return MailboxState{}, false, nil
+				return errInvalidMailboxStateProjection
 			}
 			recipient, ok := projectedRecipientName(payload, sessionName)
 			if !ok {
-				return MailboxState{}, false, nil
+				return errInvalidMailboxStateProjection
 			}
 			messageID, ok := projectedMessageIdentity(payload)
 			if !ok {
-				return MailboxState{}, false, nil
+				return errInvalidMailboxStateProjection
 			}
 			sawDelivery = true
 			deliveredMessages[messageID] = true
 			if readMessages[messageID] {
-				continue
+				return nil
 			}
 			if _, alreadyUnread := unreadMessages[messageID]; alreadyUnread {
-				continue
+				return nil
 			}
 			unreadMessages[messageID] = recipient
 			projected.InboxCounts[recipient]++
 		case MailboxProjectionReadEventType:
-			payload, ok := projectedMailboxPayload(event.Payload)
+			payload, ok := projectedMailboxStatePayload(event.Payload)
 			if !ok {
-				return MailboxState{}, false, nil
+				return errInvalidMailboxStateProjection
 			}
 			messageID, ok := projectedMessageIdentity(payload)
 			if !ok {
 				if sawDelivery {
-					continue
+					return nil
 				}
-				return MailboxState{}, false, nil
+				return errInvalidMailboxStateProjection
 			}
 			recipient, unread := unreadMessages[messageID]
 			if !unread {
 				if !sawDelivery {
-					return MailboxState{}, false, nil
+					return errInvalidMailboxStateProjection
 				}
 				if deliveredMessages[messageID] {
 					readMessages[messageID] = true
 				}
-				continue
+				return nil
 			}
 			projected.InboxCounts[recipient]--
 			delete(unreadMessages, messageID)
 			readMessages[messageID] = true
 		}
+		return nil
+	})
+	if err != nil || !sawEvent {
+		return MailboxState{}, false, nil
 	}
 
 	if !sawLease || !sawResolution {
@@ -100,6 +104,12 @@ func ProjectMailboxState(sessionDir, sessionName string) (MailboxState, bool, er
 	}
 
 	return projected, true, nil
+}
+
+type mailboxStatePayload struct {
+	MessageID string `json:"message_id,omitempty"`
+	To        string `json:"to,omitempty"`
+	Path      string `json:"path,omitempty"`
 }
 
 func loadCurrentSessionState(sessionDir string) (journal.SessionState, bool) {
@@ -118,15 +128,18 @@ func loadCurrentSessionState(sessionDir string) (journal.SessionState, bool) {
 	return state, true
 }
 
-func projectedMailboxPayload(raw json.RawMessage) (journal.MailboxEventPayload, bool) {
-	payload, ok := decodeMailboxEventPayload(raw)
-	if !ok {
-		return journal.MailboxEventPayload{}, false
+func projectedMailboxStatePayload(raw json.RawMessage) (mailboxStatePayload, bool) {
+	var payload mailboxStatePayload
+	if len(raw) == 0 {
+		return payload, true
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return mailboxStatePayload{}, false
 	}
 	return payload, true
 }
 
-func projectedRecipientName(payload journal.MailboxEventPayload, sessionName string) (string, bool) {
+func projectedRecipientName(payload mailboxStatePayload, sessionName string) (string, bool) {
 	if payload.To == "" {
 		return "", false
 	}
@@ -140,7 +153,7 @@ func projectedRecipientName(payload journal.MailboxEventPayload, sessionName str
 	return recipientName, true
 }
 
-func projectedMessageIdentity(payload journal.MailboxEventPayload) (string, bool) {
+func projectedMessageIdentity(payload mailboxStatePayload) (string, bool) {
 	if payload.MessageID != "" {
 		return payload.MessageID, true
 	}

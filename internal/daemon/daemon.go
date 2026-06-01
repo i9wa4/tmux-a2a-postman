@@ -32,6 +32,7 @@ const inboxCheckInterval = 30 * time.Second
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
+	Remove(string) error
 }
 
 func sessionScanInterval(cfg *config.Config) time.Duration {

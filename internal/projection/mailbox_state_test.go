@@ -2,6 +2,7 @@ package projection
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,36 @@ func TestProjectMailboxState_ReplaysUnreadCountsForCurrentGeneration(t *testing.
 	}
 	if got.InboxCounts["critic"] != 1 {
 		t.Fatalf("critic unread = %d, want 1", got.InboxCounts["critic"])
+	}
+}
+
+func TestProjectMailboxState_UsesMailboxMetadataWithoutContent(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 3, 15, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	messageID := "20260414-031501-r1111-from-orchestrator-to-worker.md"
+	if _, err := writer.AppendEvent(MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: messageID,
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", messageID),
+		Content:   strings.Repeat("payload\n", 4096),
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(delivered) error = %v", err)
+	}
+
+	got, ok, err := ProjectMailboxState(sessionDir, "review")
+	if err != nil {
+		t.Fatalf("ProjectMailboxState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMailboxState() ok = false, want true")
+	}
+	if got.InboxCounts["worker"] != 1 {
+		t.Fatalf("worker unread = %d, want 1", got.InboxCounts["worker"])
 	}
 }
 
