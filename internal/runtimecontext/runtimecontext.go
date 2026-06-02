@@ -534,13 +534,17 @@ func extractAddDir(launchCommand string) string {
 	return ""
 }
 
-func readAddDirSummary(addDir string) string {
+func readAddDirSummary(addDir string) (summary string) {
 	readmePath := filepath.Join(addDir, "README.md")
 	file, err := os.Open(readmePath)
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			summary = ""
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	var paragraph []string
