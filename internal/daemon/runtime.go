@@ -78,6 +78,22 @@ type daemonRuntime struct {
 
 const daemonSubmitWorkerLimit = 4
 
+const HeadlessAutoPingDelaySeconds = 1.0
+
+const autoPingDuplicateCooldown = 30 * time.Second
+
+func ApplyHeadlessAutoPingDelay(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	if cfg.AutoPingDelaySeconds == 0 {
+		return
+	}
+	if cfg.AutoPingDelaySeconds < 0 || cfg.AutoPingDelaySeconds > HeadlessAutoPingDelaySeconds {
+		cfg.AutoPingDelaySeconds = HeadlessAutoPingDelaySeconds
+	}
+}
+
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
 
 type daemonSubmitRuntimeResult struct {
@@ -418,6 +434,8 @@ func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath stri
 
 func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
 	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), now)
+	autoPing := rt.autoPingRuntimeDiagnostics(now)
+	diag.AutoPing = &autoPing
 	return &diag
 }
 
@@ -483,6 +501,34 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
 		scanDaemonSubmitRequests(sessionDir, now, &diagnostics)
 		scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
+	}
+	return diagnostics
+}
+
+func (rt *daemonRuntime) autoPingRuntimeDiagnostics(now time.Time) status.AutoPingRuntimeDiagnostics {
+	diagnostics := status.AutoPingRuntimeDiagnostics{}
+	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
+		state, ok, err := projection.ProjectAutoPingState(sessionDir)
+		if err != nil || !ok {
+			continue
+		}
+		for _, node := range state.Nodes {
+			switch node.Status {
+			case projection.AutoPingStatusDelivered:
+				diagnostics.DeliveredCount++
+			case projection.AutoPingStatusSuppressed:
+				diagnostics.SuppressedCount++
+			case projection.AutoPingStatusOwnershipBlocked:
+				diagnostics.OwnershipBlockedCount++
+			case projection.AutoPingStatusRetryingFullInbox:
+				diagnostics.RetryingFullInboxCount++
+				diagnostics.OldestRetryAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestRetryAgeSeconds, node.RetryAt, now)
+			}
+			if node.Pending {
+				diagnostics.PendingCount++
+				diagnostics.OldestPendingAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestPendingAgeSeconds, node.TriggeredAt, now)
+			}
+		}
 	}
 	return diagnostics
 }
@@ -1390,7 +1436,7 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 
 	triggeredAt := now
 	notBeforeAt := now.Add(time.Duration(delaySeconds * float64(time.Second)))
-	if state, ok, err := projection.ProjectAutoPingState(nodeInfo.SessionDir); err != nil {
+	if state, ok, err := projection.ProjectAutoPingHistory(nodeInfo.SessionDir); err != nil {
 		log.Printf("postman: WARNING: auto-PING replay failed for %s: %v\n", nodeKey, err)
 	} else if ok {
 		if existing, exists := state.Nodes[nodeKey]; exists && existing.Pending {
@@ -1406,6 +1452,11 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 			if reason == "" {
 				reason = existing.Reason
 			}
+		} else if exists {
+			if suppressUntil, suppressed := rt.autoPingSuppressionUntil(nodeKey, nodeInfo, existing, reason, now); suppressed {
+				rt.recordSuppressedAutoPing(nodeKey, nodeInfo, existing, reason, now, suppressUntil)
+				return
+			}
 		}
 	}
 	if reason == "" {
@@ -1414,6 +1465,7 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 
 	payload := projection.AutoPingEventPayload{
 		NodeKey:      nodeKey,
+		ContextID:    rt.contextID,
 		SessionName:  nodeInfo.SessionName,
 		NodeName:     ping.ExtractSimpleName(nodeKey),
 		PaneID:       nodeInfo.PaneID,
@@ -1424,12 +1476,65 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 	}
 	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
 		log.Printf("postman: WARNING: auto-PING pending append failed for %s: %v\n", nodeKey, err)
+		return
 	}
+	log.Printf("postman: auto-PING pending node=%s pane=%s reason=%s not_before=%s\n", nodeKey, nodeInfo.PaneID, reason, payload.NotBeforeAt)
+}
+
+func (rt *daemonRuntime) autoPingSuppressionUntil(nodeKey string, nodeInfo discovery.NodeInfo, existing projection.AutoPingNodeState, reason string, now time.Time) (time.Time, bool) {
+	if reason == "pane_restart" {
+		return time.Time{}, false
+	}
+	if rt.contextID == "" || existing.ContextID != rt.contextID {
+		return time.Time{}, false
+	}
+	if nodeInfo.PaneID == "" || existing.PaneID != nodeInfo.PaneID {
+		return time.Time{}, false
+	}
+	if existing.DeliveredAt == "" {
+		return time.Time{}, false
+	}
+	deliveredAt, err := time.Parse(time.RFC3339Nano, existing.DeliveredAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	suppressUntil := deliveredAt.Add(autoPingDuplicateCooldown)
+	if !now.Before(suppressUntil) {
+		return time.Time{}, false
+	}
+	return suppressUntil, true
+}
+
+func (rt *daemonRuntime) recordSuppressedAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, existing projection.AutoPingNodeState, reason string, now, suppressUntil time.Time) {
+	if reason == "" {
+		reason = "startup"
+	}
+	payload := projection.AutoPingEventPayload{
+		NodeKey:           nodeKey,
+		ContextID:         rt.contextID,
+		SessionName:       nodeInfo.SessionName,
+		NodeName:          ping.ExtractSimpleName(nodeKey),
+		PaneID:            nodeInfo.PaneID,
+		Reason:            reason,
+		TriggeredAt:       now.Format(time.RFC3339Nano),
+		DelaySeconds:      existing.DelaySeconds,
+		NotBeforeAt:       existing.NotBeforeAt,
+		DeliveredAt:       existing.DeliveredAt,
+		SuppressedAt:      now.Format(time.RFC3339Nano),
+		SuppressUntilAt:   suppressUntil.Format(time.RFC3339Nano),
+		SuppressionReason: "recent_delivered_cooldown",
+	}
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingSuppressedEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: auto-PING suppressed append failed for %s: %v\n", nodeKey, err)
+		return
+	}
+	log.Printf("postman: auto-PING suppressed node=%s pane=%s reason=%s suppression=recent_delivered_cooldown until=%s\n", nodeKey, nodeInfo.PaneID, reason, payload.SuppressUntilAt)
 }
 
 func (rt *daemonRuntime) recordDeliveredAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, now time.Time) {
 	payload := projection.AutoPingEventPayload{
 		NodeKey:      nodeKey,
+		ContextID:    rt.contextID,
 		SessionName:  nodeInfo.SessionName,
 		NodeName:     ping.ExtractSimpleName(nodeKey),
 		PaneID:       nodeInfo.PaneID,
@@ -1444,6 +1549,49 @@ func (rt *daemonRuntime) recordDeliveredAutoPing(nodeKey string, nodeInfo discov
 	}
 	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
 		log.Printf("postman: WARNING: auto-PING delivered append failed for %s: %v\n", nodeKey, err)
+		return
+	}
+	log.Printf("postman: auto-PING delivered node=%s pane=%s reason=%s delivered_at=%s\n", nodeKey, nodeInfo.PaneID, payload.Reason, payload.DeliveredAt)
+}
+
+func (rt *daemonRuntime) recordBlockedAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, now time.Time, blockedReason string) {
+	payload := autoPingPayloadFromPending(rt.contextID, nodeKey, nodeInfo, pending)
+	payload.BlockedAt = now.Format(time.RFC3339Nano)
+	payload.BlockedReason = blockedReason
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingBlockedEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: auto-PING blocked append failed for %s: %v\n", nodeKey, err)
+		return
+	}
+	log.Printf("postman: auto-PING blocked node=%s pane=%s reason=%s blocked_reason=%s\n", nodeKey, nodeInfo.PaneID, payload.Reason, blockedReason)
+}
+
+func (rt *daemonRuntime) recordRetryingAutoPing(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, now time.Time, retryReason string) {
+	payload := autoPingPayloadFromPending(rt.contextID, nodeKey, nodeInfo, pending)
+	payload.RetryAt = now.Format(time.RFC3339Nano)
+	payload.RetryReason = retryReason
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingRetryingEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: auto-PING retry append failed for %s: %v\n", nodeKey, err)
+		return
+	}
+	log.Printf("postman: auto-PING retrying node=%s pane=%s reason=%s retry_reason=%s\n", nodeKey, nodeInfo.PaneID, payload.Reason, retryReason)
+}
+
+func autoPingPayloadFromPending(contextID, nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState) projection.AutoPingEventPayload {
+	reason := pending.Reason
+	if reason == "" {
+		reason = "discovered"
+	}
+	return projection.AutoPingEventPayload{
+		NodeKey:      nodeKey,
+		ContextID:    contextID,
+		SessionName:  nodeInfo.SessionName,
+		NodeName:     ping.ExtractSimpleName(nodeKey),
+		PaneID:       nodeInfo.PaneID,
+		Reason:       reason,
+		TriggeredAt:  pending.TriggeredAt,
+		DelaySeconds: pending.DelaySeconds,
+		NotBeforeAt:  pending.NotBeforeAt,
+		DeliveredAt:  pending.DeliveredAt,
 	}
 }
 
@@ -1493,6 +1641,9 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 			}
 		}
 		if owner := config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID); owner != "" {
+			if pending.Status != projection.AutoPingStatusOwnershipBlocked {
+				rt.recordBlockedAutoPing(nodeKey, nodeInfo, pending, now, "foreign_session_owner")
+			}
 			continue
 		}
 
@@ -1530,6 +1681,9 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 				return
 			}
 			if !result.Delivered {
+				if dispatchPending.Status != projection.AutoPingStatusRetryingFullInbox {
+					rt.recordRetryingAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, rt.now(), "full_inbox")
+				}
 				return
 			}
 

@@ -203,6 +203,16 @@ type DaemonSubmitRuntimeDiagnostics struct {
 	LastSaturatedAt              string `json:"last_saturated_at,omitempty"`
 }
 
+type AutoPingRuntimeDiagnostics struct {
+	PendingCount            int `json:"pending_count"`
+	DeliveredCount          int `json:"delivered_count"`
+	SuppressedCount         int `json:"suppressed_count"`
+	OwnershipBlockedCount   int `json:"ownership_blocked_count"`
+	RetryingFullInboxCount  int `json:"retrying_full_inbox_count"`
+	OldestPendingAgeSeconds int `json:"oldest_pending_age_seconds,omitempty"`
+	OldestRetryAgeSeconds   int `json:"oldest_retry_age_seconds,omitempty"`
+}
+
 type RuntimeDiagnostics struct {
 	Source       string                         `json:"source"`
 	PointInTime  bool                           `json:"point_in_time"`
@@ -210,6 +220,7 @@ type RuntimeDiagnostics struct {
 	GoRuntime    GoRuntimeDiagnostics           `json:"go_runtime"`
 	Daemon       DaemonRuntimeCardinality       `json:"daemon"`
 	DaemonSubmit DaemonSubmitRuntimeDiagnostics `json:"daemon_submit"`
+	AutoPing     *AutoPingRuntimeDiagnostics    `json:"auto_ping,omitempty"`
 }
 
 type AllSessionStatus struct {

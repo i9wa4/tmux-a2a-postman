@@ -77,6 +77,27 @@ func waitForAutoPingPending(t *testing.T, sessionDir, nodeKey string, want bool)
 	}
 }
 
+func waitForAutoPingStatus(t *testing.T, sessionDir, nodeKey, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, ok, err := projection.ProjectAutoPingState(sessionDir)
+		if err != nil {
+			t.Fatalf("ProjectAutoPingState() error = %v", err)
+		}
+		if ok {
+			if node, exists := state.Nodes[nodeKey]; exists && node.Status == want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			state, _, _ := projection.ProjectAutoPingState(sessionDir)
+			t.Fatalf("auto-PING status[%s] did not become %q; state=%#v", nodeKey, want, state.Nodes[nodeKey])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -1673,6 +1694,9 @@ func TestDispatchPendingAutoPings_ForeignOwnedSessionStaysPendingAndDisabled(t *
 	if !state.Nodes["foreign:worker"].Pending {
 		t.Fatal("pending auto-PING was cleared even though the session is foreign-owned")
 	}
+	if state.Nodes["foreign:worker"].Status != projection.AutoPingStatusOwnershipBlocked {
+		t.Fatalf("auto-PING status = %q, want %q", state.Nodes["foreign:worker"].Status, projection.AutoPingStatusOwnershipBlocked)
+	}
 }
 
 func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing.T) {
@@ -2085,6 +2109,7 @@ func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *tes
 	if !state.Nodes["review:worker"].Pending {
 		t.Fatal("pending auto-PING debt was cleared even though delivery was blocked by a full inbox")
 	}
+	waitForAutoPingStatus(t, sessionDir, "review:worker", projection.AutoPingStatusRetryingFullInbox)
 }
 
 func TestDispatchPendingAutoPings_RespectsNotBeforeAt(t *testing.T) {
@@ -2194,6 +2219,81 @@ func TestRecordPendingAutoPing_UsesConfiguredAutoPingDelay(t *testing.T) {
 	}
 }
 
+func TestApplyHeadlessAutoPingDelayCapsConfiguredDelay(t *testing.T) {
+	cfg := &config.Config{AutoPingDelaySeconds: 20}
+
+	ApplyHeadlessAutoPingDelay(cfg)
+
+	if cfg.AutoPingDelaySeconds != HeadlessAutoPingDelaySeconds {
+		t.Fatalf("AutoPingDelaySeconds = %v, want %v", cfg.AutoPingDelaySeconds, HeadlessAutoPingDelaySeconds)
+	}
+}
+
+func TestApplyHeadlessAutoPingDelayPreservesImmediateDelay(t *testing.T) {
+	cfg := &config.Config{AutoPingDelaySeconds: 0}
+
+	ApplyHeadlessAutoPingDelay(cfg)
+
+	if cfg.AutoPingDelaySeconds != 0 {
+		t.Fatalf("AutoPingDelaySeconds = %v, want 0", cfg.AutoPingDelaySeconds)
+	}
+}
+
+func TestAutoPingRuntimeDiagnosticsCountsProjectedStates(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 25, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	events := []projection.AutoPingEventPayload{
+		{NodeKey: "review:pending", ContextID: "ctx-self", SessionName: "review", NodeName: "pending", PaneID: "%1", Reason: "startup", TriggeredAt: now.Add(-10 * time.Second).Format(time.RFC3339Nano), NotBeforeAt: now.Add(-9 * time.Second).Format(time.RFC3339Nano)},
+		{NodeKey: "review:delivered", ContextID: "ctx-self", SessionName: "review", NodeName: "delivered", PaneID: "%2", Reason: "startup", TriggeredAt: now.Add(-8 * time.Second).Format(time.RFC3339Nano), DeliveredAt: now.Add(-7 * time.Second).Format(time.RFC3339Nano)},
+		{NodeKey: "review:suppressed", ContextID: "ctx-self", SessionName: "review", NodeName: "suppressed", PaneID: "%3", Reason: "startup", DeliveredAt: now.Add(-6 * time.Second).Format(time.RFC3339Nano), SuppressedAt: now.Add(-5 * time.Second).Format(time.RFC3339Nano), SuppressionReason: "recent_delivered_cooldown"},
+		{NodeKey: "review:blocked", ContextID: "ctx-self", SessionName: "review", NodeName: "blocked", PaneID: "%4", Reason: "discovered", TriggeredAt: now.Add(-4 * time.Second).Format(time.RFC3339Nano), BlockedAt: now.Add(-3 * time.Second).Format(time.RFC3339Nano), BlockedReason: "foreign_session_owner"},
+		{NodeKey: "review:retry", ContextID: "ctx-self", SessionName: "review", NodeName: "retry", PaneID: "%5", Reason: "discovered", TriggeredAt: now.Add(-4 * time.Second).Format(time.RFC3339Nano), RetryAt: now.Add(-2 * time.Second).Format(time.RFC3339Nano), RetryReason: "full_inbox"},
+	}
+	eventTypes := []string{
+		projection.AutoPingPendingEventType,
+		projection.AutoPingDeliveredEventType,
+		projection.AutoPingSuppressedEventType,
+		projection.AutoPingBlockedEventType,
+		projection.AutoPingRetryingEventType,
+	}
+	for i, payload := range events {
+		if err := journal.RecordProcessEvent(sessionDir, "review", eventTypes[i], journal.VisibilityOperatorVisible, payload, now.Add(time.Duration(i)*time.Millisecond)); err != nil {
+			t.Fatalf("RecordProcessEvent(%s): %v", eventTypes[i], err)
+		}
+	}
+
+	rt := &daemonRuntime{
+		sessionDir: sessionDir,
+		nodes: map[string]discovery.NodeInfo{
+			"review:pending":    {SessionName: "review", SessionDir: sessionDir},
+			"review:delivered":  {SessionName: "review", SessionDir: sessionDir},
+			"review:suppressed": {SessionName: "review", SessionDir: sessionDir},
+			"review:blocked":    {SessionName: "review", SessionDir: sessionDir},
+			"review:retry":      {SessionName: "review", SessionDir: sessionDir},
+		},
+	}
+
+	got := rt.autoPingRuntimeDiagnostics(now)
+
+	if got.PendingCount != 3 ||
+		got.DeliveredCount != 1 ||
+		got.SuppressedCount != 1 ||
+		got.OwnershipBlockedCount != 1 ||
+		got.RetryingFullInboxCount != 1 {
+		t.Fatalf("auto-PING diagnostics = %#v", got)
+	}
+	if got.OldestPendingAgeSeconds <= 0 || got.OldestRetryAgeSeconds <= 0 {
+		t.Fatalf("auto-PING age diagnostics = %#v", got)
+	}
+}
+
 func TestRecordPendingAutoPing_UsesDefaultAutoPingDelay(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(baseDir, "xdg-config"))
@@ -2239,6 +2339,113 @@ func TestRecordPendingAutoPing_UsesDefaultAutoPingDelay(t *testing.T) {
 	}
 	if got, want := pending.NotBeforeAt, now.Add(20*time.Second).Format(time.RFC3339Nano); got != want {
 		t.Fatalf("NotBeforeAt: got %q, want %q", got, want)
+	}
+}
+
+func TestRecordPendingAutoPing_SuppressesRecentDeliveredForSameContextPane(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 30, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		ContextID:    "ctx-self",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%88",
+		Reason:       "startup",
+		TriggeredAt:  now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 1,
+		NotBeforeAt:  now.Add(-4 * time.Second).Format(time.RFC3339Nano),
+		DeliveredAt:  now.Add(-3 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-3*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg:       &config.Config{AutoPingDelaySeconds: 1},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%88",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "startup", now)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	got := state.Nodes["review:worker"]
+	if got.Pending {
+		t.Fatal("suppressed auto-PING is still pending")
+	}
+	if got.Status != projection.AutoPingStatusSuppressed {
+		t.Fatalf("Status = %q, want %q", got.Status, projection.AutoPingStatusSuppressed)
+	}
+	if got.SuppressionReason != "recent_delivered_cooldown" {
+		t.Fatalf("SuppressionReason = %q", got.SuppressionReason)
+	}
+}
+
+func TestRecordPendingAutoPing_AllowsNewPaneAfterRecentDelivered(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 35, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		ContextID:    "ctx-self",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%88",
+		Reason:       "startup",
+		TriggeredAt:  now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 1,
+		NotBeforeAt:  now.Add(-4 * time.Second).Format(time.RFC3339Nano),
+		DeliveredAt:  now.Add(-3 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-3*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg:       &config.Config{AutoPingDelaySeconds: 1},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%89",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "startup", now)
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	got := state.Nodes["review:worker"]
+	if !got.Pending {
+		t.Fatal("new pane auto-PING was not queued")
+	}
+	if got.PaneID != "%89" {
+		t.Fatalf("PaneID = %q, want %%89", got.PaneID)
 	}
 }
 

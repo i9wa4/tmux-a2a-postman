@@ -15,20 +15,27 @@ sends the normal pane notification when inbox delivery succeeds.
 
 - Trigger: daemon bootstrap sees already discovered nodes.
 - Timing: queued at startup, due after `auto_ping_delay_seconds` (default
-  `20`), then delivered on the next full scan.
+  `20`), then delivered on the next full scan. `start --no-tui` caps this
+  delay to `1s` unless `auto_ping_delay_seconds = 0` makes it immediate, so a
+  headless daemon normally wakes discovered nodes on the first full scan after
+  readiness.
 - Source: daemon startup.
 - Recipients: all discovered nodes unless `ui_node` is explicitly set.
   Explicit `ui_node` limits startup auto-PING to matching roles discovered in
   enabled sessions.
 - Notes: journal reason is `startup`. The embedded default
-  `ui_node = "messenger"` does not narrow by itself.
+  `ui_node = "messenger"` does not narrow by itself. Rapid restart suppresses
+  duplicate startup PINGs for the same context/session/node/pane for a short
+  cooldown after a successful delivery; a new context, new pane ID, or pane
+  restart can still queue a fresh PING.
 
 ### 1.2. New Node Auto-PING
 
 - Trigger: a daemon scan, post wake-up, or session activation discovers a node
   that was not in the known-node set.
 - Timing: queued when discovered, due after `auto_ping_delay_seconds`, then
-  delivered on the next full scan.
+  delivered on the next full scan. Under `start --no-tui`, the same `1s`
+  headless cap applies to newly discovered nodes.
 - Source: daemon discovery.
 - Recipients: the newly discovered node.
 - Notes: journal reason is `discovered`. A node that disappeared and later
@@ -72,6 +79,15 @@ normally delivered on the next full scan. If delivery is retryable, for example
 because the target inbox queue is full, the pending auto-PING remains in the
 journal and the daemon tries again on later scans. One in-flight auto-PING per
 node is allowed at a time.
+
+The auto-PING journal records distinguishable states for operator diagnosis:
+`auto_ping_pending`, `auto_ping_delivered`, `auto_ping_suppressed`,
+`auto_ping_blocked`, and `auto_ping_retrying`. Daemon logs include matching
+`auto-PING pending`, `auto-PING delivered`, `auto-PING suppressed`,
+`auto-PING blocked`, and `auto-PING retrying` lines. `tmux-a2a-postman
+get-status --debug` includes point-in-time `runtime_diagnostics.auto_ping`
+counts for pending, delivered, cooldown-suppressed, ownership-blocked, and
+retrying-full-inbox nodes.
 
 ## 2. Contact Hints
 
@@ -144,3 +160,9 @@ Repeated PING mail that has no startup, discovery, pane restart, operator
 keypress, compaction marker, or retryable-delivery explanation is unexpected
 and should be investigated with `tmux-a2a-postman get-status` and the archived
 message IDs.
+
+If a no-TUI daemon appears ready but a node has no PING, first check
+`tmux-a2a-postman get-status --debug` and `postman.log`. A due PING may still
+be pending until the next full scan, suppressed by the recent-delivery
+cooldown, blocked because another daemon owns the session, or retrying because
+the recipient inbox is full.
