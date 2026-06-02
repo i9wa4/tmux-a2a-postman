@@ -1,20 +1,11 @@
 package workspacetree
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
-func testRoot(base string, parts ...string) string {
-	all := append([]string{base}, parts...)
-	return filepath.Join(all...)
-}
-
-func TestNearestParentSkipsMissingIntermediateLevels(t *testing.T) {
-	base := t.TempDir()
+func TestNearestParentDoesNotRequireRegisteredRoot(t *testing.T) {
 	topology := Build([]Registration{
-		{SessionName: "repo", Label: "repo", Root: testRoot(base, "repo")},
-		{SessionName: "project", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
+		{SessionName: "repo", Label: "repo"},
+		{SessionName: "project", Label: "api", ParentSessionName: "repo"},
 	})
 
 	parent, ok, reason := topology.NearestParent("project")
@@ -26,13 +17,12 @@ func TestNearestParentSkipsMissingIntermediateLevels(t *testing.T) {
 	}
 }
 
-func TestNearestChildrenListsOnlyNearestRegisteredDescendants(t *testing.T) {
-	base := t.TempDir()
+func TestNearestChildrenUsesExplicitHierarchyAndOrder(t *testing.T) {
 	topology := Build([]Registration{
-		{SessionName: "repo", Label: "repo", Root: testRoot(base, "repo")},
-		{SessionName: "api", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
-		{SessionName: "pkg", Label: "pkg", Root: testRoot(base, "repo", "apps", "api", "pkg")},
-		{SessionName: "docs", Label: "docs", Root: testRoot(base, "repo", "docs")},
+		{SessionName: "repo", Label: "repo"},
+		{SessionName: "api", Label: "api", ParentSessionName: "repo", Order: 20},
+		{SessionName: "pkg", Label: "pkg", ParentSessionName: "api"},
+		{SessionName: "docs", Label: "docs", ParentSessionName: "repo", Order: 10},
 	})
 
 	children, reason := topology.NearestChildren("repo")
@@ -43,7 +33,7 @@ func TestNearestChildrenListsOnlyNearestRegisteredDescendants(t *testing.T) {
 	for _, child := range children {
 		got = append(got, child.SessionName)
 	}
-	want := []string{"api", "docs"}
+	want := []string{"docs", "api"}
 	if len(got) != len(want) {
 		t.Fatalf("children = %v, want %v", got, want)
 	}
@@ -62,41 +52,55 @@ func TestNearestChildrenListsOnlyNearestRegisteredDescendants(t *testing.T) {
 	}
 }
 
-func TestDuplicateRegisteredRootsAreReportedAndAmbiguous(t *testing.T) {
-	base := t.TempDir()
+func TestExplicitHierarchyOverridesRootAncestryMetadata(t *testing.T) {
 	topology := Build([]Registration{
-		{SessionName: "repo-a", Label: "repo-a", Root: testRoot(base, "repo")},
-		{SessionName: "repo-b", Label: "repo-b", Root: testRoot(base, "repo")},
-		{SessionName: "project", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
+		{SessionName: "repo", Label: "repo", Root: "/workspace/repo"},
+		{SessionName: "other", Label: "other", Root: "/workspace/other"},
+		{SessionName: "api", Label: "api", ParentSessionName: "other", Root: "/workspace/repo/apps/api"},
+	})
+
+	parent, ok, reason := topology.NearestParent("api")
+	if !ok {
+		t.Fatalf("NearestParent = false/%s, want explicit parent", reason)
+	}
+	if parent.SessionName != "other" {
+		t.Fatalf("parent session = %q, want explicit parent other", parent.SessionName)
+	}
+}
+
+func TestDuplicateHierarchySessionsAreReportedAndAmbiguous(t *testing.T) {
+	topology := Build([]Registration{
+		{SessionName: "repo", Label: "repo-a", ID: "repo-a"},
+		{SessionName: "repo", Label: "repo-b", ID: "repo-b"},
+		{SessionName: "project", Label: "api", ParentSessionName: "repo"},
 	})
 
 	diagnostics := topology.Diagnostics()
 	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one duplicate_root", diagnostics)
+		t.Fatalf("diagnostics = %#v, want one duplicate_session", diagnostics)
 	}
-	if diagnostics[0].Code != "duplicate_root" {
-		t.Fatalf("diagnostic code = %q, want duplicate_root", diagnostics[0].Code)
+	if diagnostics[0].Code != "duplicate_session" {
+		t.Fatalf("diagnostic code = %q, want duplicate_session", diagnostics[0].Code)
 	}
-	if len(diagnostics[0].SessionNames) != 2 {
-		t.Fatalf("diagnostic sessions = %#v, want both duplicate sessions", diagnostics[0].SessionNames)
+	if len(diagnostics[0].IDs) != 2 {
+		t.Fatalf("diagnostic ids = %#v, want both duplicate ids", diagnostics[0].IDs)
 	}
 
 	_, ok, reason := topology.NearestParent("project")
-	if ok || reason != FailureAmbiguousRoot {
-		t.Fatalf("NearestParent duplicate = ok:%v reason:%s, want ambiguous_root", ok, reason)
+	if ok || reason != FailureAmbiguousHierarchy {
+		t.Fatalf("NearestParent duplicate = ok:%v reason:%s, want ambiguous_hierarchy", ok, reason)
 	}
 	resolution := topology.ResolveAlias("@parent/worker", "project", nil)
-	if resolution.Found || resolution.FailureReason != FailureAmbiguousRoot {
-		t.Fatalf("ResolveAlias duplicate = %#v, want ambiguous_root", resolution)
+	if resolution.Found || resolution.FailureReason != FailureAmbiguousHierarchy {
+		t.Fatalf("ResolveAlias duplicate = %#v, want ambiguous_hierarchy", resolution)
 	}
 }
 
 func TestResolveAliasCompilesToExplicitSessionNodeAddress(t *testing.T) {
-	base := t.TempDir()
 	topology := Build([]Registration{
-		{SessionName: "repo", Label: "repo", Root: testRoot(base, "repo")},
-		{SessionName: "api", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
-		{SessionName: "docs", Label: "docs", Root: testRoot(base, "repo", "docs")},
+		{SessionName: "repo", ID: "repo-id", Label: "repo"},
+		{SessionName: "api", ID: "api-id", Label: "api", ParentSessionName: "repo"},
+		{SessionName: "docs", ID: "docs-id", Label: "docs", ParentSessionName: "repo"},
 	})
 
 	parent := topology.ResolveAlias("@parent/orchestrator", "api", nil)
@@ -109,18 +113,18 @@ func TestResolveAliasCompilesToExplicitSessionNodeAddress(t *testing.T) {
 		t.Fatalf("child alias = %#v, want api:worker", child)
 	}
 
-	byRootID := topology.ResolveAlias("@child/"+childTargetRootID(t, topology, "docs")+"/worker", "repo", nil)
-	if !byRootID.Found || byRootID.Address != "docs:worker" {
-		t.Fatalf("child alias by root id = %#v, want docs:worker", byRootID)
+	byID := topology.ResolveAlias("@child/docs-id/worker", "repo", nil)
+	if !byID.Found || byID.Address != "docs:worker" {
+		t.Fatalf("child alias by id = %#v, want docs:worker", byID)
 	}
 }
 
 func TestResolveAliasFailuresAreTyped(t *testing.T) {
-	base := t.TempDir()
 	topology := Build([]Registration{
-		{SessionName: "repo", Label: "repo", Root: testRoot(base, "repo")},
-		{SessionName: "api", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
-		{SessionName: "docs", Label: "docs", Root: testRoot(base, "repo", "docs")},
+		{SessionName: "repo", Label: "repo"},
+		{SessionName: "api", Label: "api", ParentSessionName: "repo"},
+		{SessionName: "docs", Label: "docs", ParentSessionName: "repo"},
+		{SessionName: "orphan", Label: "orphan", ParentSessionName: "missing-parent"},
 	})
 
 	cases := []struct {
@@ -130,9 +134,10 @@ func TestResolveAliasFailuresAreTyped(t *testing.T) {
 		want    FailureReason
 	}{
 		{name: "invalid", alias: "@child/api/worker/extra", session: "repo", want: FailureInvalidAlias},
-		{name: "unknown source", alias: "@parent/worker", session: "missing", want: FailureUnknownSourceRoot},
+		{name: "unknown source", alias: "@parent/worker", session: "missing", want: FailureUnknownSourceSession},
 		{name: "ambiguous child", alias: "@child/worker", session: "repo", want: FailureAmbiguousChild},
 		{name: "no parent", alias: "@parent/worker", session: "repo", want: FailureNoParent},
+		{name: "unknown parent", alias: "@parent/worker", session: "orphan", want: FailureUnknownParent},
 		{name: "no selected child", alias: "@child/mobile/worker", session: "repo", want: FailureNoChild},
 	}
 	for _, tc := range cases {
@@ -146,10 +151,9 @@ func TestResolveAliasFailuresAreTyped(t *testing.T) {
 }
 
 func TestResolveAliasCanRequireLiveNodeExistence(t *testing.T) {
-	base := t.TempDir()
 	topology := Build([]Registration{
-		{SessionName: "repo", Label: "repo", Root: testRoot(base, "repo")},
-		{SessionName: "api", Label: "api", Root: testRoot(base, "repo", "apps", "api")},
+		{SessionName: "repo", Label: "repo"},
+		{SessionName: "api", Label: "api", ParentSessionName: "repo"},
 	})
 
 	resolution := topology.ResolveAlias("@parent/orchestrator", "api", func(address string) bool {
@@ -158,13 +162,4 @@ func TestResolveAliasCanRequireLiveNodeExistence(t *testing.T) {
 	if resolution.Found || resolution.FailureReason != FailureUnknownNode || resolution.Address != "repo:orchestrator" {
 		t.Fatalf("ResolveAlias nodeExists = %#v, want unknown_node with compiled address", resolution)
 	}
-}
-
-func childTargetRootID(t *testing.T, topology Topology, sessionName string) string {
-	t.Helper()
-	root, ok, reason := topology.RootForSession(sessionName)
-	if !ok {
-		t.Fatalf("RootForSession(%q) = false/%s", sessionName, reason)
-	}
-	return root.RootID
 }

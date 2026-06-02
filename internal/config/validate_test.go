@@ -252,27 +252,27 @@ func TestValidateConfig_DuplicateEdges_ReverseUndirectedDuplicate(t *testing.T) 
 	}
 }
 
-func TestValidateConfig_WorkspaceRoots(t *testing.T) {
+func TestValidateConfig_WorkspaceTree(t *testing.T) {
 	cfg := &Config{
 		Edges: []string{"worker --- orchestrator"},
 		Nodes: map[string]NodeConfig{
 			"worker":       {},
 			"orchestrator": {},
 		},
-		WorkspaceRoots: []WorkspaceRootConfig{
-			{SessionName: "repo", Label: "repo", Root: "/workspace/repo", RootID: "repo-root"},
-			{SessionName: "", Root: "/workspace/repo/apps/api"},
-			{SessionName: "project", Label: "bad_label", Root: "/workspace/repo/apps/api"},
-			{SessionName: "docs", RootID: "bad_id", Root: ""},
+		WorkspaceTree: []WorkspaceTreeNodeConfig{
+			{SessionName: "repo", Label: "repo", Root: "/workspace/repo", ID: "repo-root"},
+			{SessionName: "", ParentSessionName: "repo"},
+			{SessionName: "project", Label: "bad_label", ParentSessionName: "repo"},
+			{SessionName: "docs", ID: "bad_id", ParentSessionName: "bad/parent"},
 		},
 	}
 
 	errors := ValidateConfig(cfg)
 	wantFields := map[string]bool{
-		"workspace_roots[1].session": false,
-		"workspace_roots[2].label":   false,
-		"workspace_roots[3].root":    false,
-		"workspace_roots[3].id":      false,
+		"workspace_tree[1].session": false,
+		"workspace_tree[2].label":   false,
+		"workspace_tree[3].parent":  false,
+		"workspace_tree[3].id":      false,
 	}
 	for _, err := range errors {
 		if _, ok := wantFields[err.Field]; ok && err.Severity == "error" {
@@ -281,7 +281,7 @@ func TestValidateConfig_WorkspaceRoots(t *testing.T) {
 	}
 	for field, found := range wantFields {
 		if !found {
-			t.Fatalf("missing workspace root validation error for %s in %#v", field, errors)
+			t.Fatalf("missing workspace tree validation error for %s in %#v", field, errors)
 		}
 	}
 }

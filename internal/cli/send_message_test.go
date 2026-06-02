@@ -695,27 +695,24 @@ func TestSendMessage_WorkspaceParentAliasCompilesToExplicitRecipient(t *testing.
 	t.Setenv("HOME", tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
-	repoRoot := filepath.Join(tmpDir, "repo")
-	projectRoot := filepath.Join(repoRoot, "apps", "api")
-	configContent := fmt.Sprintf(`[postman]
+	configContent := `[postman]
 edges = ["test-session:messenger --- repo-session:orchestrator"]
 
-[[postman.workspace_roots]]
+[[postman.workspace_tree]]
 session = "repo-session"
 label = "repo"
-root = %q
 
-[[postman.workspace_roots]]
+[[postman.workspace_tree]]
 session = "test-session"
 label = "api"
-root = %q
+parent = "repo-session"
 
 ["test-session:messenger"]
 role = "messenger"
 
 ["repo-session:orchestrator"]
 role = "orchestrator"
-`, repoRoot, projectRoot)
+`
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}

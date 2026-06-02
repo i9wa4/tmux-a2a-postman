@@ -284,30 +284,30 @@ func TestCollectLiveSessionStatus_IncludesRedactedWorkspaceTree(t *testing.T) {
 
 	health, err := collectLiveSessionStatus(tmpDir, contextID, sessionName, &config.Config{
 		Edges: []string{"worker --- orchestrator"},
-		WorkspaceRoots: []config.WorkspaceRootConfig{
-			{SessionName: "repo-session", Label: "repo", Root: repoRoot},
-			{SessionName: "api-session", Label: "api", Root: apiRoot},
-			{SessionName: "pkg-session", Label: "pkg", Root: pkgRoot},
-			{SessionName: "docs-session", Label: "docs", Root: docsRoot},
+		WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+			{SessionName: "repo-session", ID: "repo-id", Label: "repo", Root: repoRoot},
+			{SessionName: "api-session", ID: "api-id", Label: "api", ParentSessionName: "repo-session", Root: apiRoot, Order: 20},
+			{SessionName: "pkg-session", ID: "pkg-id", Label: "pkg", ParentSessionName: "api-session", Root: pkgRoot},
+			{SessionName: "docs-session", ID: "docs-id", Label: "docs", ParentSessionName: "repo-session", Root: docsRoot, Order: 10},
 		},
 	})
 	if err != nil {
 		t.Fatalf("collectLiveSessionStatus: %v", err)
 	}
-	if health.WorkspaceTree == nil || health.WorkspaceTree.Root == nil {
-		t.Fatalf("WorkspaceTree = %#v, want root", health.WorkspaceTree)
+	if health.WorkspaceTree == nil || health.WorkspaceTree.Current == nil {
+		t.Fatalf("WorkspaceTree = %#v, want current node", health.WorkspaceTree)
 	}
-	if health.WorkspaceTree.Root.SessionName != "repo-session" || health.WorkspaceTree.Root.Label != "repo" || health.WorkspaceTree.Root.RootID == "" {
-		t.Fatalf("workspace root = %#v, want redacted repo-session root", health.WorkspaceTree.Root)
+	if health.WorkspaceTree.Current.SessionName != "repo-session" || health.WorkspaceTree.Current.Label != "repo" || health.WorkspaceTree.Current.ID != "repo-id" || health.WorkspaceTree.Current.State != "configured" {
+		t.Fatalf("workspace current = %#v, want redacted repo-session node", health.WorkspaceTree.Current)
 	}
 	childSessions := []string{}
 	for _, child := range health.WorkspaceTree.Children {
 		childSessions = append(childSessions, child.SessionName)
-		if child.RootID == "" {
-			t.Fatalf("child missing root_id: %#v", child)
+		if child.ID == "" {
+			t.Fatalf("child missing id: %#v", child)
 		}
 	}
-	wantChildren := []string{"api-session", "docs-session"}
+	wantChildren := []string{"docs-session", "api-session"}
 	if strings.Join(childSessions, ",") != strings.Join(wantChildren, ",") {
 		t.Fatalf("workspace children = %v, want nearest children %v", childSessions, wantChildren)
 	}

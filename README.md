@@ -282,12 +282,13 @@ Implement the requested change and report DONE or BLOCKED.
 POSTMAN_BODY
 ```
 
-When `postman.toml` registers workspace roots, `send-heredoc` also accepts
-tree aliases and writes the compiled explicit recipient into the message:
+When `postman.toml` defines workspace tree hierarchy, `send-heredoc` also
+accepts tree aliases and writes the compiled explicit recipient into the
+message:
 
 ```sh
 tmux-a2a-postman send-heredoc --to @parent/orchestrator <<'POSTMAN_BODY'
-Coordinate this project with the nearest registered parent session.
+Coordinate this project with the configured parent session.
 POSTMAN_BODY
 ```
 
@@ -373,28 +374,33 @@ Most users only maintain `postman.md` under the global config directory:
 - `~/.config/tmux-a2a-postman/` fallback when `XDG_CONFIG_HOME` is unset
 
 `postman.toml` is optional. Embedded defaults are enough for the daemon to run;
-add TOML only when you need to change daemon-level defaults or register
-workspace roots for tree aliases.
+add TOML only when you need to change daemon-level defaults or define workspace
+tree hierarchy for tree aliases.
 
 The daemon reads global configuration once at startup. Restart it after editing
 `postman.md`, `postman.toml`, or `nodes/*`; runtime watchers continue to handle
 mail delivery, read/archive moves, and daemon submit queues.
 
-Workspace roots are explicit TOML registrations; they are not inferred from
-checkout layout or live pane cwd. Status output reports root labels and stable
-IDs, not root paths. Duplicate root paths are reported as ambiguous. The nearest
-registered parent and nearest registered children are used for aliases:
+Workspace tree hierarchy is explicit TOML metadata; it is not inferred from
+checkout layout or live pane cwd. Each record names a session, optional stable
+ID, optional label, optional parent session, sibling order, and optional root
+metadata. Root paths are optional bootstrap or suggestion metadata only and are
+not used for routing. Status output reports labels and stable IDs, not root
+paths. Duplicate session records are reported as ambiguous.
 
 ```toml
-[[postman.workspace_roots]]
+[[postman.workspace_tree]]
 session = "repo"
 label = "repo"
-root = "/path/to/repo"
+id = "repo-root"
+order = 10
 
-[[postman.workspace_roots]]
+[[postman.workspace_tree]]
 session = "project"
 label = "api"
-root = "/path/to/repo/apps/api"
+parent = "repo"
+order = 20
+root = "/path/to/repo/apps/api" # optional metadata only
 ```
 
 Supported aliases are `@parent/<node>`, `@child/<node>` when there is exactly

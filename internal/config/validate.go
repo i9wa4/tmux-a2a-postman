@@ -106,40 +106,49 @@ func ValidateConfig(cfg *Config) []ValidationError {
 
 	// Rule 4: Deprecated fields (none currently, placeholder for future)
 	// Add deprecated field checks here as needed
-	for i, root := range cfg.WorkspaceRoots {
-		field := fmt.Sprintf("workspace_roots[%d]", i)
-		if strings.TrimSpace(root.SessionName) == "" {
+	for i, node := range cfg.WorkspaceTree {
+		field := fmt.Sprintf("workspace_tree[%d]", i)
+		if strings.TrimSpace(node.SessionName) == "" {
 			errors = append(errors, ValidationError{
 				Field:    field + ".session",
 				Message:  "session is required",
 				Severity: "error",
 			})
-		} else if _, err := ValidateSessionName(root.SessionName); err != nil {
+		} else if _, err := ValidateSessionName(node.SessionName); err != nil {
 			errors = append(errors, ValidationError{
 				Field:    field + ".session",
 				Message:  err.Error(),
 				Severity: "error",
 			})
 		}
-		if strings.TrimSpace(root.Root) == "" {
-			errors = append(errors, ValidationError{
-				Field:    field + ".root",
-				Message:  "root is required",
-				Severity: "error",
-			})
+		if strings.TrimSpace(node.ParentSessionName) != "" {
+			if _, err := ValidateSessionName(node.ParentSessionName); err != nil {
+				errors = append(errors, ValidationError{
+					Field:    field + ".parent",
+					Message:  err.Error(),
+					Severity: "error",
+				})
+			}
 		}
-		if root.Label != "" && !binding.ValidateNodeName(root.Label) {
+		if node.Label != "" && !binding.ValidateNodeName(node.Label) {
 			errors = append(errors, ValidationError{
 				Field:    field + ".label",
-				Message:  fmt.Sprintf("label %q must match %s", root.Label, binding.NodeNamePattern),
+				Message:  fmt.Sprintf("label %q must match %s", node.Label, binding.NodeNamePattern),
 				Severity: "error",
 			})
 		}
-		if root.RootID != "" && !binding.ValidateNodeName(root.RootID) {
+		if node.ID != "" && !binding.ValidateNodeName(node.ID) {
 			errors = append(errors, ValidationError{
 				Field:    field + ".id",
-				Message:  fmt.Sprintf("id %q must match %s", root.RootID, binding.NodeNamePattern),
+				Message:  fmt.Sprintf("id %q must match %s", node.ID, binding.NodeNamePattern),
 				Severity: "error",
+			})
+		}
+		if strings.TrimSpace(node.Root) != "" && !strings.HasPrefix(strings.TrimSpace(node.Root), "/") {
+			errors = append(errors, ValidationError{
+				Field:    field + ".root",
+				Message:  "root should be an absolute path when supplied",
+				Severity: "warning",
 			})
 		}
 	}

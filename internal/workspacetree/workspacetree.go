@@ -1,9 +1,7 @@
 package workspacetree
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -19,47 +17,51 @@ const (
 type FailureReason string
 
 const (
-	FailureNone              FailureReason = ""
-	FailureNotAlias          FailureReason = "not_alias"
-	FailureInvalidAlias      FailureReason = "invalid_alias"
-	FailureUnknownSourceRoot FailureReason = "unknown_source_root"
-	FailureAmbiguousRoot     FailureReason = "ambiguous_root"
-	FailureNoParent          FailureReason = "no_parent"
-	FailureNoChild           FailureReason = "no_child"
-	FailureAmbiguousChild    FailureReason = "ambiguous_child"
-	FailureUnknownNode       FailureReason = "unknown_node"
+	FailureNone                 FailureReason = ""
+	FailureNotAlias             FailureReason = "not_alias"
+	FailureInvalidAlias         FailureReason = "invalid_alias"
+	FailureUnknownSourceSession FailureReason = "unknown_source_session"
+	FailureAmbiguousHierarchy   FailureReason = "ambiguous_hierarchy"
+	FailureUnknownParent        FailureReason = "unknown_parent"
+	FailureNoParent             FailureReason = "no_parent"
+	FailureNoChild              FailureReason = "no_child"
+	FailureAmbiguousChild       FailureReason = "ambiguous_child"
+	FailureUnknownNode          FailureReason = "unknown_node"
 )
 
 type Registration struct {
-	SessionName string
-	Label       string
-	Root        string
-	RootID      string
+	SessionName       string
+	ID                string
+	Label             string
+	ParentSessionName string
+	Order             int
+	Root              string
 }
 
-type Root struct {
+type Node struct {
 	SessionName       string
+	ID                string
 	Label             string
-	RootID            string
-	path              string
-	duplicateRootPath bool
-	ambiguousSession  bool
+	ParentSessionName string
+	Order             int
 }
 
 type Diagnostic struct {
-	Code         string
-	RootID       string
-	RootIDs      []string
-	SessionName  string
-	SessionNames []string
-	Labels       []string
-	Message      string
+	Code              string
+	ID                string
+	IDs               []string
+	SessionName       string
+	SessionNames      []string
+	ParentSessionName string
+	Labels            []string
+	Message           string
 }
 
 type Topology struct {
-	roots       []Root
-	bySession   map[string][]int
-	diagnostics []Diagnostic
+	nodes            []Node
+	bySession        map[string][]int
+	childrenByParent map[string][]int
+	diagnostics      []Diagnostic
 }
 
 type AliasResolution struct {
@@ -75,91 +77,80 @@ type AliasResolution struct {
 
 func Build(registrations []Registration) Topology {
 	topology := Topology{
-		bySession: make(map[string][]int),
+		bySession:        make(map[string][]int),
+		childrenByParent: make(map[string][]int),
 	}
-	byPath := make(map[string][]int)
 
 	for _, registration := range registrations {
 		sessionName := strings.TrimSpace(registration.SessionName)
-		rootPath := strings.TrimSpace(registration.Root)
-		if sessionName == "" || rootPath == "" {
-			continue
-		}
-		normalized, err := normalizeRootPath(rootPath)
-		if err != nil {
-			topology.diagnostics = append(topology.diagnostics, Diagnostic{
-				Code:        "invalid_root",
-				SessionName: sessionName,
-				Message:     "workspace root path could not be normalized",
-			})
+		if sessionName == "" {
 			continue
 		}
 		label := strings.TrimSpace(registration.Label)
 		if label == "" {
 			label = sessionName
 		}
-		rootID := strings.TrimSpace(registration.RootID)
-		if rootID == "" {
-			rootID = derivedRootID(normalized)
+		id := strings.TrimSpace(registration.ID)
+		if id == "" {
+			id = sessionName
 		}
-		idx := len(topology.roots)
-		topology.roots = append(topology.roots, Root{
-			SessionName: sessionName,
-			Label:       label,
-			RootID:      rootID,
-			path:        normalized,
+		parentSessionName := strings.TrimSpace(registration.ParentSessionName)
+
+		idx := len(topology.nodes)
+		topology.nodes = append(topology.nodes, Node{
+			SessionName:       sessionName,
+			ID:                id,
+			Label:             label,
+			ParentSessionName: parentSessionName,
+			Order:             registration.Order,
 		})
 		topology.bySession[sessionName] = append(topology.bySession[sessionName], idx)
-		byPath[normalized] = append(byPath[normalized], idx)
+		if parentSessionName != "" {
+			topology.childrenByParent[parentSessionName] = append(topology.childrenByParent[parentSessionName], idx)
+		}
 	}
 
-	for _, idxs := range byPath {
+	topology.recordDuplicateSessions()
+	topology.recordUnknownParents()
+	sortDiagnostics(topology.diagnostics)
+	return topology
+}
+
+func (t *Topology) recordDuplicateSessions() {
+	for sessionName, idxs := range t.bySession {
 		if len(idxs) < 2 {
 			continue
 		}
-		var rootIDs, sessionNames, labels []string
+		var ids, labels []string
 		for _, idx := range idxs {
-			topology.roots[idx].duplicateRootPath = true
-			rootIDs = append(rootIDs, topology.roots[idx].RootID)
-			sessionNames = append(sessionNames, topology.roots[idx].SessionName)
-			labels = append(labels, topology.roots[idx].Label)
+			ids = append(ids, t.nodes[idx].ID)
+			labels = append(labels, t.nodes[idx].Label)
 		}
-		topology.diagnostics = append(topology.diagnostics, Diagnostic{
-			Code:         "duplicate_root",
-			RootID:       topology.roots[idxs[0]].RootID,
-			RootIDs:      sortedUnique(rootIDs),
-			SessionNames: sortedUnique(sessionNames),
-			Labels:       sortedUnique(labels),
-			Message:      "multiple sessions registered the same workspace root",
-		})
-	}
-
-	for sessionName, idxs := range topology.bySession {
-		if len(idxs) < 2 {
-			continue
-		}
-		var rootIDs, labels []string
-		for _, idx := range idxs {
-			topology.roots[idx].ambiguousSession = true
-			rootIDs = append(rootIDs, topology.roots[idx].RootID)
-			labels = append(labels, topology.roots[idx].Label)
-		}
-		topology.diagnostics = append(topology.diagnostics, Diagnostic{
-			Code:        "ambiguous_session_roots",
-			RootIDs:     sortedUnique(rootIDs),
+		t.diagnostics = append(t.diagnostics, Diagnostic{
+			Code:        "duplicate_session",
+			IDs:         sortedUnique(ids),
 			SessionName: sessionName,
 			Labels:      sortedUnique(labels),
-			Message:     "session registered more than one workspace root",
+			Message:     "session appears more than once in workspace tree",
 		})
 	}
+}
 
-	sort.Slice(topology.diagnostics, func(i, j int) bool {
-		if topology.diagnostics[i].Code != topology.diagnostics[j].Code {
-			return topology.diagnostics[i].Code < topology.diagnostics[j].Code
+func (t *Topology) recordUnknownParents() {
+	for _, node := range t.nodes {
+		if node.ParentSessionName == "" {
+			continue
 		}
-		return topology.diagnostics[i].RootID < topology.diagnostics[j].RootID
-	})
-	return topology
+		if len(t.bySession[node.ParentSessionName]) == 0 {
+			t.diagnostics = append(t.diagnostics, Diagnostic{
+				Code:              "unknown_parent",
+				ID:                node.ID,
+				SessionName:       node.SessionName,
+				ParentSessionName: node.ParentSessionName,
+				Message:           "workspace tree parent session is not configured",
+			})
+		}
+	}
 }
 
 func (t Topology) Diagnostics() []Diagnostic {
@@ -168,87 +159,50 @@ func (t Topology) Diagnostics() []Diagnostic {
 	return result
 }
 
-func (t Topology) RootForSession(sessionName string) (Root, bool, FailureReason) {
+func (t Topology) NodeForSession(sessionName string) (Node, bool, FailureReason) {
 	idxs := t.bySession[sessionName]
 	if len(idxs) == 0 {
-		return Root{}, false, FailureUnknownSourceRoot
+		return Node{}, false, FailureUnknownSourceSession
 	}
 	if len(idxs) > 1 {
-		return Root{}, false, FailureAmbiguousRoot
+		return Node{}, false, FailureAmbiguousHierarchy
 	}
-	root := t.roots[idxs[0]]
-	if root.duplicateRootPath || root.ambiguousSession {
-		return Root{}, false, FailureAmbiguousRoot
-	}
-	return root, true, FailureNone
+	return t.nodes[idxs[0]], true, FailureNone
 }
 
-func (t Topology) NearestParent(sessionName string) (Root, bool, FailureReason) {
-	source, ok, reason := t.RootForSession(sessionName)
+func (t Topology) NearestParent(sessionName string) (Node, bool, FailureReason) {
+	source, ok, reason := t.NodeForSession(sessionName)
 	if !ok {
-		return Root{}, false, reason
+		return Node{}, false, reason
 	}
-
-	var candidates []Root
-	bestDepth := -1
-	for _, candidate := range t.roots {
-		if candidate.SessionName == source.SessionName {
-			continue
+	if source.ParentSessionName == "" {
+		return Node{}, false, FailureNoParent
+	}
+	parent, ok, reason := t.NodeForSession(source.ParentSessionName)
+	if !ok {
+		if reason == FailureUnknownSourceSession {
+			return Node{}, false, FailureUnknownParent
 		}
-		if !isStrictDescendant(source.path, candidate.path) {
-			continue
-		}
-		depth := pathDepth(candidate.path)
-		switch {
-		case depth > bestDepth:
-			candidates = []Root{candidate}
-			bestDepth = depth
-		case depth == bestDepth:
-			candidates = append(candidates, candidate)
-		}
+		return Node{}, false, reason
 	}
-	if len(candidates) == 0 {
-		return Root{}, false, FailureNoParent
-	}
-	if rootsAmbiguous(candidates) {
-		return Root{}, false, FailureAmbiguousRoot
-	}
-	return candidates[0], true, FailureNone
+	return parent, true, FailureNone
 }
 
-func (t Topology) NearestChildren(sessionName string) ([]Root, FailureReason) {
-	source, ok, reason := t.RootForSession(sessionName)
-	if !ok {
+func (t Topology) NearestChildren(sessionName string) ([]Node, FailureReason) {
+	if _, ok, reason := t.NodeForSession(sessionName); !ok {
 		return nil, reason
 	}
 
-	descendants := make([]Root, 0)
-	for _, candidate := range t.roots {
-		if candidate.SessionName == source.SessionName {
-			continue
+	childIdxs := append([]int(nil), t.childrenByParent[sessionName]...)
+	children := make([]Node, 0, len(childIdxs))
+	for _, idx := range childIdxs {
+		child := t.nodes[idx]
+		if _, ok, reason := t.NodeForSession(child.SessionName); !ok {
+			return nil, reason
 		}
-		if isStrictDescendant(candidate.path, source.path) {
-			descendants = append(descendants, candidate)
-		}
+		children = append(children, child)
 	}
-
-	children := make([]Root, 0, len(descendants))
-	for _, candidate := range descendants {
-		nearest := true
-		for _, other := range descendants {
-			if other.SessionName == candidate.SessionName && other.path == candidate.path {
-				continue
-			}
-			if isStrictDescendant(candidate.path, other.path) {
-				nearest = false
-				break
-			}
-		}
-		if nearest {
-			children = append(children, candidate)
-		}
-	}
-	sortRoots(children)
+	sortNodes(children)
 	return children, FailureNone
 }
 
@@ -261,7 +215,7 @@ func (t Topology) ResolveAlias(alias, sourceSessionName string, nodeExists func(
 		return AliasResolution{Input: alias, FailureReason: FailureInvalidAlias}
 	}
 
-	var target Root
+	var target Node
 	switch parsed.kind {
 	case "parent":
 		parent, ok, reason := t.NearestParent(sourceSessionName)
@@ -278,7 +232,7 @@ func (t Topology) ResolveAlias(alias, sourceSessionName string, nodeExists func(
 		if len(matches) == 0 {
 			return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureNoChild}
 		}
-		if rootsAmbiguous(matches) || len(matches) > 1 {
+		if len(matches) > 1 {
 			return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureAmbiguousChild}
 		}
 		target = matches[0]
@@ -364,76 +318,31 @@ func validateAliasNode(nodeName string) error {
 	return nil
 }
 
-func selectChildren(children []Root, selector string) []Root {
+func selectChildren(children []Node, selector string) []Node {
 	if selector == "" {
-		if len(children) == 1 {
-			return children
-		}
 		return children
 	}
-	var matches []Root
+	var matches []Node
 	for _, child := range children {
-		if child.Label == selector || child.SessionName == selector || child.RootID == selector {
+		if child.Label == selector || child.SessionName == selector || child.ID == selector {
 			matches = append(matches, child)
 		}
 	}
 	return matches
 }
 
-func rootsAmbiguous(roots []Root) bool {
-	for _, root := range roots {
-		if root.duplicateRootPath || root.ambiguousSession {
-			return true
+func sortNodes(nodes []Node) {
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Order != nodes[j].Order {
+			return nodes[i].Order < nodes[j].Order
 		}
-	}
-	return len(roots) > 1
-}
-
-func normalizeRootPath(root string) (string, error) {
-	cleaned := filepath.Clean(root)
-	if !filepath.IsAbs(cleaned) {
-		abs, err := filepath.Abs(cleaned)
-		if err != nil {
-			return "", err
+		if nodes[i].Label != nodes[j].Label {
+			return nodes[i].Label < nodes[j].Label
 		}
-		cleaned = abs
-	}
-	return filepath.Clean(cleaned), nil
-}
-
-func derivedRootID(root string) string {
-	sum := sha256.Sum256([]byte(root))
-	return fmt.Sprintf("root-%x", sum[:6])
-}
-
-func isStrictDescendant(path, parent string) bool {
-	rel, err := filepath.Rel(parent, path)
-	if err != nil {
-		return false
-	}
-	if rel == "." || rel == ".." {
-		return false
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func pathDepth(path string) int {
-	cleaned := filepath.Clean(path)
-	if cleaned == string(filepath.Separator) {
-		return 0
-	}
-	return strings.Count(cleaned, string(filepath.Separator))
-}
-
-func sortRoots(roots []Root) {
-	sort.Slice(roots, func(i, j int) bool {
-		if roots[i].Label != roots[j].Label {
-			return roots[i].Label < roots[j].Label
+		if nodes[i].SessionName != nodes[j].SessionName {
+			return nodes[i].SessionName < nodes[j].SessionName
 		}
-		if roots[i].SessionName != roots[j].SessionName {
-			return roots[i].SessionName < roots[j].SessionName
-		}
-		return roots[i].RootID < roots[j].RootID
+		return nodes[i].ID < nodes[j].ID
 	})
 }
 
@@ -449,4 +358,16 @@ func sortedUnique(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func sortDiagnostics(diagnostics []Diagnostic) {
+	sort.Slice(diagnostics, func(i, j int) bool {
+		if diagnostics[i].Code != diagnostics[j].Code {
+			return diagnostics[i].Code < diagnostics[j].Code
+		}
+		if diagnostics[i].SessionName != diagnostics[j].SessionName {
+			return diagnostics[i].SessionName < diagnostics[j].SessionName
+		}
+		return diagnostics[i].ID < diagnostics[j].ID
+	})
 }

@@ -189,9 +189,9 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.WorkspaceTreeStatus {
 	topology := workspacetree.BuildFromConfig(cfg)
 	diagnostics := workspaceTreeDiagnostics(topology.Diagnostics())
-	root, ok, reason := topology.RootForSession(sessionName)
+	node, ok, reason := topology.NodeForSession(sessionName)
 	if !ok {
-		if reason == workspacetree.FailureUnknownSourceRoot && len(diagnostics) == 0 {
+		if reason == workspacetree.FailureUnknownSourceSession && len(diagnostics) == 0 {
 			return nil
 		}
 		return &status.WorkspaceTreeStatus{
@@ -200,11 +200,11 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 	}
 
 	result := &status.WorkspaceTreeStatus{
-		Root: &status.WorkspaceTreeRootStatus{
-			SessionName: root.SessionName,
-			Label:       root.Label,
-			RootID:      root.RootID,
-			State:       "registered",
+		Current: &status.WorkspaceTreeNodeStatus{
+			SessionName: node.SessionName,
+			Label:       node.Label,
+			ID:          node.ID,
+			State:       "configured",
 		},
 		Diagnostics: diagnostics,
 	}
@@ -219,11 +219,11 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 	return result
 }
 
-func workspaceTreeRef(root workspacetree.Root) *status.WorkspaceTreeRef {
+func workspaceTreeRef(node workspacetree.Node) *status.WorkspaceTreeRef {
 	return &status.WorkspaceTreeRef{
-		SessionName: root.SessionName,
-		Label:       root.Label,
-		RootID:      root.RootID,
+		SessionName: node.SessionName,
+		Label:       node.Label,
+		ID:          node.ID,
 	}
 }
 
@@ -234,13 +234,14 @@ func workspaceTreeDiagnostics(diagnostics []workspacetree.Diagnostic) []status.W
 	result := make([]status.WorkspaceTreeDiagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		result = append(result, status.WorkspaceTreeDiagnostic{
-			Code:         diagnostic.Code,
-			RootID:       diagnostic.RootID,
-			RootIDs:      append([]string{}, diagnostic.RootIDs...),
-			SessionName:  diagnostic.SessionName,
-			SessionNames: append([]string{}, diagnostic.SessionNames...),
-			Labels:       append([]string{}, diagnostic.Labels...),
-			Message:      diagnostic.Message,
+			Code:              diagnostic.Code,
+			ID:                diagnostic.ID,
+			IDs:               append([]string{}, diagnostic.IDs...),
+			SessionName:       diagnostic.SessionName,
+			SessionNames:      append([]string{}, diagnostic.SessionNames...),
+			ParentSessionName: diagnostic.ParentSessionName,
+			Labels:            append([]string{}, diagnostic.Labels...),
+			Message:           diagnostic.Message,
 		})
 	}
 	return result

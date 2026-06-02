@@ -60,12 +60,12 @@ type Config struct {
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                 []string              `toml:"edges"`
-	ReplyCommand          string                `toml:"reply_command"`
-	UINode                string                `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool                 `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
-	AutoEnableNewAgents   *bool                 `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
-	WorkspaceRoots        []WorkspaceRootConfig `toml:"workspace_roots"`          // Optional registered roots for tree aliases
+	Edges                 []string                  `toml:"edges"`
+	ReplyCommand          string                    `toml:"reply_command"`
+	UINode                string                    `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions *bool                     `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	AutoEnableNewAgents   *bool                     `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
+	WorkspaceTree         []WorkspaceTreeNodeConfig `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -92,11 +92,13 @@ type NodeConfig struct {
 	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
 }
 
-type WorkspaceRootConfig struct {
-	SessionName string `toml:"session"`
-	Label       string `toml:"label"`
-	Root        string `toml:"root"`
-	RootID      string `toml:"id"`
+type WorkspaceTreeNodeConfig struct {
+	SessionName       string `toml:"session"`
+	ID                string `toml:"id"`
+	Label             string `toml:"label"`
+	ParentSessionName string `toml:"parent"`
+	Order             int    `toml:"order"`
+	Root              string `toml:"root"`
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -567,8 +569,8 @@ func mergeConfig(base, override *Config) {
 	if len(override.Edges) > 0 {
 		base.Edges = override.Edges
 	}
-	if len(override.WorkspaceRoots) > 0 {
-		base.WorkspaceRoots = override.WorkspaceRoots
+	if len(override.WorkspaceTree) > 0 {
+		base.WorkspaceTree = override.WorkspaceTree
 	}
 	base.recordNodeNames(override.NodeOrder...)
 

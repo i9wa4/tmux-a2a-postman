@@ -136,28 +136,29 @@ type SessionQueues struct {
 type WorkspaceTreeRef struct {
 	SessionName string `json:"session_name"`
 	Label       string `json:"label,omitempty"`
-	RootID      string `json:"root_id"`
+	ID          string `json:"id"`
 }
 
-type WorkspaceTreeRootStatus struct {
+type WorkspaceTreeNodeStatus struct {
 	SessionName string `json:"session_name"`
 	Label       string `json:"label,omitempty"`
-	RootID      string `json:"root_id"`
+	ID          string `json:"id"`
 	State       string `json:"state"`
 }
 
 type WorkspaceTreeDiagnostic struct {
-	Code         string   `json:"code"`
-	RootID       string   `json:"root_id,omitempty"`
-	RootIDs      []string `json:"root_ids,omitempty"`
-	SessionName  string   `json:"session_name,omitempty"`
-	SessionNames []string `json:"session_names,omitempty"`
-	Labels       []string `json:"labels,omitempty"`
-	Message      string   `json:"message,omitempty"`
+	Code              string   `json:"code"`
+	ID                string   `json:"id,omitempty"`
+	IDs               []string `json:"ids,omitempty"`
+	SessionName       string   `json:"session_name,omitempty"`
+	SessionNames      []string `json:"session_names,omitempty"`
+	ParentSessionName string   `json:"parent_session_name,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	Message           string   `json:"message,omitempty"`
 }
 
 type WorkspaceTreeStatus struct {
-	Root        *WorkspaceTreeRootStatus  `json:"root,omitempty"`
+	Current     *WorkspaceTreeNodeStatus  `json:"current,omitempty"`
 	Parent      *WorkspaceTreeRef         `json:"parent,omitempty"`
 	Children    []WorkspaceTreeRef        `json:"children,omitempty"`
 	Diagnostics []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
