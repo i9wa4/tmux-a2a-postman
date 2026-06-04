@@ -81,6 +81,20 @@ Prerequisites:
 
 - macOS or Linux
 - tmux 3.0 or newer
+- Stable tmux pane titles for agent roles
+
+Postman uses tmux pane titles as node names. Before starting a postman
+session, disable or neutralize terminal title updates in agent CLIs:
+
+- Claude Code: set `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` in the environment
+  used to launch `claude`.
+- Codex CLI: add this to `$CODEX_HOME/config.toml` (`~/.codex/config.toml` by
+  default), or use `/title` to remove title items:
+
+  ```toml
+  [tui]
+  terminal_title = []
+  ```
 
 Install with Go:
 
