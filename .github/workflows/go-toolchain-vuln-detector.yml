@@ -1,0 +1,86 @@
+name: go-toolchain-vuln-detector
+run-name: ${{ github.event_name }} on ${{ github.ref_name }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * *"
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          github_access_token: ${{ github.token }}
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Cache Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+
+      - name: Detect Go stdlib/toolchain vulnerabilities
+        run: |
+          set -euo pipefail
+
+          set +e
+          nix develop .#ci --command govulncheck -json -scan=module > govulncheck-module.jsonl
+          govuln_status=$?
+          set -e
+          if [[ "$govuln_status" -ne 0 && "$govuln_status" -ne 3 ]]; then
+            echo "govulncheck -json -scan=module failed with status $govuln_status" >&2
+            exit "$govuln_status"
+          fi
+
+          findings="$(
+            jq -r '
+              select(.finding)
+              | (
+                  [
+                    .finding.trace[]?
+                    | select(.module == "stdlib" or .module == "toolchain")
+                    | .module + "@" + (.version // "")
+                  ]
+                  | unique
+                ) as $modules
+              | select($modules | length > 0)
+              | [
+                  .finding.osv,
+                  .finding.fixed_version,
+                  ($modules | join(","))
+                ]
+              | @tsv
+            ' govulncheck-module.jsonl | sort -u
+          )"
+
+          if [[ -z "$findings" ]]; then
+            echo "No Go stdlib/toolchain module findings."
+            exit 0
+          fi
+
+          echo "::error::Go stdlib/toolchain module findings detected. Dispatch update-go-toolchain from main."
+          printf '%s\n' "$findings"
+          exit 1
