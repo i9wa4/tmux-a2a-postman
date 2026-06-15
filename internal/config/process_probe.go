@@ -44,8 +44,8 @@ func defaultSessionPIDProbe() sessionPIDProbe {
 		findProcess: func(pid int) (signalProcess, error) {
 			return os.FindProcess(pid)
 		},
-		processCommand:   psProcessCommand,
-		processStartedAt: psProcessStartedAt,
+		processCommand:   defaultProcessCommand,
+		processStartedAt: defaultProcessStartedAt,
 		stat:             os.Stat,
 		fileOwnerUID:     unixFileOwnerUID,
 		currentUID:       os.Getuid,
@@ -240,6 +240,55 @@ func unixFileOwnerUID(info os.FileInfo) (int, bool) {
 		return 0, false
 	}
 	return int(stat.Uid), true
+}
+
+func defaultProcessCommand(pid int) (string, error) {
+	if command, err := procProcessCommand(pid); err == nil {
+		return command, nil
+	}
+	if command, err := psProcessCommand(pid); err == nil {
+		return command, nil
+	}
+	return platformProcessCommand(pid)
+}
+
+func defaultProcessStartedAt(pid int) (string, error) {
+	if startedAt, err := procProcessStartedAt(pid); err == nil {
+		return startedAt, nil
+	}
+	if startedAt, err := psProcessStartedAt(pid); err == nil {
+		return startedAt, nil
+	}
+	return platformProcessStartedAt(pid)
+}
+
+func procProcessCommand(pid int) (string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return "", err
+	}
+	command := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", " "))
+	if command == "" {
+		return "", fmt.Errorf("empty /proc cmdline for pid %d", pid)
+	}
+	return command, nil
+}
+
+func procProcessStartedAt(pid int) (string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	stat := string(data)
+	closeParen := strings.LastIndex(stat, ")")
+	if closeParen < 0 || closeParen+2 >= len(stat) {
+		return "", fmt.Errorf("invalid /proc stat for pid %d", pid)
+	}
+	fields := strings.Fields(stat[closeParen+2:])
+	if len(fields) < 20 {
+		return "", fmt.Errorf("short /proc stat for pid %d", pid)
+	}
+	return fields[19], nil
 }
 
 func psProcessCommand(pid int) (string, error) {
