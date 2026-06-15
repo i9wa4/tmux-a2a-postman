@@ -334,6 +334,34 @@ func TestSessionPIDProbeRejectsStructuredPIDWithDifferentStartTime(t *testing.T)
 	}
 }
 
+func TestSessionPIDProbeAcceptsStructuredPIDWithSameStartTime(t *testing.T) {
+	probe := sessionPIDProbe{
+		readFile: func(string) ([]byte, error) {
+			return []byte(`{"pid":2263,"process_name":"tmux-a2a-postman","process_started_at":"Mon Jun 15 11:22:00 2026"}`), nil
+		},
+		findProcess: func(int) (signalProcess, error) {
+			return fakeSignalProcess{t: t}, nil
+		},
+		processCommand: func(int) (string, error) {
+			return "/nix/store/example/bin/sleep 60", nil
+		},
+		processStartedAt: fakeProcessStartedAt,
+		stat: func(string) (os.FileInfo, error) {
+			return fakeFileInfo{uid: 501}, nil
+		},
+		fileOwnerUID: func(info os.FileInfo) (int, bool) {
+			return info.(fakeFileInfo).uid, true
+		},
+		currentUID: func() int {
+			return 501
+		},
+	}
+
+	if !probe.isPIDAlive(filepath.Join("ctx", "sess", "postman.pid")) {
+		t.Fatal("isPIDAlive() = false, want true when structured PID start time still matches")
+	}
+}
+
 func withSessionPIDProbe(t *testing.T, probe sessionPIDProbe) {
 	t.Helper()
 	orig := sessionPIDs

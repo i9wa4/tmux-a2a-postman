@@ -191,6 +191,7 @@ func (p sessionPIDProbe) matchesSessionPIDRecord(record sessionPIDRecord) bool {
 		if err != nil || strings.TrimSpace(startedAt) != record.ProcessStartedAt {
 			return false
 		}
+		return true
 	}
 	expectedName := record.ProcessName
 	if expectedName == "" {
