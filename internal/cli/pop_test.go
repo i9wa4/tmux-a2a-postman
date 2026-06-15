@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -635,7 +634,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, contextID, "test-session") {
