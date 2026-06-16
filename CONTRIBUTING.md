@@ -24,23 +24,29 @@ Go version policy:
 - Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
 - Keep the `flake.nix` Go override on the latest required patch release only
   for the break-glass security window before `nixpkgs-unstable` catches up
-- The scheduled `go-toolchain-vuln-detector` workflow is the actionable
-  detector for standard-library and toolchain module findings; it fails with
-  the finding list when a break-glass update may be needed
-- Use the manual `update-go-toolchain` workflow from `main` when all
-  break-glass gates are true:
-  - `govulncheck -scan=module` or equivalent parsed JSON/SARIF evidence reports
-    a standard-library or toolchain finding
+- When you suspect a Go standard-library or toolchain vulnerability, run:
+
+  ```sh
+  nix run .#update-go-toolchain
+  ```
+
+- The command first runs `govulncheck -json -scan=module` and filters for
+  standard-library and toolchain findings. If there are none, it exits 0 with
+  `no stdlib/toolchain vulnerabilities found`.
+- When findings exist, the command updates the Go override only if all
+  break-glass gates pass:
   - the finding advertises a fixed Go patch for the current major.minor
-  - go.dev publishes that fixed patch or a newer same-minor patch
+  - go.dev publishes that fixed patch or a newer same-minor stable patch
   - live `nixpkgs-unstable` still lags behind the fixed patch
-- The workflow updates only the Go override version/hash in `flake.nix`, runs
-  `go mod tidy`, `govulncheck ./...`, `govulncheck -scan=module`,
-  `nix flake check`, and `nix build`, then validates that the PR diff from
-  `origin/main` contains only `flake.nix` before reusing the same updater
-  branch/PR
+  - the current `flake.nix` override does not already satisfy the fixed patch
+- If any gate fails, the command prints structured `status=gate_failed`,
+  `gate=...`, and `reason=...` output, then exits nonzero without changing the
+  repository.
+- When all gates pass, the command updates only the Go override version/hash in
+  `flake.nix`. Then run `govulncheck ./...`, `govulncheck -scan=module`,
+  `nix flake check`, and `nix build` before opening the update PR.
 - No-substitute source builds are manual attestation, not the default fast
-  break-glass gate; dispatch the workflow with `source_attestation=true` or run
+  break-glass gate; run
   `nix build --option substitute false --print-build-logs` explicitly when that
   evidence is needed
 - Minor-version migrations still require manually updating the hard-coded

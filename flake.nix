@@ -62,10 +62,10 @@
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
-            version = "1.26.3";
+            version = "1.26.4";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
+              hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
             };
           });
           buildGo126Module = pkgs.buildGoModule.override { go = go126; };
@@ -124,34 +124,166 @@
               type = "app";
               program = "${pkgs.writeShellScriptBin "update-go-toolchain" ''
                 set -euo pipefail
+                export PATH="${go126}/bin:${pkgs.git}/bin:$PATH"
 
-                go_mod_version="$(awk '/^go / { print $2; exit }' go.mod)"
-                go_minor="$(printf '%s\n' "$go_mod_version" | cut -d. -f1-2)"
-                if ! printf '%s\n' "$go_minor" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+                # Exit codes:
+                #   0: no stdlib/toolchain vulnerabilities were found, or the
+                #      Go toolchain override was updated successfully.
+                #   1: a detection/update tool failed or a break-glass gate
+                #      rejected the update.
+                version_ge() {
+                  first="$1"
+                  second="$2"
+                  [ "$(printf '%s\n%s\n' "$second" "$first" | ${pkgs.coreutils}/bin/sort -V | ${pkgs.coreutils}/bin/tail -n 1)" = "$first" ]
+                }
+
+                fail_gate() {
+                  gate="$1"
+                  reason="$2"
+                  echo "status=gate_failed"
+                  echo "gate=$gate"
+                  echo "reason=$reason"
+                  exit 1
+                }
+
+                go_mod_version="$(${pkgs.gawk}/bin/awk '/^go / { print $2; exit }' go.mod)"
+                go_minor="$(printf '%s\n' "$go_mod_version" | ${pkgs.coreutils}/bin/cut -d. -f1-2)"
+                if ! printf '%s\n' "$go_minor" | ${pkgs.gnugrep}/bin/grep -Eq '^[0-9]+\.[0-9]+$'; then
                   echo "Failed to extract Go major.minor from go.mod: $go_mod_version" >&2
                   exit 1
                 fi
 
+                nix_attr="go_$(printf '%s\n' "$go_minor" | ${pkgs.gnused}/bin/sed 's/\./_/g')"
                 nix_minor="$(
                   ${pkgs.gnused}/bin/sed -nE 's/.*pkgs\.go_([0-9]+_[0-9]+).*/\1/p' flake.nix \
-                    | head -n 1 \
-                    | tr '_' '.'
+                    | ${pkgs.coreutils}/bin/head -n 1 \
+                    | ${pkgs.coreutils}/bin/tr '_' '.'
                 )"
+                override_go="$(
+                  ${pkgs.perl}/bin/perl -0ne 'print "$1\n" if /pkgs\.go_[0-9]+_[0-9]+\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/' flake.nix
+                )"
+                if [ -z "$nix_minor" ]; then
+                  echo "Failed to extract Go major.minor from flake.nix" >&2
+                  exit 1
+                fi
+                if [ -z "$override_go" ]; then
+                  echo "Failed to extract Go override patch version from flake.nix" >&2
+                  exit 1
+                fi
                 if [ "$go_minor" != "$nix_minor" ]; then
                   echo "Go major.minor mismatch: go.mod=$go_minor, flake.nix=$nix_minor" >&2
                   exit 1
                 fi
+                case "$override_go" in
+                  "$go_minor".*) ;;
+                  *)
+                    echo "Go override mismatch: go.mod=$go_minor, override=$override_go" >&2
+                    exit 1
+                    ;;
+                esac
 
-                latest="$(
-                  ${pkgs.curl}/bin/curl -fsSL 'https://go.dev/dl/?mode=json' \
-                    | ${pkgs.jq}/bin/jq -r --arg prefix "go$go_minor." '[.[].version | select(startswith($prefix))][0]'
-                )"
-                if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-                  echo "Failed to find latest Go patch for $go_minor" >&2
-                  exit 1
+                govuln_json="$(${pkgs.coreutils}/bin/mktemp -t govulncheck-module.XXXXXX.jsonl)"
+                trap 'rm -f "$govuln_json"' EXIT
+
+                set +e
+                ${pkgs.govulncheck}/bin/govulncheck -json -scan=module >"$govuln_json"
+                govuln_status=$?
+                set -e
+                if [ "$govuln_status" -ne 0 ] && [ "$govuln_status" -ne 3 ]; then
+                  echo "govulncheck -json -scan=module failed with status $govuln_status" >&2
+                  exit "$govuln_status"
                 fi
 
-                go_version="''${latest#go}"
+                go_toolchain_findings="$(
+                  ${pkgs.jq}/bin/jq -r '
+                    select(.finding)
+                    | (
+                        [
+                          .finding.trace[]?
+                          | select(.module == "stdlib" or .module == "toolchain")
+                          | .module + "@" + (.version // "")
+                        ]
+                        | unique
+                      ) as $modules
+                    | select($modules | length > 0)
+                    | [
+                        .finding.osv,
+                        .finding.fixed_version,
+                        ($modules | join(","))
+                      ]
+                    | @tsv
+                  ' "$govuln_json" | ${pkgs.coreutils}/bin/sort -u
+                )"
+
+                if [ -z "$go_toolchain_findings" ]; then
+                  echo "no stdlib/toolchain vulnerabilities found"
+                  echo "status=clean"
+                  echo "go_minor=$go_minor"
+                  echo "current_go_version=$override_go"
+                  exit 0
+                fi
+
+                echo "status=findings_detected"
+                echo "go_minor=$go_minor"
+                echo "current_go_version=$override_go"
+                echo "findings<<FINDINGS"
+                printf '%s\n' "$go_toolchain_findings"
+                echo "FINDINGS"
+
+                fixed_versions="$(
+                  printf '%s\n' "$go_toolchain_findings" \
+                    | ${pkgs.gawk}/bin/awk -F '\t' -v prefix="$go_minor." '
+                        {
+                          fixed = $2
+                          sub(/^v/, "", fixed)
+                          sub(/^go/, "", fixed)
+                          if (fixed ~ "^" prefix "[0-9]+$") {
+                            print fixed
+                          }
+                        }
+                      ' \
+                    | ${pkgs.coreutils}/bin/sort -V \
+                    | ${pkgs.coreutils}/bin/uniq
+                )"
+                if [ -z "$fixed_versions" ]; then
+                  fail_gate "fixed_version" "stdlib/toolchain findings exist, but none advertise a fixed Go patch for $go_minor"
+                fi
+                target_go_version="$(printf '%s\n' "$fixed_versions" | ${pkgs.coreutils}/bin/tail -n 1)"
+                echo "target_go_version=$target_go_version"
+
+                latest="$(
+                  ${pkgs.curl}/bin/curl -fsSL 'https://go.dev/dl/?mode=json&include=all' \
+                    | ${pkgs.jq}/bin/jq -r --arg prefix "go$go_minor." '
+                        [
+                          .[].version
+                          | select(startswith($prefix))
+                          | sub("^go"; "")
+                          | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                        ]
+                        | .[]
+                      ' \
+                    | ${pkgs.coreutils}/bin/sort -V \
+                    | ${pkgs.coreutils}/bin/tail -n 1
+                )"
+                if [ -z "$latest" ]; then
+                  fail_gate "go_dev_release" "go.dev does not currently publish a stable Go $go_minor patch"
+                fi
+                if ! version_ge "$latest" "$target_go_version"; then
+                  fail_gate "go_dev_release" "latest upstream Go $latest does not satisfy fixed version $target_go_version"
+                fi
+                echo "upstream_go_version=$latest"
+
+                live_nixpkgs_version="$(${pkgs.nix}/bin/nix eval --raw "github:NixOS/nixpkgs/nixpkgs-unstable#$nix_attr.version")"
+                echo "live_nixpkgs_version=$live_nixpkgs_version"
+                if version_ge "$live_nixpkgs_version" "$target_go_version"; then
+                  fail_gate "nixpkgs_lag" "live nixpkgs-unstable already provides $nix_attr $live_nixpkgs_version, which satisfies $target_go_version"
+                fi
+
+                if version_ge "$override_go" "$target_go_version"; then
+                  fail_gate "current_override" "current flake.nix Go override $override_go already satisfies fixed version $target_go_version"
+                fi
+
+                go_version="$latest"
                 src_url="https://go.dev/dl/go$go_version.src.tar.gz"
                 hash="$(
                   ${pkgs.nix}/bin/nix store prefetch-file --json "$src_url" \
@@ -174,7 +306,7 @@
                 echo "Updated Go toolchain override to $go_version"
                 echo "hash = $hash"
               ''}/bin/update-go-toolchain";
-              meta.description = "Update the pinned Go patch override and source hash.";
+              meta.description = "Detect Go stdlib/toolchain vulnerabilities and update the pinned Go patch override when needed.";
             };
 
             check = {
