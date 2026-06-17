@@ -153,7 +153,6 @@
                   exit 1
                 fi
 
-                nix_attr="go_$(printf '%s\n' "$go_minor" | ${pkgs.gnused}/bin/sed 's/\./_/g')"
                 nix_minor="$(
                   ${pkgs.gnused}/bin/sed -nE 's/.*pkgs\.go_([0-9]+_[0-9]+).*/\1/p' flake.nix \
                     | ${pkgs.coreutils}/bin/head -n 1 \
@@ -272,12 +271,6 @@
                   fail_gate "go_dev_release" "latest upstream Go $latest does not satisfy fixed version $target_go_version"
                 fi
                 echo "upstream_go_version=$latest"
-
-                live_nixpkgs_version="$(${pkgs.nix}/bin/nix eval --raw "github:NixOS/nixpkgs/nixpkgs-unstable#$nix_attr.version")"
-                echo "live_nixpkgs_version=$live_nixpkgs_version"
-                if version_ge "$live_nixpkgs_version" "$target_go_version"; then
-                  fail_gate "nixpkgs_lag" "live nixpkgs-unstable already provides $nix_attr $live_nixpkgs_version, which satisfies $target_go_version"
-                fi
 
                 if version_ge "$override_go" "$target_go_version"; then
                   fail_gate "current_override" "current flake.nix Go override $override_go already satisfies fixed version $target_go_version"

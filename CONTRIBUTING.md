@@ -23,7 +23,7 @@ Go version policy:
 - Keep `go.mod` at major.minor (for example `go 1.26`)
 - Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
 - Keep the `flake.nix` Go override on the latest required patch release only
-  for the break-glass security window before `nixpkgs-unstable` catches up
+  for explicit break-glass security updates
 - When you suspect a Go standard-library or toolchain vulnerability, run:
 
   ```sh
@@ -33,11 +33,10 @@ Go version policy:
 - The command first runs `govulncheck -json -scan=module` and filters for
   standard-library and toolchain findings. If there are none, it exits 0 with
   `no stdlib/toolchain vulnerabilities found`.
-- When findings exist, the command updates the Go override only if all
+- When findings exist, the command updates the Go override only if all three
   break-glass gates pass:
   - the finding advertises a fixed Go patch for the current major.minor
   - go.dev publishes that fixed patch or a newer same-minor stable patch
-  - live `nixpkgs-unstable` still lags behind the fixed patch
   - the current `flake.nix` override does not already satisfy the fixed patch
 - If any gate fails, the command prints structured `status=gate_failed`,
   `gate=...`, and `reason=...` output, then exits nonzero without changing the
