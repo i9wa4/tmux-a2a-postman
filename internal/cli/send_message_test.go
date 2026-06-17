@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1632,7 +1631,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	now := time.Date(2026, time.May, 3, 9, 0, 0, 0, time.UTC)
@@ -2569,7 +2568,7 @@ role = "worker"
 	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -2647,7 +2646,7 @@ role = "worker"
 	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -2710,7 +2709,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit", "test-session") {
@@ -2824,7 +2823,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-legacy", "test-session") {
@@ -2957,7 +2956,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-json", "test-session") {
@@ -3104,7 +3103,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-marker-resolution", "test-session") {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -70,13 +69,9 @@ func RunStop(stdout io.Writer, args []string) error {
 	}
 
 	pidPath := filepath.Join(baseDir, contextID, daemonSessionName, "postman.pid")
-	data, err := os.ReadFile(pidPath)
+	pid, err := config.ReadSessionPIDFile(pidPath)
 	if err != nil {
-		return fmt.Errorf("reading pid file %s: %w", pidPath, err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid pid in %s", pidPath)
+		return err
 	}
 
 	proc, err := os.FindProcess(pid)
