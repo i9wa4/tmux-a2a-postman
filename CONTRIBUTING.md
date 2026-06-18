@@ -22,32 +22,22 @@ Go version policy:
 
 - Keep `go.mod` at major.minor (for example `go 1.26`)
 - Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
-- Keep the `flake.nix` Go override on the latest required patch release only
-  for explicit break-glass security updates
-- When you suspect a Go standard-library or toolchain vulnerability, run:
+- Keep the `flake.nix` Go override on the latest stable same-minor patch release
+  published by go.dev
+- To update the Go patch override, run:
 
   ```sh
   nix run .#update-go-toolchain
   ```
 
-- The command first runs `govulncheck -json -scan=module` and filters for
-  standard-library and toolchain findings. If there are none, it exits 0 with
-  `no stdlib/toolchain vulnerabilities found`.
-- When findings exist, the command updates the Go override only if all three
-  break-glass gates pass:
-  - the finding advertises a fixed Go patch for the current major.minor
-  - go.dev publishes that fixed patch or a newer same-minor stable patch
-  - the current `flake.nix` override does not already satisfy the fixed patch
-- If any gate fails, the command prints structured `status=gate_failed`,
-  `gate=...`, and `reason=...` output, then exits nonzero without changing the
-  repository.
-- When all gates pass, the command updates only the Go override version/hash in
-  `flake.nix`. Then run `govulncheck ./...`, `govulncheck -scan=module`,
-  `nix flake check`, and `nix build` before opening the update PR.
-- No-substitute source builds are manual attestation, not the default fast
-  break-glass gate; run
-  `nix build --option substitute false --print-build-logs` explicitly when that
-  evidence is needed
+- The command reads the current Go major.minor from the `go126` override in
+  `flake.nix`, queries go.dev for the latest stable patch release for that same
+  major.minor, and updates only the override version/hash in `flake.nix` when a
+  newer patch exists.
+- If the override is already current, the command exits 0 with
+  `status=up_to_date` and leaves the repository unchanged.
+- After the command updates `flake.nix`, run `nix flake check` and `nix build`
+  before opening the update PR.
 - Minor-version migrations still require manually updating the hard-coded
   `go126` / `go_1_26` names and then rerunning the alignment checks
 

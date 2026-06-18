@@ -128,12 +128,7 @@
                   runtimeInputs = with pkgs; [
                     coreutils
                     curl
-                    gawk
-                    git
                     gnugrep
-                    gnused
-                    go126
-                    govulncheck
                     jq
                     nix
                     perl
@@ -141,7 +136,7 @@
                   text = builtins.readFile ./scripts/update-go-toolchain.sh;
                 }
               }/bin/update-go-toolchain";
-              meta.description = "Detect Go stdlib/toolchain vulnerabilities and update the pinned Go patch override when needed.";
+              meta.description = "Update the pinned Go patch override to the latest same-minor go.dev release.";
             };
 
             check = {
