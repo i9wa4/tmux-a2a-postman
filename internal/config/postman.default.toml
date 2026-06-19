@@ -112,9 +112,7 @@ common_template = ""
 allow_shell_templates = false
 
 # Notification template (when new message arrives)
-notification_template = """Hello, {node}!
-You've got mail: {filename}
-Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
+notification_template = """Hello, {node}! You've got mail: {filename}. Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
 # Message footer (rendered into the generated header before the sender body separator)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes

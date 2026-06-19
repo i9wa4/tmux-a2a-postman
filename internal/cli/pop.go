@@ -156,6 +156,8 @@ type popMessageOutput struct {
 	ArchivedBodyReadInstruction string                  `json:"archived_body_read_instruction,omitempty"`
 	RuntimeContext              *runtimecontext.Summary `json:"runtime_context,omitempty"`
 	RuntimeContextError         string                  `json:"runtime_context_error,omitempty"`
+	PopReceiptPath              string                  `json:"pop_receipt_path,omitempty"`
+	PopReceiptAbsolutePath      string                  `json:"pop_receipt_absolute_path,omitempty"`
 	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
 }
 
@@ -190,7 +192,28 @@ func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath str
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
-	return json.NewEncoder(stdout).Encode(output)
+	receiptPath, err := popReceiptPath(markdownPath)
+	if err != nil {
+		return err
+	}
+	if receiptPath != "" {
+		output.PopReceiptPath = displayMarkdownPath(receiptPath)
+		if output.PopReceiptPath != receiptPath {
+			output.PopReceiptAbsolutePath = receiptPath
+		}
+	}
+	payload, err := json.Marshal(output)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if receiptPath != "" {
+		if err := os.WriteFile(receiptPath, payload, 0o600); err != nil {
+			return fmt.Errorf("writing pop receipt: %w", err)
+		}
+	}
+	_, err = stdout.Write(payload)
+	return err
 }
 
 func popSessionDiagnosticsForSession(sessionDir string) *popSessionDiagnostics {
@@ -309,6 +332,26 @@ func sessionDirFromArchivedMarkdownPath(markdownPath string) string {
 		return ""
 	}
 	return filepath.Dir(filepath.Dir(markdownPath))
+}
+
+func popReceiptPath(markdownPath string) (string, error) {
+	if markdownPath == "" {
+		return "", nil
+	}
+	dir := filepath.Dir(markdownPath)
+	if filepath.Base(dir) != "read" {
+		return "", nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("creating pop receipt directory: %w", err)
+	}
+	filename := filepath.Base(markdownPath)
+	ext := filepath.Ext(filename)
+	stem := strings.TrimSuffix(filename, ext)
+	if stem == "" {
+		stem = filename
+	}
+	return filepath.Join(dir, stem+".pop.json"), nil
 }
 
 func displayMarkdownPath(markdownPath string) string {

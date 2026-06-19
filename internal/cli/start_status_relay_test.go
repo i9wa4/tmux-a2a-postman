@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -20,11 +19,7 @@ func writeLiveSessionPID(t *testing.T, baseDir, contextID, sessionName string) {
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", sessionDir, err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(sessionDir, "postman.pid"),
-		[]byte(strconv.Itoa(os.Getpid())),
-		0o600,
-	); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 }

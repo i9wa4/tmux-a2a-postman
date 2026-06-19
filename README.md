@@ -13,6 +13,11 @@ commands.
 Any AI coding agent that can run commands in a tmux pane can participate;
 postman keeps handoffs local with filesystem-backed inboxes.
 
+Postman is intentionally a thin coordination layer, not a full agent runtime
+or harness. It connects existing terminal processes from the outside, then
+makes their work traceable through mailbox threads, reply-required approval
+threads, journal/projection state, and tmux pane state.
+
 ## 1. Concept
 
 ```mermaid
@@ -72,6 +77,9 @@ archived mail outside the agent panes.
 - Trust explicit local state: the daemon tracks delivery, unread/read archives,
   dead letters, and reply-required slots through files and status commands
   instead of a hidden workflow engine.
+- Keep command-control rails backend-independent: mailbox and approval threads
+  can record what was requested and accepted across agent CLIs, while OS-level
+  sandboxing and hard enforcement stay with the host or runtime.
 - Avoid missed handoffs: pending replies, status views, and archived Markdown
   messages help operators and agents catch unresolved tasks before they drift.
 
@@ -81,6 +89,20 @@ Prerequisites:
 
 - macOS or Linux
 - tmux 3.0 or newer
+- Stable tmux pane titles for agent roles
+
+Postman uses tmux pane titles as node names. Before starting a postman
+session, disable or neutralize terminal title updates in agent CLIs:
+
+- Claude Code: set `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` in the environment
+  used to launch `claude`.
+- Codex CLI: add this to `$CODEX_HOME/config.toml` (`~/.codex/config.toml` by
+  default), or use `/title` to remove title items:
+
+  ```toml
+  [tui]
+  terminal_title = []
+  ```
 
 Install with Go:
 

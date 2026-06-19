@@ -2,6 +2,8 @@ package runtimecontext
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +49,58 @@ func TestRuntimeContextSanitizesPromptLikeFieldsForMarkdown(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered markdown missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestRuntimeContextIncludesLaunchCommandAndAddDirInMarkdownAndSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	addDir := filepath.Join(tmpDir, "internal")
+	if err := os.MkdirAll(addDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll addDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(addDir, "README.md"), []byte("# Internal\n\nUseful automation context.\n\nSecond paragraph.\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	launchCommand := "/usr/bin/codex --yolo --add-dir " + addDir + " --model gpt-5.5"
+
+	snapshot := BuildSnapshot(BuildOptions{
+		Now:       time.Date(2026, time.June, 1, 12, 0, 0, 0, time.UTC),
+		Scope:     "sender",
+		ContextID: "ctx-runtime",
+		MessageID: "message.md",
+		Node:      "worker",
+		Runtime:   RuntimeMetadataFromLaunchCommand(launchCommand, ""),
+	})
+	if snapshot.Runtime == nil {
+		t.Fatalf("snapshot.Runtime is nil")
+	}
+	if snapshot.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("launch command = %q, want %q", snapshot.Runtime.LaunchCommand, launchCommand)
+	}
+	if snapshot.Runtime.AddDir == nil || snapshot.Runtime.AddDir.Context != "Useful automation context." {
+		t.Fatalf("add_dir = %#v, want README summary", snapshot.Runtime.AddDir)
+	}
+
+	rendered := RenderSenderMarkdown(snapshot)
+	for _, want := range []string{
+		"- launch_command: /usr/bin/codex --yolo --add-dir",
+		"- add_dir:",
+		"Useful automation context.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered markdown missing %q:\n%s", want, rendered)
+		}
+	}
+
+	summary := SummaryFromSnapshot(snapshot, filepath.Join(tmpDir, "rctx.json"), 100, time.Date(2026, time.June, 1, 12, 1, 0, 0, time.UTC))
+	if summary.YouWereLaunchedWith != launchCommand {
+		t.Fatalf("summary.YouWereLaunchedWith = %q, want %q", summary.YouWereLaunchedWith, launchCommand)
+	}
+	if summary.Fields.Runtime == nil || summary.Fields.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("summary runtime = %#v, want launch command", summary.Fields.Runtime)
+	}
+	if summary.Fields.Runtime.AddDir == nil || summary.Fields.Runtime.AddDir.Context != "Useful automation context." {
+		t.Fatalf("summary add_dir = %#v, want README summary", summary.Fields.Runtime.AddDir)
 	}
 }
 

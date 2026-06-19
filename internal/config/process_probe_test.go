@@ -21,6 +21,14 @@ func (p fakeSignalProcess) Signal(sig os.Signal) error {
 	return p.err
 }
 
+func fakePostmanCommand(int) (string, error) {
+	return "/nix/store/example/bin/tmux-a2a-postman start", nil
+}
+
+func fakeProcessStartedAt(int) (string, error) {
+	return "Mon Jun 15 11:22:00 2026", nil
+}
+
 type fakeFileInfo struct {
 	name string
 	uid  int
@@ -68,6 +76,8 @@ func TestSessionPIDProbeLivenessMatrix(t *testing.T) {
 					}
 					return fakeSignalProcess{t: t, err: tt.signalErr}, nil
 				},
+				processCommand:   fakePostmanCommand,
+				processStartedAt: fakeProcessStartedAt,
 				stat: func(string) (os.FileInfo, error) {
 					return fakeFileInfo{uid: 501}, nil
 				},
@@ -117,6 +127,8 @@ func TestSessionPIDProbeRejectsInvalidPIDFiles(t *testing.T) {
 					findCalled = true
 					return fakeSignalProcess{t: t}, nil
 				},
+				processCommand:   fakePostmanCommand,
+				processStartedAt: fakeProcessStartedAt,
 				stat: func(string) (os.FileInfo, error) {
 					return fakeFileInfo{uid: 501}, nil
 				},
@@ -179,6 +191,8 @@ func TestSessionPIDProbeOwnershipFallbacks(t *testing.T) {
 				findProcess: func(int) (signalProcess, error) {
 					return fakeSignalProcess{t: t}, nil
 				},
+				processCommand:   fakePostmanCommand,
+				processStartedAt: fakeProcessStartedAt,
 				stat: func(string) (os.FileInfo, error) {
 					return fakeFileInfo{uid: tt.ownerUID}, nil
 				},
@@ -211,6 +225,8 @@ func TestFindCurrentUserDaemonUsesPIDProbeAcrossMultipleContexts(t *testing.T) {
 		findProcess: func(int) (signalProcess, error) {
 			return fakeSignalProcess{t: t}, nil
 		},
+		processCommand:   fakePostmanCommand,
+		processStartedAt: fakeProcessStartedAt,
 		stat: func(path string) (os.FileInfo, error) {
 			switch path {
 			case foreignPID:
@@ -256,6 +272,94 @@ func writePIDFileForProbeTest(t *testing.T, baseDir, contextName, sessionName, p
 		t.Fatalf("WriteFile(%q): %v", pidPath, err)
 	}
 	return pidPath
+}
+
+func TestSessionPIDProbeRejectsReusedPIDWithDifferentCommand(t *testing.T) {
+	probe := sessionPIDProbe{
+		readFile: func(string) ([]byte, error) {
+			return []byte("2263"), nil
+		},
+		findProcess: func(int) (signalProcess, error) {
+			return fakeSignalProcess{t: t}, nil
+		},
+		processCommand: func(int) (string, error) {
+			return "/System/Library/PrivateFrameworks/DeviceCheckInternal.framework/devicecheckd", nil
+		},
+		processStartedAt: fakeProcessStartedAt,
+		stat: func(string) (os.FileInfo, error) {
+			return fakeFileInfo{uid: 501}, nil
+		},
+		fileOwnerUID: func(info os.FileInfo) (int, bool) {
+			return info.(fakeFileInfo).uid, true
+		},
+		currentUID: func() int {
+			return 501
+		},
+	}
+
+	pidPath := filepath.Join("ctx", "sess", "postman.pid")
+	if probe.isPIDAlive(pidPath) {
+		t.Fatal("isPIDAlive() = true, want false for reused PID with non-postman command")
+	}
+	if probe.isPIDOwnedByCurrentUser(pidPath) {
+		t.Fatal("isPIDOwnedByCurrentUser() = true, want false for reused PID with non-postman command")
+	}
+}
+
+func TestSessionPIDProbeRejectsStructuredPIDWithDifferentStartTime(t *testing.T) {
+	probe := sessionPIDProbe{
+		readFile: func(string) ([]byte, error) {
+			return []byte(`{"pid":2263,"process_name":"tmux-a2a-postman","process_started_at":"Mon Jun 15 10:00:00 2026"}`), nil
+		},
+		findProcess: func(int) (signalProcess, error) {
+			return fakeSignalProcess{t: t}, nil
+		},
+		processCommand: fakePostmanCommand,
+		processStartedAt: func(int) (string, error) {
+			return "Mon Jun 15 11:22:00 2026", nil
+		},
+		stat: func(string) (os.FileInfo, error) {
+			return fakeFileInfo{uid: 501}, nil
+		},
+		fileOwnerUID: func(info os.FileInfo) (int, bool) {
+			return info.(fakeFileInfo).uid, true
+		},
+		currentUID: func() int {
+			return 501
+		},
+	}
+
+	if probe.isPIDAlive(filepath.Join("ctx", "sess", "postman.pid")) {
+		t.Fatal("isPIDAlive() = true, want false for reused PID with different start time")
+	}
+}
+
+func TestSessionPIDProbeAcceptsStructuredPIDWithSameStartTime(t *testing.T) {
+	probe := sessionPIDProbe{
+		readFile: func(string) ([]byte, error) {
+			return []byte(`{"pid":2263,"process_name":"tmux-a2a-postman","process_started_at":"Mon Jun 15 11:22:00 2026"}`), nil
+		},
+		findProcess: func(int) (signalProcess, error) {
+			return fakeSignalProcess{t: t}, nil
+		},
+		processCommand: func(int) (string, error) {
+			return "/nix/store/example/bin/sleep 60", nil
+		},
+		processStartedAt: fakeProcessStartedAt,
+		stat: func(string) (os.FileInfo, error) {
+			return fakeFileInfo{uid: 501}, nil
+		},
+		fileOwnerUID: func(info os.FileInfo) (int, bool) {
+			return info.(fakeFileInfo).uid, true
+		},
+		currentUID: func() int {
+			return 501
+		},
+	}
+
+	if !probe.isPIDAlive(filepath.Join("ctx", "sess", "postman.pid")) {
+		t.Fatal("isPIDAlive() = false, want true when structured PID start time still matches")
+	}
 }
 
 func withSessionPIDProbe(t *testing.T, probe sessionPIDProbe) {
