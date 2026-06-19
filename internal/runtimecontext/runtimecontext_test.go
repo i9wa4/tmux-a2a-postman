@@ -104,6 +104,60 @@ func TestRuntimeContextIncludesLaunchCommandAndAddDirInMarkdownAndSummary(t *tes
 	}
 }
 
+func TestSaveSnapshotPreservesFullLaunchCommandAndAddDirContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	addDir := filepath.Join(tmpDir, "internal")
+	if err := os.MkdirAll(addDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll addDir: %v", err)
+	}
+	fullContext := strings.TrimSpace(strings.Repeat("Operational context for the automation archive. ", 12))
+	if len(fullContext) <= defaultStringLimit {
+		t.Fatalf("test context length = %d, want > %d", len(fullContext), defaultStringLimit)
+	}
+	if err := os.WriteFile(filepath.Join(addDir, "README.md"), []byte("# Internal\n\n"+fullContext+"\n\nSecond paragraph.\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	launchCommand := "/usr/bin/codex --yolo --add-dir " + addDir + " --model gpt-5.5 " + strings.Repeat("--flag=value ", 30)
+	if len(launchCommand) <= defaultStringLimit {
+		t.Fatalf("test launch command length = %d, want > %d", len(launchCommand), defaultStringLimit)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-runtime", "tmux-a2a-postman")
+
+	snapshot := BuildSnapshot(BuildOptions{
+		Now:       time.Date(2026, time.June, 19, 10, 0, 0, 0, time.UTC),
+		Scope:     "sender",
+		ContextID: "ctx-runtime",
+		MessageID: "message.md",
+		Node:      "worker",
+		Runtime:   RuntimeMetadataFromLaunchCommand(launchCommand, ""),
+	})
+	saved, err := SaveSnapshot(sessionDir, snapshot)
+	if err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+
+	data, err := os.ReadFile(saved.Path)
+	if err != nil {
+		t.Fatalf("ReadFile saved snapshot: %v", err)
+	}
+	var archived Snapshot
+	if err := json.Unmarshal(data, &archived); err != nil {
+		t.Fatalf("json.Unmarshal archived snapshot: %v", err)
+	}
+	if archived.Runtime == nil {
+		t.Fatalf("archived.Runtime is nil: %s", data)
+	}
+	if archived.Runtime.LaunchCommand != strings.TrimSpace(launchCommand) {
+		t.Fatalf("archived launch command length = %d, want full length %d\nvalue=%q", len(archived.Runtime.LaunchCommand), len(strings.TrimSpace(launchCommand)), archived.Runtime.LaunchCommand)
+	}
+	if archived.Runtime.AddDir == nil || archived.Runtime.AddDir.Context != fullContext {
+		t.Fatalf("archived add_dir = %#v, want full README context length %d", archived.Runtime.AddDir, len(fullContext))
+	}
+	if strings.Contains(archived.Runtime.LaunchCommand, "...") || strings.Contains(archived.Runtime.AddDir.Context, "...") {
+		t.Fatalf("archived runtime metadata was abbreviated: %#v", archived.Runtime)
+	}
+}
+
 func TestRenderSenderMarkdownPreservesSafetyLinesAndBoundaryWhenTruncated(t *testing.T) {
 	snapshot := Snapshot{
 		SchemaVersion: SchemaVersion,
