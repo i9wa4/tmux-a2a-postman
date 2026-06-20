@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -214,7 +213,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 	}
 
 	pidPath := filepath.Join(sessionDir, "postman.pid")
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(pidPath, os.Getpid()); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
