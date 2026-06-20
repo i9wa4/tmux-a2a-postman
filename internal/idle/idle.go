@@ -20,7 +20,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
 
-const compactionPingCooldown = 30 * time.Second
+const (
+	compactionPingCooldown       = 30 * time.Second
+	maxCompactionPrefixTailBytes = 256
+)
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
@@ -56,7 +59,7 @@ type PaneCaptureState struct {
 	LastCompactionTrigger string    // Non-empty while a compaction marker remains in scanned content
 	LastCompactionHash    uint32    // Scanned compaction content hash for the most recent compaction marker state
 	LastCompactionMarkers int       // Marker occurrences in scanned content for the most recent compaction state
-	LastCompactionPrefix  string    // Scanned content through the latest marker occurrence
+	LastCompactionPrefix  string    // Bounded scanned content suffix through the latest marker occurrence
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -244,14 +247,25 @@ func codexCompactionTriggerScan(content string) compactionMarkerScan {
 }
 
 func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) compactionMarkerScan {
-	lines := strings.Split(content, "\n")
 	markers := 0
-	latestMarkerLine := -1
-	for i, line := range lines {
+	latestMarkerEnd := -1
+	for lineStart := 0; lineStart <= len(content); {
+		lineEnd := strings.IndexByte(content[lineStart:], '\n')
+		nextLineStart := len(content) + 1
+		if lineEnd < 0 {
+			lineEnd = len(content)
+		} else {
+			lineEnd += lineStart
+			nextLineStart = lineEnd + 1
+		}
+
+		line := content[lineStart:lineEnd]
 		if isMarker(line) {
 			markers++
-			latestMarkerLine = i
+			latestMarkerEnd = lineEnd
 		}
+
+		lineStart = nextLineStart
 	}
 	if markers == 0 {
 		return compactionMarkerScan{}
@@ -259,8 +273,19 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 	return compactionMarkerScan{
 		Trigger:            trigger,
 		MarkerCount:        markers,
-		LatestMarkerPrefix: strings.Join(lines[:latestMarkerLine+1], "\n"),
+		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
 	}
+}
+
+func compactionPrefixTail(content string, end int) string {
+	if end <= 0 {
+		return ""
+	}
+	start := 0
+	if end > maxCompactionPrefixTailBytes {
+		start = end - maxCompactionPrefixTailBytes
+	}
+	return strings.Clone(content[start:end])
 }
 
 func isCodexCompactionLine(line string) bool {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -24,11 +25,15 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
-const inboxCheckInterval = 30 * time.Second
+const (
+	inboxCheckInterval            = 30 * time.Second
+	runtimeDiagnosticsLogInterval = 10 * time.Minute
+)
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -240,6 +245,87 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	}, nil
 }
 
+func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+	response := projection.DaemonSubmitResponse{
+		RequestID: request.RequestID,
+		Command:   request.Command,
+		HandledAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if request.RequestID == "" {
+		return response, fmt.Errorf("daemon submit runtime-profile missing request_id")
+	}
+	kind, err := runtimeprofile.NormalizeKind(request.ProfileKind)
+	if err != nil {
+		return response, err
+	}
+	maxBytes := request.ProfileMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = runtimeprofile.DefaultMaxBytes
+	}
+	data, err := runtimeprofile.Capture(kind, maxBytes)
+	if err != nil {
+		return response, err
+	}
+
+	switch request.ProfileDestination {
+	case "stdout":
+		response.RuntimeProfile = &projection.RuntimeProfileCapture{
+			Kind:          kind,
+			Destination:   "stdout",
+			Encoding:      "base64",
+			ContentBase64: base64.StdEncoding.EncodeToString(data),
+			Bytes:         len(data),
+			MaxBytes:      maxBytes,
+		}
+	case "file":
+		if request.ProfileOutputPath == "" {
+			return response, fmt.Errorf("daemon submit runtime-profile file destination missing output path")
+		}
+		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data); err != nil {
+			return response, err
+		}
+		response.RuntimeProfile = &projection.RuntimeProfileCapture{
+			Kind:        kind,
+			Destination: "file",
+			Bytes:       len(data),
+			MaxBytes:    maxBytes,
+			OutputPath:  request.ProfileOutputPath,
+		}
+	default:
+		return response, fmt.Errorf("daemon submit runtime-profile requires explicit destination stdout or file")
+	}
+	return response, nil
+}
+
+func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
+	if outputPath == "" {
+		return fmt.Errorf("profile output path is required")
+	}
+	if strings.ContainsAny(filepath.Base(outputPath), `/\`) {
+		return fmt.Errorf("profile output path must name a file")
+	}
+	dir := filepath.Dir(outputPath)
+	if dir == "." {
+		dir = ""
+	}
+	if dir != "" {
+		if info, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("profile output directory: %w", err)
+		} else if !info.IsDir() {
+			return fmt.Errorf("profile output directory is not a directory")
+		}
+	}
+	tmpPath := outputPath + "." + requestID + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("writing profile temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("publishing profile file: %w", err)
+	}
+	return nil
+}
+
 func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) {
 	content := fallbackContent
 	if readContent, err := os.ReadFile(readPath); err == nil {
@@ -314,6 +400,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		if err == nil && !response.Empty {
 			result.ProjectionSyncSessionDir = sessionDir
 		}
+	case projection.DaemonSubmitRuntimeProfile:
+		response, err = handleDaemonSubmitRuntimeProfile(sessionDir, request)
 	default:
 		err = fmt.Errorf("unsupported daemon submit command %q", request.Command)
 		response = projection.DaemonSubmitResponse{
@@ -554,8 +642,11 @@ func runDaemonLoopWithWatcherEvents(
 	defer sessionScanTicker.Stop()
 	inboxCheckTicker := time.NewTicker(inboxCheckInterval)
 	defer inboxCheckTicker.Stop()
+	runtimeDiagnosticsTicker := time.NewTicker(runtimeDiagnosticsLogInterval)
+	defer runtimeDiagnosticsTicker.Stop()
 
 	runtime.bootstrap()
+	runtime.logRuntimeDiagnosticsSnapshot("startup", runtime.now())
 
 	for {
 		select {
@@ -583,6 +674,8 @@ func runDaemonLoopWithWatcherEvents(
 			runtime.handleSessionScanTick()
 		case <-inboxCheckTicker.C:
 			runtime.handleInboxCheckTick()
+		case <-runtimeDiagnosticsTicker.C:
+			runtime.logRuntimeDiagnosticsSnapshot("interval", runtime.now())
 		}
 	}
 }
@@ -614,21 +707,80 @@ func scanLiveInboxCounts(nodes map[string]discovery.NodeInfo) map[string]int {
 	return counts
 }
 
-// checkSwallowedMessages detects inbox messages likely swallowed by a busy agent pane
-// and re-delivers the notification. Detection: inbox file older than delivery_idle_timeout_seconds
-// AND pane idle AND node has not sent since file landed in inbox. Issue #282.
-func checkSwallowedMessages(
-	nodes map[string]discovery.NodeInfo,
-	cfg *config.Config,
-	events chan<- tui.DaemonEvent,
-	contextID string,
-	adjacency map[string][]string,
-	idleTracker *idle.IdleTracker,
-	daemonState *DaemonState,
-) {
-	paneStatus := idleTracker.GetPaneActivityStatus(cfg)
-	livenessMap := idleTracker.GetLivenessMap()
+type swallowedInboxEntry struct {
+	name    string
+	isDir   bool
+	modTime time.Time
+	infoErr error
+}
 
+type swallowedCandidate struct {
+	nodeKey      string
+	nodeName     string
+	nodeInfo     discovery.NodeInfo
+	fileName     string
+	inboxPath    string
+	from         string
+	deliveryTime time.Time
+	detectedAt   time.Time
+	retryCount   int
+	retryMax     int
+}
+
+type swallowedDetector struct {
+	now              func() time.Time
+	listInbox        func(inboxDir string) ([]swallowedInboxEntry, error)
+	hasNodeSentSince func(nodeName string, since time.Time) bool
+	retryCount       func(inboxPath string) int
+}
+
+type swallowedPaneSender func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+
+func readSwallowedInboxEntries(inboxDir string) ([]swallowedInboxEntry, error) {
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]swallowedInboxEntry, 0, len(entries))
+	for _, entry := range entries {
+		item := swallowedInboxEntry{
+			name:  entry.Name(),
+			isDir: entry.IsDir(),
+		}
+		if !item.isDir {
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				item.infoErr = infoErr
+			} else {
+				item.modTime = info.ModTime()
+			}
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func newSwallowedDetector(daemonState *DaemonState) swallowedDetector {
+	return swallowedDetector{
+		now:       daemonState.now,
+		listInbox: readSwallowedInboxEntries,
+		hasNodeSentSince: func(nodeName string, since time.Time) bool {
+			return daemonState.hasNodeSentSince(nodeName, since)
+		},
+		retryCount: func(inboxPath string) int {
+			daemonState.swallowedRetryCountMu.Lock()
+			defer daemonState.swallowedRetryCountMu.Unlock()
+			return daemonState.swallowedRetryCount[inboxPath]
+		},
+	}
+}
+
+func (d swallowedDetector) detect(nodes map[string]discovery.NodeInfo, cfg *config.Config, paneStatus map[string]string) []swallowedCandidate {
+	if cfg == nil {
+		return nil
+	}
+	now := d.currentTime()
+	var candidates []swallowedCandidate
 	for nodeKey, nodeInfo := range nodes {
 		simpleName := nodeKey
 		if parts := strings.SplitN(nodeKey, ":", 2); len(parts) == 2 {
@@ -652,83 +804,167 @@ func checkSwallowedMessages(
 
 		timeout := time.Duration(nodeCfg.DeliveryIdleTimeoutSeconds * float64(time.Second))
 		inboxDir := filepath.Join(nodeInfo.SessionDir, "inbox", simpleName)
-		entries, err := os.ReadDir(inboxDir)
+		entries, err := d.entries(inboxDir)
 		if err != nil {
 			continue
 		}
 
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			if entry.isDir || !strings.HasSuffix(entry.name, ".md") {
 				continue
 			}
-			fileInfo, parseErr := message.ParseMessageFilename(entry.Name())
+			fileInfo, parseErr := message.ParseMessageFilename(entry.name)
 			if parseErr != nil {
 				continue
 			}
 			if fileInfo.From == "postman" || fileInfo.From == "daemon" {
 				continue
 			}
-
-			entryInfo, infoErr := entry.Info()
-			if infoErr != nil {
-				continue
-			}
-			deliveryTime := entryInfo.ModTime()
-
-			if time.Since(deliveryTime) < timeout {
+			if entry.infoErr != nil {
 				continue
 			}
 
-			if daemonState.hasNodeSentSince(simpleName, deliveryTime) {
+			deliveryTime := entry.modTime
+			if now.Sub(deliveryTime) < timeout {
 				continue
 			}
 
-			inboxPath := filepath.Join(inboxDir, entry.Name())
-			daemonState.swallowedRetryCountMu.Lock()
-			count := daemonState.swallowedRetryCount[inboxPath]
-			daemonState.swallowedRetryCountMu.Unlock()
+			if d.nodeSentSince(simpleName, deliveryTime) {
+				continue
+			}
+
+			inboxPath := filepath.Join(inboxDir, entry.name)
+			count := d.countRetries(inboxPath)
 			if count >= retryMax {
 				continue
 			}
 
-			notificationMsg := notification.BuildNotification(
-				cfg, adjacency, nodes, contextID,
-				simpleName, fileInfo.From,
-				nodeInfo.SessionName, entry.Name(),
-				livenessMap,
-			)
-			enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
-			if nodeCfg.EnterDelay != 0 {
-				enterDelay = time.Duration(nodeCfg.EnterDelay * float64(time.Second))
-			}
-			tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-			enterCount := nodeCfg.EnterCount
-			if enterCount == 0 {
-				enterCount = 1
-			}
-
-			verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
-			log.Printf("postman: notification: swallowed detected for %s: %s (age=%s, pane=%s)\n",
-				simpleName, entry.Name(), time.Since(deliveryTime).Truncate(time.Second), nodeInfo.PaneID)
-			_ = notification.SendToPane(nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
-
-			daemonState.swallowedRetryCountMu.Lock()
-			daemonState.swallowedRetryCount[inboxPath]++
-			daemonState.swallowedRetryCountMu.Unlock()
-
-			log.Printf("postman: swallowed message re-delivered to %s (pane=%s): %s (attempt %d/%d)\n",
-				simpleName, nodeInfo.PaneID, entry.Name(), count+1, retryMax)
-			events <- tui.DaemonEvent{
-				Type:    "swallowed_redelivery",
-				Message: fmt.Sprintf("Re-delivered to %s: %s (attempt %d/%d)", simpleName, entry.Name(), count+1, retryMax),
-				Details: map[string]interface{}{
-					"node":    nodeKey,
-					"file":    entry.Name(),
-					"attempt": count + 1,
-					"max":     retryMax,
-				},
-			}
+			candidates = append(candidates, swallowedCandidate{
+				nodeKey:      nodeKey,
+				nodeName:     simpleName,
+				nodeInfo:     nodeInfo,
+				fileName:     entry.name,
+				inboxPath:    inboxPath,
+				from:         fileInfo.From,
+				deliveryTime: deliveryTime,
+				detectedAt:   now,
+				retryCount:   count,
+				retryMax:     retryMax,
+			})
 		}
+	}
+	return candidates
+}
+
+func (d swallowedDetector) currentTime() time.Time {
+	if d.now != nil {
+		return d.now()
+	}
+	return time.Now()
+}
+
+func (d swallowedDetector) entries(inboxDir string) ([]swallowedInboxEntry, error) {
+	if d.listInbox != nil {
+		return d.listInbox(inboxDir)
+	}
+	return readSwallowedInboxEntries(inboxDir)
+}
+
+func (d swallowedDetector) nodeSentSince(nodeName string, since time.Time) bool {
+	if d.hasNodeSentSince == nil {
+		return false
+	}
+	return d.hasNodeSentSince(nodeName, since)
+}
+
+func (d swallowedDetector) countRetries(inboxPath string) int {
+	if d.retryCount == nil {
+		return 0
+	}
+	return d.retryCount(inboxPath)
+}
+
+func executeSwallowedRedelivery(
+	candidate swallowedCandidate,
+	cfg *config.Config,
+	adjacency map[string][]string,
+	nodes map[string]discovery.NodeInfo,
+	contextID string,
+	livenessMap map[string]bool,
+	events chan<- tui.DaemonEvent,
+	send swallowedPaneSender,
+	incrementRetry func(inboxPath string),
+) {
+	if send == nil {
+		send = notification.SendToPane
+	}
+	notificationMsg := notification.BuildNotification(
+		cfg, adjacency, nodes, contextID,
+		candidate.nodeName, candidate.from,
+		candidate.nodeInfo.SessionName, candidate.fileName,
+		livenessMap,
+	)
+	nodeCfg := cfg.GetNodeConfig(candidate.nodeName)
+	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
+	if nodeCfg.EnterDelay != 0 {
+		enterDelay = time.Duration(nodeCfg.EnterDelay * float64(time.Second))
+	}
+	tmuxTimeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	enterCount := nodeCfg.EnterCount
+	if enterCount == 0 {
+		enterCount = 1
+	}
+
+	verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
+	age := candidate.detectedAt.Sub(candidate.deliveryTime)
+	log.Printf("postman: notification: swallowed detected for %s: %s (age=%s, pane=%s)\n",
+		candidate.nodeName, candidate.fileName, age.Truncate(time.Second), candidate.nodeInfo.PaneID)
+	_ = send(candidate.nodeInfo.PaneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax)
+
+	if incrementRetry != nil {
+		incrementRetry(candidate.inboxPath)
+	}
+
+	log.Printf("postman: swallowed message re-delivered to %s (pane=%s): %s (attempt %d/%d)\n",
+		candidate.nodeName, candidate.nodeInfo.PaneID, candidate.fileName, candidate.retryCount+1, candidate.retryMax)
+	if events != nil {
+		events <- tui.DaemonEvent{
+			Type:    "swallowed_redelivery",
+			Message: fmt.Sprintf("Re-delivered to %s: %s (attempt %d/%d)", candidate.nodeName, candidate.fileName, candidate.retryCount+1, candidate.retryMax),
+			Details: map[string]interface{}{
+				"node":    candidate.nodeKey,
+				"file":    candidate.fileName,
+				"attempt": candidate.retryCount + 1,
+				"max":     candidate.retryMax,
+			},
+		}
+	}
+}
+
+func (ds *DaemonState) incrementSwallowedRetryCount(inboxPath string) {
+	ds.swallowedRetryCountMu.Lock()
+	ds.swallowedRetryCount[inboxPath]++
+	ds.swallowedRetryCountMu.Unlock()
+}
+
+// checkSwallowedMessages detects inbox messages likely swallowed by a busy agent pane
+// and re-delivers the notification. Detection: inbox file older than delivery_idle_timeout_seconds
+// AND pane idle AND node has not sent since file landed in inbox. Issue #282.
+func checkSwallowedMessages(
+	nodes map[string]discovery.NodeInfo,
+	cfg *config.Config,
+	events chan<- tui.DaemonEvent,
+	contextID string,
+	adjacency map[string][]string,
+	idleTracker *idle.IdleTracker,
+	daemonState *DaemonState,
+) {
+	paneStatus := idleTracker.GetPaneActivityStatus(cfg)
+	livenessMap := idleTracker.GetLivenessMap()
+	detector := newSwallowedDetector(daemonState)
+	candidates := detector.detect(nodes, cfg, paneStatus)
+	for _, candidate := range candidates {
+		executeSwallowedRedelivery(candidate, cfg, adjacency, nodes, contextID, livenessMap, events, notification.SendToPane, daemonState.incrementSwallowedRetryCount)
 	}
 }
 
