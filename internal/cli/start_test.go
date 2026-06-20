@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +59,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pidDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -110,7 +109,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pidDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -564,7 +563,7 @@ func writeRuntimeSessionFixture(t *testing.T, baseDir, contextID, sessionName st
 	}
 	if livePID {
 		pidPath := filepath.Join(contextDir, sessionName, "postman.pid")
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		if err := config.WriteSessionPIDFile(pidPath, os.Getpid()); err != nil {
 			t.Fatalf("WriteFile(postman.pid): %v", err)
 		}
 	}

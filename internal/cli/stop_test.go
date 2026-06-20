@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 func TestRunStop_NoActiveDaemonPrintsMessage(t *testing.T) {
@@ -81,7 +82,7 @@ func TestRunStop_StopsDaemonOwningManagedSession(t *testing.T) {
 		}
 	})
 
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), child.Process.Pid); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
