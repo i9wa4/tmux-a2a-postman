@@ -128,7 +128,6 @@
                   runtimeInputs = with pkgs; [
                     coreutils
                     curl
-                    gnugrep
                     jq
                     nix
                     perl
@@ -146,6 +145,10 @@
                     override_go="$(
                       perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/' flake.nix
                     )"
+                    if [ -z "$override_go" ]; then
+                      echo "Failed to extract Go override patch version from flake.nix" >&2
+                      exit 1
+                    fi
 
                     go_minor="$(printf '%s\n' "$override_go" | cut -d. -f1-2)"
                     latest="$(
@@ -161,6 +164,10 @@
                           | last // empty
                         '
                     )"
+                    if [ -z "$latest" ]; then
+                      echo "go.dev does not currently publish a stable Go $go_minor patch" >&2
+                      exit 1
+                    fi
 
                     echo "current_go_version=$override_go"
                     echo "latest_go_version=$latest"
