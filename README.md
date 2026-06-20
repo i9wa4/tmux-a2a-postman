@@ -326,6 +326,32 @@ recipient-side confirmation before retrying. Use
 use `get-status --debug` for bounded `daemon_submit` queue health, including
 pending, claimed, late response, worker, and saturation counts.
 
+The daemon writes passive runtime memory snapshots to `postman.log` at startup
+and every 10 minutes. These `component=daemon_runtime
+event=memory_snapshot source=passive_log` lines are intended for normal log
+analysis and require no operator action. They include only scalar Go memory,
+GC, goroutine, daemon cardinality, and daemon-submit queue counters; they omit
+mailbox body content, pane content, local absolute paths, message identifiers,
+node names, and unbounded lists.
+
+For incident diagnostics, `capture-profile` can capture one heap or goroutine
+profile from the running daemon through an explicit daemon-submit request after
+log analysis points to heap growth, retained objects, goroutine growth, or stuck
+work:
+
+```sh
+tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof
+tmux-a2a-postman capture-profile --type goroutine --output ./postman-goroutine.pprof
+```
+
+Profiling is disabled during normal operation: there is no default listener,
+endpoint, or background collector. Each capture requires an operator command
+with an explicit destination, either `--output -` for stdout or an output path
+for the daemon to write. Heap profiles help explain high heap telemetry or
+retained objects; goroutine profiles help explain growing goroutine counts or
+stuck work. Captures are point-in-time and may briefly add CPU and memory
+pressure proportional to profile size, bounded by `--max-bytes`.
+
 Inspect live session state:
 
 ```sh
