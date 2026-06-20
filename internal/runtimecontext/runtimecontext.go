@@ -550,13 +550,20 @@ func (file addDirSummaryReadCloser) Close() error {
 	return err
 }
 
+func openAddDirSummaryFile(path string, summary *string) (addDirSummaryReadCloser, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return addDirSummaryReadCloser{}, err
+	}
+	return addDirSummaryReadCloser{Reader: file, Closer: file, summary: summary}, nil
+}
+
 func readAddDirSummary(addDir string) (summary string) {
 	readmePath := filepath.Join(addDir, "README.md")
-	readmeFile, err := os.Open(readmePath)
+	file, err := openAddDirSummaryFile(readmePath, &summary)
 	if err != nil {
 		return ""
 	}
-	file := addDirSummaryReadCloser{Reader: readmeFile, Closer: readmeFile, summary: &summary}
 	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
