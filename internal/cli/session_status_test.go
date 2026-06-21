@@ -40,6 +40,46 @@ func TestRunGetSessionStatus_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 	}
 }
 
+func TestRunGetSessionStatusWithContextWritesJSONToConfiguredStdout(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := commandContext{
+		stdout: &stdout,
+		stderr: io.Discard,
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{BaseDir: tmpDir}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		getTmuxSessionName: func() string {
+			return "review"
+		},
+		collectSessionStatus: func(_, contextID, sessionName string, _ *config.Config) (status.SessionStatus, error) {
+			return status.SessionStatus{
+				SchemaVersion: status.SchemaVersion,
+				ContextID:     contextID,
+				SessionName:   sessionName,
+				VisibleState:  "ready",
+				Nodes:         []status.NodeStatus{},
+				Windows:       []status.SessionWindow{},
+			}, nil
+		},
+	}
+
+	if err := runGetSessionStatusWithContext(ctx, []string{"--context-id", "ctx-status"}); err != nil {
+		t.Fatalf("runGetSessionStatusWithContext: %v", err)
+	}
+
+	var payload status.SessionStatus
+	if err := json.Unmarshal([]byte(stdout.String()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.ContextID != "ctx-status" || payload.SessionName != "review" || payload.VisibleState != "ready" {
+		t.Fatalf("payload = %#v, want injected status", payload)
+	}
+}
+
 func TestSessionStatus_NoActivePostmanReturnsEmptyPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "review", "worker")

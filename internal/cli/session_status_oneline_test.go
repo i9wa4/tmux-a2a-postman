@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
@@ -20,6 +22,39 @@ func TestRunGetSessionStatusOneline_NoLiveContext(t *testing.T) {
 
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestRunGetSessionStatusOnelineWithContextWritesToConfiguredStdout(t *testing.T) {
+	var stdout bytes.Buffer
+	ctx := commandContext{
+		stdout: &stdout,
+		stderr: io.Discard,
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		discoverAllSessions: func() ([]string, error) {
+			return []string{"alpha", "beta"}, nil
+		},
+		collectSessionStatus: func(_, _, sessionName string, _ *config.Config) (status.SessionStatus, error) {
+			return status.SessionStatus{
+				SchemaVersion: status.SchemaVersion,
+				SessionName:   sessionName,
+				Compact:       sessionName[:1],
+				Nodes:         []status.NodeStatus{},
+				Windows:       []status.SessionWindow{},
+			}, nil
+		},
+	}
+
+	if err := runGetSessionStatusOnelineWithContext(ctx, []string{"--context-id", "ctx-oneline"}); err != nil {
+		t.Fatalf("runGetSessionStatusOnelineWithContext: %v", err)
+	}
+	if got, want := stdout.String(), "[0]a [1]b\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
 
