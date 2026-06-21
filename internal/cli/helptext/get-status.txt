@@ -44,3 +44,9 @@ Debug diagnostics:
   when present. This is not a persisted time series. It omits mailbox body
   content, pane content, local absolute paths, per-message identifiers, and
   unbounded lists.
+
+  The daemon also writes the same class of scalar memory and queue counters to
+  postman.log at startup and every 10 minutes as
+  component=daemon_runtime event=memory_snapshot source=passive_log. Those
+  passive log lines are the normal first signal for memory optimization
+  analysis; capture-profile remains an explicit follow-up diagnostic.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 const (
 	SchemaVersion                    = 1
 	SemanticsMetadataNotInstructions = "metadata_not_instructions"
+	unboundedStringLimit             = 0
 	defaultStringLimit               = 240
 	defaultBodyLimit                 = 1024
 	defaultSummaryLimit              = 4096
@@ -432,7 +434,7 @@ func (tracker *redactionTracker) sanitizeString(value string, limit int) string 
 		tracker.applied = true
 		return "[redacted]"
 	}
-	if len(value) > limit {
+	if limit != unboundedStringLimit && len(value) > limit {
 		tracker.truncated = true
 		value = truncateUTF8(value, limit)
 	}
@@ -451,11 +453,11 @@ func sanitizeRuntimeMetadata(runtime RuntimeMetadata, tracker *redactionTracker)
 	runtime.Name = tracker.sanitizeString(runtime.Name, defaultStringLimit)
 	runtime.Model = tracker.sanitizeString(runtime.Model, defaultStringLimit)
 	runtime.Profile = tracker.sanitizeString(runtime.Profile, defaultStringLimit)
-	runtime.LaunchCommand = tracker.sanitizeString(runtime.LaunchCommand, defaultStringLimit)
+	runtime.LaunchCommand = tracker.sanitizeString(runtime.LaunchCommand, unboundedStringLimit)
 	if runtime.AddDir != nil {
 		addDir := *runtime.AddDir
 		addDir.Path = tracker.sanitizeString(displayPath(addDir.Path), defaultStringLimit)
-		addDir.Context = tracker.sanitizeString(addDir.Context, defaultStringLimit)
+		addDir.Context = tracker.sanitizeString(addDir.Context, unboundedStringLimit)
 		if addDir.Path == "" && addDir.Context == "" {
 			runtime.AddDir = nil
 		} else {
@@ -534,13 +536,35 @@ func extractAddDir(launchCommand string) string {
 	return ""
 }
 
-func readAddDirSummary(addDir string) string {
+type addDirSummaryReadCloser struct {
+	io.Reader
+	io.Closer
+	summary *string
+}
+
+func (file addDirSummaryReadCloser) Close() error {
+	err := file.Closer.Close()
+	if err != nil && file.summary != nil {
+		*file.summary = ""
+	}
+	return err
+}
+
+func openAddDirSummaryFile(path string, summary *string) (addDirSummaryReadCloser, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return addDirSummaryReadCloser{}, err
+	}
+	return addDirSummaryReadCloser{Reader: file, Closer: file, summary: summary}, nil
+}
+
+func readAddDirSummary(addDir string) (summary string) {
 	readmePath := filepath.Join(addDir, "README.md")
-	file, err := os.Open(readmePath)
+	file, err := openAddDirSummaryFile(readmePath, &summary)
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	var paragraph []string
