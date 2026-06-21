@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -535,9 +536,31 @@ func extractAddDir(launchCommand string) string {
 	return ""
 }
 
-func readAddDirSummary(addDir string) string {
+type addDirSummaryReadCloser struct {
+	io.Reader
+	io.Closer
+	summary *string
+}
+
+func (file addDirSummaryReadCloser) Close() error {
+	err := file.Closer.Close()
+	if err != nil && file.summary != nil {
+		*file.summary = ""
+	}
+	return err
+}
+
+func openAddDirSummaryFile(path string, summary *string) (addDirSummaryReadCloser, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return addDirSummaryReadCloser{}, err
+	}
+	return addDirSummaryReadCloser{Reader: file, Closer: file, summary: summary}, nil
+}
+
+func readAddDirSummary(addDir string) (summary string) {
 	readmePath := filepath.Join(addDir, "README.md")
-	file, err := os.Open(readmePath)
+	file, err := openAddDirSummaryFile(readmePath, &summary)
 	if err != nil {
 		return ""
 	}

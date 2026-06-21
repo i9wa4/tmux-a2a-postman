@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 )
 
 func TestProcessDaemonSubmitRequest_SendWritesPostFile(t *testing.T) {
@@ -169,6 +171,139 @@ func TestProcessDaemonSubmitRequest_PopRecordsReadBeforeProjectionSync(t *testin
 	}
 	if response.Filename != filename {
 		t.Fatalf("response.Filename = %q, want %q", response.Filename, filename)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_RuntimeProfileStdoutReturnsBoundedPayload(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID:          "req-profile",
+		Command:            projection.DaemonSubmitRuntimeProfile,
+		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+		ProfileKind:        runtimeprofile.KindGoroutine,
+		ProfileDestination: "stdout",
+		ProfileMaxBytes:    runtimeprofile.DefaultMaxBytes,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-profile"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("response.Error = %q", response.Error)
+	}
+	if response.RuntimeProfile == nil {
+		t.Fatal("RuntimeProfile = nil")
+	}
+	if response.RuntimeProfile.Kind != runtimeprofile.KindGoroutine ||
+		response.RuntimeProfile.Destination != "stdout" ||
+		response.RuntimeProfile.Encoding != "base64" ||
+		response.RuntimeProfile.OutputPath != "" {
+		t.Fatalf("RuntimeProfile metadata = %#v", response.RuntimeProfile)
+	}
+	data, err := base64.StdEncoding.DecodeString(response.RuntimeProfile.ContentBase64)
+	if err != nil {
+		t.Fatalf("DecodeString(ContentBase64): %v", err)
+	}
+	if len(data) == 0 || len(data) != response.RuntimeProfile.Bytes {
+		t.Fatalf("profile payload bytes = %d, response bytes = %d", len(data), response.RuntimeProfile.Bytes)
+	}
+	if response.Content != "" || response.MarkdownPath != "" {
+		t.Fatalf("profile response leaked message fields: content=%q markdown_path=%q", response.Content, response.MarkdownPath)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_RuntimeProfileFileWritesExplicitPathOnly(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	outputPath := filepath.Join(t.TempDir(), "goroutine.pprof")
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID:          "req-profile-file",
+		Command:            projection.DaemonSubmitRuntimeProfile,
+		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+		ProfileKind:        runtimeprofile.KindGoroutine,
+		ProfileDestination: "file",
+		ProfileOutputPath:  outputPath,
+		ProfileMaxBytes:    runtimeprofile.DefaultMaxBytes,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile profile output: %v", err)
+	}
+	if len(written) == 0 {
+		t.Fatal("written profile is empty")
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-profile-file"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("response.Error = %q", response.Error)
+	}
+	if response.RuntimeProfile == nil {
+		t.Fatal("RuntimeProfile = nil")
+	}
+	if response.RuntimeProfile.ContentBase64 != "" {
+		t.Fatal("file response should not include profile content")
+	}
+	if response.RuntimeProfile.OutputPath != outputPath {
+		t.Fatalf("OutputPath = %q, want explicit output path %q", response.RuntimeProfile.OutputPath, outputPath)
+	}
+	if response.RuntimeProfile.Bytes != len(written) {
+		t.Fatalf("response bytes = %d, written bytes = %d", response.RuntimeProfile.Bytes, len(written))
+	}
+}
+
+func TestProcessDaemonSubmitRequest_RuntimeProfileRequiresExplicitDestination(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID:   "req-profile-no-destination",
+		Command:     projection.DaemonSubmitRuntimeProfile,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		ProfileKind: runtimeprofile.KindGoroutine,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-profile-no-destination"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error == "" {
+		t.Fatal("response.Error = empty, want destination error")
+	}
+	if response.RuntimeProfile != nil {
+		t.Fatalf("RuntimeProfile = %#v, want nil on error", response.RuntimeProfile)
 	}
 }
 

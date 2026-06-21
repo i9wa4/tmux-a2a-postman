@@ -2,6 +2,7 @@ package runtimecontext
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,30 @@ func TestRuntimeContextSanitizesPromptLikeFieldsForMarkdown(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered markdown missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+type errCloser struct {
+	err error
+}
+
+func (closer errCloser) Close() error {
+	return closer.err
+}
+
+func TestAddDirSummaryReadCloserClearsSummaryOnCloseError(t *testing.T) {
+	summary := "existing summary"
+	file := addDirSummaryReadCloser{
+		Reader:  strings.NewReader("ignored"),
+		Closer:  errCloser{err: errors.New("close failed")},
+		summary: &summary,
+	}
+
+	if err := file.Close(); err == nil {
+		t.Fatalf("Close() error = nil, want error")
+	}
+	if summary != "" {
+		t.Fatalf("summary = %q, want empty", summary)
 	}
 }
 

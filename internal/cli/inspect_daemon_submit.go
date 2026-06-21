@@ -37,6 +37,7 @@ type inspectDaemonSubmitResponseState struct {
 	Empty                     bool   `json:"empty,omitempty"`
 	ErrorPresent              bool   `json:"error_present,omitempty"`
 	RuntimeDiagnosticsPresent bool   `json:"runtime_diagnostics_present,omitempty"`
+	RuntimeProfilePresent     bool   `json:"runtime_profile_present,omitempty"`
 }
 
 func RunInspectDaemonSubmit(args []string) error {
@@ -135,6 +136,7 @@ func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time) (*inspect
 		Empty:                     response.Empty,
 		ErrorPresent:              response.Error != "",
 		RuntimeDiagnosticsPresent: response.RuntimeDiagnostics != nil,
+		RuntimeProfilePresent:     response.RuntimeProfile != nil,
 	}, nil
 }
 
