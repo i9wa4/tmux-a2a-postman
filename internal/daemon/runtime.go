@@ -65,11 +65,13 @@ type daemonRuntime struct {
 	activeAutoPings  map[string]bool
 
 	processDaemonSubmit           daemonSubmitProcessor
+	launchDaemonSubmitWorker      daemonSubmitWorkerLauncher
 	daemonSubmitSem               chan struct{}
 	daemonSubmitResults           chan daemonSubmitRuntimeResult
 	activeDaemonSubmitKeys        map[string]bool
 	daemonSubmitSaturationCount   int
 	daemonSubmitLastSaturatedAt   time.Time
+	scheduleRuntimeTimer          runtimeTimerScheduler
 	mailboxProjectionSyncMu       sync.Mutex
 	activeMailboxProjectionSyncs  map[string]bool
 	pendingMailboxProjectionSyncs map[string]bool
@@ -79,6 +81,14 @@ type daemonRuntime struct {
 const daemonSubmitWorkerLimit = 4
 
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
+
+// daemonSubmitWorkerLauncher owns worker scheduling. The worker owns exactly one
+// daemon-submit result send and semaphore release.
+type daemonSubmitWorkerLauncher func(worker func())
+
+// runtimeTimerScheduler owns callback scheduling while callbacks keep runtime
+// ownership of their state transitions.
+type runtimeTimerScheduler func(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func())
 
 type daemonSubmitRuntimeResult struct {
 	requestPath string
@@ -144,12 +154,22 @@ func newDaemonRuntime(
 		activePostEvents:              make(map[string]bool),
 		activeAutoPings:               make(map[string]bool),
 		processDaemonSubmit:           processDaemonSubmitRequest,
+		launchDaemonSubmitWorker:      defaultDaemonSubmitWorkerLauncher,
 		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
 		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
 		activeDaemonSubmitKeys:        make(map[string]bool),
+		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
 	}
+}
+
+func defaultDaemonSubmitWorkerLauncher(worker func()) {
+	go worker()
+}
+
+func defaultRuntimeTimerScheduler(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func()) {
+	safeAfterFunc(delay, name, events, callback)
 }
 
 func (rt *daemonRuntime) now() time.Time {
@@ -297,19 +317,42 @@ func (rt *daemonRuntime) handleContextDone() {
 	}
 }
 
-func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
+type runtimeWatcherEventKind int
+
+const (
+	runtimeWatcherEventIgnored runtimeWatcherEventKind = iota
+	runtimeWatcherEventDaemonSubmitRequest
+	runtimeWatcherEventPost
+	runtimeWatcherEventRead
+)
+
+func classifyRuntimeWatcherEvent(event fswatcher.Event) runtimeWatcherEventKind {
 	eventPath := event.Name
 
 	switch {
 	case filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon):
 		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
-			rt.handleDaemonSubmitRequest(eventPath)
+			return runtimeWatcherEventDaemonSubmitRequest
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "post"):
 		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 {
-			rt.wakePostReconciler(eventPath)
+			return runtimeWatcherEventPost
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "read"):
+		return runtimeWatcherEventRead
+	}
+	return runtimeWatcherEventIgnored
+}
+
+func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
+	eventPath := event.Name
+
+	switch classifyRuntimeWatcherEvent(event) {
+	case runtimeWatcherEventDaemonSubmitRequest:
+		rt.handleDaemonSubmitRequest(eventPath)
+	case runtimeWatcherEventPost:
+		rt.wakePostReconciler(eventPath)
+	case runtimeWatcherEventRead:
 		rt.handleReadWatcherEvent(eventPath, event.Op)
 	}
 }
@@ -361,7 +404,7 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
 	processor := rt.processDaemonSubmit
 
-	go func() {
+	worker := func() {
 		workerResult := daemonSubmitRuntimeResult{
 			requestPath: requestPath,
 			dispatchKey: dispatchKey,
@@ -374,7 +417,8 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 			<-rt.daemonSubmitSem
 		}()
 		workerResult.result, workerResult.err = processor(requestPath)
-	}()
+	}
+	rt.launchDaemonSubmitWorker(worker)
 
 	return daemonSubmitDispatched
 }
@@ -632,6 +676,9 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 	if rt.processDaemonSubmit == nil {
 		rt.processDaemonSubmit = processDaemonSubmitRequest
 	}
+	if rt.launchDaemonSubmitWorker == nil {
+		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
+	}
 	if rt.daemonSubmitSem == nil {
 		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimit)
 	}
@@ -824,7 +871,11 @@ func (rt *daemonRuntime) scheduleRateLimitedPostRetry(eventPath, filename, from,
 		remaining = time.Millisecond
 	}
 	log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs, retry_in=%s)\n", from, to, gapSeconds, remaining.Round(time.Millisecond))
-	safeAfterFunc(remaining, "post-rate-limit-retry", rt.events, func() {
+	scheduler := rt.scheduleRuntimeTimer
+	if scheduler == nil {
+		scheduler = defaultRuntimeTimerScheduler
+	}
+	scheduler(remaining, "post-rate-limit-retry", rt.events, func() {
 		rt.retryActivePostDelivery(eventPath, filename)
 	})
 }
