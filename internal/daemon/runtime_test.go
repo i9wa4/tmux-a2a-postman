@@ -242,6 +242,103 @@ func assertRuntimeDiagnosticsHasNoArrays(t *testing.T, diagnostics *status.Runti
 	walk(decoded)
 }
 
+func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	if _, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-secret-pending",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(pending): %v", err)
+	}
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-secret-late",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-4 * time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse(late): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		sessionDir:  sessionDir,
+		selfSession: "review",
+		nodes: map[string]discovery.NodeInfo{
+			"review:worker": {SessionName: "review"},
+			"qa:critic":     {SessionName: "qa"},
+		},
+		watchedDirs: map[string]bool{
+			"/tmp/private/review/post":  true,
+			"/tmp/private/review/inbox": true,
+		},
+		claimedPanes: map[string]bool{
+			"%42": true,
+		},
+		activePostEvents: map[string]bool{
+			"/tmp/private/review/post/20260524-120000-r1111-from-a-to-b.md": true,
+		},
+		activeAutoPings: map[string]bool{
+			"review:worker": true,
+		},
+		activeDaemonSubmitKeys: map[string]bool{
+			"send:/tmp/private/request.json": true,
+		},
+		daemonSubmitSaturationCount: 2,
+		daemonSubmitLastSaturatedAt: now.Add(-time.Minute),
+	}
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	rt.logRuntimeDiagnosticsSnapshot("startup", now)
+	line := buf.String()
+	for _, want := range []string{
+		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=startup",
+		"observed_at=2026-06-02T00:00:00Z",
+		"heap_alloc_bytes=",
+		"heap_sys_bytes=",
+		"heap_objects=",
+		"gc_count=",
+		"goroutine_count=",
+		"daemon_session_count=2",
+		"daemon_node_count=2",
+		"daemon_watched_dir_count=2",
+		"daemon_active_post_event_count=1",
+		"daemon_active_auto_ping_count=1",
+		"daemon_active_daemon_submit_count=1",
+		"daemon_submit_pending_request_count=1",
+		"daemon_submit_late_response_count=1",
+		"daemon_submit_saturation_count=2",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("runtime diagnostics log missing %q in %q", want, line)
+		}
+	}
+	for _, forbidden := range []string{
+		"/tmp/private",
+		"20260524-120000-r1111-from-a-to-b.md",
+		"review:worker",
+		"%42",
+		"request.json",
+		"req-secret-pending",
+		"req-secret-late",
+	} {
+		if strings.Contains(line, forbidden) {
+			t.Fatalf("runtime diagnostics log leaked %q in %q", forbidden, line)
+		}
+	}
+}
+
 func TestBuildRuntimeStatusSnapshot_SortsSessionNamesAndNormalizesSessionNodes(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{
 		"bravo:worker":   {SessionName: "bravo"},
@@ -359,7 +456,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
 		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(contextDir, selfSession, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -429,7 +526,7 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
 		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(contextDir, selfSession, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -2283,7 +2380,7 @@ func writeRuntimeLivePID(t *testing.T, baseDir, contextName, sessionName string)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pid dir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "postman.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(dir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 }

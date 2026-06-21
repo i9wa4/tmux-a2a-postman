@@ -2,6 +2,9 @@ package runtimecontext
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +50,136 @@ func TestRuntimeContextSanitizesPromptLikeFieldsForMarkdown(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered markdown missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+type errCloser struct {
+	err error
+}
+
+func (closer errCloser) Close() error {
+	return closer.err
+}
+
+func TestAddDirSummaryReadCloserClearsSummaryOnCloseError(t *testing.T) {
+	summary := "existing summary"
+	file := addDirSummaryReadCloser{
+		Reader:  strings.NewReader("ignored"),
+		Closer:  errCloser{err: errors.New("close failed")},
+		summary: &summary,
+	}
+
+	if err := file.Close(); err == nil {
+		t.Fatalf("Close() error = nil, want error")
+	}
+	if summary != "" {
+		t.Fatalf("summary = %q, want empty", summary)
+	}
+}
+
+func TestRuntimeContextIncludesLaunchCommandAndAddDirInMarkdownAndSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	addDir := filepath.Join(tmpDir, "internal")
+	if err := os.MkdirAll(addDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll addDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(addDir, "README.md"), []byte("# Internal\n\nUseful automation context.\n\nSecond paragraph.\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	launchCommand := "/usr/bin/codex --yolo --add-dir " + addDir + " --model gpt-5.5"
+
+	snapshot := BuildSnapshot(BuildOptions{
+		Now:       time.Date(2026, time.June, 1, 12, 0, 0, 0, time.UTC),
+		Scope:     "sender",
+		ContextID: "ctx-runtime",
+		MessageID: "message.md",
+		Node:      "worker",
+		Runtime:   RuntimeMetadataFromLaunchCommand(launchCommand, ""),
+	})
+	if snapshot.Runtime == nil {
+		t.Fatalf("snapshot.Runtime is nil")
+	}
+	if snapshot.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("launch command = %q, want %q", snapshot.Runtime.LaunchCommand, launchCommand)
+	}
+	if snapshot.Runtime.AddDir == nil || snapshot.Runtime.AddDir.Context != "Useful automation context." {
+		t.Fatalf("add_dir = %#v, want README summary", snapshot.Runtime.AddDir)
+	}
+
+	rendered := RenderSenderMarkdown(snapshot)
+	for _, want := range []string{
+		"- launch_command: /usr/bin/codex --yolo --add-dir",
+		"- add_dir:",
+		"Useful automation context.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered markdown missing %q:\n%s", want, rendered)
+		}
+	}
+
+	summary := SummaryFromSnapshot(snapshot, filepath.Join(tmpDir, "rctx.json"), 100, time.Date(2026, time.June, 1, 12, 1, 0, 0, time.UTC))
+	if summary.YouWereLaunchedWith != launchCommand {
+		t.Fatalf("summary.YouWereLaunchedWith = %q, want %q", summary.YouWereLaunchedWith, launchCommand)
+	}
+	if summary.Fields.Runtime == nil || summary.Fields.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("summary runtime = %#v, want launch command", summary.Fields.Runtime)
+	}
+	if summary.Fields.Runtime.AddDir == nil || summary.Fields.Runtime.AddDir.Context != "Useful automation context." {
+		t.Fatalf("summary add_dir = %#v, want README summary", summary.Fields.Runtime.AddDir)
+	}
+}
+
+func TestSaveSnapshotPreservesFullLaunchCommandAndAddDirContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	addDir := filepath.Join(tmpDir, "internal")
+	if err := os.MkdirAll(addDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll addDir: %v", err)
+	}
+	fullContext := strings.TrimSpace(strings.Repeat("Operational context for the automation archive. ", 12))
+	if len(fullContext) <= defaultStringLimit {
+		t.Fatalf("test context length = %d, want > %d", len(fullContext), defaultStringLimit)
+	}
+	if err := os.WriteFile(filepath.Join(addDir, "README.md"), []byte("# Internal\n\n"+fullContext+"\n\nSecond paragraph.\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	launchCommand := "/usr/bin/codex --yolo --add-dir " + addDir + " --model gpt-5.5 " + strings.Repeat("--flag=value ", 30)
+	if len(launchCommand) <= defaultStringLimit {
+		t.Fatalf("test launch command length = %d, want > %d", len(launchCommand), defaultStringLimit)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-runtime", "tmux-a2a-postman")
+
+	snapshot := BuildSnapshot(BuildOptions{
+		Now:       time.Date(2026, time.June, 19, 10, 0, 0, 0, time.UTC),
+		Scope:     "sender",
+		ContextID: "ctx-runtime",
+		MessageID: "message.md",
+		Node:      "worker",
+		Runtime:   RuntimeMetadataFromLaunchCommand(launchCommand, ""),
+	})
+	saved, err := SaveSnapshot(sessionDir, snapshot)
+	if err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+
+	data, err := os.ReadFile(saved.Path)
+	if err != nil {
+		t.Fatalf("ReadFile saved snapshot: %v", err)
+	}
+	var archived Snapshot
+	if err := json.Unmarshal(data, &archived); err != nil {
+		t.Fatalf("json.Unmarshal archived snapshot: %v", err)
+	}
+	if archived.Runtime == nil {
+		t.Fatalf("archived.Runtime is nil: %s", data)
+	}
+	if archived.Runtime.LaunchCommand != strings.TrimSpace(launchCommand) {
+		t.Fatalf("archived launch command length = %d, want full length %d\nvalue=%q", len(archived.Runtime.LaunchCommand), len(strings.TrimSpace(launchCommand)), archived.Runtime.LaunchCommand)
+	}
+	if archived.Runtime.AddDir == nil || archived.Runtime.AddDir.Context != fullContext {
+		t.Fatalf("archived add_dir = %#v, want full README context length %d", archived.Runtime.AddDir, len(fullContext))
+	}
+	if strings.Contains(archived.Runtime.LaunchCommand, "...") || strings.Contains(archived.Runtime.AddDir.Context, "...") {
+		t.Fatalf("archived runtime metadata was abbreviated: %#v", archived.Runtime)
 	}
 }
 

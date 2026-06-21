@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -293,7 +292,7 @@ func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T)
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 	t.Setenv("POSTMAN_HOME", tmpDir)

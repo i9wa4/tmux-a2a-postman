@@ -7,3 +7,6 @@ Usage:
 Output:
   Starts the daemon with the default TUI surface and writes operational logs
   to postman.log.
+  postman.log includes passive daemon runtime memory snapshots at startup and
+  every 10 minutes. The snapshots are scalar counters only and do not include
+  mailbox content, pane content, paths, message identifiers, or node names.

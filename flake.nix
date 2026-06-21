@@ -62,10 +62,10 @@
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
-            version = "1.26.3";
+            version = "1.26.4";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
+              hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
             };
           });
           buildGo126Module = pkgs.buildGoModule.override { go = go126; };
@@ -87,6 +87,7 @@
             goreleaser
           ];
           markdownFormatter = "${inputs.markdown-formatter.packages.${system}.default}/bin/mdfmt";
+          skillMetadataCheck = "${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh skills";
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -121,59 +122,21 @@
 
             update-go-toolchain = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "update-go-toolchain" ''
-                set -euo pipefail
-
-                go_mod_version="$(awk '/^go / { print $2; exit }' go.mod)"
-                go_minor="$(printf '%s\n' "$go_mod_version" | cut -d. -f1-2)"
-                if ! printf '%s\n' "$go_minor" | grep -Eq '^[0-9]+\.[0-9]+$'; then
-                  echo "Failed to extract Go major.minor from go.mod: $go_mod_version" >&2
-                  exit 1
-                fi
-
-                nix_minor="$(
-                  ${pkgs.gnused}/bin/sed -nE 's/.*pkgs\.go_([0-9]+_[0-9]+).*/\1/p' flake.nix \
-                    | head -n 1 \
-                    | tr '_' '.'
-                )"
-                if [ "$go_minor" != "$nix_minor" ]; then
-                  echo "Go major.minor mismatch: go.mod=$go_minor, flake.nix=$nix_minor" >&2
-                  exit 1
-                fi
-
-                latest="$(
-                  ${pkgs.curl}/bin/curl -fsSL 'https://go.dev/dl/?mode=json' \
-                    | ${pkgs.jq}/bin/jq -r --arg prefix "go$go_minor." '[.[].version | select(startswith($prefix))][0]'
-                )"
-                if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-                  echo "Failed to find latest Go patch for $go_minor" >&2
-                  exit 1
-                fi
-
-                go_version="''${latest#go}"
-                src_url="https://go.dev/dl/go$go_version.src.tar.gz"
-                hash="$(
-                  ${pkgs.nix}/bin/nix store prefetch-file --json "$src_url" \
-                    | ${pkgs.jq}/bin/jq -r .hash
-                )"
-                if [ -z "$hash" ] || [ "$hash" = "null" ]; then
-                  echo "Failed to prefetch $src_url" >&2
-                  exit 1
-                fi
-
-                GO_VERSION="$go_version" GO_HASH="$hash" ${pkgs.perl}/bin/perl -0pi -e '
-                  my $version = $ENV{"GO_VERSION"};
-                  my $hash = $ENV{"GO_HASH"};
-                  s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = ")[^"]+(";)/$1$version$2/
-                    or die "failed to update Go override version\n";
-                  s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{.*?src = pkgs\.fetchurl \{\n\s*url = "https:\/\/go\.dev\/dl\/go\$\{version\}\.src\.tar\.gz";\n\s*hash = ")[^"]+(";)/$1$hash$2/s
-                    or die "failed to update Go override hash\n";
-                ' flake.nix
-
-                echo "Updated Go toolchain override to $go_version"
-                echo "hash = $hash"
-              ''}/bin/update-go-toolchain";
-              meta.description = "Update the pinned Go patch override and source hash.";
+              program = "${
+                pkgs.writeShellApplication {
+                  name = "update-go-toolchain";
+                  runtimeInputs = with pkgs; [
+                    coreutils
+                    curl
+                    gnugrep
+                    jq
+                    nix
+                    perl
+                  ];
+                  text = builtins.readFile ./scripts/update-go-toolchain.sh;
+                }
+              }/bin/update-go-toolchain";
+              meta.description = "Update the pinned Go patch override to the latest same-minor go.dev release.";
             };
 
             check = {
@@ -189,9 +152,10 @@
               type = "app";
               program = "${pkgs.writeShellScriptBin "skill-check" ''
                 set -euo pipefail
+                ${skillMetadataCheck}
                 exec ${pkgs.gh}/bin/gh skill publish --dry-run "$@"
               ''}/bin/skill-check";
-              meta.description = "Validate agent skills without publishing.";
+              meta.description = "Validate agent skill metadata and publish packaging without publishing.";
             };
 
             skill-publish = {
@@ -337,6 +301,15 @@
                 name = "markdown-formatter (all tracked markdown)";
                 entry = "${markdownFormatter} --write";
                 types = [ "markdown" ];
+              };
+
+              # === Agent skills ===
+              skill-metadata = {
+                enable = true;
+                name = "validate agent skill metadata";
+                entry = skillMetadataCheck;
+                files = "^skills/[^/]+/SKILL\\.md$";
+                pass_filenames = false;
               };
 
               # === Shell ===
