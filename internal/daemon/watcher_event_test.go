@@ -25,6 +25,10 @@ func (testFilesystemWatcher) Add(string, fswatcher.Op) error {
 	return nil
 }
 
+func (testFilesystemWatcher) Remove(string) error {
+	return nil
+}
+
 func TestClassifyRuntimeWatcherEvent(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	daemonRequestPath := filepath.Join(sessionDir, string(projection.SubmitPathDaemon), "requests", "req.json")

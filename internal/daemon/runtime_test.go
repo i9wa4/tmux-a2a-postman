@@ -25,6 +25,19 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
+type recordingFilesystemWatcher struct {
+	removed []string
+}
+
+func (w *recordingFilesystemWatcher) Add(string, fswatcher.Op) error {
+	return nil
+}
+
+func (w *recordingFilesystemWatcher) Remove(path string) error {
+	w.removed = append(w.removed, path)
+	return nil
+}
+
 func waitForInboxEntries(t *testing.T, sessionDir, nodeName string, want int) {
 	t.Helper()
 	inboxDir := filepath.Join(sessionDir, "inbox", nodeName)
@@ -1795,6 +1808,40 @@ func TestPruneKnownNodes_AllowsReturnedNodeToReceiveAutoPingAgain(t *testing.T) 
 
 	if got, want := newNodes, []string{"review:worker"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("detectNewNodes() after pruneKnownNodes() = %#v, want %#v", got, want)
+	}
+}
+
+func TestPruneWatchedDirsRemovesDirsForDisappearedNodes(t *testing.T) {
+	liveSessionDir := filepath.Join(t.TempDir(), "live")
+	staleSessionDir := filepath.Join(t.TempDir(), "stale")
+	livePostDir := filepath.Join(liveSessionDir, "post")
+	stalePostDir := filepath.Join(staleSessionDir, "post")
+	staleSubmitDir := projection.DaemonSubmitRequestsDir(staleSessionDir)
+	watcher := &recordingFilesystemWatcher{}
+	rt := &daemonRuntime{
+		watcher: watcher,
+		watchedDirs: map[string]bool{
+			livePostDir:    true,
+			stalePostDir:   true,
+			staleSubmitDir: true,
+		},
+	}
+
+	rt.pruneWatchedDirs(map[string]discovery.NodeInfo{
+		"review:worker": {SessionDir: liveSessionDir},
+	})
+
+	if !rt.watchedDirs[livePostDir] {
+		t.Fatalf("pruneWatchedDirs() removed live dir %q", livePostDir)
+	}
+	if rt.watchedDirs[stalePostDir] || rt.watchedDirs[staleSubmitDir] {
+		t.Fatalf("pruneWatchedDirs() kept stale dirs: %#v", rt.watchedDirs)
+	}
+	sort.Strings(watcher.removed)
+	wantRemoved := []string{stalePostDir, staleSubmitDir}
+	sort.Strings(wantRemoved)
+	if !reflect.DeepEqual(watcher.removed, wantRemoved) {
+		t.Fatalf("removed dirs = %#v, want %#v", watcher.removed, wantRemoved)
 	}
 }
 

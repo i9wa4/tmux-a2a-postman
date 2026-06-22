@@ -815,6 +815,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
+		rt.pruneWatchedDirs(freshNodes)
 		rt.claimNewPanes(freshNodes)
 		rt.pruneKnownNodes(freshNodes)
 		newNodes := rt.detectNewNodes(freshNodes)
@@ -1085,6 +1086,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	rt.pruneClaimedPanes(freshNodes)
+	rt.pruneWatchedDirs(freshNodes)
 	rt.claimNewPanes(freshNodes)
 	for _, collision := range scanCollisions {
 		rt.events <- tui.DaemonEvent{
@@ -1273,6 +1275,7 @@ func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string
 	}
 
 	rt.pruneClaimedPanes(freshNodes)
+	rt.pruneWatchedDirs(freshNodes)
 	rt.claimNewPanes(freshNodes)
 	for _, collision := range scanCollisions {
 		rt.events <- tui.DaemonEvent{
@@ -1383,6 +1386,46 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		if err := rt.watcher.Add(submitRequestsDir, fswatcher.All); err == nil {
 			rt.watchedDirs[submitRequestsDir] = true
 		}
+	}
+}
+
+func nodeWatchDirs(nodeInfo discovery.NodeInfo) []string {
+	if nodeInfo.SessionDir == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(nodeInfo.SessionDir, "post"),
+		filepath.Join(nodeInfo.SessionDir, "inbox"),
+		filepath.Join(nodeInfo.SessionDir, "read"),
+		projection.DaemonSubmitRequestsDir(nodeInfo.SessionDir),
+	}
+}
+
+func desiredWatchDirsForNodes(nodes map[string]discovery.NodeInfo) map[string]bool {
+	desired := make(map[string]bool, len(nodes)*4)
+	for _, nodeInfo := range nodes {
+		for _, dir := range nodeWatchDirs(nodeInfo) {
+			if dir != "" {
+				desired[dir] = true
+			}
+		}
+	}
+	return desired
+}
+
+func (rt *daemonRuntime) pruneWatchedDirs(freshNodes map[string]discovery.NodeInfo) {
+	desired := desiredWatchDirsForNodes(freshNodes)
+	for dir := range rt.watchedDirs {
+		if desired[dir] {
+			continue
+		}
+		if rt.watcher != nil {
+			if err := rt.watcher.Remove(dir); err != nil {
+				log.Printf("postman: WARNING: failed to remove watcher dir %s: %v\n", dir, err)
+				continue
+			}
+		}
+		delete(rt.watchedDirs, dir)
 	}
 }
 
