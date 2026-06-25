@@ -141,6 +141,9 @@ func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time, request *
 }
 
 func inspectDaemonSubmitResponseVisibleState(response projection.DaemonSubmitResponse, requestID string, request *inspectDaemonSubmitRequestState) string {
+	if response.RequestID != "" && response.RequestID != requestID {
+		return "stale_response"
+	}
 	if request != nil && isStaleDaemonSubmitResponse(response, requestID, request.CreatedAt) {
 		return "stale_response"
 	}
