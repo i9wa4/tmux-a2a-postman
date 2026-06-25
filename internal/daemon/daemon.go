@@ -33,6 +33,9 @@ import (
 const (
 	inboxCheckInterval            = 30 * time.Second
 	runtimeDiagnosticsLogInterval = 10 * time.Minute
+	// daemonSubmitQueueWarnThresholdMs is the default threshold (30 s) above
+	// which a queue_ms_threshold_exceeded WARNING is emitted.
+	daemonSubmitQueueWarnThresholdMs int64 = 30_000
 )
 
 type filesystemWatcher interface {
@@ -387,6 +390,10 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
 	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
+	if queueMs >= daemonSubmitQueueWarnThresholdMs {
+		log.Printf("postman: WARNING: component=%s event=queue_ms_threshold_exceeded submit_path=%s command=%s session=%s request=%s queue_ms=%d threshold_ms=%d\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, queueMs, daemonSubmitQueueWarnThresholdMs)
+	}
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
