@@ -502,3 +502,50 @@ func TestProcessDaemonSubmitRequest_QueueMsBelowThresholdNoWarning(t *testing.T)
 		t.Fatalf("unexpected queue_ms_threshold_exceeded WARNING for fast request; got:\n%s", logged)
 	}
 }
+
+func TestProcessDaemonSubmitRequest_ConfiguredThresholdIsHonored(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "cfg-threshold-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	// Override the package-level threshold to 1 000 ms (1 s) to prove the
+	// configured value is used instead of the default 30 000 ms.
+	original := daemonSubmitQueueWarnThresholdMs
+	daemonSubmitQueueWarnThresholdMs = 1_000
+	t.Cleanup(func() { daemonSubmitQueueWarnThresholdMs = original })
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	// CreatedAt 5 s ago: queue_ms ~5 000, which is above 1 000 but well below
+	// the default 30 000, proving the custom threshold fires.
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-cfg-threshold",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().Add(-5 * time.Second).UTC().Format(time.RFC3339Nano),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "event=queue_ms_threshold_exceeded") {
+		t.Fatalf("expected queue_ms_threshold_exceeded WARNING for custom 1 000 ms threshold; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "threshold_ms=1000") {
+		t.Fatalf("expected threshold_ms=1000 in WARNING log; got:\n%s", logged)
+	}
+}

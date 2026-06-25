@@ -31,12 +31,15 @@ import (
 )
 
 const (
-	inboxCheckInterval            = 30 * time.Second
-	runtimeDiagnosticsLogInterval = 10 * time.Minute
-	// daemonSubmitQueueWarnThresholdMs is the default threshold (30 s) above
-	// which a queue_ms_threshold_exceeded WARNING is emitted.
-	daemonSubmitQueueWarnThresholdMs int64 = 30_000
+	inboxCheckInterval                            = 30 * time.Second
+	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
+	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 )
+
+// daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
+// in milliseconds. Initialized from config at daemon startup; tests may
+// override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
+var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -621,6 +624,11 @@ func runDaemonLoopWithWatcherEvents(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) {
+	// Apply configurable queue warning threshold before any workers start.
+	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
+		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
 	// "send on closed channel" panics. Let the channel be garbage collected when all
