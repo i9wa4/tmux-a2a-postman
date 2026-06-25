@@ -130,19 +130,27 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 }
 
 func syncMailboxProjection(sessionDir string) {
+	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
+}
+
+func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
+	if fields.TmuxSession == "" {
+		fields.TmuxSession = filepath.Base(sessionDir)
+	}
+	emitTrace := msgtrace.HasMessageContext(fields)
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
-		msgtrace.Log("projection_sync", msgtrace.Fields{
-			TmuxSession: filepath.Base(sessionDir),
-			Result:      "error",
-			Reason:      err.Error(),
-		})
+		fields.Result = "error"
+		fields.Reason = err.Error()
+		if emitTrace {
+			msgtrace.Log("projection_sync", fields)
+		}
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
 		return
 	}
-	msgtrace.Log("projection_sync", msgtrace.Fields{
-		TmuxSession: filepath.Base(sessionDir),
-		Result:      "ok",
-	})
+	fields.Result = "ok"
+	if emitTrace {
+		msgtrace.Log("projection_sync", fields)
+	}
 }
 
 func mailboxThreadIDFromContent(content string) string {
@@ -294,7 +302,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		FailureReason: deadLetterFailureReason(dstPath),
 		Content:       content,
 	})
-	syncMailboxProjection(sessionDir)
+	syncMailboxProjectionWithTrace(sessionDir, fields)
 	return nil
 }
 
@@ -827,9 +835,21 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		messageContent,
 		now,
 	)
-	syncMailboxProjection(sourceSessionDir)
+	sourceProjectionFields := msgtrace.Fields{
+		MessageID:       filename,
+		MessagePath:     shadowRelativePath(sourceSessionDir, postPath),
+		Sender:          info.From,
+		Recipient:       info.To,
+		ContextID:       contextID,
+		TmuxSession:     sourceSessionName,
+		DeliveryAttempt: 1,
+	}
+	syncMailboxProjectionWithTrace(sourceSessionDir, sourceProjectionFields)
 	if recipientSessionDir != sourceSessionDir {
-		syncMailboxProjection(recipientSessionDir)
+		recipientProjectionFields := sourceProjectionFields
+		recipientProjectionFields.MessagePath = shadowRelativePath(recipientSessionDir, dst)
+		recipientProjectionFields.TmuxSession = recipientSessionName
+		syncMailboxProjectionWithTrace(recipientSessionDir, recipientProjectionFields)
 	}
 
 	// Send tmux notification to the recipient pane

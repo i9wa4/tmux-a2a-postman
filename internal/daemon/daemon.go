@@ -99,19 +99,27 @@ func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, v
 }
 
 func syncMailboxProjection(sessionDir string) {
+	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
+}
+
+func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
+	if fields.TmuxSession == "" {
+		fields.TmuxSession = filepath.Base(sessionDir)
+	}
+	emitTrace := msgtrace.HasMessageContext(fields)
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
-		msgtrace.Log("projection_sync", msgtrace.Fields{
-			TmuxSession: filepath.Base(sessionDir),
-			Result:      "error",
-			Reason:      err.Error(),
-		})
+		fields.Result = "error"
+		fields.Reason = err.Error()
+		if emitTrace {
+			msgtrace.Log("projection_sync", fields)
+		}
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
 		return
 	}
-	msgtrace.Log("projection_sync", msgtrace.Fields{
-		TmuxSession: filepath.Base(sessionDir),
-		Result:      "ok",
-	})
+	fields.Result = "ok"
+	if emitTrace {
+		msgtrace.Log("projection_sync", fields)
+	}
 }
 
 func mailboxProjectionPayloadForFile(filename, relativePath, content string) journal.MailboxEventPayload {

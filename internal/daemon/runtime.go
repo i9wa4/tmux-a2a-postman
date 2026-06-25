@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
@@ -834,13 +835,15 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	now := rt.now()
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+	var postTraceFields msgtrace.Fields
 	if content, err := os.ReadFile(eventPath); err == nil {
 		fields := msgtrace.FromContent(filename, shadowRelativePath(sourceSessionDir, eventPath), filepath.Base(sourceSessionDir), string(content))
 		fields.ContextID = rt.contextID
 		fields.SubmitPath = string(projection.SubmitPathPost)
 		msgtrace.Log("send_enqueue", fields)
+		postTraceFields = fields
 	}
-	syncMailboxProjection(sourceSessionDir)
+	syncMailboxProjectionWithTrace(sourceSessionDir, postTraceFields)
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
@@ -966,11 +969,26 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		syncMailboxProjection(sourceSessionDir)
+		var syncFields msgtrace.Fields
+		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+			syncFields = msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(sourceSessionDir, eventPath),
+				Sender:          info.From,
+				Recipient:       info.To,
+				ContextID:       rt.contextID,
+				TmuxSession:     sourceSessionName,
+				DeliveryAttempt: 1,
+			}
+		}
+		syncMailboxProjectionWithTrace(sourceSessionDir, syncFields)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
 			if nodeInfo, ok := nodes[recipientFullName]; ok {
-				syncMailboxProjection(nodeInfo.SessionDir)
+				recipientSyncFields := syncFields
+				recipientSyncFields.MessagePath = filepath.Join("inbox", nodeaddr.Simple(info.To), filename)
+				recipientSyncFields.TmuxSession = filepath.Base(nodeInfo.SessionDir)
+				syncMailboxProjectionWithTrace(nodeInfo.SessionDir, recipientSyncFields)
 			}
 		}
 
@@ -986,14 +1004,20 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		default:
 		}
 		if suppressNormalDelivery {
-			msgtrace.Log("delivery_result", msgtrace.Fields{
+			deadLetterFields := msgtrace.Fields{
 				MessageID:       filename,
 				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
 				ContextID:       rt.contextID,
 				TmuxSession:     sourceSessionName,
 				DeliveryAttempt: 1,
 				Result:          "dead_letter",
-			})
+				Reason:          "dead_letter",
+			}
+			if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+				deadLetterFields.Sender = info.From
+				deadLetterFields.Recipient = info.To
+			}
+			msgtrace.Log("delivery_result", deadLetterFields)
 		}
 
 		if !suppressNormalDelivery {

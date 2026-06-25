@@ -55,6 +55,10 @@ func Log(event string, fields Fields) {
 	log.Print(Line(event, fields))
 }
 
+func HasMessageContext(fields Fields) bool {
+	return fields.MessageID != "" || fields.MessagePath != "" || fields.Sender != "" || fields.Recipient != "" || fields.ContextID != "" || fields.InputRequestID != "" || fields.ReplyTo != ""
+}
+
 func Line(event string, fields Fields) string {
 	parts := []string{
 		"postman:",
