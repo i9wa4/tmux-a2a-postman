@@ -8,8 +8,11 @@ Output:
   Always JSON.
   {"status":"not_running","session":"review"}
   {"status":"stopped","session":"review","context_id":"...","pid":12345}
+  {"status":"stopped","session":"review","daemon_session":"daemon","context_id":"...","pid":12345}
 
 Notes:
   stop resolves the daemon that owns the current tmux session and sends it
-  SIGTERM. In the daemon TUI, pressing q exits the same daemon directly; use q
-  as the manual shutdown path if stop cannot identify the owned daemon.
+  SIGTERM. When the daemon owner differs from the caller session, JSON output
+  includes daemon_session. In the daemon TUI, pressing q exits the same daemon
+  directly; use q as the manual shutdown path if stop cannot identify the owned
+  daemon.
