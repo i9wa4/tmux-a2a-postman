@@ -33,22 +33,21 @@ internal and hardcoded to `false` in `main.go:61`.
 
 ## 3. Config Fields (`postman.toml`)
 
-| Field                                   | Category | Notes                                                               |
-| --------------------------------------- | -------- | ------------------------------------------------------------------- |
-| `edges`                                 | **Core** | Bidirectional routing rules between nodes; required                 |
-| `ui_node`                               | Optional | Startup PING target filter; prefer Mermaid class syntax             |
-| `auto_enable_new_sessions`              | Optional | Auto-enable sessions with configured node panes (default: true)     |
-| `message_footer`                        | Optional | Header guidance before the body separator in sent messages          |
-| `draft_template`                        | Optional | Stored send-heredoc Markdown envelope                               |
-| `daemon_message_template`               | Optional | Structured envelope for daemon-originated PING mail                 |
-| `skill_path`                            | Optional | Postman.md skill catalogs                                           |
-| `session_scan_interval_seconds`         | Optional | Lightweight tmux session-list refresh (default: 0.10)               |
-| `auto_ping_delay_seconds`               | Optional | Delay before first auto-PING for newly appeared nodes (default: 20) |
-| `notification_template`                 | Optional | Pane hint rendered when mail arrives                                |
-| `min_delivery_gap_seconds`              | Optional | Same-route delivery gap for duplicate control                       |
-| `retention_period_days`                 | Optional | Inactive runtime cleanup window (default: 30; 0 = disabled)         |
-| `daemon_submit_queue_warn_threshold_ms` | Optional | Queue wait WARNING threshold in ms (default: 30000)                 |
-| `pane_capture_tail_lines`               | Optional | Recent lines scanned for compaction markers (default: 100)          |
+| Field                           | Category | Notes                                                               |
+| ------------------------------- | -------- | ------------------------------------------------------------------- |
+| `edges`                         | **Core** | Bidirectional routing rules between nodes; required                 |
+| `ui_node`                       | Optional | Startup PING target filter; prefer Mermaid class syntax             |
+| `auto_enable_new_sessions`      | Optional | Auto-enable sessions with configured node panes (default: true)     |
+| `message_footer`                | Optional | Header guidance before the body separator in sent messages          |
+| `draft_template`                | Optional | Stored send-heredoc Markdown envelope                               |
+| `daemon_message_template`       | Optional | Structured envelope for daemon-originated PING mail                 |
+| `skill_path`                    | Optional | Postman.md skill catalogs                                           |
+| `session_scan_interval_seconds` | Optional | Lightweight tmux session-list refresh (default: 0.10)               |
+| `auto_ping_delay_seconds`       | Optional | Delay before first auto-PING for newly appeared nodes (default: 20) |
+| `notification_template`         | Optional | Pane hint rendered when mail arrives                                |
+| `min_delivery_gap_seconds`      | Optional | Same-route delivery gap for duplicate control                       |
+| `retention_period_days`         | Optional | Inactive runtime cleanup window (default: 30; 0 = disabled)         |
+| `pane_capture_tail_lines`       | Optional | Recent lines scanned for compaction markers (default: 100)          |
 
 ## 4. Daemon Runtime Features
 
@@ -144,7 +143,7 @@ incident-response needs. Config fields are all optional and non-breaking.
 | 8     | Core CLI commands                               |
 | 1     | Deprecated/disabled CLI command (`send`)        |
 | 4     | Diagnostic CLI commands                         |
-| 15    | Config fields (1 core, 14 optional)             |
+| 13    | Config fields (1 core, 12 optional)             |
 | 1     | Dead-code internal mode (no-TUI)                |
 | 2     | Unmerged remote branches extending no-TUI model |
 
