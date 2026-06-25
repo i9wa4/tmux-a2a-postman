@@ -318,6 +318,12 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
+Both `send-heredoc` and `pop` prefer daemon-mediated delivery when the running
+daemon owns the session and fall back to direct filesystem access for non-owned
+sessions. Both output a `submit_path` field (`daemon-submit` or `post`) that
+identifies which path was taken, including on empty `pop` results. Operators
+can use this field to detect when daemon mediation was bypassed.
+
 If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
 unknown. The daemon may still commit the side effect after the CLI stops
 waiting, so inspect status, inbox/read state, archived message evidence, or

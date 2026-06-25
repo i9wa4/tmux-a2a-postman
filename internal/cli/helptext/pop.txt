@@ -7,7 +7,7 @@ Usage:
 
 Output:
   Always JSON.
-  {"status":"empty"}
+  {"status":"empty","submit_path":"daemon-submit"}
   {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","you_were_launched_with":"codex --yolo --add-dir /workspace/internal --model gpt-5.5","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"pop_receipt_path":"~/.local/state/tmux-a2a-postman/.../read/filename.pop.json","session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0},"submit_path":"daemon-submit"}
 
 Options:

@@ -70,7 +70,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			return fmt.Errorf("daemon submit pop: %w", err)
 		}
 		if response.Empty {
-			return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+			return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon)
 		}
 		remaining := response.UnreadBefore - 1
 		if remaining < 0 {
@@ -85,7 +85,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
-		return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+		return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -98,7 +98,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
-				return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+				return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 			}
 			sort.Slice(msgs, func(i, j int) bool {
 				return msgs[i].Filename < msgs[j].Filename
@@ -107,7 +107,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
-					return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+					return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 				}
 				return fmt.Errorf("reading message: %w", err)
 			}
@@ -132,6 +132,7 @@ func archivePoppedMessage(absPath, filename string) (string, error) {
 type popEmptyOutput struct {
 	Status             string                 `json:"status"`
 	SessionDiagnostics *popSessionDiagnostics `json:"session_diagnostics,omitempty"`
+	SubmitPath         projection.SubmitPath  `json:"submit_path,omitempty"`
 }
 
 type popMessageOutput struct {
@@ -175,8 +176,8 @@ type popSessionDiagnostics struct {
 
 const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
-func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics) error {
-	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
+func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath) error {
+	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics, SubmitPath: submitPath})
 }
 
 func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath) error {
