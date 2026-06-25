@@ -358,6 +358,9 @@ func emitDeliveryDecisionEvent(events chan<- DaemonEvent, decision deliveryDecis
 	events <- DaemonEvent{
 		Type:    "message_received",
 		Message: message,
+		Details: map[string]interface{}{
+			"failure_reason": decision.EventReason,
+		},
 	}
 }
 

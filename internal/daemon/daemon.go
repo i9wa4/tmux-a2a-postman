@@ -1108,6 +1108,14 @@ func messageEventSuppressesNormalDelivery(event message.DaemonEvent) bool {
 	return event.Type == "message_received" && strings.HasPrefix(event.Message, "Dead-letter:")
 }
 
+func messageEventFailureReason(event message.DaemonEvent) string {
+	if event.Details == nil {
+		return ""
+	}
+	reason, _ := event.Details["failure_reason"].(string)
+	return reason
+}
+
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
 // Detects restart by comparing current paneStates with previous paneStates.
 func (ds *DaemonState) checkPaneRestarts(paneStates map[string]uinode.PaneInfo, paneToNode map[string]string, nodes map[string]discovery.NodeInfo, events chan<- tui.DaemonEvent) []string {

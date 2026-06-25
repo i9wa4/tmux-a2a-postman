@@ -993,8 +993,10 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 
 		suppressNormalDelivery := false
+		var deliveryEvent message.DaemonEvent
 		select {
 		case msgEvent := <-messageEvents:
+			deliveryEvent = msgEvent
 			rt.events <- tui.DaemonEvent{
 				Type:    msgEvent.Type,
 				Message: msgEvent.Message,
@@ -1004,6 +1006,10 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		default:
 		}
 		if suppressNormalDelivery {
+			reason := messageEventFailureReason(deliveryEvent)
+			if reason == "" {
+				reason = "dead_letter"
+			}
 			deadLetterFields := msgtrace.Fields{
 				MessageID:       filename,
 				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
@@ -1011,7 +1017,7 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 				TmuxSession:     sourceSessionName,
 				DeliveryAttempt: 1,
 				Result:          "dead_letter",
-				Reason:          "dead_letter",
+				Reason:          reason,
 			}
 			if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 				deadLetterFields.Sender = info.From
