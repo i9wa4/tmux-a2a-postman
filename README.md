@@ -330,9 +330,12 @@ The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
 event=memory_snapshot source=passive_log` lines are intended for normal log
 analysis and require no operator action. They include only scalar Go memory,
-GC, goroutine, daemon cardinality, and daemon-submit queue counters; they omit
-mailbox body content, pane content, local absolute paths, message identifiers,
-node names, and unbounded lists.
+process RSS when supported by the host OS, GC, goroutine, daemon cardinality,
+and daemon-submit queue counters; they omit mailbox body content, pane content,
+local absolute paths, message identifiers, node names, and unbounded lists.
+Linux snapshots include `rss_bytes`; unsupported hosts or read failures mark
+`rss_supported=false` or `rss_available=false` instead of reporting a
+misleading zero value.
 
 For incident diagnostics, `capture-profile` can capture one heap or goroutine
 profile from the running daemon through an explicit daemon-submit request after
