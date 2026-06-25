@@ -78,7 +78,7 @@ func RunInspectDaemonSubmit(args []string) error {
 		output.Status = request.State
 	}
 
-	response, err := inspectDaemonSubmitResponse(sessionDir, *id, now)
+	response, err := inspectDaemonSubmitResponse(sessionDir, *id, now, request)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func readInspectDaemonSubmitRequest(path, state string, now time.Time) (*inspect
 	}, nil
 }
 
-func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time) (*inspectDaemonSubmitResponseState, error) {
+func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time, request *inspectDaemonSubmitRequestState) (*inspectDaemonSubmitResponseState, error) {
 	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, id))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -129,7 +129,7 @@ func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time) (*inspect
 		return nil, err
 	}
 	return &inspectDaemonSubmitResponseState{
-		State:                     "response",
+		State:                     inspectDaemonSubmitResponseVisibleState(response, id, request),
 		Command:                   string(response.Command),
 		HandledAt:                 response.HandledAt,
 		AgeSeconds:                daemonSubmitInspectAgeSeconds(response.HandledAt, now),
@@ -138,6 +138,13 @@ func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time) (*inspect
 		RuntimeDiagnosticsPresent: response.RuntimeDiagnostics != nil,
 		RuntimeProfilePresent:     response.RuntimeProfile != nil,
 	}, nil
+}
+
+func inspectDaemonSubmitResponseVisibleState(response projection.DaemonSubmitResponse, requestID string, request *inspectDaemonSubmitRequestState) string {
+	if request != nil && isStaleDaemonSubmitResponse(response, requestID, request.CreatedAt) {
+		return "stale_response"
+	}
+	return "late_response"
 }
 
 func daemonSubmitInspectAgeSeconds(timestamp string, now time.Time) int {
