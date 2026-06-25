@@ -15,6 +15,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
+const (
+	DefaultDaemonSubmitWorkerLimit = 8
+	MaxDaemonSubmitWorkerLimit     = 16
+)
+
 //go:embed postman.default.toml
 var defaultConfigBytes []byte
 
@@ -38,6 +43,7 @@ type Config struct {
 	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING
+	DaemonSubmitWorkerLimit   int     `toml:"daemon_submit_worker_limit"`   // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -97,6 +103,17 @@ func BoolVal(p *bool, defaultVal bool) bool {
 		return defaultVal
 	}
 	return *p
+}
+
+func EffectiveDaemonSubmitWorkerLimit(configured int) (int, string) {
+	switch {
+	case configured <= 0:
+		return DefaultDaemonSubmitWorkerLimit, fmt.Sprintf("daemon_submit_worker_limit=%d is below minimum 1; using default %d", configured, DefaultDaemonSubmitWorkerLimit)
+	case configured > MaxDaemonSubmitWorkerLimit:
+		return MaxDaemonSubmitWorkerLimit, fmt.Sprintf("daemon_submit_worker_limit=%d exceeds maximum %d; clamping to %d", configured, MaxDaemonSubmitWorkerLimit, MaxDaemonSubmitWorkerLimit)
+	default:
+		return configured, ""
+	}
 }
 
 // DefaultConfig returns a Config with zero values.
@@ -548,6 +565,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.DaemonSubmitWorkerLimit != 0 {
+		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
 	}
 
 	// *bool fields: bidirectional override (#219)

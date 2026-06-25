@@ -325,6 +325,9 @@ recipient-side confirmation before retrying. Use
 `inspect-daemon-submit --id <request_id>` to look up the timed-out request, and
 use `get-status --debug` for bounded `daemon_submit` queue health, including
 pending, claimed, late response, worker, and saturation counts.
+Configure daemon-submit concurrency with
+`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
+values above 16 are clamped with a daemon warning.
 
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
