@@ -3,11 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -104,6 +106,15 @@ func (transport daemonSubmitRoundTripper) roundTrip(sessionDir string, request p
 		if err == nil {
 			if isStaleDaemonSubmitResponse(response, requestID, request.CreatedAt) {
 				outcome.StaleResponseCount++
+				msgtrace.Log("late_response", msgtrace.Fields{
+					MessageID:             response.Filename,
+					MessagePath:           filepath.Base(outcome.ResponsePath),
+					TmuxSession:           filepath.Base(sessionDir),
+					DaemonSubmitRequestID: response.RequestID,
+					DaemonSubmitCommand:   string(response.Command),
+					SubmitPath:            string(projection.SubmitPathDaemon),
+					Result:                "stale",
+				})
 				if removeErr := transport.removeResponse(outcome.ResponsePath); removeErr != nil && !os.IsNotExist(removeErr) {
 					return outcome, removeErr
 				}
@@ -122,6 +133,10 @@ func (transport daemonSubmitRoundTripper) roundTrip(sessionDir string, request p
 		if current.After(deadline) {
 			outcome.TimedOut = true
 			outcome.Diagnostics = transport.diagnostics(sessionDir, current)
+			if outcome.Diagnostics.LateResponseCount > 0 {
+				log.Printf("postman: component=%s event=late_response_observed tmux_session=%s daemon_submit_request_id=%s submit_path=%s late_response_count=%d oldest_late_response_age_seconds=%d\n",
+					msgtrace.Component, filepath.Base(sessionDir), requestID, projection.SubmitPathDaemon, outcome.Diagnostics.LateResponseCount, outcome.Diagnostics.OldestLateResponseAgeSeconds)
+			}
 			return outcome, projection.DaemonSubmitResponseTimeoutError{
 				RequestID: requestID,
 				Timeout:   timeout,

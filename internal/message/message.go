@@ -17,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -130,8 +131,18 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 
 func syncMailboxProjection(sessionDir string) {
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		msgtrace.Log("projection_sync", msgtrace.Fields{
+			TmuxSession: filepath.Base(sessionDir),
+			Result:      "error",
+			Reason:      err.Error(),
+		})
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
+		return
 	}
+	msgtrace.Log("projection_sync", msgtrace.Fields{
+		TmuxSession: filepath.Base(sessionDir),
+		Result:      "ok",
+	})
 }
 
 func mailboxThreadIDFromContent(content string) string {
@@ -264,6 +275,15 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
 	}
+	fields := msgtrace.FromContent(messageID, shadowRelativePath(sessionDir, dstPath), sessionName, content)
+	if fields.Sender == "" {
+		fields.Sender = from
+	}
+	if fields.Recipient == "" {
+		fields.Recipient = to
+	}
+	fields.Reason = deadLetterFailureReason(dstPath)
+	msgtrace.Log("dead_letter", fields)
 	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:     messageID,
 		From:          from,
@@ -769,6 +789,16 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		return err
 	}
+	msgtrace.Log("delivery_result", msgtrace.Fields{
+		MessageID:       filename,
+		MessagePath:     shadowRelativePath(recipientSessionDir, dst),
+		Sender:          info.From,
+		Recipient:       info.To,
+		ContextID:       contextID,
+		TmuxSession:     recipientSessionName,
+		DeliveryAttempt: 1,
+		Result:          "delivered",
+	})
 	recordMailboxProjectionPayload(sourceSessionDir, sourceSessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,

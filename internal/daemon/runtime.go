@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
@@ -360,6 +361,14 @@ func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
 	status := rt.dispatchDaemonSubmitRequest(requestPath)
 	if status == daemonSubmitDispatchSaturated {
+		request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+		fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
+		fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
+		fields.DaemonSubmitRequestID = request.RequestID
+		fields.DaemonSubmitCommand = string(request.Command)
+		fields.SubmitPath = string(projection.SubmitPathDaemon)
+		fields.Result = "saturated"
+		msgtrace.Log("daemon_submit_saturate", fields)
 		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
 			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
 	}
@@ -402,6 +411,12 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), sessionNameForDaemonSubmitRequestPath(requestPath), request.Content)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("daemon_submit_dispatch", fields)
 	processor := rt.processDaemonSubmit
 
 	worker := func() {
@@ -711,6 +726,14 @@ func daemonSubmitDispatchKey(requestPath string) string {
 	return "path:" + requestPath
 }
 
+func sessionNameForDaemonSubmitRequestPath(requestPath string) string {
+	sessionDir, ok := daemonSubmitSessionDir(requestPath)
+	if !ok {
+		return ""
+	}
+	return filepath.Base(sessionDir)
+}
+
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
 	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
@@ -811,6 +834,12 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	now := rt.now()
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields := msgtrace.FromContent(filename, shadowRelativePath(sourceSessionDir, eventPath), filepath.Base(sourceSessionDir), string(content))
+		fields.ContextID = rt.contextID
+		fields.SubmitPath = string(projection.SubmitPathPost)
+		msgtrace.Log("send_enqueue", fields)
+	}
 	syncMailboxProjection(sourceSessionDir)
 
 	freshNodes, _, err := rt.discoverNodes()
@@ -907,9 +936,27 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+			msgtrace.Log("delivery_attempt", msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
+				Sender:          msgInfo.From,
+				Recipient:       msgInfo.To,
+				ContextID:       rt.contextID,
+				TmuxSession:     filepath.Base(filepath.Dir(filepath.Dir(eventPath))),
+				DeliveryAttempt: 1,
+			})
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
+			msgtrace.Log("delivery_result", msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
+				ContextID:       rt.contextID,
+				TmuxSession:     filepath.Base(filepath.Dir(filepath.Dir(eventPath))),
+				DeliveryAttempt: 1,
+				Result:          "error",
+				Reason:          err.Error(),
+			})
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -937,6 +984,16 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 			suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 		default:
+		}
+		if suppressNormalDelivery {
+			msgtrace.Log("delivery_result", msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
+				ContextID:       rt.contextID,
+				TmuxSession:     sourceSessionName,
+				DeliveryAttempt: 1,
+				Result:          "dead_letter",
+			})
 		}
 
 		if !suppressNormalDelivery {
@@ -1003,9 +1060,17 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fswatcher.O
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
+	msgtrace.Log("pop_read_archive", msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		Sender:      info.From,
+		Recipient:   info.To,
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	})
 	rt.scheduleMailboxProjectionSync(sourceSessionDir)
 
 	if info.To == "postman" || info.To == "daemon" {
