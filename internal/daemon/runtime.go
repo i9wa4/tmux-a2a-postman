@@ -922,6 +922,32 @@ func (rt *daemonRuntime) retryActivePostDelivery(eventPath, filename string) {
 	rt.processActivePostEvent(eventPath, filename)
 }
 
+func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msgtrace.Fields {
+	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+	sourceSessionName := filepath.Base(sourceSessionDir)
+	fields := msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	}
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields = msgtrace.FromContent(filename, fields.MessagePath, sourceSessionName, string(content))
+	}
+	if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	if fields.ContextID == "" {
+		fields.ContextID = rt.contextID
+	}
+	return fields
+}
+
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
@@ -939,27 +965,17 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-			msgtrace.Log("delivery_attempt", msgtrace.Fields{
-				MessageID:       filename,
-				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
-				Sender:          msgInfo.From,
-				Recipient:       msgInfo.To,
-				ContextID:       rt.contextID,
-				TmuxSession:     filepath.Base(filepath.Dir(filepath.Dir(eventPath))),
-				DeliveryAttempt: 1,
-			})
+			attemptFields := rt.postDeliveryTraceFields(eventPath, filename)
+			attemptFields.DeliveryAttempt = 1
+			msgtrace.Log("delivery_attempt", attemptFields)
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
-			msgtrace.Log("delivery_result", msgtrace.Fields{
-				MessageID:       filename,
-				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
-				ContextID:       rt.contextID,
-				TmuxSession:     filepath.Base(filepath.Dir(filepath.Dir(eventPath))),
-				DeliveryAttempt: 1,
-				Result:          "error",
-				Reason:          err.Error(),
-			})
+			resultFields := rt.postDeliveryTraceFields(eventPath, filename)
+			resultFields.DeliveryAttempt = 1
+			resultFields.Result = "error"
+			resultFields.Reason = err.Error()
+			msgtrace.Log("delivery_result", resultFields)
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -969,18 +985,8 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		var syncFields msgtrace.Fields
-		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-			syncFields = msgtrace.Fields{
-				MessageID:       filename,
-				MessagePath:     shadowRelativePath(sourceSessionDir, eventPath),
-				Sender:          info.From,
-				Recipient:       info.To,
-				ContextID:       rt.contextID,
-				TmuxSession:     sourceSessionName,
-				DeliveryAttempt: 1,
-			}
-		}
+		syncFields := rt.postDeliveryTraceFields(eventPath, filename)
+		syncFields.DeliveryAttempt = 1
 		syncMailboxProjectionWithTrace(sourceSessionDir, syncFields)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)

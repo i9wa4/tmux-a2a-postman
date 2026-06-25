@@ -133,6 +133,22 @@ func syncMailboxProjection(sessionDir string) {
 	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
 }
 
+func deliveryTraceFieldsFromContent(filename, messagePath, tmuxSession, contextID, content string, info *MessageInfo) msgtrace.Fields {
+	fields := msgtrace.FromContent(filename, messagePath, tmuxSession, content)
+	if fields.ContextID == "" {
+		fields.ContextID = contextID
+	}
+	if info != nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	return fields
+}
+
 func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
 	if fields.TmuxSession == "" {
 		fields.TmuxSession = filepath.Base(sessionDir)
@@ -800,16 +816,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		return err
 	}
-	msgtrace.Log("delivery_result", msgtrace.Fields{
-		MessageID:       filename,
-		MessagePath:     shadowRelativePath(recipientSessionDir, dst),
-		Sender:          info.From,
-		Recipient:       info.To,
-		ContextID:       contextID,
-		TmuxSession:     recipientSessionName,
-		DeliveryAttempt: 1,
-		Result:          "delivered",
-	})
+	resultFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+	resultFields.DeliveryAttempt = 1
+	resultFields.Result = "delivered"
+	msgtrace.Log("delivery_result", resultFields)
 	recordMailboxProjectionPayload(sourceSessionDir, sourceSessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
@@ -838,20 +848,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		messageContent,
 		now,
 	)
-	sourceProjectionFields := msgtrace.Fields{
-		MessageID:       filename,
-		MessagePath:     shadowRelativePath(sourceSessionDir, postPath),
-		Sender:          info.From,
-		Recipient:       info.To,
-		ContextID:       contextID,
-		TmuxSession:     sourceSessionName,
-		DeliveryAttempt: 1,
-	}
+	sourceProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(sourceSessionDir, postPath), sourceSessionName, contextID, messageContent, info)
+	sourceProjectionFields.DeliveryAttempt = 1
 	syncMailboxProjectionWithTrace(sourceSessionDir, sourceProjectionFields)
 	if recipientSessionDir != sourceSessionDir {
-		recipientProjectionFields := sourceProjectionFields
-		recipientProjectionFields.MessagePath = shadowRelativePath(recipientSessionDir, dst)
-		recipientProjectionFields.TmuxSession = recipientSessionName
+		recipientProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+		recipientProjectionFields.DeliveryAttempt = 1
 		syncMailboxProjectionWithTrace(recipientSessionDir, recipientProjectionFields)
 	}
 

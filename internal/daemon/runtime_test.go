@@ -69,6 +69,38 @@ func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRunt
 	}
 }
 
+func TestPostDeliveryTraceFieldsPreservesEnvelopeCorrelation(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "source-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	filename := "20260626-010000-from-orchestrator-to-worker.md"
+	eventPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyTo: 20260626-005900-from-worker-to-orchestrator.md\n  input_request_id: ireq_attempt_123\n  timestamp: 2026-06-26T01:00:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(eventPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rt := &daemonRuntime{contextID: "runtime-ctx"}
+	fields := rt.postDeliveryTraceFields(eventPath, filename)
+
+	if fields.MessageID != filename {
+		t.Fatalf("MessageID = %q, want %q", fields.MessageID, filename)
+	}
+	if fields.MessagePath != filepath.Join("post", filename) {
+		t.Fatalf("MessagePath = %q, want post-relative filename", fields.MessagePath)
+	}
+	if fields.ContextID != "envelope-ctx" {
+		t.Fatalf("ContextID = %q, want envelope-ctx", fields.ContextID)
+	}
+	if fields.InputRequestID != "ireq_attempt_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_attempt_123", fields.InputRequestID)
+	}
+	if fields.ReplyTo != "20260626-005900-from-worker-to-orchestrator.md" {
+		t.Fatalf("ReplyTo = %q", fields.ReplyTo)
+	}
+}
+
 type daemonSubmitWorkerHarness struct {
 	workers []func()
 }
