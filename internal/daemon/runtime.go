@@ -963,15 +963,16 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 		}()
 
+		postTraceFields := rt.postDeliveryTraceFields(eventPath, filename)
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
-			attemptFields := rt.postDeliveryTraceFields(eventPath, filename)
+			attemptFields := postTraceFields
 			attemptFields.DeliveryAttempt = 1
 			msgtrace.Log("delivery_attempt", attemptFields)
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
-			resultFields := rt.postDeliveryTraceFields(eventPath, filename)
+			resultFields := postTraceFields
 			resultFields.DeliveryAttempt = 1
 			resultFields.Result = "error"
 			resultFields.Reason = err.Error()
@@ -985,16 +986,16 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		syncFields := rt.postDeliveryTraceFields(eventPath, filename)
+		syncFields := postTraceFields
 		syncFields.DeliveryAttempt = 1
-		syncMailboxProjectionWithTrace(sourceSessionDir, syncFields)
+		syncMailboxProjectionWithTraceFn(sourceSessionDir, syncFields)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
 			if nodeInfo, ok := nodes[recipientFullName]; ok {
 				recipientSyncFields := syncFields
 				recipientSyncFields.MessagePath = filepath.Join("inbox", nodeaddr.Simple(info.To), filename)
 				recipientSyncFields.TmuxSession = filepath.Base(nodeInfo.SessionDir)
-				syncMailboxProjectionWithTrace(nodeInfo.SessionDir, recipientSyncFields)
+				syncMailboxProjectionWithTraceFn(nodeInfo.SessionDir, recipientSyncFields)
 			}
 		}
 

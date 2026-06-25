@@ -102,6 +102,8 @@ func syncMailboxProjection(sessionDir string) {
 	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
 }
 
+var syncMailboxProjectionWithTraceFn = syncMailboxProjectionWithTrace
+
 func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
 	if fields.TmuxSession == "" {
 		fields.TmuxSession = filepath.Base(sessionDir)
