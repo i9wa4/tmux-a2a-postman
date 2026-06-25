@@ -80,7 +80,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
-		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon)
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
@@ -122,7 +122,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -159,6 +159,7 @@ type popMessageOutput struct {
 	PopReceiptPath              string                  `json:"pop_receipt_path,omitempty"`
 	PopReceiptAbsolutePath      string                  `json:"pop_receipt_absolute_path,omitempty"`
 	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
+	SubmitPath                  projection.SubmitPath   `json:"submit_path,omitempty"`
 }
 
 type popSessionDiagnostics struct {
@@ -178,7 +179,7 @@ func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics) e
 	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
 }
 
-func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics) error {
+func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
@@ -192,6 +193,7 @@ func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath str
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
+	output.SubmitPath = submitPath
 	receiptPath, err := popReceiptPath(markdownPath)
 	if err != nil {
 		return err

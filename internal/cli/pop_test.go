@@ -105,6 +105,9 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want read path", payload.MarkdownPath)
 	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q (non-owner direct fallback)", payload.SubmitPath, projection.SubmitPathPost)
+	}
 	if !strings.Contains(readPopArchiveForTest(t, payload), "context stdout payload") {
 		t.Fatalf("archived body missing expected payload")
 	}
@@ -152,6 +155,9 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 	payload := decodePopMessageOutputForTest(t, stdout.String())
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q (daemon-submit path)", payload.SubmitPath, projection.SubmitPathDaemon)
 	}
 }
 
