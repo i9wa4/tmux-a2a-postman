@@ -310,121 +310,6 @@ func TestProcessDaemonSubmitRequest_RuntimeProfileRequiresExplicitDestination(t 
 	}
 }
 
-func TestProcessDaemonSubmitRequest_AlreadyClaimedRequestIsNoop(t *testing.T) {
-	sessionDir := filepath.Join(t.TempDir(), "review-session")
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		t.Fatalf("CreateSessionDirs: %v", err)
-	}
-
-	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll inbox: %v", err)
-	}
-	oldest := "20260414-033300-from-orchestrator-to-worker.md"
-	newest := "20260414-033301-from-orchestrator-to-worker.md"
-	if err := os.WriteFile(filepath.Join(inboxDir, oldest), []byte("oldest"), 0o600); err != nil {
-		t.Fatalf("WriteFile oldest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(inboxDir, newest), []byte("newest"), 0o600); err != nil {
-		t.Fatalf("WriteFile newest: %v", err)
-	}
-
-	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
-		RequestID: "req-pop-once",
-		Command:   projection.DaemonSubmitPop,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Node:      "worker",
-	})
-	if err != nil {
-		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
-	}
-
-	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
-		t.Fatalf("processDaemonSubmitRequest(first): %v", err)
-	}
-	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
-		t.Fatalf("processDaemonSubmitRequest(second): %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(inboxDir, newest)); err != nil {
-		t.Fatalf("newest inbox file should not be popped by duplicate processing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(sessionDir, "read", oldest)); err != nil {
-		t.Fatalf("oldest read file missing: %v", err)
-	}
-}
-
-func TestProcessDaemonSubmitRequest_ConcurrentClaimsPopOnlyOnce(t *testing.T) {
-	sessionDir := filepath.Join(t.TempDir(), "review-session")
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		t.Fatalf("CreateSessionDirs: %v", err)
-	}
-
-	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll inbox: %v", err)
-	}
-	oldest := "20260414-033400-from-orchestrator-to-worker.md"
-	newest := "20260414-033401-from-orchestrator-to-worker.md"
-	if err := os.WriteFile(filepath.Join(inboxDir, oldest), []byte("oldest"), 0o600); err != nil {
-		t.Fatalf("WriteFile oldest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(inboxDir, newest), []byte("newest"), 0o600); err != nil {
-		t.Fatalf("WriteFile newest: %v", err)
-	}
-
-	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
-		RequestID: "req-pop-concurrent",
-		Command:   projection.DaemonSubmitPop,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Node:      "worker",
-	})
-	if err != nil {
-		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
-	}
-
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	errs := make(chan error, 8)
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			_, err := processDaemonSubmitRequest(requestPath)
-			errs <- err
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("processDaemonSubmitRequest concurrent error: %v", err)
-		}
-	}
-
-	if _, err := os.Stat(filepath.Join(sessionDir, "read", oldest)); err != nil {
-		t.Fatalf("oldest read file missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(inboxDir, newest)); err != nil {
-		t.Fatalf("newest inbox file should not be popped by duplicate concurrent processing: %v", err)
-	}
-	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
-		t.Fatalf("request file still present or wrong error: %v", err)
-	}
-	if _, err := os.Stat(requestPath + ".processing"); !os.IsNotExist(err) {
-		t.Fatalf("claimed request file still present or wrong error: %v", err)
-	}
-
-	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-concurrent"))
-	if err != nil {
-		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
-	}
-	if response.Filename != oldest {
-		t.Fatalf("response.Filename = %q, want %q", response.Filename, oldest)
-	}
-}
-
 func TestProcessDaemonSubmitRequest_QueueMsThresholdExceededEmitsWarning(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -547,6 +432,121 @@ func TestProcessDaemonSubmitRequest_ConfiguredThresholdIsHonored(t *testing.T) {
 	}
 	if !strings.Contains(logged, "threshold_ms=1000") {
 		t.Fatalf("expected threshold_ms=1000 in WARNING log; got:\n%s", logged)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_AlreadyClaimedRequestIsNoop(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	oldest := "20260414-033300-from-orchestrator-to-worker.md"
+	newest := "20260414-033301-from-orchestrator-to-worker.md"
+	if err := os.WriteFile(filepath.Join(inboxDir, oldest), []byte("oldest"), 0o600); err != nil {
+		t.Fatalf("WriteFile oldest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inboxDir, newest), []byte("newest"), 0o600); err != nil {
+		t.Fatalf("WriteFile newest: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-once",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest(first): %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest(second): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxDir, newest)); err != nil {
+		t.Fatalf("newest inbox file should not be popped by duplicate processing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "read", oldest)); err != nil {
+		t.Fatalf("oldest read file missing: %v", err)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_ConcurrentClaimsPopOnlyOnce(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	oldest := "20260414-033400-from-orchestrator-to-worker.md"
+	newest := "20260414-033401-from-orchestrator-to-worker.md"
+	if err := os.WriteFile(filepath.Join(inboxDir, oldest), []byte("oldest"), 0o600); err != nil {
+		t.Fatalf("WriteFile oldest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inboxDir, newest), []byte("newest"), 0o600); err != nil {
+		t.Fatalf("WriteFile newest: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-concurrent",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := processDaemonSubmitRequest(requestPath)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("processDaemonSubmitRequest concurrent error: %v", err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(sessionDir, "read", oldest)); err != nil {
+		t.Fatalf("oldest read file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxDir, newest)); err != nil {
+		t.Fatalf("newest inbox file should not be popped by duplicate concurrent processing: %v", err)
+	}
+	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
+		t.Fatalf("request file still present or wrong error: %v", err)
+	}
+	if _, err := os.Stat(requestPath + ".processing"); !os.IsNotExist(err) {
+		t.Fatalf("claimed request file still present or wrong error: %v", err)
+	}
+
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-concurrent"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != oldest {
+		t.Fatalf("response.Filename = %q, want %q", response.Filename, oldest)
 	}
 }
 
