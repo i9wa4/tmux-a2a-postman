@@ -138,3 +138,90 @@ func TestRunCaptureProfileFileOutputPrintsMetadataWithoutProfileContent(t *testi
 		t.Fatalf("stdout leaked profile content: %q", stdout.String())
 	}
 }
+
+func TestRunCaptureProfileFileForcePassesThroughRequest(t *testing.T) {
+	baseDir := t.TempDir()
+	installFakeTmuxForCLI(t, baseDir, "review", "worker")
+	outputPath := filepath.Join(t.TempDir(), "heap.pprof")
+
+	var gotRequest projection.DaemonSubmitRequest
+	ctx := commandContext{
+		stdout: &bytes.Buffer{},
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{BaseDir: baseDir, TmuxTimeout: 1}, nil
+		},
+		contextOwnsSession: func(baseDirArg, contextID, sessionName string) bool {
+			return baseDirArg == baseDir && contextID == "ctx-prof" && sessionName == "review"
+		},
+		roundTripDaemonSubmit: func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+			gotRequest = request
+			return projection.DaemonSubmitResponse{
+				RequestID: "req-profile-force",
+				Command:   projection.DaemonSubmitRuntimeProfile,
+				HandledAt: time.Now().UTC().Format(time.RFC3339Nano),
+				RuntimeProfile: &projection.RuntimeProfileCapture{
+					Kind:        runtimeprofile.KindHeap,
+					Destination: "file",
+					Bytes:       10,
+					MaxBytes:    runtimeprofile.DefaultMaxBytes,
+					OutputPath:  outputPath,
+				},
+			}, nil
+		},
+	}
+
+	if err := runCaptureProfileWithContext(ctx, []string{
+		"--context-id", "ctx-prof",
+		"--type", "heap",
+		"--output", outputPath,
+		"--force",
+	}); err != nil {
+		t.Fatalf("runCaptureProfileWithContext(): %v", err)
+	}
+	if !gotRequest.ProfileForce {
+		t.Fatal("ProfileForce = false, want true when --force is passed")
+	}
+}
+
+func TestRunCaptureProfileFileNoForceByDefault(t *testing.T) {
+	baseDir := t.TempDir()
+	installFakeTmuxForCLI(t, baseDir, "review", "worker")
+	outputPath := filepath.Join(t.TempDir(), "heap.pprof")
+
+	var gotRequest projection.DaemonSubmitRequest
+	ctx := commandContext{
+		stdout: &bytes.Buffer{},
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{BaseDir: baseDir, TmuxTimeout: 1}, nil
+		},
+		contextOwnsSession: func(baseDirArg, contextID, sessionName string) bool {
+			return baseDirArg == baseDir && contextID == "ctx-prof" && sessionName == "review"
+		},
+		roundTripDaemonSubmit: func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+			gotRequest = request
+			return projection.DaemonSubmitResponse{
+				RequestID: "req-profile-no-force",
+				Command:   projection.DaemonSubmitRuntimeProfile,
+				HandledAt: time.Now().UTC().Format(time.RFC3339Nano),
+				RuntimeProfile: &projection.RuntimeProfileCapture{
+					Kind:        runtimeprofile.KindHeap,
+					Destination: "file",
+					Bytes:       10,
+					MaxBytes:    runtimeprofile.DefaultMaxBytes,
+					OutputPath:  outputPath,
+				},
+			}, nil
+		},
+	}
+
+	if err := runCaptureProfileWithContext(ctx, []string{
+		"--context-id", "ctx-prof",
+		"--type", "heap",
+		"--output", outputPath,
+	}); err != nil {
+		t.Fatalf("runCaptureProfileWithContext(): %v", err)
+	}
+	if gotRequest.ProfileForce {
+		t.Fatal("ProfileForce = true, want false when --force is not passed")
+	}
+}

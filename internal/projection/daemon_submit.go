@@ -41,6 +41,7 @@ type DaemonSubmitRequest struct {
 	ProfileDestination string              `json:"profile_destination,omitempty"`
 	ProfileOutputPath  string              `json:"profile_output_path,omitempty"`
 	ProfileMaxBytes    int64               `json:"profile_max_bytes,omitempty"`
+	ProfileForce       bool                `json:"profile_force,omitempty"`
 }
 
 type RuntimeProfileCapture struct {

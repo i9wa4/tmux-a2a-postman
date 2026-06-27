@@ -282,7 +282,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 		if request.ProfileOutputPath == "" {
 			return response, fmt.Errorf("daemon submit runtime-profile file destination missing output path")
 		}
-		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data); err != nil {
+		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data, request.ProfileForce); err != nil {
 			return response, err
 		}
 		response.RuntimeProfile = &projection.RuntimeProfileCapture{
@@ -298,7 +298,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 	return response, nil
 }
 
-func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
+func writeRuntimeProfileFile(outputPath, requestID string, data []byte, force bool) error {
 	if outputPath == "" {
 		return fmt.Errorf("profile output path is required")
 	}
@@ -314,6 +314,11 @@ func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
 			return fmt.Errorf("profile output directory: %w", err)
 		} else if !info.IsDir() {
 			return fmt.Errorf("profile output directory is not a directory")
+		}
+	}
+	if !force {
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("profile output file already exists: %s (use --force to overwrite)", outputPath)
 		}
 	}
 	tmpPath := outputPath + "." + requestID + ".tmp"
