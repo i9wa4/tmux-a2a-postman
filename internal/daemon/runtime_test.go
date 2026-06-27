@@ -2409,6 +2409,7 @@ func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *tes
 	rt.daemonState.SetSessionEnabled("review", true)
 
 	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingEventIdle(t, rt, "review:worker", 2*time.Second)
 
 	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
 	if err != nil {
