@@ -355,6 +355,13 @@ retained objects; goroutine profiles help explain growing goroutine counts or
 stuck work. Captures are point-in-time and may briefly add CPU and memory
 pressure proportional to profile size, bounded by `--max-bytes`.
 
+By default, `capture-profile` refuses to overwrite an existing output file.
+Pass `--force` to allow overwriting:
+
+```sh
+tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof --force
+```
+
 Inspect live session state:
 
 ```sh
