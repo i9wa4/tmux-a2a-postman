@@ -20,6 +20,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
@@ -360,6 +362,14 @@ func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
 	status := rt.dispatchDaemonSubmitRequest(requestPath)
 	if status == daemonSubmitDispatchSaturated {
+		request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+		fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
+		fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
+		fields.DaemonSubmitRequestID = request.RequestID
+		fields.DaemonSubmitCommand = string(request.Command)
+		fields.SubmitPath = string(projection.SubmitPathDaemon)
+		fields.Result = "saturated"
+		msgtrace.Log("daemon_submit_saturate", fields)
 		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
 			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
 	}
@@ -402,6 +412,12 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), sessionNameForDaemonSubmitRequestPath(requestPath), request.Content)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("daemon_submit_dispatch", fields)
 	processor := rt.processDaemonSubmit
 
 	worker := func() {
@@ -711,6 +727,14 @@ func daemonSubmitDispatchKey(requestPath string) string {
 	return "path:" + requestPath
 }
 
+func sessionNameForDaemonSubmitRequestPath(requestPath string) string {
+	sessionDir, ok := daemonSubmitSessionDir(requestPath)
+	if !ok {
+		return ""
+	}
+	return filepath.Base(sessionDir)
+}
+
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
 	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
@@ -811,7 +835,15 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	now := rt.now()
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-	syncMailboxProjection(sourceSessionDir)
+	var postTraceFields msgtrace.Fields
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields := msgtrace.FromContent(filename, shadowRelativePath(sourceSessionDir, eventPath), filepath.Base(sourceSessionDir), string(content))
+		fields.ContextID = rt.contextID
+		fields.SubmitPath = string(projection.SubmitPathPost)
+		msgtrace.Log("send_enqueue", fields)
+		postTraceFields = fields
+	}
+	syncMailboxProjectionWithTrace(sourceSessionDir, postTraceFields)
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
@@ -890,6 +922,32 @@ func (rt *daemonRuntime) retryActivePostDelivery(eventPath, filename string) {
 	rt.processActivePostEvent(eventPath, filename)
 }
 
+func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msgtrace.Fields {
+	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+	sourceSessionName := filepath.Base(sourceSessionDir)
+	fields := msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	}
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields = msgtrace.FromContent(filename, fields.MessagePath, sourceSessionName, string(content))
+	}
+	if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	if fields.ContextID == "" {
+		fields.ContextID = rt.contextID
+	}
+	return fields
+}
+
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
@@ -905,11 +963,20 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 		}()
 
+		postTraceFields := rt.postDeliveryTraceFields(eventPath, filename)
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+			attemptFields := postTraceFields
+			attemptFields.DeliveryAttempt = 1
+			msgtrace.Log("delivery_attempt", attemptFields)
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
+			resultFields := postTraceFields
+			resultFields.DeliveryAttempt = 1
+			resultFields.Result = "error"
+			resultFields.Reason = err.Error()
+			msgtrace.Log("delivery_result", resultFields)
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -919,17 +986,24 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		syncMailboxProjection(sourceSessionDir)
+		syncFields := postTraceFields
+		syncFields.DeliveryAttempt = 1
+		syncMailboxProjectionWithTraceFn(sourceSessionDir, syncFields)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
 			if nodeInfo, ok := nodes[recipientFullName]; ok {
-				syncMailboxProjection(nodeInfo.SessionDir)
+				recipientSyncFields := syncFields
+				recipientSyncFields.MessagePath = filepath.Join("inbox", nodeaddr.Simple(info.To), filename)
+				recipientSyncFields.TmuxSession = filepath.Base(nodeInfo.SessionDir)
+				syncMailboxProjectionWithTraceFn(nodeInfo.SessionDir, recipientSyncFields)
 			}
 		}
 
 		suppressNormalDelivery := false
+		var deliveryEvent message.DaemonEvent
 		select {
 		case msgEvent := <-messageEvents:
+			deliveryEvent = msgEvent
 			rt.events <- tui.DaemonEvent{
 				Type:    msgEvent.Type,
 				Message: msgEvent.Message,
@@ -937,6 +1011,26 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 			suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 		default:
+		}
+		if suppressNormalDelivery {
+			reason := messageEventFailureReason(deliveryEvent)
+			if reason == "" {
+				reason = "dead_letter"
+			}
+			deadLetterFields := msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
+				ContextID:       rt.contextID,
+				TmuxSession:     sourceSessionName,
+				DeliveryAttempt: 1,
+				Result:          "dead_letter",
+				Reason:          reason,
+			}
+			if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+				deadLetterFields.Sender = info.From
+				deadLetterFields.Recipient = info.To
+			}
+			msgtrace.Log("delivery_result", deadLetterFields)
 		}
 
 		if !suppressNormalDelivery {
@@ -1003,9 +1097,17 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fswatcher.O
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
+	msgtrace.Log("pop_read_archive", msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		Sender:      info.From,
+		Recipient:   info.To,
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	})
 	rt.scheduleMailboxProjectionSync(sourceSessionDir)
 
 	if info.To == "postman" || info.To == "daemon" {

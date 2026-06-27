@@ -326,6 +326,17 @@ recipient-side confirmation before retrying. Use
 use `get-status --debug` for bounded `daemon_submit` queue health, including
 pending, claimed, late response, worker, and saturation counts.
 
+Message lifecycle logs use `component=message_lifecycle` and stable trace
+fields so operators can follow one message across enqueue, daemon-submit,
+delivery, pop/read archive, dead-letter, projection sync, and late-response
+events. Start with `message_id=<filename>` when known; for daemon-submit
+timeouts, start with `daemon_submit_request_id=<request_id>` and then correlate
+the emitted `message_id`, `sender`, `recipient`, `context_id`,
+`tmux_session`, `input_request_id`, `reply_to`, and `delivery_attempt` fields.
+`message_path` is a local operator log field and may name mailbox-relative or
+daemon-submit files; public reports should use message ids, request ids, and
+repo-relative evidence instead of machine-local paths.
+
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
 event=memory_snapshot source=passive_log` lines are intended for normal log
