@@ -129,10 +129,6 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	return payload
 }
 
-func syncMailboxProjection(sessionDir string) {
-	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
-}
-
 func deliveryTraceFieldsFromContent(filename, messagePath, tmuxSession, contextID, content string, info *MessageInfo) msgtrace.Fields {
 	fields := msgtrace.FromContent(filename, messagePath, tmuxSession, content)
 	if fields.ContextID == "" {
