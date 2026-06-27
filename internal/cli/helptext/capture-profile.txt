@@ -12,6 +12,7 @@ Usage:
   tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof
   tmux-a2a-postman capture-profile --type goroutine --output ./postman-goroutine.pprof
   tmux-a2a-postman capture-profile --type goroutine --output - > goroutine.pprof
+  tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof --force
 
 Flags:
   --type heap|goroutine   Profile type to capture (required)
@@ -19,10 +20,16 @@ Flags:
                           written by the daemon (required)
   --max-bytes N           Maximum profile bytes to return or write
                           (default: 16777216)
+  --force                 Overwrite an existing output file (default: refuse)
 
 Output:
   --output PATH prints JSON metadata after the daemon writes the profile.
   --output - writes raw profile bytes to stdout.
+
+Overwrite policy:
+  --output PATH refuses to overwrite an existing file by default. The daemon
+  returns an error if the destination already exists. Pass --force to allow
+  overwriting. New files are always written atomically regardless of --force.
 
 Operational notes:
   Heap profiles are useful when memory telemetry shows heap growth or retained
