@@ -190,7 +190,7 @@ func TestRunPop_EmptyDaemonPopReportsSubmitPath(t *testing.T) {
 		t.Fatalf("runPopWithContext: %v", err)
 	}
 	var payload popEmptyOutput
-	if err := json.Unmarshal([]byte(stdout.String()), &payload); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
 	if payload.Status != "empty" {
@@ -224,7 +224,7 @@ func TestRunPop_EmptyDirectPopReportsSubmitPath(t *testing.T) {
 		t.Fatalf("runPopWithContext: %v", err)
 	}
 	var payload popEmptyOutput
-	if err := json.Unmarshal([]byte(stdout.String()), &payload); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
 	}
 	if payload.Status != "empty" {
