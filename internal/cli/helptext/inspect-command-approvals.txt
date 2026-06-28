@@ -1,0 +1,19 @@
+inspect-command-approvals — inspect command approval threads
+
+Usage:
+  tmux-a2a-postman inspect-command-approvals
+
+Output:
+  JSON with context_id, session_name, and approval threads keyed by thread_id.
+
+Thread fields:
+  requester, reviewer, mode, label, category, command_hash, status, reason,
+  requested_at, expires_at, decided_at, decision_message_id
+
+Statuses:
+  pending         Request exists and has not been decided.
+  approved        Matching reviewer approved before expiry.
+  rejected        Matching reviewer rejected.
+  expired         Pending or approved request is past expires_at.
+  wrong_reviewer  Decision reviewer did not match the request reviewer.
+  stale           Decision exists without a matching request thread.

@@ -263,6 +263,28 @@ func OpenShadowWriter(sessionDir, contextID, tmuxSessionName string, holderPID i
 	return writer, nil
 }
 
+func OpenCurrentWriter(sessionDir string) (*Writer, error) {
+	var session SessionState
+	if err := readJSONFile(sessionStatePath(sessionDir), &session); err != nil {
+		return nil, err
+	}
+	if session.SessionKey == "" || session.Generation < 1 {
+		return nil, fmt.Errorf("session state is invalid")
+	}
+	var lease Lease
+	if err := readJSONFile(currentLeasePath(sessionDir), &lease); err != nil {
+		return nil, err
+	}
+	if lease.LeaseID == "" || lease.LeaseEpoch < 1 {
+		return nil, fmt.Errorf("current lease is invalid")
+	}
+	return &Writer{
+		sessionDir: sessionDir,
+		session:    session,
+		lease:      lease,
+	}, nil
+}
+
 func ResolveSession(sessionDir, tmuxSessionName string, mode ResolutionMode, now time.Time) (SessionState, ResolutionResult, error) {
 	if err := ensureOwnerOnlyDir(journalDir(sessionDir)); err != nil {
 		return SessionState{}, "", fmt.Errorf("ensuring journal dir: %w", err)
@@ -594,7 +616,7 @@ func validateThreadBinding(eventType, threadID string) error {
 }
 
 func requiresThreadID(eventType string) bool {
-	return strings.HasPrefix(eventType, "approval_") || strings.HasPrefix(eventType, "review_")
+	return strings.HasPrefix(eventType, "approval_") || strings.HasPrefix(eventType, "command_approval_") || strings.HasPrefix(eventType, "review_")
 }
 
 func isKnownVisibility(visibility Visibility) bool {

@@ -9,6 +9,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cli"
 )
 
+type exitCoder interface {
+	ExitCode() int
+}
+
 func splitCommand(args []string) (string, []string, bool) {
 	if len(args) == 0 {
 		return "", nil, false
@@ -67,7 +71,9 @@ func main() {
 			GetSessionStatusOneline: func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			InspectInput:            cli.RunInspectInput,
 			InspectMessage:          cli.RunInspectMessage,
+			InspectCommandApprovals: cli.RunInspectCommandApprovals,
 			InspectDaemonSubmit:     cli.RunInspectDaemonSubmit,
+			ExecuteBash:             cli.RunExecuteBash,
 			SendMessage:             cli.RunSendMessage,
 			SendHeredoc:             cli.RunSendHeredoc,
 			Stop: func(args []string) error {
@@ -83,6 +89,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "❌ %s: %v\n", result.Label, result.Err)
 		if result.ShowUsage {
 			fs.Usage()
+		}
+		if err, ok := result.Err.(exitCoder); ok {
+			os.Exit(err.ExitCode())
 		}
 		os.Exit(1)
 	}
