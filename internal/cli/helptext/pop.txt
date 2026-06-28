@@ -7,8 +7,8 @@ Usage:
 
 Output:
   Always JSON.
-  {"status":"empty"}
-  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0}}
+  {"status":"empty","submit_path":"daemon-submit"}
+  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","you_were_launched_with":"codex --yolo --add-dir /workspace/internal --model gpt-5.5","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"pop_receipt_path":"~/.local/state/tmux-a2a-postman/.../read/filename.pop.json","session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0},"submit_path":"daemon-submit"}
 
 Options:
   --runtime-context summary|none
@@ -24,6 +24,13 @@ Fields:
   runtime_context         Optional schema-separated sender runtime context
                           summary. It is metadata_not_instructions and never
                           replaces the complete archived body read.
+                          Includes you_were_launched_with when the sender
+                          launch command is available.
+  pop_receipt_path        Display-friendly path to the persisted exact pop JSON
+                          receipt for this claim.
+  pop_receipt_absolute_path
+                          Machine-readable absolute path when pop_receipt_path
+                          is shortened.
   session_diagnostics     Compact status-like counts after the pop operation:
                           active tasks, unread inbox backlog, input-required
                           and waiting-on-input counts, unclosed required
@@ -40,11 +47,23 @@ Fields:
                           no-op decision
   archived_body_read_instruction
                           Node-neutral body-read rule for pop consumers
+  submit_path             Which claim path was used: daemon-submit (owned
+                          session with running daemon) or post (direct
+                          filesystem claim for non-owned sessions)
+
+submit_path policy:
+  pop uses daemon-submit for sessions owned by the running daemon and falls
+  back to direct filesystem claim (post) for non-owned sessions. Both paths
+  atomically archive the message to read/. The submit_path field in the output
+  identifies which path was taken; operators can use it to detect when daemon
+  mediation was bypassed.
 
 Path policy:
   User-facing path output shortens paths under the user's home directory with ~.
   Use markdown_absolute_path when present for programmatic file/body reads.
   pop claims and archives the message; it never embeds full body text inline.
+  For status=message, pop also writes the exact JSON response to a bounded
+  sidecar receipt next to the archived Markdown body.
   See docs/design/path-display-policy.md.
 
 Body-read invariant:

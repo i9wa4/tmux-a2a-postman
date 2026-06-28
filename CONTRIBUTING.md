@@ -22,10 +22,24 @@ Go version policy:
 
 - Keep `go.mod` at major.minor (for example `go 1.26`)
 - Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
-- Keep the `flake.nix` Go override on the latest required patch release until
-  nixpkgs catches up
-- Update the override with `nix run .#update-go-toolchain`, then run the checks
-  below
+- Keep the `flake.nix` Go override on the latest stable same-minor patch release
+  published by go.dev
+- To update the Go patch override, run:
+
+  ```sh
+  nix run .#update-go-toolchain
+  ```
+
+- The command reads the current Go major.minor from the `go126` override in
+  `flake.nix`, queries go.dev for the latest stable patch release for that same
+  major.minor, and updates only the override version/hash in `flake.nix` when a
+  newer patch exists.
+- If the override is already current, the command exits 0 with
+  `status=up_to_date` and leaves the repository unchanged.
+- After the command updates `flake.nix`, run `nix flake check` and `nix build`
+  before opening the update PR.
+- Minor-version migrations still require manually updating the hard-coded
+  `go126` / `go_1_26` names and then rerunning the alignment checks
 
 When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 `vendorHash`:
@@ -52,6 +66,12 @@ Validate publishable skill metadata with:
 ```sh
 nix run '.#skill-check'
 ```
+
+The local/CI skill check validates `skills/*/SKILL.md` frontmatter,
+name-to-directory matching, license and description metadata, `USE FOR` /
+`DO NOT USE FOR` discovery text, and then runs the GitHub skill publish
+dry-run. `nix flake check` also runs the metadata validation through
+pre-commit.
 
 Do not use `gh skill publish --tag` in the tag-push release workflow. That
 command creates a tag and GitHub Release itself. The repository release flow

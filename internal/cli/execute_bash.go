@@ -382,6 +382,14 @@ func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPo
 	}
 	if ok {
 		if thread, found := state.Threads[threadID]; found {
+			if thread.CommandHash != "" && thread.CommandHash != commandHash {
+				return commandApprovalEvaluation{
+					Decision: "digest_mismatch",
+					Allowed:  false,
+					Reason:   "approval exists for a different command digest",
+					Thread:   &thread,
+				}, nil
+			}
 			return evaluationForThread(thread), nil
 		}
 		for _, thread := range state.Threads {

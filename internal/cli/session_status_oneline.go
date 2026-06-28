@@ -24,7 +24,13 @@ func isShellCommand(cmd string) bool {
 // RunGetSessionStatusOneline formats the compact all-session status view in one line.
 // Output format: [0]🔷🟡:🟢 [1]🔴
 func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
+	return runGetSessionStatusOnelineWithContext(commandContext{stdout: stdout}, args)
+}
+
+func runGetSessionStatusOnelineWithContext(ctx commandContext, args []string) error {
+	ctx = ctx.withDefaults()
 	fs := flag.NewFlagSet("get-status-oneline", flag.ContinueOnError)
+	fs.SetOutput(ctx.stderr)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from session)")
 	configPath := fs.String("config", "", "Config file path")
@@ -33,7 +39,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		return err
 	}
 
-	statuses, _, ok, err := collectAllSessionStatus(*contextID, "", *configPath)
+	statuses, _, ok, err := collectAllSessionStatusWithContext(ctx, *contextID, "", *configPath, ctx.collectSessionStatus)
 	if err != nil {
 		if strings.Contains(err.Error(), "no active postman found") {
 			return nil
@@ -49,7 +55,7 @@ func RunGetSessionStatusOneline(stdout io.Writer, args []string) error {
 		statusStr = formatAllSessionStatusSeverityOneline(statuses)
 	}
 	if statusStr != "" {
-		_, err := fmt.Fprintln(stdout, statusStr)
+		_, err := fmt.Fprintln(ctx.stdout, statusStr)
 		return err
 	}
 	return nil

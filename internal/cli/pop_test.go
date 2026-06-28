@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +105,9 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want read path", payload.MarkdownPath)
 	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q (non-owner direct fallback)", payload.SubmitPath, projection.SubmitPathPost)
+	}
 	if !strings.Contains(readPopArchiveForTest(t, payload), "context stdout payload") {
 		t.Fatalf("archived body missing expected payload")
 	}
@@ -153,6 +155,83 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 	payload := decodePopMessageOutputForTest(t, stdout.String())
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q (daemon-submit path)", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
+}
+
+func TestRunPop_EmptyDaemonPopReportsSubmitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-empty-daemon"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command: request.Command,
+				Empty:   true,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	var payload popEmptyOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "empty" {
+		t.Fatalf("Status = %q, want empty", payload.Status)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q (daemon-owned empty pop)", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
+}
+
+func TestRunPop_EmptyDirectPopReportsSubmitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-empty-direct"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return false
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	var payload popEmptyOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "empty" {
+		t.Fatalf("Status = %q, want empty", payload.Status)
+	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q (non-owner direct fallback empty pop)", payload.SubmitPath, projection.SubmitPathPost)
 	}
 }
 
@@ -635,7 +714,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, contextID, "test-session") {
@@ -707,6 +786,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	filename := "20260520-010103-from-orchestrator-to-worker.md"
 	capturedAt := time.Date(2026, time.May, 20, 1, 1, 3, 0, time.UTC)
+	launchCommand := "/usr/bin/codex --yolo --add-dir /workspace/internal --model gpt-5.5"
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:         capturedAt,
 		Scope:       "sender",
@@ -716,6 +796,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		Node:        "orchestrator",
 		PaneID:      "%42",
 		CWD:         filepath.Join(tmpDir, "workspace"),
+		Runtime:     runtimecontext.RuntimeMetadata{LaunchCommand: launchCommand},
 	})
 	if _, err := runtimecontext.SaveSnapshot(sessionDir, snapshot); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
@@ -742,6 +823,23 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout)
+	receiptPath := payload.PopReceiptAbsolutePath
+	if receiptPath == "" {
+		receiptPath = payload.PopReceiptPath
+	}
+	if receiptPath == "" {
+		t.Fatalf("payload missing pop receipt path: %#v", payload)
+	}
+	if filepath.Base(receiptPath) != "20260520-010103-from-orchestrator-to-worker.pop.json" {
+		t.Fatalf("receipt path = %q, want filename.pop.json", receiptPath)
+	}
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("ReadFile pop receipt: %v", err)
+	}
+	if string(receiptBytes) != stdout {
+		t.Fatalf("pop receipt did not persist exact stdout:\nreceipt=%s\nstdout=%s", string(receiptBytes), stdout)
+	}
 	if payload.RuntimeContext == nil {
 		t.Fatalf("payload.RuntimeContext is nil; stdout=%s", stdout)
 	}
@@ -750,6 +848,15 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 	}
 	if payload.RuntimeContext.Fields.Role != "orchestrator" {
 		t.Fatalf("runtime context role = %q, want orchestrator", payload.RuntimeContext.Fields.Role)
+	}
+	if payload.RuntimeContext.YouWereLaunchedWith != launchCommand {
+		t.Fatalf("runtime context launch command = %q, want %q", payload.RuntimeContext.YouWereLaunchedWith, launchCommand)
+	}
+	if payload.RuntimeContext.Fields.Runtime == nil || payload.RuntimeContext.Fields.Runtime.LaunchCommand != launchCommand {
+		t.Fatalf("runtime context fields runtime = %#v, want launch command", payload.RuntimeContext.Fields.Runtime)
+	}
+	if !strings.Contains(stdout, `"you_were_launched_with"`) {
+		t.Fatalf("pop JSON missing you_were_launched_with key:\n%s", stdout)
 	}
 	if payload.RuntimeContext.ContentHash != snapshot.ContentHash {
 		t.Fatalf("runtime context hash = %q, want %q", payload.RuntimeContext.ContentHash, snapshot.ContentHash)

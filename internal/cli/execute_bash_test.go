@@ -328,6 +328,46 @@ func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	}
 }
 
+func TestRunExecuteBashBlockingRejectsExplicitThreadIDWithMismatchedDigest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+
+	// Approve the original command.
+	originalCommand := "printf original-command"
+	approvedThreadID := fixture.appendCommandApproval(t, policy, originalCommand, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+
+	// Attempt to execute a different command using the approved thread ID.
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--thread-id", approvedThreadID,
+		"--command", "printf attack-command",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want digest_mismatch block")
+	}
+	if !strings.Contains(err.Error(), "different command digest") {
+		t.Fatalf("error = %v, want reason containing \"different command digest\"", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0; command must not execute on digest mismatch", fixture.runCount)
+	}
+}
+
 func TestRunExecuteBashPropagatesExitStatus(t *testing.T) {
 	fixture := newExecuteBashFixture(t)
 	fixture.runStatus = 7

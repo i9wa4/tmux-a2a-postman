@@ -2,55 +2,45 @@
 name: postman-session-operator
 license: MIT
 description: |
-  USE FOR: Live mailbox/session operation, mail triage, exact replies, waits,
-  blocked/stale/dead-letter state.
-  DO NOT USE FOR: first contact or topology audits.
+  USE FOR: MUST LOAD after sends or live mailbox/session work: passive waits,
+  exact replies, bounded status, stale/dead-letter state, and pane hints.
+  DO NOT USE FOR: first-contact sends, polling loops, or topology audits.
 ---
 
 # postman-session-operator
 
-## 1. USE FOR
+MUST load after sending or live mailbox/session work; first contact uses
+`postman-send-message`.
 
-- Interpret pending, waiting, blocked, stale, and dead-letter state.
-- Claim unread mail, read complete archives, close exact requests.
-- Use `tmux-a2a-postman inspect-message --id <message_id>` as a read-only
-  historical lookup. Use `--path` for the stored Markdown path and `--body` for
-  sender-authored body text.
+## 1. USE FOR / Procedure
 
-## 2. Procedure
-
-1. Use `get-status` for on-demand decisions, not polling. After delegated or
-   reply-required mail, wait for pane notifications, exact replies,
-   timeout/watchdog boundaries, or delivery trouble.
-2. For daemon-submit timeouts, do not treat the timeout as proof that delivery
-   failed. When the timeout includes a request id, run
-   `tmux-a2a-postman inspect-daemon-submit --id <request_id>` to inspect the
-   request state, and use `tmux-a2a-postman get-status --debug` only for
-   bounded aggregate `daemon_submit` queue health.
-3. After every successful `pop` with `status=message`, read the complete
+1. Do not poll. After sends or delegated work, wait passively for notification,
+   exact reply, timeout/watchdog boundary, explicit user status request, or
+   concrete delivery trouble.
+2. `pop` is only for explicit notification/current evidence of mail; never run
+   repeated `pop` or sleep/pop loops.
+3. Bounded status is only for explicit user status request, watchdog boundary,
+   or concrete delivery trouble; never use status as a heartbeat.
+4. `tmux-a2a-postman inspect-message --id <message_id>` is read-only
+   historical lookup. Use `--path` for the stored Markdown path and `--body`
+   for sender-authored body text.
+5. After every successful `pop` with `status=message`, read the complete
    archived Markdown body before any handling, routing, reply, status decision,
-   or no-action or no-op decision.
-4. `messageType: ping`, `replyPolicy: none`, and other metadata do not allow
-   skipping the body. truncated command output does not count as a complete
-   read.
-5. Filling an input request closes transport, not task acceptance. After exact
-   replies, check send JSON `fill`, `required_input`, and `notice`; `DONE` still
-   requires `Task artifact: <artifact-reference>`, `Original checklist: PASS`,
-   evidence, and `Remaining blockers: none`. Use `BLOCKED` with
-   `Original checklist: FAIL`; receivers should verify checklist status, durable
-   references, evidence, and blockers before relaying, approving, or closing
-   work.
-6. Route dead letters, missing routes, or stale topology to
-   `postman-config-auditor`. Details:
+   or no-action or no-op decision. `messageType: ping`, `replyPolicy: none`,
+   and other metadata do not allow skipping the body. truncated command output
+   does not count as a complete read.
+6. Both `send-heredoc` and `pop` output a `submit_path` field
+   (`daemon-submit` or `post`) identifying whether daemon mediation was used or
+   bypassed by direct filesystem access. This applies to all output including
+   empty `pop` results. Use `submit_path` to audit fallback behavior.
+7. Filling an input request closes transport, not task acceptance. After any
+   exact reply, check send JSON `fill`, `required_input`, and `notice`.
+   DONE/completion or BLOCKED/task-acceptance replies require
+   `Task artifact: <artifact-reference>`, Original checklist: PASS, evidence,
+   and Remaining blockers: none. Use `BLOCKED` with `Original checklist: FAIL`.
+8. Receivers verify checklist status, durable references, evidence, and
+   blockers before relaying, approving, or closing work.
+9. Pane ids require exact tmux verification; missing panes are stale evidence.
+   Dead letters, missing routes, or stale topology go to
+   `postman-config-auditor`. More detail:
    [Session Flow](references/session-flow.md).
-
-## 3. DO NOT USE FOR
-
-- First contact; use `postman-send-message`.
-- Config/topology/skill audits; use `postman-config-auditor`.
-- Infrastructure management or daemon repair.
-
-## 4. Troubleshooting
-
-If status is stuck after route checks, send `BLOCKED`; do not edit mailbox
-files.

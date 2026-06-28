@@ -13,6 +13,7 @@ var helpTextFS embed.FS
 
 var helpTopicFiles = map[string]string{
 	"":                          "helptext/overview.txt",
+	"capture-profile":           "helptext/capture-profile.txt",
 	"commands":                  "helptext/commands.txt",
 	"config":                    "helptext/config.txt",
 	"directories":               "helptext/directories.txt",

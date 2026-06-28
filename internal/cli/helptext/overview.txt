@@ -26,6 +26,7 @@ Key Concepts:
 Default operator surface:
   send-heredoc               Send a message with an explicit quoted heredoc
   pop                        Claim and archive the oldest unread inbox message
+  capture-profile            Explicitly capture daemon heap or goroutine profile
   get-status                 Print canonical session status JSON
   get-status-oneline         Print compact all-session status
   inspect-input              Inspect open reply-required work by id
@@ -43,6 +44,8 @@ Lifecycle and recovery:
 Messaging Protocol:
   send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin
   pop                                        Claim and archive oldest message
+  capture-profile --type heap|goroutine --output -|PATH
+                                             Capture one explicit daemon profile
   get-status                                Inspect agent-readable session status
   get-status-oneline                        Inspect compact all-session status
   inspect-input --id <id>                   Inspect an open input request by id
@@ -55,6 +58,7 @@ Messaging Protocol:
 
 Topics:
   commands             tmux-a2a-postman help commands
+  capture-profile      tmux-a2a-postman help capture-profile
   config               tmux-a2a-postman help config
   directories          tmux-a2a-postman help directories
   messaging            tmux-a2a-postman help messaging

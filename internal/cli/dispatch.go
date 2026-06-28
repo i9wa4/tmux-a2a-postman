@@ -12,6 +12,7 @@ type Config struct {
 type Handlers struct {
 	Start                   func(contextID, configPath, logFilePath string, noTUI bool) error
 	Pop                     func(args []string) error
+	CaptureProfile          func(args []string) error
 	GetSessionStatus        func(args []string) error
 	GetSessionStatusOneline func(args []string) error
 	InspectInput            func(args []string) error
@@ -49,6 +50,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman start",
 			Err:   handlers.Start(cfg.ContextID, cfg.ConfigPath, cfg.LogFilePath, cfg.NoTUI),
+		}
+	case "capture-profile":
+		return Result{
+			Label: "postman capture-profile",
+			Err:   handlers.CaptureProfile(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "pop":
 		return Result{

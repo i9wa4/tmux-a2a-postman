@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,10 +18,11 @@ import (
 const stopTimeoutSeconds = 10
 
 type stopOutput struct {
-	Status    string `json:"status"`
-	Session   string `json:"session,omitempty"`
-	ContextID string `json:"context_id,omitempty"`
-	PID       int    `json:"pid,omitempty"`
+	Status        string `json:"status"`
+	Session       string `json:"session,omitempty"`
+	DaemonSession string `json:"daemon_session,omitempty"`
+	ContextID     string `json:"context_id,omitempty"`
+	PID           int    `json:"pid,omitempty"`
 }
 
 // RunStop gracefully stops the running postman daemon for this tmux session.
@@ -62,21 +62,21 @@ func RunStop(stdout io.Writer, args []string) error {
 
 	daemonSessionName := config.FindContextSessionName(baseDir, contextID)
 	if daemonSessionName == "" || !config.IsSessionPIDOwnedByCurrentUser(baseDir, contextID, daemonSessionName) {
-		return json.NewEncoder(stdout).Encode(stopOutput{
+		output := stopOutput{
 			Status:    "not_owned",
 			Session:   sessionName,
 			ContextID: contextID,
-		})
+		}
+		if daemonSessionName != "" && daemonSessionName != sessionName {
+			output.DaemonSession = daemonSessionName
+		}
+		return json.NewEncoder(stdout).Encode(output)
 	}
 
 	pidPath := filepath.Join(baseDir, contextID, daemonSessionName, "postman.pid")
-	data, err := os.ReadFile(pidPath)
+	pid, err := config.ReadSessionPIDFile(pidPath)
 	if err != nil {
-		return fmt.Errorf("reading pid file %s: %w", pidPath, err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid pid in %s", pidPath)
+		return err
 	}
 
 	proc, err := os.FindProcess(pid)
@@ -89,13 +89,17 @@ func RunStop(stdout io.Writer, args []string) error {
 
 	deadline := time.Now().Add(stopTimeoutSeconds * time.Second)
 	for time.Now().Before(deadline) {
-		if !config.IsSessionPIDAlive(baseDir, contextID, sessionName) {
-			return json.NewEncoder(stdout).Encode(stopOutput{
+		if !config.IsSessionPIDAlive(baseDir, contextID, daemonSessionName) {
+			output := stopOutput{
 				Status:    "stopped",
 				Session:   sessionName,
 				ContextID: contextID,
 				PID:       pid,
-			})
+			}
+			if daemonSessionName != sessionName {
+				output.DaemonSession = daemonSessionName
+			}
+			return json.NewEncoder(stdout).Encode(output)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

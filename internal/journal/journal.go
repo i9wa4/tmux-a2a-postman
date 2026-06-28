@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -454,12 +455,23 @@ func (w *Writer) ensureActiveLease() error {
 }
 
 func Replay(sessionDir string) ([]Event, error) {
+	events := make([]Event, 0)
+	if err := ReplayEach(sessionDir, func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func ReplayEach(sessionDir string, fn func(Event) error) error {
 	entries, err := os.ReadDir(recordsDir(sessionDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil
 		}
-		return nil, fmt.Errorf("reading records dir: %w", err)
+		return fmt.Errorf("reading records dir: %w", err)
 	}
 
 	type committedRecord struct {
@@ -487,57 +499,60 @@ func Replay(sessionDir string) ([]Event, error) {
 	expectedSequence := 1
 	currentLeaseID := ""
 	currentLeaseEpoch := 0
-	events := make([]Event, 0, len(records))
 	for _, record := range records {
 		if record.sequence < expectedSequence {
-			return nil, fmt.Errorf("replay: duplicate sequence %d", record.sequence)
+			return fmt.Errorf("replay: duplicate sequence %d", record.sequence)
 		}
 		if record.sequence > expectedSequence {
-			return nil, fmt.Errorf("replay: sequence gap at %d", expectedSequence)
+			return fmt.Errorf("replay: sequence gap at %d", expectedSequence)
 		}
 
 		var event Event
-		if err := readJSONFile(filepath.Join(recordsDir(sessionDir), record.name), &event); err != nil {
-			return nil, fmt.Errorf("replay: reading %s: %w", record.name, err)
+		if err := readJSONRecord(filepath.Join(recordsDir(sessionDir), record.name), &event); err != nil {
+			return fmt.Errorf("replay: reading %s: %w", record.name, err)
 		}
 		if event.Sequence != record.sequence {
-			return nil, fmt.Errorf("replay: record %s encoded sequence %d, want %d", record.name, event.Sequence, record.sequence)
+			return fmt.Errorf("replay: record %s encoded sequence %d, want %d", record.name, event.Sequence, record.sequence)
 		}
 		if event.SessionKey == "" {
-			return nil, fmt.Errorf("replay: record %s missing session_key", record.name)
+			return fmt.Errorf("replay: record %s missing session_key", record.name)
 		}
 		if event.Generation < 1 {
-			return nil, fmt.Errorf("replay: record %s has invalid generation %d", record.name, event.Generation)
+			return fmt.Errorf("replay: record %s has invalid generation %d", record.name, event.Generation)
 		}
 		if err := validateThreadBinding(event.Type, strings.TrimSpace(event.ThreadID)); err != nil {
-			return nil, fmt.Errorf("replay: record %s: %w", record.name, err)
+			return fmt.Errorf("replay: record %s: %w", record.name, err)
 		}
 
 		if event.Type == leaseAcquiredEventType {
 			if event.LeaseID == "" {
-				return nil, fmt.Errorf("replay: record %s missing lease_id", record.name)
+				return fmt.Errorf("replay: record %s missing lease_id", record.name)
 			}
 			if event.LeaseEpoch < 1 {
-				return nil, fmt.Errorf("replay: record %s has invalid lease_epoch %d", record.name, event.LeaseEpoch)
+				return fmt.Errorf("replay: record %s has invalid lease_epoch %d", record.name, event.LeaseEpoch)
 			}
 			if currentLeaseEpoch != 0 && event.LeaseEpoch <= currentLeaseEpoch {
-				return nil, fmt.Errorf("replay: non-monotonic lease epoch %d", event.LeaseEpoch)
+				return fmt.Errorf("replay: non-monotonic lease epoch %d", event.LeaseEpoch)
 			}
 			currentLeaseID = event.LeaseID
 			currentLeaseEpoch = event.LeaseEpoch
 		} else {
 			if currentLeaseID == "" {
-				return nil, fmt.Errorf("replay: record %s appeared before lease acquisition", record.name)
+				return fmt.Errorf("replay: record %s appeared before lease acquisition", record.name)
 			}
 			if event.LeaseID != currentLeaseID || event.LeaseEpoch != currentLeaseEpoch {
-				return nil, fmt.Errorf("replay: lease mismatch at sequence %d", event.Sequence)
+				return fmt.Errorf("replay: lease mismatch at sequence %d", event.Sequence)
 			}
 		}
 
-		events = append(events, event)
+		if fn != nil {
+			if err := fn(event); err != nil {
+				return fmt.Errorf("replay: callback sequence %d: %w", event.Sequence, err)
+			}
+		}
 		expectedSequence++
 	}
-	return events, nil
+	return nil
 }
 
 func SessionStatePath(sessionDir string) string {
@@ -734,6 +749,21 @@ func readJSONFile(path string, target interface{}) error {
 		return err
 	}
 	return json.Unmarshal(data, target)
+}
+
+func readJSONRecord(path string, target interface{}) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	if err := json.NewDecoder(file).Decode(target); err != nil {
+		if err == io.ErrUnexpectedEOF {
+			return fmt.Errorf("unexpected end of JSON input")
+		}
+		return err
+	}
+	return nil
 }
 
 func randomHex(byteCount int) string {

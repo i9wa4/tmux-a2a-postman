@@ -65,20 +65,28 @@ type daemonRuntime struct {
 	activeAutoPings  map[string]bool
 
 	processDaemonSubmit           daemonSubmitProcessor
+	launchDaemonSubmitWorker      daemonSubmitWorkerLauncher
 	daemonSubmitSem               chan struct{}
 	daemonSubmitResults           chan daemonSubmitRuntimeResult
 	activeDaemonSubmitKeys        map[string]bool
 	daemonSubmitSaturationCount   int
 	daemonSubmitLastSaturatedAt   time.Time
+	scheduleRuntimeTimer          runtimeTimerScheduler
 	mailboxProjectionSyncMu       sync.Mutex
 	activeMailboxProjectionSyncs  map[string]bool
 	pendingMailboxProjectionSyncs map[string]bool
 	mailboxProjectionSyncWG       sync.WaitGroup
 }
 
-const daemonSubmitWorkerLimit = 4
-
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
+
+// daemonSubmitWorkerLauncher owns worker scheduling. The worker owns exactly one
+// daemon-submit result send and semaphore release.
+type daemonSubmitWorkerLauncher func(worker func())
+
+// runtimeTimerScheduler owns callback scheduling while callbacks keep runtime
+// ownership of their state transitions.
+type runtimeTimerScheduler func(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func())
 
 type daemonSubmitRuntimeResult struct {
 	requestPath string
@@ -121,6 +129,7 @@ func newDaemonRuntime(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) *daemonRuntime {
+	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
 		baseDir:                       baseDir,
 		sessionDir:                    sessionDir,
@@ -144,12 +153,33 @@ func newDaemonRuntime(
 		activePostEvents:              make(map[string]bool),
 		activeAutoPings:               make(map[string]bool),
 		processDaemonSubmit:           processDaemonSubmitRequest,
+		launchDaemonSubmitWorker:      defaultDaemonSubmitWorkerLauncher,
 		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
 		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
 		activeDaemonSubmitKeys:        make(map[string]bool),
+		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
 	}
+}
+
+func daemonSubmitWorkerLimitFromConfig(cfg *config.Config) int {
+	if cfg == nil || cfg.DaemonSubmitWorkerLimit == 0 {
+		return config.DefaultDaemonSubmitWorkerLimit
+	}
+	limit, warning := config.EffectiveDaemonSubmitWorkerLimit(cfg.DaemonSubmitWorkerLimit)
+	if warning != "" {
+		log.Printf("postman: WARNING: %s\n", warning)
+	}
+	return limit
+}
+
+func defaultDaemonSubmitWorkerLauncher(worker func()) {
+	go worker()
+}
+
+func defaultRuntimeTimerScheduler(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func()) {
+	safeAfterFunc(delay, name, events, callback)
 }
 
 func (rt *daemonRuntime) now() time.Time {
@@ -297,19 +327,42 @@ func (rt *daemonRuntime) handleContextDone() {
 	}
 }
 
-func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
+type runtimeWatcherEventKind int
+
+const (
+	runtimeWatcherEventIgnored runtimeWatcherEventKind = iota
+	runtimeWatcherEventDaemonSubmitRequest
+	runtimeWatcherEventPost
+	runtimeWatcherEventRead
+)
+
+func classifyRuntimeWatcherEvent(event fswatcher.Event) runtimeWatcherEventKind {
 	eventPath := event.Name
 
 	switch {
 	case filepath.Base(filepath.Dir(eventPath)) == "requests" && filepath.Base(filepath.Dir(filepath.Dir(eventPath))) == string(projection.SubmitPathDaemon):
 		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 && strings.HasSuffix(filepath.Base(eventPath), ".json") {
-			rt.handleDaemonSubmitRequest(eventPath)
+			return runtimeWatcherEventDaemonSubmitRequest
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "post"):
 		if event.Op&(fswatcher.Create|fswatcher.Rename) != 0 {
-			rt.wakePostReconciler(eventPath)
+			return runtimeWatcherEventPost
 		}
 	case strings.HasSuffix(filepath.Dir(eventPath), "read"):
+		return runtimeWatcherEventRead
+	}
+	return runtimeWatcherEventIgnored
+}
+
+func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
+	eventPath := event.Name
+
+	switch classifyRuntimeWatcherEvent(event) {
+	case runtimeWatcherEventDaemonSubmitRequest:
+		rt.handleDaemonSubmitRequest(eventPath)
+	case runtimeWatcherEventPost:
+		rt.wakePostReconciler(eventPath)
+	case runtimeWatcherEventRead:
 		rt.handleReadWatcherEvent(eventPath, event.Op)
 	}
 }
@@ -361,7 +414,7 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
 	processor := rt.processDaemonSubmit
 
-	go func() {
+	worker := func() {
 		workerResult := daemonSubmitRuntimeResult{
 			requestPath: requestPath,
 			dispatchKey: dispatchKey,
@@ -374,7 +427,8 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 			<-rt.daemonSubmitSem
 		}()
 		workerResult.result, workerResult.err = processor(requestPath)
-	}()
+	}
+	rt.launchDaemonSubmitWorker(worker)
 
 	return daemonSubmitDispatched
 }
@@ -419,6 +473,58 @@ func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath stri
 func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
 	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), now)
 	return &diag
+}
+
+func (rt *daemonRuntime) logRuntimeDiagnosticsSnapshot(reason string, now time.Time) {
+	if reason == "" {
+		reason = "interval"
+	}
+	log.Print(runtimeDiagnosticsLogLine(reason, rt.runtimeDiagnostics(now)))
+}
+
+func runtimeDiagnosticsLogLine(reason string, diagnostics *status.RuntimeDiagnostics) string {
+	mem := diagnostics.GoRuntime.Memory
+	gc := diagnostics.GoRuntime.GC
+	daemon := diagnostics.Daemon
+	submit := diagnostics.DaemonSubmit
+	rss := currentProcessRSSSnapshot()
+
+	return fmt.Sprintf(
+		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s %s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
+		reason,
+		diagnostics.ObservedAt,
+		processRSSLogFields(rss),
+		mem.HeapAllocBytes,
+		mem.HeapSysBytes,
+		mem.HeapObjects,
+		mem.StackInuseBytes,
+		mem.TotalAllocBytes,
+		mem.MemorySysBytes,
+		mem.MemoryFreesCount,
+		gc.Count,
+		gc.NextGCBytes,
+		gc.PauseTotalNS,
+		gc.LastPauseNS,
+		diagnostics.GoRuntime.GoroutineCount,
+		daemon.SessionCount,
+		daemon.NodeCount,
+		daemon.WatchedDirCount,
+		daemon.ClaimedPaneCount,
+		daemon.ActivePostEventCount,
+		daemon.ActiveAutoPingCount,
+		daemon.ActiveDaemonSubmitCount,
+		submit.WorkerLimit,
+		submit.ActiveWorkerCount,
+		submit.ActiveRequestCount,
+		submit.PendingRequestCount,
+		submit.OldestPendingAgeSeconds,
+		submit.ClaimedRequestCount,
+		submit.OldestClaimedAgeSeconds,
+		submit.LateResponseCount,
+		submit.OldestLateResponseAgeSeconds,
+		submit.SaturationCount,
+		submit.LastSaturatedAt,
+	)
 }
 
 func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
@@ -471,7 +577,7 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 
 func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
 	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
-		WorkerLimit:        daemonSubmitWorkerLimit,
+		WorkerLimit:        rt.daemonSubmitWorkerLimit(),
 		ActiveWorkerCount:  len(rt.daemonSubmitSem),
 		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
 		SaturationCount:    rt.daemonSubmitSaturationCount,
@@ -485,6 +591,13 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 		scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
 	}
 	return diagnostics
+}
+
+func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
+	if rt.daemonSubmitSem != nil {
+		return cap(rt.daemonSubmitSem)
+	}
+	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
 }
 
 func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
@@ -582,11 +695,14 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 	if rt.processDaemonSubmit == nil {
 		rt.processDaemonSubmit = processDaemonSubmitRequest
 	}
+	if rt.launchDaemonSubmitWorker == nil {
+		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
+	}
 	if rt.daemonSubmitSem == nil {
-		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimit)
+		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.daemonSubmitResults == nil {
-		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit)
+		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.activeDaemonSubmitKeys == nil {
 		rt.activeDaemonSubmitKeys = make(map[string]bool)
@@ -636,6 +752,38 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 }
 
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
+	pendingBySession := rt.pendingDaemonSubmitRequestsBySession()
+	for {
+		dispatchedInRound := false
+		for i := range pendingBySession {
+			pending := &pendingBySession[i]
+			for pending.next < len(pending.names) {
+				name := pending.names[pending.next]
+				pending.next++
+				status := rt.dispatchDaemonSubmitRequest(filepath.Join(pending.requestsDir, name))
+				if status == daemonSubmitDispatchSaturated {
+					return
+				}
+				if status == daemonSubmitDispatched {
+					dispatchedInRound = true
+					break
+				}
+			}
+		}
+		if !dispatchedInRound {
+			return
+		}
+	}
+}
+
+type pendingDaemonSubmitSessionRequests struct {
+	requestsDir string
+	names       []string
+	next        int
+}
+
+func (rt *daemonRuntime) pendingDaemonSubmitRequestsBySession() []pendingDaemonSubmitSessionRequests {
+	pendingBySession := []pendingDaemonSubmitSessionRequests{}
 	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
 		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
 		entries, err := os.ReadDir(requestsDir)
@@ -654,13 +802,14 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 			names = append(names, entry.Name())
 		}
 		sort.Strings(names)
-		for _, name := range names {
-			status := rt.dispatchDaemonSubmitRequest(filepath.Join(requestsDir, name))
-			if status == daemonSubmitDispatchSaturated {
-				return
-			}
+		if len(names) > 0 {
+			pendingBySession = append(pendingBySession, pendingDaemonSubmitSessionRequests{
+				requestsDir: requestsDir,
+				names:       names,
+			})
 		}
 	}
+	return pendingBySession
 }
 
 func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fswatcher.Op) {
@@ -718,6 +867,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
+		rt.pruneWatchedDirs(freshNodes)
 		rt.claimNewPanes(freshNodes)
 		rt.pruneKnownNodes(freshNodes)
 		newNodes := rt.detectNewNodes(freshNodes)
@@ -774,7 +924,11 @@ func (rt *daemonRuntime) scheduleRateLimitedPostRetry(eventPath, filename, from,
 		remaining = time.Millisecond
 	}
 	log.Printf("postman: rate-limited delivery %s -> %s (gap: %.1fs, retry_in=%s)\n", from, to, gapSeconds, remaining.Round(time.Millisecond))
-	safeAfterFunc(remaining, "post-rate-limit-retry", rt.events, func() {
+	scheduler := rt.scheduleRuntimeTimer
+	if scheduler == nil {
+		scheduler = defaultRuntimeTimerScheduler
+	}
+	scheduler(remaining, "post-rate-limit-retry", rt.events, func() {
 		rt.retryActivePostDelivery(eventPath, filename)
 	})
 }
@@ -984,6 +1138,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	}
 
 	rt.pruneClaimedPanes(freshNodes)
+	rt.pruneWatchedDirs(freshNodes)
 	rt.claimNewPanes(freshNodes)
 	for _, collision := range scanCollisions {
 		rt.events <- tui.DaemonEvent{
@@ -1172,6 +1327,7 @@ func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string
 	}
 
 	rt.pruneClaimedPanes(freshNodes)
+	rt.pruneWatchedDirs(freshNodes)
 	rt.claimNewPanes(freshNodes)
 	for _, collision := range scanCollisions {
 		rt.events <- tui.DaemonEvent{
@@ -1282,6 +1438,46 @@ func (rt *daemonRuntime) ensureNodeWatchDirs(nodeName string, nodeInfo discovery
 		if err := rt.watcher.Add(submitRequestsDir, fswatcher.All); err == nil {
 			rt.watchedDirs[submitRequestsDir] = true
 		}
+	}
+}
+
+func nodeWatchDirs(nodeInfo discovery.NodeInfo) []string {
+	if nodeInfo.SessionDir == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(nodeInfo.SessionDir, "post"),
+		filepath.Join(nodeInfo.SessionDir, "inbox"),
+		filepath.Join(nodeInfo.SessionDir, "read"),
+		projection.DaemonSubmitRequestsDir(nodeInfo.SessionDir),
+	}
+}
+
+func desiredWatchDirsForNodes(nodes map[string]discovery.NodeInfo) map[string]bool {
+	desired := make(map[string]bool, len(nodes)*4)
+	for _, nodeInfo := range nodes {
+		for _, dir := range nodeWatchDirs(nodeInfo) {
+			if dir != "" {
+				desired[dir] = true
+			}
+		}
+	}
+	return desired
+}
+
+func (rt *daemonRuntime) pruneWatchedDirs(freshNodes map[string]discovery.NodeInfo) {
+	desired := desiredWatchDirsForNodes(freshNodes)
+	for dir := range rt.watchedDirs {
+		if desired[dir] {
+			continue
+		}
+		if rt.watcher != nil {
+			if err := rt.watcher.Remove(dir); err != nil {
+				log.Printf("postman: WARNING: failed to remove watcher dir %s: %v\n", dir, err)
+				continue
+			}
+		}
+		delete(rt.watchedDirs, dir)
 	}
 }
 
