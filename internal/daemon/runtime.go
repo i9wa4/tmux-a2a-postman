@@ -752,6 +752,38 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 }
 
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
+	pendingBySession := rt.pendingDaemonSubmitRequestsBySession()
+	for {
+		dispatchedInRound := false
+		for i := range pendingBySession {
+			pending := &pendingBySession[i]
+			for pending.next < len(pending.names) {
+				name := pending.names[pending.next]
+				pending.next++
+				status := rt.dispatchDaemonSubmitRequest(filepath.Join(pending.requestsDir, name))
+				if status == daemonSubmitDispatchSaturated {
+					return
+				}
+				if status == daemonSubmitDispatched {
+					dispatchedInRound = true
+					break
+				}
+			}
+		}
+		if !dispatchedInRound {
+			return
+		}
+	}
+}
+
+type pendingDaemonSubmitSessionRequests struct {
+	requestsDir string
+	names       []string
+	next        int
+}
+
+func (rt *daemonRuntime) pendingDaemonSubmitRequestsBySession() []pendingDaemonSubmitSessionRequests {
+	pendingBySession := []pendingDaemonSubmitSessionRequests{}
 	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
 		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
 		entries, err := os.ReadDir(requestsDir)
@@ -770,13 +802,14 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 			names = append(names, entry.Name())
 		}
 		sort.Strings(names)
-		for _, name := range names {
-			status := rt.dispatchDaemonSubmitRequest(filepath.Join(requestsDir, name))
-			if status == daemonSubmitDispatchSaturated {
-				return
-			}
+		if len(names) > 0 {
+			pendingBySession = append(pendingBySession, pendingDaemonSubmitSessionRequests{
+				requestsDir: requestsDir,
+				names:       names,
+			})
 		}
 	}
+	return pendingBySession
 }
 
 func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fswatcher.Op) {

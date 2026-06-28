@@ -1412,6 +1412,76 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 }
 
+func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-round-robin"
+	highVolumeSessionDir := filepath.Join(baseDir, contextID, "a-high-volume")
+	lowVolumeSessionDir := filepath.Join(baseDir, contextID, "b-low-volume")
+	for _, sessionDir := range []string{highVolumeSessionDir, lowVolumeSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	for i := 1; i <= daemonSubmitWorkerLimit; i++ {
+		if _, err := projection.WriteDaemonSubmitRequest(highVolumeSessionDir, projection.DaemonSubmitRequest{
+			RequestID: fmt.Sprintf("high-%02d", i),
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  fmt.Sprintf("20260601-1200%02d-r1111-from-orchestrator-to-worker.md", i),
+			Content:   "high-volume",
+		}); err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(high-%02d): %v", i, err)
+		}
+	}
+	if _, err := projection.WriteDaemonSubmitRequest(lowVolumeSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "low-01",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120001-r2222-from-orchestrator-to-worker.md",
+		Content:   "low-volume",
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(low-01): %v", err)
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	var started []string
+	rt := &daemonRuntime{
+		sessionDir: highVolumeSessionDir,
+		nodes: map[string]discovery.NodeInfo{
+			"b-low-volume:worker": {
+				SessionName: "b-low-volume",
+				SessionDir:  lowVolumeSessionDir,
+			},
+		},
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started = append(started, request.RequestID)
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+
+	rt.dispatchPendingDaemonSubmitRequests()
+	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, daemonSubmitWorkerLimit)
+	}
+	for len(workerHarness.workers) > 0 {
+		workerHarness.runNext(t)
+	}
+
+	wantStarted := []string{"high-01", "low-01", "high-02", "high-03"}
+	if !reflect.DeepEqual(started, wantStarted) {
+		t.Fatalf("started requests = %#v, want round-robin order %#v", started, wantStarted)
+	}
+}
+
 func TestHandlePostWatcherEvent_RateLimitedMessageSchedulesSingleRetry(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeTestTmux(t, tmpDir)
