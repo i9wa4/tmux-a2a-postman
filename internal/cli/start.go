@@ -105,11 +105,54 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 			continue
 		}
 		options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
-		if _, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options); err != nil {
+		result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
+		if err != nil {
 			log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
 			continue
 		}
+		if result.Delivered {
+			recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
+		}
 		log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
+	}
+}
+
+func recordDirectPingDelivered(nodeKey string, nodeInfo discovery.NodeInfo, resolutionReason string, now time.Time) {
+	if nodeKey == "" || nodeInfo.SessionDir == "" || nodeInfo.SessionName == "" {
+		return
+	}
+
+	payload := projection.AutoPingEventPayload{
+		NodeKey:          nodeKey,
+		SessionName:      nodeInfo.SessionName,
+		NodeName:         ping.ExtractSimpleName(nodeKey),
+		PaneID:           nodeInfo.PaneID,
+		Reason:           resolutionReason,
+		ResolutionReason: resolutionReason,
+		TriggeredAt:      now.Format(time.RFC3339Nano),
+		NotBeforeAt:      now.Format(time.RFC3339Nano),
+		DeliveredAt:      now.Format(time.RFC3339Nano),
+	}
+	if state, ok, err := projection.ProjectAutoPingState(nodeInfo.SessionDir); err != nil {
+		log.Printf("postman: WARNING: direct PING auto-PING replay failed for %s: %v\n", nodeKey, err)
+	} else if ok {
+		if existing, exists := state.Nodes[nodeKey]; exists {
+			if existing.Reason != "" {
+				payload.Reason = existing.Reason
+			}
+			if existing.TriggeredAt != "" {
+				payload.TriggeredAt = existing.TriggeredAt
+			}
+			if existing.DelaySeconds >= 0 {
+				payload.DelaySeconds = existing.DelaySeconds
+			}
+			if existing.NotBeforeAt != "" {
+				payload.NotBeforeAt = existing.NotBeforeAt
+			}
+		}
+	}
+	if err := journal.RecordProcessEvent(nodeInfo.SessionDir, nodeInfo.SessionName, projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, payload, now); err != nil {
+		log.Printf("postman: WARNING: direct PING delivered append failed for %s: %v\n", nodeKey, err)
 	}
 }
 
@@ -604,9 +647,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 								wg.Add(1)
 								go func(name string, info discovery.NodeInfo) {
 									defer wg.Done()
-									if err := ping.SendPingToNode(info, contextID, name,
+									result, err := ping.SendPingToNodeWithResult(info, contextID, name,
 										cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
-										pingAdjacency, freshNodes); err != nil {
+										pingAdjacency, freshNodes)
+									if err != nil {
 										log.Printf("❌ postman: PING to %s failed: %v\n", name, err)
 										failCount.Add(1)
 										daemonEvents <- tui.DaemonEvent{
@@ -614,6 +658,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 											Message: fmt.Sprintf("PING failed for %s: %v", name, err),
 										}
 									} else {
+										if result.Delivered {
+											recordDirectPingDelivered(name, info, "operator_tui", time.Now())
+										}
 										log.Printf("📮 postman: PING sent to %s\n", name)
 										successCount.Add(1)
 										daemonEvents <- tui.DaemonEvent{
