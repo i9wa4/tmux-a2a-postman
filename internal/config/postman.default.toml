@@ -34,7 +34,7 @@
 #   {reply_to}       - Message id this message references, when supplied
 #   {input_request_id}  - Exact input request id for reply-required messages
 #   {fills_input_request_id} - Exact input request id this message fills
-#   {sender_runtime_context} - Optional compatibility sender runtime context block
+#   {sender_runtime_context} - Generated compact sender runtime context block
 #   {runtime_context_id} - Runtime context snapshot id
 #   {runtime_context_scope} - Runtime context scope, usually sender
 #   {runtime_context_captured_at} - Runtime context capture timestamp
@@ -73,10 +73,12 @@ message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = d
 retention_period_days = 30            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
+daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16; values above 16 are clamped)
 
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
+daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
@@ -112,9 +114,7 @@ common_template = ""
 allow_shell_templates = false
 
 # Notification template (when new message arrives)
-notification_template = """Hello, {node}!
-You've got mail: {filename}
-Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
+notification_template = """Hello, {node}! You've got mail: {filename}. Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
 # Message footer (rendered into the generated header before the sender body separator)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes
@@ -206,6 +206,7 @@ params:
 
 {template}
 
+{sender_runtime_context}
 ## Sender Message
 
 ---

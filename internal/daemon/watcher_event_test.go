@@ -25,6 +25,88 @@ func (testFilesystemWatcher) Add(string, fswatcher.Op) error {
 	return nil
 }
 
+func (testFilesystemWatcher) Remove(string) error {
+	return nil
+}
+
+func TestClassifyRuntimeWatcherEvent(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	daemonRequestPath := filepath.Join(sessionDir, string(projection.SubmitPathDaemon), "requests", "req.json")
+	daemonProcessingPath := filepath.Join(sessionDir, string(projection.SubmitPathDaemon), "requests", "req.json.processing")
+	postPath := filepath.Join(sessionDir, "post", "20260601-120000-r1111-from-orchestrator-to-worker.md")
+	readPath := filepath.Join(sessionDir, "read", "20260601-120000-r1111-from-orchestrator-to-worker.md")
+
+	cases := []struct {
+		name string
+		path string
+		op   fswatcher.Op
+		want runtimeWatcherEventKind
+	}{
+		{
+			name: "daemon submit create",
+			path: daemonRequestPath,
+			op:   fswatcher.Create,
+			want: runtimeWatcherEventDaemonSubmitRequest,
+		},
+		{
+			name: "daemon submit rename",
+			path: daemonRequestPath,
+			op:   fswatcher.Rename,
+			want: runtimeWatcherEventDaemonSubmitRequest,
+		},
+		{
+			name: "daemon submit write waits for rescan",
+			path: daemonRequestPath,
+			op:   fswatcher.Write,
+			want: runtimeWatcherEventIgnored,
+		},
+		{
+			name: "daemon submit processing ignored",
+			path: daemonProcessingPath,
+			op:   fswatcher.Create,
+			want: runtimeWatcherEventIgnored,
+		},
+		{
+			name: "post create",
+			path: postPath,
+			op:   fswatcher.Create,
+			want: runtimeWatcherEventPost,
+		},
+		{
+			name: "post rename",
+			path: postPath,
+			op:   fswatcher.Rename,
+			want: runtimeWatcherEventPost,
+		},
+		{
+			name: "post write waits for rescan",
+			path: postPath,
+			op:   fswatcher.Write,
+			want: runtimeWatcherEventIgnored,
+		},
+		{
+			name: "read write is handled",
+			path: readPath,
+			op:   fswatcher.Write,
+			want: runtimeWatcherEventRead,
+		},
+		{
+			name: "unrelated config ignored",
+			path: filepath.Join(filepath.Dir(sessionDir), "postman.toml"),
+			op:   fswatcher.Create,
+			want: runtimeWatcherEventIgnored,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRuntimeWatcherEvent(fswatcher.Event{Name: tc.path, Op: tc.op}); got != tc.want {
+				t.Fatalf("classifyRuntimeWatcherEvent() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleWatcherEvent_ConfigAndNodesEventsDoNotMutateStartupSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
 

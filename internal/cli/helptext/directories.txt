@@ -15,4 +15,5 @@ Layout:
           ├── inbox/
           │   └── {node}/     # daemon delivers messages here
           ├── read/           # agent moves messages here after reading
+          ├── snapshot/       # internal: bounded daemon-submit/runtime snapshots
           └── dead-letter/    # unroutable messages land here

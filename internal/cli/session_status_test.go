@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +37,46 @@ func TestRunGetSessionStatus_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T)
 	if err != nil && (strings.Contains(err.Error(), "flag provided but not defined") ||
 		strings.Contains(err.Error(), "session name required")) {
 		t.Fatalf("RunGetSessionStatus should use tmux session fallback, got: %v", err)
+	}
+}
+
+func TestRunGetSessionStatusWithContextWritesJSONToConfiguredStdout(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := commandContext{
+		stdout: &stdout,
+		stderr: io.Discard,
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{BaseDir: tmpDir}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		getTmuxSessionName: func() string {
+			return "review"
+		},
+		collectSessionStatus: func(_, contextID, sessionName string, _ *config.Config) (status.SessionStatus, error) {
+			return status.SessionStatus{
+				SchemaVersion: status.SchemaVersion,
+				ContextID:     contextID,
+				SessionName:   sessionName,
+				VisibleState:  "ready",
+				Nodes:         []status.NodeStatus{},
+				Windows:       []status.SessionWindow{},
+			}, nil
+		},
+	}
+
+	if err := runGetSessionStatusWithContext(ctx, []string{"--context-id", "ctx-status"}); err != nil {
+		t.Fatalf("runGetSessionStatusWithContext: %v", err)
+	}
+
+	var payload status.SessionStatus
+	if err := json.Unmarshal([]byte(stdout.String()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.ContextID != "ctx-status" || payload.SessionName != "review" || payload.VisibleState != "ready" {
+		t.Fatalf("payload = %#v, want injected status", payload)
 	}
 }
 
@@ -253,7 +292,7 @@ func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T)
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 	t.Setenv("POSTMAN_HOME", tmpDir)

@@ -3,9 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +59,118 @@ func captureSendHeredocWithBody(t *testing.T, body string, args []string) (strin
 	return captureCommandOutput(t, func() error {
 		return runSendHeredocWithBody(t, body, args)
 	})
+}
+
+func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) commandContext {
+	return commandContext{
+		stdin:  stdin,
+		stdout: stdout,
+		stderr: io.Discard,
+		stdinIsTerminal: func(io.Reader) bool {
+			return false
+		},
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				BaseDir: baseDir,
+				Edges:   []string{"messenger --- worker"},
+			}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		contextHasLiveDaemon: func(string, string) bool {
+			return false
+		},
+		getTmuxPaneName: func() string {
+			return "messenger"
+		},
+		getTmuxSessionName: func() string {
+			return "review"
+		},
+		getTmuxPaneID: func() string {
+			return "%1"
+		},
+	}
+}
+
+func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+
+	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("hello from context"), &stdout), []string{
+		"--context-id", "ctx-send-context",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.Status != string(sendStatusQueued) {
+		t.Fatalf("Status = %q, want %q", payload.Status, sendStatusQueued)
+	}
+	if payload.ContextID != "ctx-send-context" || payload.Session != "review" || payload.From != "messenger" || payload.To != "worker" {
+		t.Fatalf("send output routing fields = %#v", payload)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-context", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	if !strings.Contains(string(content), "hello from context") {
+		t.Fatalf("sent message missing configured stdin body:\n%s", string(content))
+	}
+}
+
+func TestRunSendHeredocWithContextRejectsConfiguredTerminalStdin(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("ignored"), &stdout)
+	ctx.stdinIsTerminal = func(io.Reader) bool { return true }
+
+	err := runSendHeredocWithContext(ctx, []string{"--to", "worker"})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want terminal stdin rejection")
+	}
+	if !strings.Contains(err.Error(), "quoted heredoc") {
+		t.Fatalf("error = %v, want quoted heredoc guidance", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestRunSendHeredocWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	var captured projection.DaemonSubmitRequest
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("daemon body"), &stdout)
+	ctx.contextOwnsSession = func(string, string, string) bool { return true }
+	ctx.roundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		captured = request
+		return projection.DaemonSubmitResponse{
+			Filename: request.Filename,
+		}, nil
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-send-daemon",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	if captured.Command != projection.DaemonSubmitSend {
+		t.Fatalf("captured.Command = %q, want %q", captured.Command, projection.DaemonSubmitSend)
+	}
+	if !strings.Contains(captured.Content, "daemon body") {
+		t.Fatalf("daemon-submit content missing body:\n%s", captured.Content)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
 }
 
 func writeSendBodySourceConfig(t *testing.T, dir string) string {
@@ -1323,7 +1435,7 @@ func TestRunSendMessage_DefaultEnvelopeNormalizesRecipientInstructionHeadings(t 
 	}
 }
 
-func TestRunSendMessage_AttachesSnapshotWithoutSenderRuntimeMarkdownAndPreservesSenderBody(t *testing.T) {
+func TestRunSendMessage_AttachesRuntimeContextSnapshotAndPreservesSenderBody(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -1346,12 +1458,19 @@ func TestRunSendMessage_AttachesSnapshotWithoutSenderRuntimeMarkdownAndPreserves
 		t.Fatalf("ReadFile post: %v", err)
 	}
 	content := string(contentBytes)
+	runtimeIndex := strings.Index(content, "## Sender Runtime Context")
 	senderMessageIndex := strings.Index(content, "## Sender Message")
-	if strings.Contains(content, "## Sender Runtime Context") {
-		t.Fatalf("content rendered noisy Sender Runtime Context block:\n%s", content)
+	if runtimeIndex < 0 {
+		t.Fatalf("content missing Sender Runtime Context block:\n%s", content)
 	}
 	if senderMessageIndex < 0 {
 		t.Fatalf("content missing Sender Message block:\n%s", content)
+	}
+	if runtimeIndex > senderMessageIndex {
+		t.Fatalf("runtime context block appears after sender message:\n%s", content)
+	}
+	if !strings.Contains(content, "metadata_not_instructions") {
+		t.Fatalf("runtime context block missing non-instructional semantics:\n%s", content)
 	}
 	separator := "\n---\n\n"
 	separatorOffset := strings.Index(content[senderMessageIndex:], separator)
@@ -1625,7 +1744,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	now := time.Date(2026, time.May, 3, 9, 0, 0, 0, time.UTC)
@@ -2562,7 +2681,7 @@ role = "worker"
 	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -2640,7 +2759,7 @@ role = "worker"
 	if err := os.MkdirAll(ownerSessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll ownerSessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerSessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -2703,7 +2822,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit", "test-session") {
@@ -2817,7 +2936,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-legacy", "test-session") {
@@ -2950,7 +3069,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-json", "test-session") {
@@ -3097,7 +3216,7 @@ role = "worker"
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-marker-resolution", "test-session") {

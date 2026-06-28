@@ -404,6 +404,42 @@ func TestReplay_FailsClosedOnSequenceAndLeaseDefects(t *testing.T) {
 	})
 }
 
+func TestReplayEach_StreamsValidatedEventsAndStopsOnCallbackError(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 25, 0, 0, time.UTC)
+	writer, err := OpenShadowWriter(sessionDir, "ctx-main", "main", 111, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	if _, err := writer.AppendEvent("mailbox_projection_posted", VisibilityMailboxProjection, map[string]string{"path": "post/test.md"}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+
+	wantErr := errors.New("stop streaming")
+	var sequences []int
+	err = ReplayEach(sessionDir, func(event Event) error {
+		sequences = append(sequences, event.Sequence)
+		if event.Sequence == 2 {
+			return wantErr
+		}
+		return nil
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ReplayEach() error = %v, want callback error", err)
+	}
+	if len(sequences) != 2 || sequences[0] != 1 || sequences[1] != 2 {
+		t.Fatalf("ReplayEach() streamed sequences %#v, want [1 2]", sequences)
+	}
+
+	events, err := Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("Replay() returned %d events, want 3", len(events))
+	}
+}
+
 func assertOwnerOnlyMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 

@@ -62,10 +62,10 @@
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
-            version = "1.26.3";
+            version = "1.26.4";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-HGRoddCqh5kTMYTtV895/yS97+jIggRwYCqdPW2Rkrg=";
+              hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
             };
           });
           buildGo126Module = pkgs.buildGoModule.override { go = go126; };
@@ -122,59 +122,81 @@
 
             update-go-toolchain = {
               type = "app";
-              program = "${pkgs.writeShellScriptBin "update-go-toolchain" ''
-                set -euo pipefail
+              program = "${
+                pkgs.writeShellApplication {
+                  name = "update-go-toolchain";
+                  runtimeInputs = with pkgs; [
+                    coreutils
+                    curl
+                    jq
+                    nix
+                    perl
+                  ];
+                  text = ''
+                    set -euo pipefail
 
-                go_mod_version="$(awk '/^go / { print $2; exit }' go.mod)"
-                go_minor="$(printf '%s\n' "$go_mod_version" | cut -d. -f1-2)"
-                if ! printf '%s\n' "$go_minor" | grep -Eq '^[0-9]+\.[0-9]+$'; then
-                  echo "Failed to extract Go major.minor from go.mod: $go_mod_version" >&2
-                  exit 1
-                fi
+                    version_gt() {
+                      first="$1"
+                      second="$2"
+                      [ "$first" != "$second" ] &&
+                        [ "$(printf '%s\n%s\n' "$second" "$first" | sort -V | tail -n 1)" = "$first" ]
+                    }
 
-                nix_minor="$(
-                  ${pkgs.gnused}/bin/sed -nE 's/.*pkgs\.go_([0-9]+_[0-9]+).*/\1/p' flake.nix \
-                    | head -n 1 \
-                    | tr '_' '.'
-                )"
-                if [ "$go_minor" != "$nix_minor" ]; then
-                  echo "Go major.minor mismatch: go.mod=$go_minor, flake.nix=$nix_minor" >&2
-                  exit 1
-                fi
+                    override_go="$(
+                      perl -0ne 'print "$1\n" if /go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = "([0-9]+\.[0-9]+\.[0-9]+)";/' flake.nix
+                    )"
+                    if [ -z "$override_go" ]; then
+                      echo "Failed to extract Go override patch version from flake.nix" >&2
+                      exit 1
+                    fi
 
-                latest="$(
-                  ${pkgs.curl}/bin/curl -fsSL 'https://go.dev/dl/?mode=json' \
-                    | ${pkgs.jq}/bin/jq -r --arg prefix "go$go_minor." '[.[].version | select(startswith($prefix))][0]'
-                )"
-                if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-                  echo "Failed to find latest Go patch for $go_minor" >&2
-                  exit 1
-                fi
+                    go_minor="$(printf '%s\n' "$override_go" | cut -d. -f1-2)"
+                    latest="$(
+                      curl -fsSL 'https://go.dev/dl/?mode=json&include=all' |
+                        jq -r --arg prefix "go$go_minor." '
+                          [
+                            .[].version
+                            | select(startswith($prefix))
+                            | sub("^go"; "")
+                            | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                          ]
+                          | sort_by(split(".") | map(tonumber))
+                          | last // empty
+                        '
+                    )"
+                    if [ -z "$latest" ]; then
+                      echo "go.dev does not currently publish a stable Go $go_minor patch" >&2
+                      exit 1
+                    fi
 
-                go_version="''${latest#go}"
-                src_url="https://go.dev/dl/go$go_version.src.tar.gz"
-                hash="$(
-                  ${pkgs.nix}/bin/nix store prefetch-file --json "$src_url" \
-                    | ${pkgs.jq}/bin/jq -r .hash
-                )"
-                if [ -z "$hash" ] || [ "$hash" = "null" ]; then
-                  echo "Failed to prefetch $src_url" >&2
-                  exit 1
-                fi
+                    echo "current_go_version=$override_go"
+                    echo "latest_go_version=$latest"
 
-                GO_VERSION="$go_version" GO_HASH="$hash" ${pkgs.perl}/bin/perl -0pi -e '
-                  my $version = $ENV{"GO_VERSION"};
-                  my $hash = $ENV{"GO_HASH"};
-                  s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = ")[^"]+(";)/$1$version$2/
-                    or die "failed to update Go override version\n";
-                  s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{.*?src = pkgs\.fetchurl \{\n\s*url = "https:\/\/go\.dev\/dl\/go\$\{version\}\.src\.tar\.gz";\n\s*hash = ")[^"]+(";)/$1$hash$2/s
-                    or die "failed to update Go override hash\n";
-                ' flake.nix
+                    if ! version_gt "$latest" "$override_go"; then
+                      echo "Go toolchain override is already at the latest Go $go_minor patch"
+                      echo "status=up_to_date"
+                      exit 0
+                    fi
 
-                echo "Updated Go toolchain override to $go_version"
-                echo "hash = $hash"
-              ''}/bin/update-go-toolchain";
-              meta.description = "Update the pinned Go patch override and source hash.";
+                    src_url="https://go.dev/dl/go$latest.src.tar.gz"
+                    hash="$(nix store prefetch-file --json "$src_url" | jq -r .hash)"
+
+                    GO_VERSION="$latest" GO_HASH="$hash" perl -0pi -e '
+                      my $version = $ENV{"GO_VERSION"};
+                      my $hash = $ENV{"GO_HASH"};
+                      s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{\n\s*version = ")[^"]+(";)/$1$version$2/
+                        or die "failed to update Go override version\n";
+                      s/(go126 = pkgs\.go_1_26\.overrideAttrs \(_old: rec \{.*?src = pkgs\.fetchurl \{\n\s*url = "https:\/\/go\.dev\/dl\/go\$\{version\}\.src\.tar\.gz";\n\s*hash = ")[^"]+(";)/$1$hash$2/s
+                        or die "failed to update Go override hash\n";
+                    ' flake.nix
+
+                    echo "Updated Go toolchain override to $latest"
+                    echo "hash=$hash"
+                    echo "status=updated"
+                  '';
+                }
+              }/bin/update-go-toolchain";
+              meta.description = "Update the pinned Go patch override to the latest same-minor go.dev release.";
             };
 
             check = {
