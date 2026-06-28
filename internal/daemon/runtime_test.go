@@ -540,6 +540,8 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 		daemonState:  NewDaemonState(0, contextID),
 		events:       events,
 	}
+	autoEnable := true
+	rt.cfg.AutoEnableNewSessions = &autoEnable
 	rt.cfg.Edges = []string{"messenger --- orchestrator"}
 
 	rt.handleSessionScanTick()
@@ -610,6 +612,8 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 		daemonState:  NewDaemonState(0, contextID),
 		events:       events,
 	}
+	autoEnable := true
+	rt.cfg.AutoEnableNewSessions = &autoEnable
 	rt.cfg.Edges = nil
 	rt.cfg.NodeOrder = []string{"worker", "critic"}
 	rt.cfg.Nodes = map[string]config.NodeConfig{

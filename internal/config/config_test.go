@@ -343,8 +343,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.AutoPingDelaySeconds != 20.0 {
 		t.Errorf("default AutoPingDelaySeconds: got %v, want 20.0", cfg.AutoPingDelaySeconds)
 	}
-	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
-		t.Errorf("default AutoEnableNewSessions: got %v, want true", cfg.AutoEnableNewSessions)
+	if cfg.AutoEnableNewSessions == nil || *cfg.AutoEnableNewSessions {
+		t.Errorf("default AutoEnableNewSessions: got %v, want false (opt-in per #135)", cfg.AutoEnableNewSessions)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)

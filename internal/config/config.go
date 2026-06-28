@@ -63,7 +63,7 @@ type Config struct {
 	Edges                 []string `toml:"edges"`
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
 	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
 	// Node-specific configurations (loaded from [nodename] sections)
