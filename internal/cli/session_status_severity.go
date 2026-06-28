@@ -12,17 +12,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
 
-func enrichSessionStatus(health *status.SessionStatus, sessionDir string, now time.Time) {
+func applySessionStatusEnrichment(health *status.SessionStatus, delivery *status.DeliveryStatus, blockedByNode map[string][]projection.BlockedReport) {
 	health.SchemaVersion = status.SchemaVersion
-
-	blockedByNode := map[string][]projection.BlockedReport{}
-	if sessionDir != "" {
-		if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, health.SessionName); err == nil && ok {
-			blockedByNode = blocked.ReportsByNode
-		}
-	}
-
-	health.Delivery = collectSessionDelivery(sessionDir, health.Queues, now)
+	health.Delivery = delivery
 	for idx := range health.Nodes {
 		node := &health.Nodes[idx]
 		node.Queues = &status.NodeQueues{InboxCount: node.InboxCount}
@@ -31,6 +23,17 @@ func enrichSessionStatus(health *status.SessionStatus, sessionDir string, now ti
 		applyNodeSeverity(node)
 	}
 	applySessionSeverity(health)
+}
+
+func enrichSessionStatus(health *status.SessionStatus, sessionDir string, now time.Time) {
+	blockedByNode := map[string][]projection.BlockedReport{}
+	if sessionDir != "" {
+		if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, health.SessionName); err == nil && ok {
+			blockedByNode = blocked.ReportsByNode
+		}
+	}
+	delivery := collectSessionDelivery(sessionDir, health.Queues, now)
+	applySessionStatusEnrichment(health, delivery, blockedByNode)
 }
 
 func collectSessionDelivery(sessionDir string, queues status.SessionQueues, now time.Time) *status.DeliveryStatus {
