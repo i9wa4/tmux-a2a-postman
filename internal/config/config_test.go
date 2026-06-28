@@ -341,11 +341,71 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.AutoPingDelaySeconds != 20.0 {
 		t.Errorf("default AutoPingDelaySeconds: got %v, want 20.0", cfg.AutoPingDelaySeconds)
 	}
+	if cfg.DaemonSubmitWorkerLimit != DefaultDaemonSubmitWorkerLimit {
+		t.Errorf("default DaemonSubmitWorkerLimit: got %d, want %d", cfg.DaemonSubmitWorkerLimit, DefaultDaemonSubmitWorkerLimit)
+	}
 	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
 		t.Errorf("default AutoEnableNewSessions: got %v, want true", cfg.AutoEnableNewSessions)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestLoadConfig_DaemonSubmitWorkerLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+daemon_submit_worker_limit = 12
+edges = ["orchestrator --- worker"]
+
+[orchestrator]
+role = "coordinator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DaemonSubmitWorkerLimit != 12 {
+		t.Fatalf("DaemonSubmitWorkerLimit = %d, want 12", cfg.DaemonSubmitWorkerLimit)
+	}
+}
+
+func TestEffectiveDaemonSubmitWorkerLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+		wantWarn   bool
+	}{
+		{name: "default for zero", configured: 0, want: DefaultDaemonSubmitWorkerLimit, wantWarn: true},
+		{name: "default for negative", configured: -1, want: DefaultDaemonSubmitWorkerLimit, wantWarn: true},
+		{name: "configured", configured: 12, want: 12},
+		{name: "clamped max", configured: 99, want: MaxDaemonSubmitWorkerLimit, wantWarn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, warning := EffectiveDaemonSubmitWorkerLimit(tt.configured)
+			if got != tt.want {
+				t.Fatalf("EffectiveDaemonSubmitWorkerLimit(%d) = %d, want %d", tt.configured, got, tt.want)
+			}
+			if (warning != "") != tt.wantWarn {
+				t.Fatalf("warning = %q, wantWarn %v", warning, tt.wantWarn)
+			}
+		})
 	}
 }
 
