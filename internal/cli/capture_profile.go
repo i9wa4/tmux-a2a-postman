@@ -35,6 +35,7 @@ func runCaptureProfileWithContext(ctx commandContext, args []string) error {
 	profileType := fs.String("type", "", "Profile type: heap or goroutine")
 	output := fs.String("output", "", "Output destination: - for stdout or an explicit file path")
 	maxBytes := fs.Int64("max-bytes", runtimeprofile.DefaultMaxBytes, "Maximum profile bytes to return or write")
+	force := fs.Bool("force", false, "Overwrite an existing output file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -77,6 +78,7 @@ func runCaptureProfileWithContext(ctx commandContext, args []string) error {
 		ProfileDestination: destination,
 		ProfileOutputPath:  outputPath,
 		ProfileMaxBytes:    *maxBytes,
+		ProfileForce:       *force,
 	}, daemonSubmitTimeout(target.cfg.TmuxTimeout))
 	if err != nil {
 		return fmt.Errorf("daemon submit runtime-profile: %w", err)

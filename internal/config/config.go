@@ -36,14 +36,15 @@ type Config struct {
 	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
 	// Node state thresholds.
-	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds since pane change: active
-	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
-	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
-	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
-	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
-	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
-	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING
-	DaemonSubmitWorkerLimit   int     `toml:"daemon_submit_worker_limit"`   // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
+	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
+	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
+	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
+	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
+	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
+	MinDeliveryGapSeconds            float64 `toml:"min_delivery_gap_seconds"`              // Duplicate delivery rate limit; 0 = disabled
+	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
+	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING
+	DaemonSubmitWorkerLimit          int     `toml:"daemon_submit_worker_limit"`            // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -565,6 +566,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
+		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
 	}
 	if override.DaemonSubmitWorkerLimit != 0 {
 		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit

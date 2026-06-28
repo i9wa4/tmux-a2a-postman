@@ -39,6 +39,7 @@ Core config:
   notification_template            Pane hint rendered when mail arrives
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
+  daemon_submit_queue_warn_threshold_ms  Queue wait WARNING threshold in ms (default: 30000); emits event=queue_ms_threshold_exceeded when queue_ms >= threshold
   pane_capture_tail_lines          Recent lines scanned for compaction markers (default: 100; 0 = visible pane only)
 
 Skill catalogs:

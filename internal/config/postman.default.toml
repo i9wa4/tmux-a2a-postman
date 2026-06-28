@@ -78,6 +78,7 @@ daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16;
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
+daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
