@@ -111,6 +111,13 @@ type postDeliveryReservation struct {
 
 type autoPingSender func(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error)
 
+type autoPingDispatchSnapshot struct {
+	activeNodes []string
+	livenessMap map[string]bool
+	adjacency   map[string][]string
+	nodes       map[string]discovery.NodeInfo
+}
+
 func newDaemonRuntime(
 	baseDir string,
 	sessionDir string,
@@ -1671,6 +1678,7 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 	if rt.idleTracker != nil {
 		livenessMap = rt.idleTracker.GetLivenessMap()
 	}
+	var dispatchSnapshot *autoPingDispatchSnapshot
 
 	for _, nodeKey := range nodeKeys {
 		nodeInfo := freshNodes[nodeKey]
@@ -1707,15 +1715,18 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 		if !rt.beginAutoPing(nodeKey) {
 			continue
 		}
+		if dispatchSnapshot == nil {
+			dispatchSnapshot = newAutoPingDispatchSnapshot(freshNodes, activeNodes, livenessMap, rt.adjacency)
+		}
 
 		dispatchNodeKey := nodeKey
 		dispatchNodeInfo := nodeInfo
 		dispatchPending := pending
 		dispatchTemplate := tmpl
-		dispatchActiveNodes := append([]string(nil), activeNodes...)
-		dispatchLivenessMap := cloneBoolMap(livenessMap)
-		dispatchAdjacency := cloneStringSliceMap(rt.adjacency)
-		dispatchNodes := cloneNodeInfoMap(freshNodes)
+		dispatchActiveNodes := dispatchSnapshot.activeNodes
+		dispatchLivenessMap := dispatchSnapshot.livenessMap
+		dispatchAdjacency := dispatchSnapshot.adjacency
+		dispatchNodes := dispatchSnapshot.nodes
 		sendAutoPing := rt.autoPingSender()
 		go func() {
 			defer rt.finishAutoPing(dispatchNodeKey)
@@ -1731,6 +1742,15 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 
 			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, rt.now())
 		}()
+	}
+}
+
+func newAutoPingDispatchSnapshot(freshNodes map[string]discovery.NodeInfo, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string) *autoPingDispatchSnapshot {
+	return &autoPingDispatchSnapshot{
+		activeNodes: append([]string(nil), activeNodes...),
+		livenessMap: cloneBoolMap(livenessMap),
+		adjacency:   cloneStringSliceMap(adjacency),
+		nodes:       cloneNodeInfoMap(freshNodes),
 	}
 }
 

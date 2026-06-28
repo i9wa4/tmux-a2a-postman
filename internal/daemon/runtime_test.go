@@ -1893,6 +1893,81 @@ func waitForAutoPingEventIdle(t *testing.T, rt *daemonRuntime, nodeKey string, t
 	}
 }
 
+func TestNewAutoPingDispatchSnapshot_ClonesDispatchInputs(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%1",
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		},
+	}
+	activeNodes := []string{"worker"}
+	livenessMap := map[string]bool{"review:worker": true}
+	adjacency := map[string][]string{"review:worker": {"review:critic"}}
+
+	snapshot := newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+
+	nodes["review:worker"] = discovery.NodeInfo{PaneID: "%2", SessionName: "review", SessionDir: "mutated"}
+	activeNodes[0] = "mutated"
+	livenessMap["review:worker"] = false
+	adjacency["review:worker"][0] = "review:mutated"
+
+	if got := snapshot.nodes["review:worker"].PaneID; got != "%1" {
+		t.Fatalf("snapshot node pane = %q, want original %%1", got)
+	}
+	if got := snapshot.activeNodes[0]; got != "worker" {
+		t.Fatalf("snapshot active node = %q, want worker", got)
+	}
+	if got := snapshot.livenessMap["review:worker"]; !got {
+		t.Fatal("snapshot liveness was mutated")
+	}
+	if got := snapshot.adjacency["review:worker"][0]; got != "review:critic" {
+		t.Fatalf("snapshot adjacency = %q, want review:critic", got)
+	}
+}
+
+var autoPingSnapshotSink *autoPingDispatchSnapshot
+
+func BenchmarkAutoPingDispatchSnapshotAllocations(b *testing.B) {
+	const nodeCount = 256
+	nodes := make(map[string]discovery.NodeInfo, nodeCount)
+	livenessMap := make(map[string]bool, nodeCount)
+	adjacency := make(map[string][]string, nodeCount)
+	activeNodes := make([]string, 0, nodeCount)
+	for i := 0; i < nodeCount; i++ {
+		nodeKey := fmt.Sprintf("review:worker-%03d", i)
+		nodes[nodeKey] = discovery.NodeInfo{
+			PaneID:      fmt.Sprintf("%%%d", i),
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		}
+		livenessMap[nodeKey] = true
+		adjacency[nodeKey] = []string{"review:orchestrator", "review:critic"}
+		activeNodes = append(activeNodes, fmt.Sprintf("worker-%03d", i))
+	}
+
+	b.Run("legacy_per_target_clone", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < nodeCount; j++ {
+				autoPingSnapshotSink = &autoPingDispatchSnapshot{
+					activeNodes: append([]string(nil), activeNodes...),
+					livenessMap: cloneBoolMap(livenessMap),
+					adjacency:   cloneStringSliceMap(adjacency),
+					nodes:       cloneNodeInfoMap(nodes),
+				}
+			}
+		}
+	})
+
+	b.Run("batched_snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			autoPingSnapshotSink = newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+		}
+	})
+}
+
 func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 	freshNodes := map[string]discovery.NodeInfo{
 		"self:known": {
