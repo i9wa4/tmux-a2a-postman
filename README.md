@@ -333,7 +333,10 @@ use `get-status --debug` for bounded `daemon_submit` queue health, including
 pending, claimed, late response, worker, and saturation counts.
 Configure daemon-submit concurrency with
 `daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
-values above 16 are clamped with a daemon warning.
+values above 16 are clamped with a daemon warning. The same limit bounds
+non-daemon post delivery, auto-PING delivery, and manual PING fan-out; debug
+status includes bounded `non_daemon_delivery` active, pending, and saturation
+counts for those paths.
 
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime

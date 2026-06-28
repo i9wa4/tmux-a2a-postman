@@ -99,7 +99,8 @@ request id, inspect that specific request with
 `tmux-a2a-postman inspect-daemon-submit --id <request_id>` before retrying or
 resending. Use `tmux-a2a-postman get-status --debug` for bounded aggregate
 `daemon_submit` queue health such as pending, claimed, late response, and
-abandoned counts.
+abandoned counts, plus bounded `non_daemon_delivery` active, pending, and
+saturation counts for post, auto-PING, and manual PING delivery paths.
 
 ## 5. Queue Signals
 
