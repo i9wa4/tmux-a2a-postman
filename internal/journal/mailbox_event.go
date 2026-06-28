@@ -15,6 +15,8 @@ type MailboxEventPayload struct {
 	MessageType         string `json:"message_type,omitempty"`
 	Timestamp           string `json:"timestamp,omitempty"`
 	ThreadID            string `json:"thread_id,omitempty"`
+	TaskID              string `json:"task_id,omitempty"`
+	RunID               string `json:"run_id,omitempty"`
 	InputRequestID      string `json:"input_request_id,omitempty"`
 	FillsInputRequestID string `json:"fills_input_request_id,omitempty"`
 	InputRequestSetID   string `json:"input_request_set_id,omitempty"`

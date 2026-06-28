@@ -137,6 +137,21 @@ func TestParseMetadataAcceptsExactInputRequestFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsExternalTaskRunFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  task_id: TASK-123\n  run_id: run-20260617-01\n---\n\nplease work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.TaskID != "TASK-123" {
+		t.Fatalf("TaskID = %q, want TASK-123", got.TaskID)
+	}
+	if got.RunID != "run-20260617-01" {
+		t.Fatalf("RunID = %q, want run-20260617-01", got.RunID)
+	}
+}
+
 func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
 	inputRequestAlias := "obligation" + "_id"
 	fillsAlias := "satisfies" + "_obligation" + "_id"
