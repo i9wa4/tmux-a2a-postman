@@ -32,9 +32,15 @@ import (
 )
 
 const (
-	inboxCheckInterval            = 30 * time.Second
-	runtimeDiagnosticsLogInterval = 10 * time.Minute
+	inboxCheckInterval                            = 30 * time.Second
+	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
+	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 )
+
+// daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
+// in milliseconds. Initialized from config at daemon startup; tests may
+// override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
+var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -313,7 +319,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 		if request.ProfileOutputPath == "" {
 			return response, fmt.Errorf("daemon submit runtime-profile file destination missing output path")
 		}
-		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data); err != nil {
+		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data, request.ProfileForce); err != nil {
 			return response, err
 		}
 		response.RuntimeProfile = &projection.RuntimeProfileCapture{
@@ -329,7 +335,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 	return response, nil
 }
 
-func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
+func writeRuntimeProfileFile(outputPath, requestID string, data []byte, force bool) error {
 	if outputPath == "" {
 		return fmt.Errorf("profile output path is required")
 	}
@@ -345,6 +351,11 @@ func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
 			return fmt.Errorf("profile output directory: %w", err)
 		} else if !info.IsDir() {
 			return fmt.Errorf("profile output directory is not a directory")
+		}
+	}
+	if !force {
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("profile output file already exists: %s (use --force to overwrite)", outputPath)
 		}
 	}
 	tmpPath := outputPath + "." + requestID + ".tmp"
@@ -422,6 +433,10 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
 	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
+	if queueMs >= daemonSubmitQueueWarnThresholdMs {
+		log.Printf("postman: WARNING: component=%s event=queue_ms_threshold_exceeded submit_path=%s command=%s session=%s request=%s queue_ms=%d threshold_ms=%d\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, queueMs, daemonSubmitQueueWarnThresholdMs)
+	}
 	msgtrace.Log("daemon_submit_accept", requestTrace)
 
 	var response projection.DaemonSubmitResponse
@@ -665,6 +680,11 @@ func runDaemonLoopWithWatcherEvents(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) {
+	// Apply configurable queue warning threshold before any workers start.
+	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
+		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
 	// "send on closed channel" panics. Let the channel be garbage collected when all

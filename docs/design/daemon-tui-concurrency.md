@@ -88,7 +88,8 @@ direct shared-state mutation outside the owning loop.
 
 ## 6. Backpressure rules
 
-- Daemon-submit concurrency is capped by `daemonSubmitWorkerLimit`.
+- Daemon-submit concurrency is capped by `daemon_submit_worker_limit` (default
+  8, maximum 16).
 - Saturated daemon-submit workers apply filesystem backpressure: the request
   remains pending instead of being claimed and forgotten.
 - A same-inbox `pop` already in flight defers later `pop` requests for that
