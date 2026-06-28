@@ -1426,7 +1426,8 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	for i := 1; i <= daemonSubmitWorkerLimit; i++ {
+	workerLimit := 4
+	for i := 1; i <= workerLimit; i++ {
 		if _, err := projection.WriteDaemonSubmitRequest(highVolumeSessionDir, projection.DaemonSubmitRequest{
 			RequestID: fmt.Sprintf("high-%02d", i),
 			Command:   projection.DaemonSubmitSend,
@@ -1451,6 +1452,7 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	var started []string
 	rt := &daemonRuntime{
 		sessionDir: highVolumeSessionDir,
+		cfg:        &config.Config{DaemonSubmitWorkerLimit: workerLimit},
 		nodes: map[string]discovery.NodeInfo{
 			"b-low-volume:worker": {
 				SessionName: "b-low-volume",
@@ -1469,8 +1471,8 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
 	for len(workerHarness.workers) > 0 {
 		workerHarness.runNext(t)
