@@ -477,11 +477,13 @@ func runtimeDiagnosticsLogLine(reason string, diagnostics *status.RuntimeDiagnos
 	gc := diagnostics.GoRuntime.GC
 	daemon := diagnostics.Daemon
 	submit := diagnostics.DaemonSubmit
+	rss := currentProcessRSSSnapshot()
 
 	return fmt.Sprintf(
-		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
+		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s %s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
 		reason,
 		diagnostics.ObservedAt,
+		processRSSLogFields(rss),
 		mem.HeapAllocBytes,
 		mem.HeapSysBytes,
 		mem.HeapObjects,

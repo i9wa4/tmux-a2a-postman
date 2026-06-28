@@ -49,4 +49,6 @@ Debug diagnostics:
   postman.log at startup and every 10 minutes as
   component=daemon_runtime event=memory_snapshot source=passive_log. Those
   passive log lines are the normal first signal for memory optimization
-  analysis; capture-profile remains an explicit follow-up diagnostic.
+  analysis. On supported hosts they include process RSS as rss_bytes; otherwise
+  rss_supported or rss_available marks RSS unavailable without a zero-value
+  placeholder. capture-profile remains an explicit follow-up diagnostic.

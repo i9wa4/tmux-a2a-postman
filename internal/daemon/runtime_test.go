@@ -358,12 +358,22 @@ func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
 		log.SetOutput(originalOutput)
 		log.SetFlags(originalFlags)
 	})
+	originalRSS := currentProcessRSSSnapshot
+	currentProcessRSSSnapshot = func() processRSSSnapshot {
+		return processRSSSnapshot{Supported: true, Available: true, Bytes: 123456}
+	}
+	t.Cleanup(func() {
+		currentProcessRSSSnapshot = originalRSS
+	})
 
 	rt.logRuntimeDiagnosticsSnapshot("startup", now)
 	line := buf.String()
 	for _, want := range []string{
 		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=startup",
 		"observed_at=2026-06-02T00:00:00Z",
+		"rss_supported=true",
+		"rss_available=true",
+		"rss_bytes=123456",
 		"heap_alloc_bytes=",
 		"heap_sys_bytes=",
 		"heap_objects=",
@@ -395,6 +405,36 @@ func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
 		if strings.Contains(line, forbidden) {
 			t.Fatalf("runtime diagnostics log leaked %q in %q", forbidden, line)
 		}
+	}
+}
+
+func TestRuntimeDiagnosticsLogLineMarksUnsupportedRSSExplicitly(t *testing.T) {
+	originalRSS := currentProcessRSSSnapshot
+	currentProcessRSSSnapshot = func() processRSSSnapshot {
+		return processRSSSnapshot{}
+	}
+	t.Cleanup(func() {
+		currentProcessRSSSnapshot = originalRSS
+	})
+
+	diagnostics := status.NewRuntimeDiagnostics(
+		"daemon_runtime",
+		status.DaemonRuntimeCardinality{},
+		status.DaemonSubmitRuntimeDiagnostics{},
+		time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
+	)
+
+	line := runtimeDiagnosticsLogLine("interval", &diagnostics)
+	for _, want := range []string{
+		"rss_supported=false",
+		"rss_available=false",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("runtime diagnostics log missing %q in %q", want, line)
+		}
+	}
+	if strings.Contains(line, "rss_bytes=") {
+		t.Fatalf("unsupported RSS log included rss_bytes in %q", line)
 	}
 }
 
@@ -2479,6 +2519,7 @@ func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *tes
 	rt.daemonState.SetSessionEnabled("review", true)
 
 	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingEventIdle(t, rt, "review:worker", 2*time.Second)
 
 	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
 	if err != nil {
