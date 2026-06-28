@@ -73,6 +73,7 @@ message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = d
 retention_period_days = 30            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
+daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16; values above 16 are clamped)
 
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: internal active

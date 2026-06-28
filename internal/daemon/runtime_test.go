@@ -239,7 +239,7 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 	}) {
 		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
 	}
-	if diagnostics.DaemonSubmit.WorkerLimit != daemonSubmitWorkerLimit ||
+	if diagnostics.DaemonSubmit.WorkerLimit != config.DefaultDaemonSubmitWorkerLimit ||
 		diagnostics.DaemonSubmit.ActiveWorkerCount != 0 ||
 		diagnostics.DaemonSubmit.ActiveRequestCount != 1 ||
 		diagnostics.DaemonSubmit.PendingRequestCount != 1 ||
@@ -274,6 +274,52 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 		}
 	}
 	assertRuntimeDiagnosticsHasNoArrays(t, diagnostics)
+}
+
+func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want int
+	}{
+		{name: "nil config uses default", cfg: nil, want: config.DefaultDaemonSubmitWorkerLimit},
+		{name: "missing config uses default", cfg: &config.Config{}, want: config.DefaultDaemonSubmitWorkerLimit},
+		{name: "configured", cfg: &config.Config{DaemonSubmitWorkerLimit: 12}, want: 12},
+		{name: "above max clamps", cfg: &config.Config{DaemonSubmitWorkerLimit: 99}, want: config.MaxDaemonSubmitWorkerLimit},
+		{name: "negative uses default", cfg: &config.Config{DaemonSubmitWorkerLimit: -1}, want: config.DefaultDaemonSubmitWorkerLimit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newDaemonRuntime(
+				"",
+				"",
+				"",
+				tt.cfg,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				"",
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				"",
+			)
+			if got := cap(rt.daemonSubmitSem); got != tt.want {
+				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)
+			}
+			if got := cap(rt.daemonSubmitResults); got != tt.want {
+				t.Fatalf("daemonSubmitResults cap = %d, want %d", got, tt.want)
+			}
+			if got := rt.daemonSubmitRuntimeDiagnostics(time.Now()).WorkerLimit; got != tt.want {
+				t.Fatalf("diagnostic worker limit = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }
 
 func assertRuntimeDiagnosticsHasNoArrays(t *testing.T, diagnostics *status.RuntimeDiagnostics) {
@@ -914,7 +960,8 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 		launchDaemonSubmitWorker: workerHarness.launch,
 	}
 
-	for i := 0; i < daemonSubmitWorkerLimit; i++ {
+	workerLimit := config.DefaultDaemonSubmitWorkerLimit
+	for i := 0; i < workerLimit; i++ {
 		requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 			RequestID: fmt.Sprintf("req-send-%d", i),
 			Command:   projection.DaemonSubmitSend,
@@ -929,11 +976,11 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 			t.Fatalf("dispatch request %d status = %v, want dispatched", i, status)
 		}
 	}
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
-	if got := len(rt.daemonSubmitSem); got != daemonSubmitWorkerLimit {
-		t.Fatalf("active worker slots = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(rt.daemonSubmitSem); got != workerLimit {
+		t.Fatalf("active worker slots = %d, want %d", got, workerLimit)
 	}
 
 	extraPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
@@ -949,8 +996,8 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	if status := rt.dispatchDaemonSubmitRequest(extraPath); status != daemonSubmitDispatchSaturated {
 		t.Fatalf("dispatch saturated request status = %v, want saturated", status)
 	}
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers after saturation = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers after saturation = %d, want %d", got, workerLimit)
 	}
 	if rt.daemonSubmitSaturationCount != 1 {
 		t.Fatalf("daemonSubmitSaturationCount = %d, want 1", rt.daemonSubmitSaturationCount)
@@ -1379,7 +1426,8 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	for i := 1; i <= daemonSubmitWorkerLimit; i++ {
+	workerLimit := 4
+	for i := 1; i <= workerLimit; i++ {
 		if _, err := projection.WriteDaemonSubmitRequest(highVolumeSessionDir, projection.DaemonSubmitRequest{
 			RequestID: fmt.Sprintf("high-%02d", i),
 			Command:   projection.DaemonSubmitSend,
@@ -1404,6 +1452,7 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	var started []string
 	rt := &daemonRuntime{
 		sessionDir: highVolumeSessionDir,
+		cfg:        &config.Config{DaemonSubmitWorkerLimit: workerLimit},
 		nodes: map[string]discovery.NodeInfo{
 			"b-low-volume:worker": {
 				SessionName: "b-low-volume",
@@ -1422,8 +1471,8 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
 	for len(workerHarness.workers) > 0 {
 		workerHarness.runNext(t)

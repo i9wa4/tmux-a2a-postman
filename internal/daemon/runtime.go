@@ -78,8 +78,6 @@ type daemonRuntime struct {
 	mailboxProjectionSyncWG       sync.WaitGroup
 }
 
-const daemonSubmitWorkerLimit = 4
-
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
 
 // daemonSubmitWorkerLauncher owns worker scheduling. The worker owns exactly one
@@ -131,6 +129,7 @@ func newDaemonRuntime(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) *daemonRuntime {
+	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
 		baseDir:                       baseDir,
 		sessionDir:                    sessionDir,
@@ -162,6 +161,17 @@ func newDaemonRuntime(
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
 	}
+}
+
+func daemonSubmitWorkerLimitFromConfig(cfg *config.Config) int {
+	if cfg == nil || cfg.DaemonSubmitWorkerLimit == 0 {
+		return config.DefaultDaemonSubmitWorkerLimit
+	}
+	limit, warning := config.EffectiveDaemonSubmitWorkerLimit(cfg.DaemonSubmitWorkerLimit)
+	if warning != "" {
+		log.Printf("postman: WARNING: %s\n", warning)
+	}
+	return limit
 }
 
 func defaultDaemonSubmitWorkerLauncher(worker func()) {
@@ -567,7 +577,7 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 
 func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
 	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
-		WorkerLimit:        daemonSubmitWorkerLimit,
+		WorkerLimit:        rt.daemonSubmitWorkerLimit(),
 		ActiveWorkerCount:  len(rt.daemonSubmitSem),
 		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
 		SaturationCount:    rt.daemonSubmitSaturationCount,
@@ -581,6 +591,13 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 		scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
 	}
 	return diagnostics
+}
+
+func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
+	if rt.daemonSubmitSem != nil {
+		return cap(rt.daemonSubmitSem)
+	}
+	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
 }
 
 func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
@@ -682,10 +699,10 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
 	}
 	if rt.daemonSubmitSem == nil {
-		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimit)
+		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.daemonSubmitResults == nil {
-		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit)
+		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.activeDaemonSubmitKeys == nil {
 		rt.activeDaemonSubmitKeys = make(map[string]bool)
