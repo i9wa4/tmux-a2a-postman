@@ -31,9 +31,15 @@ import (
 )
 
 const (
-	inboxCheckInterval            = 30 * time.Second
-	runtimeDiagnosticsLogInterval = 10 * time.Minute
+	inboxCheckInterval                            = 30 * time.Second
+	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
+	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 )
+
+// daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
+// in milliseconds. Initialized from config at daemon startup; tests may
+// override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
+var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -392,6 +398,10 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
 	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
+	if queueMs >= daemonSubmitQueueWarnThresholdMs {
+		log.Printf("postman: WARNING: component=%s event=queue_ms_threshold_exceeded submit_path=%s command=%s session=%s request=%s queue_ms=%d threshold_ms=%d\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, queueMs, daemonSubmitQueueWarnThresholdMs)
+	}
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
@@ -619,6 +629,11 @@ func runDaemonLoopWithWatcherEvents(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) {
+	// Apply configurable queue warning threshold before any workers start.
+	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
+		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
 	// "send on closed channel" panics. Let the channel be garbage collected when all
