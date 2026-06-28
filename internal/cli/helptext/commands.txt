@@ -28,6 +28,20 @@ pop
   Empty inbox: {"status":"empty"}
   Node is auto-detected from tmux pane title.
 
+capture-profile
+  Capture one explicit Go runtime profile from the running daemon.
+  Profiling has no default listener or background collector.
+  Output: JSON for --output PATH; raw profile bytes for --output -
+  --output PATH refuses to overwrite an existing file; use --force to allow it.
+  Usage:
+    tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof
+    tmux-a2a-postman capture-profile --type goroutine --output -
+  Flags:
+    --type heap|goroutine   Profile type to capture (required)
+    --output -|PATH         Explicit destination (required)
+    --max-bytes N           Maximum profile bytes (default: 16777216)
+    --force                 Overwrite an existing output file (default: refuse)
+
 get-status
   Print canonical session status JSON for agents and scripts.
   Uses the current tmux session.
@@ -77,4 +91,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, capture-profile, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, version, help

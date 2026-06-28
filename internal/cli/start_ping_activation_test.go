@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -133,7 +132,7 @@ func TestActivateStartupSessions_DefaultMakesForeignSessionDiscoverableAndOwned(
 	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
 		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(contextDir, selfSession, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(contextDir, selfSession, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -317,7 +316,7 @@ func TestActivateSessionForPing_RejectsSameUserOwnedSession(t *testing.T) {
 	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(ownerDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ownerDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
