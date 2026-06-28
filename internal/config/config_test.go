@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,7 +134,6 @@ scan_interval_seconds = 2.0
 session_scan_interval_seconds = 0.25
 enter_delay_seconds = 1.0
 tmux_timeout_seconds = 10.0
-startup_delay_seconds = 3.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
 daemon_message_template = "Custom daemon"
@@ -173,9 +174,6 @@ role = "observer"
 	}
 	if cfg.TmuxTimeout != 10.0 {
 		t.Errorf("TmuxTimeout: got %v, want 10.0", cfg.TmuxTimeout)
-	}
-	if cfg.StartupDelay != 3.0 {
-		t.Errorf("StartupDelay: got %v, want 3.0", cfg.StartupDelay)
 	}
 	if cfg.BaseDir != "/custom/base" {
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/custom/base")
@@ -1808,4 +1806,47 @@ role = "worker"
 	if got != "trusted explicit-config-base" {
 		t.Fatalf("explicit trusted base draft template = %q, want %q", got, "trusted explicit-config-base")
 	}
+}
+
+func TestWarnDeprecatedKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		wantKey string
+	}{
+		{
+			name:    "startup_delay_seconds triggers warning",
+			raw:     "startup_delay_seconds = 10.0\nscan_interval_seconds = 1.0\n",
+			wantKey: "startup_delay_seconds",
+		},
+		{
+			name:    "auto_enable_new_agents triggers warning",
+			raw:     "auto_enable_new_agents = true\n",
+			wantKey: "auto_enable_new_agents",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			warnDeprecatedKeys([]byte(tc.raw), "/fake/config.toml")
+
+			if !strings.Contains(buf.String(), tc.wantKey) {
+				t.Errorf("warnDeprecatedKeys: expected warning containing %q, got: %q", tc.wantKey, buf.String())
+			}
+		})
+	}
+
+	t.Run("no warning for current keys", func(t *testing.T) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+		warnDeprecatedKeys([]byte("scan_interval_seconds = 1.0\nauto_enable_new_sessions = true\n"), "/fake/config.toml")
+
+		if buf.Len() != 0 {
+			t.Errorf("warnDeprecatedKeys: unexpected warning output: %q", buf.String())
+		}
+	})
 }

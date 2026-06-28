@@ -26,7 +26,6 @@ type Config struct {
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
 	EnterDelay          float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
-	StartupDelay        float64 `toml:"startup_delay_seconds"`
 	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
@@ -64,7 +63,6 @@ type Config struct {
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
 	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
-	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -277,7 +275,19 @@ func skillCatalogForRuntime(catalogs map[string]string, runtime string) string {
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
+// Deprecated keys are caught here rather than at parse time because the Go TOML
+// decoder silently ignores keys not present in the struct.
 func warnDeprecatedKeys(rawBytes []byte, path string) {
+	deprecated := []string{
+		"startup_delay_seconds",
+		"auto_enable_new_agents",
+	}
+	raw := string(rawBytes)
+	for _, key := range deprecated {
+		if strings.Contains(raw, key) {
+			log.Printf("WARNING: %s: deprecated config key %q will be ignored; remove it from your config", path, key)
+		}
+	}
 }
 
 // loadEmbeddedConfig loads configuration from embedded default_postman.toml.
@@ -488,9 +498,6 @@ func mergeConfig(base, override *Config) {
 	if override.AutoEnableNewSessions != nil {
 		base.AutoEnableNewSessions = override.AutoEnableNewSessions
 	}
-	if override.AutoEnableNewAgents != nil {
-		base.AutoEnableNewAgents = override.AutoEnableNewAgents
-	}
 
 	// Float64 fields
 	if override.ScanInterval != 0 {
@@ -504,9 +511,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.TmuxTimeout != 0 {
 		base.TmuxTimeout = override.TmuxTimeout
-	}
-	if override.StartupDelay != 0 {
-		base.StartupDelay = override.StartupDelay
 	}
 	if override.EnterVerifyDelay != 0 {
 		base.EnterVerifyDelay = override.EnterVerifyDelay
