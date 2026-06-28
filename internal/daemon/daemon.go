@@ -425,6 +425,7 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	requestTrace.DaemonSubmitRequestID = request.RequestID
 	requestTrace.DaemonSubmitCommand = string(request.Command)
 	requestTrace.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("daemon_submit_accept", requestTrace)
 	result := daemonSubmitProcessResult{
 		Command:    request.Command,
 		SessionDir: sessionDir,
@@ -437,7 +438,6 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		log.Printf("postman: WARNING: component=%s event=queue_ms_threshold_exceeded submit_path=%s command=%s session=%s request=%s queue_ms=%d threshold_ms=%d\n",
 			projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, queueMs, daemonSubmitQueueWarnThresholdMs)
 	}
-	msgtrace.Log("daemon_submit_accept", requestTrace)
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
