@@ -58,7 +58,6 @@ func main() {
 			ContextID:   *contextID,
 			ConfigPath:  *configPath,
 			LogFilePath: "",
-			NoTUI:       false,
 		},
 		cli.Handlers{
 			Start:                   cli.RunStartWithFlags,
