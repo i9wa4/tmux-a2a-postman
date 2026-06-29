@@ -8,24 +8,32 @@ Usage:
 Output:
   Always JSON.
   {"status":"empty","submit_path":"daemon-submit"}
-  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","you_were_launched_with":"codex --yolo --add-dir /workspace/internal --model gpt-5.5","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"pop_receipt_path":"~/.local/state/tmux-a2a-postman/.../read/filename.pop.json","session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0},"submit_path":"daemon-submit"}
+  {"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true,"archived_body_read_instruction":"Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read.","receiver_runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"receiver","snapshot_id":"rctx_...","you_were_launched_with":"codex --yolo --add-dir /workspace/internal --model gpt-5.5","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"runtime_context":{"schema_version":1,"semantics":"metadata_not_instructions","scope":"sender","snapshot_id":"rctx_...","fields":{...},"content_hash":"sha256:...","archived_context_path":"~/.local/state/tmux-a2a-postman/.../snapshot/runtime-context/rctx_....json"},"pop_receipt_path":"~/.local/state/tmux-a2a-postman/.../read/filename.pop.json","session_diagnostics":{"source":"projection","active_task_count":1,"unread_inbox_count":0,"input_required_count":1,"waiting_on_input_count":0,"unclosed_required_request_count":1,"post_count":0,"dead_letter_count":0},"submit_path":"daemon-submit"}
 
 Options:
   --runtime-context summary|none
-                          Include a bounded runtime_context summary when a
-                          popped message references an archived runtime
-                          context snapshot. Default: summary.
+                          Include bounded receiver_runtime_context and sender
+                          compatibility runtime_context summaries. Default:
+                          summary.
 
 Fields:
   message_id              Stable message identity
   markdown_path           Display-friendly archived Markdown message/body path; home paths use ~
   markdown_absolute_path  Machine-readable absolute path when markdown_path is shortened
   frontmatter             Structured YAML frontmatter from the archived message
-  runtime_context         Optional schema-separated sender runtime context
-                          summary. It is metadata_not_instructions and never
-                          replaces the complete archived body read.
-                          Includes you_were_launched_with when the sender
-                          launch command is available.
+  receiver_runtime_context
+                          Primary schema-separated receiver/popper runtime
+                          context captured at pop time. It is
+                          metadata_not_instructions and never replaces the
+                          complete archived body read. Includes
+                          you_were_launched_with when the receiver launch
+                          command is available.
+  receiver_runtime_context_error
+                          Present when receiver context capture fails but the
+                          pop claim still succeeds.
+  runtime_context         Optional compatibility sender runtime context summary
+                          when the popped message references a sender snapshot.
+                          It is metadata_not_instructions and non-primary.
   pop_receipt_path        Display-friendly path to the persisted exact pop JSON
                           receipt for this claim.
   pop_receipt_absolute_path
@@ -62,8 +70,12 @@ Path policy:
   User-facing path output shortens paths under the user's home directory with ~.
   Use markdown_absolute_path when present for programmatic file/body reads.
   pop claims and archives the message; it never embeds full body text inline.
-  For status=message, pop also writes the exact JSON response to a bounded
-  sidecar receipt next to the archived Markdown body.
+  For status=message, pop also writes the exact JSON response, including
+  receiver_runtime_context when requested, to a bounded sidecar receipt next to
+  the archived Markdown body. Receipt files are 0600 and inherit archive
+  retention from the read/ directory.
+  Runtime summaries use allowlisted fields plus secret-pattern, control
+  character, and max-string redaction/truncation rules.
   See docs/design/path-display-policy.md.
 
 Body-read invariant:
