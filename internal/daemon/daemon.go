@@ -150,6 +150,12 @@ func mailboxProjectionPayloadForFile(filename, relativePath, content string) jou
 		if metadata.ThreadID != "" {
 			payload.ThreadID = metadata.ThreadID
 		}
+		if metadata.TaskID != "" {
+			payload.TaskID = metadata.TaskID
+		}
+		if metadata.RunID != "" {
+			payload.RunID = metadata.RunID
+		}
 	}
 	if payload.ThreadID == "" {
 		payload.ThreadID = frontmatterValue(content, "thread_id")

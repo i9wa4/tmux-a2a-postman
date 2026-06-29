@@ -3,6 +3,7 @@ get-status — print canonical session status JSON
 Usage:
   tmux-a2a-postman get-status
   tmux-a2a-postman get-status --debug
+  tmux-a2a-postman get-status --tasks
   tmux-a2a-postman get-status --help
 
 Output:
@@ -31,6 +32,11 @@ Output:
   nodes[*].screen_progress provides non-content pane evidence:
   evidence_state, last_capture_at, last_screen_change_at, and
   screen_fingerprint. Raw pane text is not included.
+  With --tasks, tasks contains read-only external task/run projection entries
+  for messages that carry task_id or run_id metadata. It exposes task_id,
+  run_id, originating_message_id, thread_id, assigned_node, latest_message_id,
+  open_input_request_ids, state, terminal_message_id, and ambiguity fields.
+  Messages without external task/run metadata do not create task entries.
 
 Debug diagnostics:
   --debug adds runtime_diagnostics as an optional object without changing
