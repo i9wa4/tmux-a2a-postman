@@ -2870,6 +2870,109 @@ func TestRecordPendingAutoPing_UsesDefaultAutoPingDelay(t *testing.T) {
 	}
 }
 
+func TestRecordPendingAutoPing_SkipsSamePaneAfterDirectPingDelivery(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 45, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:          "review:worker",
+		SessionName:      "review",
+		NodeName:         "worker",
+		PaneID:           "%77",
+		Reason:           "operator_tui",
+		ResolutionReason: "operator_tui",
+		TriggeredAt:      now.Format(time.RFC3339Nano),
+		NotBeforeAt:      now.Format(time.RFC3339Nano),
+		DeliveredAt:      now.Format(time.RFC3339Nano),
+	}, now); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			AutoPingDelaySeconds: 20,
+		},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%77",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "discovered", now.Add(time.Second))
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	node := state.Nodes["review:worker"]
+	if node.Pending {
+		t.Fatalf("same-pane discovered auto-PING queued after direct delivery: %#v", node)
+	}
+	if node.DeliveredAt == "" || node.ResolutionReason != "operator_tui" {
+		t.Fatalf("direct delivery state not preserved: %#v", node)
+	}
+}
+
+func TestRecordPendingAutoPing_AllowsReplacementPaneAfterDirectPingDelivery(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 46, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:          "review:worker",
+		SessionName:      "review",
+		NodeName:         "worker",
+		PaneID:           "%77",
+		Reason:           "operator_tui",
+		ResolutionReason: "operator_tui",
+		TriggeredAt:      now.Format(time.RFC3339Nano),
+		NotBeforeAt:      now.Format(time.RFC3339Nano),
+		DeliveredAt:      now.Format(time.RFC3339Nano),
+	}, now); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			AutoPingDelaySeconds: 20,
+		},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%78",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "pane_restart", now.Add(time.Second))
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	node := state.Nodes["review:worker"]
+	if !node.Pending || node.PaneID != "%78" || node.Reason != "pane_restart" {
+		t.Fatalf("replacement pane auto-PING was not queued: %#v", node)
+	}
+}
+
 func installRuntimeSessionOwnerTmux(t *testing.T, owners map[string]string) {
 	t.Helper()
 

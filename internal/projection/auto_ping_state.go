@@ -12,28 +12,30 @@ const (
 )
 
 type AutoPingEventPayload struct {
-	NodeKey      string  `json:"node_key"`
-	SessionName  string  `json:"session_name,omitempty"`
-	NodeName     string  `json:"node_name,omitempty"`
-	PaneID       string  `json:"pane_id,omitempty"`
-	Reason       string  `json:"reason,omitempty"`
-	TriggeredAt  string  `json:"triggered_at,omitempty"`
-	DelaySeconds float64 `json:"delay_seconds,omitempty"`
-	NotBeforeAt  string  `json:"not_before_at,omitempty"`
-	DeliveredAt  string  `json:"delivered_at,omitempty"`
+	NodeKey          string  `json:"node_key"`
+	SessionName      string  `json:"session_name,omitempty"`
+	NodeName         string  `json:"node_name,omitempty"`
+	PaneID           string  `json:"pane_id,omitempty"`
+	Reason           string  `json:"reason,omitempty"`
+	ResolutionReason string  `json:"resolution_reason,omitempty"`
+	TriggeredAt      string  `json:"triggered_at,omitempty"`
+	DelaySeconds     float64 `json:"delay_seconds,omitempty"`
+	NotBeforeAt      string  `json:"not_before_at,omitempty"`
+	DeliveredAt      string  `json:"delivered_at,omitempty"`
 }
 
 type AutoPingNodeState struct {
-	NodeKey      string
-	SessionName  string
-	NodeName     string
-	PaneID       string
-	Reason       string
-	TriggeredAt  string
-	DelaySeconds float64
-	NotBeforeAt  string
-	DeliveredAt  string
-	Pending      bool
+	NodeKey          string
+	SessionName      string
+	NodeName         string
+	PaneID           string
+	Reason           string
+	ResolutionReason string
+	TriggeredAt      string
+	DelaySeconds     float64
+	NotBeforeAt      string
+	DeliveredAt      string
+	Pending          bool
 }
 
 type AutoPingState struct {
@@ -83,16 +85,17 @@ func ProjectAutoPingState(sessionDir string) (AutoPingState, bool, error) {
 		}
 
 		nodeState := AutoPingNodeState{
-			NodeKey:      payload.NodeKey,
-			SessionName:  payload.SessionName,
-			NodeName:     payload.NodeName,
-			PaneID:       payload.PaneID,
-			Reason:       payload.Reason,
-			TriggeredAt:  payload.TriggeredAt,
-			DelaySeconds: payload.DelaySeconds,
-			NotBeforeAt:  payload.NotBeforeAt,
-			DeliveredAt:  payload.DeliveredAt,
-			Pending:      event.Type == AutoPingPendingEventType,
+			NodeKey:          payload.NodeKey,
+			SessionName:      payload.SessionName,
+			NodeName:         payload.NodeName,
+			PaneID:           payload.PaneID,
+			Reason:           payload.Reason,
+			ResolutionReason: payload.ResolutionReason,
+			TriggeredAt:      payload.TriggeredAt,
+			DelaySeconds:     payload.DelaySeconds,
+			NotBeforeAt:      payload.NotBeforeAt,
+			DeliveredAt:      payload.DeliveredAt,
+			Pending:          event.Type == AutoPingPendingEventType,
 		}
 		projected.Nodes[payload.NodeKey] = nodeState
 	}
