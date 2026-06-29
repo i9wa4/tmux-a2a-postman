@@ -527,6 +527,7 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	swallowedRetryCount           map[string]int             // Issue #282: inbox file path -> re-delivery attempt count
 	swallowedRetryCountMu         sync.Mutex                 // Issue #282
+	nonDaemonDeliveryBudget       *nonDaemonDeliveryBudget
 	clock                         func() time.Time
 }
 
@@ -551,8 +552,43 @@ func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		reservedDeliveryByRoute:       make(map[string]time.Time),
 		swallowedRetryCount:           make(map[string]int),
+		nonDaemonDeliveryBudget:       newNonDaemonDeliveryBudget(clock),
 		clock:                         clock,
 	}
+}
+
+func (ds *DaemonState) NonDaemonDeliveryWorkerLimit() int {
+	return ds.nonDaemonDeliveryBudgetForUse().workerLimit()
+}
+
+func (ds *DaemonState) BeginManualPingFanout(total int) int {
+	return ds.nonDaemonDeliveryBudgetForUse().beginManualFanout(total)
+}
+
+func (ds *DaemonState) StartManualPingDelivery() bool {
+	return ds.nonDaemonDeliveryBudgetForUse().tryStart(nonDaemonDeliveryPathManualPing)
+}
+
+func (ds *DaemonState) FinishManualPingDelivery() {
+	ds.nonDaemonDeliveryBudgetForUse().finish(nonDaemonDeliveryPathManualPing)
+}
+
+func (ds *DaemonState) UnqueueManualPingDelivery() {
+	ds.nonDaemonDeliveryBudgetForUse().unqueue(nonDaemonDeliveryPathManualPing)
+}
+
+func (ds *DaemonState) FinishManualPingFanout() {
+	ds.nonDaemonDeliveryBudgetForUse().finishManualFanout()
+}
+
+func (ds *DaemonState) nonDaemonDeliveryBudgetForUse() *nonDaemonDeliveryBudget {
+	if ds == nil {
+		return newNonDaemonDeliveryBudget(nil)
+	}
+	if ds.nonDaemonDeliveryBudget == nil {
+		ds.nonDaemonDeliveryBudget = newNonDaemonDeliveryBudget(ds.clock)
+	}
+	return ds.nonDaemonDeliveryBudget
 }
 
 func (ds *DaemonState) now() time.Time {

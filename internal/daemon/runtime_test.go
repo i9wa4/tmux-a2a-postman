@@ -304,6 +304,16 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 	daemonState := NewDaemonState(0, "ctx-runtime")
 	daemonState.AutoEnableSessionIfNew("review")
 	daemonState.AutoEnableSessionIfNew("qa")
+	budget := daemonState.nonDaemonDeliveryBudgetForUse()
+	if !budget.tryStart(nonDaemonDeliveryPathPost) {
+		t.Fatal("tryStart(post) = false, want true")
+	}
+	if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+		t.Fatal("tryStart(auto_ping) = false, want true")
+	}
+	budget.queue(nonDaemonDeliveryPathPost)
+	budget.queue(nonDaemonDeliveryPathAutoPing)
+	budget.recordSaturation()
 	rt := &daemonRuntime{
 		sessionDir:  sessionDir,
 		selfSession: "review",
@@ -378,6 +388,15 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 		diagnostics.DaemonSubmit.OldestLateResponseAgeSeconds <= 0 ||
 		diagnostics.DaemonSubmit.LastSaturatedAt == "" {
 		t.Fatalf("DaemonSubmit age diagnostics = %#v", diagnostics.DaemonSubmit)
+	}
+	if diagnostics.NonDaemonDelivery.WorkerLimit != config.DefaultDaemonSubmitWorkerLimit ||
+		diagnostics.NonDaemonDelivery.ActivePostCount != 1 ||
+		diagnostics.NonDaemonDelivery.PendingPostCount != 1 ||
+		diagnostics.NonDaemonDelivery.ActiveAutoPingCount != 1 ||
+		diagnostics.NonDaemonDelivery.PendingAutoPingCount != 1 ||
+		diagnostics.NonDaemonDelivery.SaturationCount != 1 ||
+		diagnostics.NonDaemonDelivery.LastSaturatedAt == "" {
+		t.Fatalf("NonDaemonDelivery diagnostics = %#v", diagnostics.NonDaemonDelivery)
 	}
 
 	payload, err := json.Marshal(diagnostics)
@@ -559,6 +578,14 @@ func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
 		"daemon_submit_pending_request_count=1",
 		"daemon_submit_late_response_count=1",
 		"daemon_submit_saturation_count=2",
+		"non_daemon_delivery_worker_limit=8",
+		"non_daemon_delivery_active_post_count=0",
+		"non_daemon_delivery_pending_post_count=0",
+		"non_daemon_delivery_active_auto_ping_count=0",
+		"non_daemon_delivery_pending_auto_ping_count=0",
+		"non_daemon_delivery_active_manual_ping_count=0",
+		"non_daemon_delivery_pending_manual_ping_count=0",
+		"non_daemon_delivery_saturation_count=0",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("runtime diagnostics log missing %q in %q", want, line)
@@ -592,6 +619,7 @@ func TestRuntimeDiagnosticsLogLineMarksUnsupportedRSSExplicitly(t *testing.T) {
 		"daemon_runtime",
 		status.DaemonRuntimeCardinality{},
 		status.DaemonSubmitRuntimeDiagnostics{},
+		status.NonDaemonDeliveryRuntimeDiagnostics{},
 		time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
 	)
 
@@ -1129,6 +1157,122 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	}
 	if !rt.daemonSubmitLastSaturatedAt.Equal(now) {
 		t.Fatalf("daemonSubmitLastSaturatedAt = %s, want %s", rt.daemonSubmitLastSaturatedAt, now)
+	}
+}
+
+func TestDispatchPostDelivery_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		clock: func() time.Time {
+			return now
+		},
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathPost) {
+			t.Fatalf("pre-fill post slot %d failed", i)
+		}
+	}
+
+	rt.dispatchPostDelivery(
+		filepath.Join(t.TempDir(), "post", "20260603-090000-r1111-from-a-to-b.md"),
+		"20260603-090000-r1111-from-a-to-b.md",
+		nil,
+		nil,
+		config.DefaultConfig(),
+		postDeliveryReservation{},
+	)
+
+	if len(timerHarness.calls) != 1 {
+		t.Fatalf("scheduled retries = %d, want 1", len(timerHarness.calls))
+	}
+	if got := timerHarness.calls[0].name; got != "post-delivery-budget-retry" {
+		t.Fatalf("retry timer name = %q, want post-delivery-budget-retry", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActivePostCount != budget.workerLimit() || diag.PendingPostCount != 1 || diag.SaturationCount != 1 {
+		t.Fatalf("non-daemon diagnostics after post saturation = %#v", diag)
+	}
+}
+
+func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 1, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time {
+			return now
+		},
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+			t.Fatalf("pre-fill auto-PING slot %d failed", i)
+		}
+	}
+
+	rt.dispatchAutoPingDelivery(
+		"review:worker",
+		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
+		projection.AutoPingNodeState{},
+		"PING {node}",
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	if calls.Load() != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0 while budget saturated", calls.Load())
+	}
+	if len(timerHarness.calls) != 1 {
+		t.Fatalf("scheduled retries = %d, want 1", len(timerHarness.calls))
+	}
+	if got := timerHarness.calls[0].name; got != "auto-ping-budget-retry" {
+		t.Fatalf("retry timer name = %q, want auto-ping-budget-retry", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActiveAutoPingCount != budget.workerLimit() || diag.PendingAutoPingCount != 1 || diag.SaturationCount != 1 {
+		t.Fatalf("non-daemon diagnostics after auto-PING saturation = %#v", diag)
+	}
+}
+
+func TestNonDaemonBudget_BoundsManualPingFanout(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 2, 0, 0, time.UTC)
+	budget := newNonDaemonDeliveryBudget(func() time.Time { return now })
+
+	workerLimit := budget.beginManualFanout(config.DefaultDaemonSubmitWorkerLimit + 3)
+	if workerLimit != config.DefaultDaemonSubmitWorkerLimit {
+		t.Fatalf("manual worker limit = %d, want %d", workerLimit, config.DefaultDaemonSubmitWorkerLimit)
+	}
+	diag := budget.snapshot()
+	if diag.PendingManualPingCount != config.DefaultDaemonSubmitWorkerLimit+3 || diag.SaturationCount != 1 || diag.LastSaturatedAt == "" {
+		t.Fatalf("manual fanout diagnostics after begin = %#v", diag)
+	}
+
+	for i := 0; i < workerLimit; i++ {
+		budget.unqueue(nonDaemonDeliveryPathManualPing)
+		if !budget.tryStart(nonDaemonDeliveryPathManualPing) {
+			t.Fatalf("manual worker %d could not start", i)
+		}
+	}
+	if budget.tryStart(nonDaemonDeliveryPathManualPing) {
+		t.Fatal("manual worker started beyond budget limit")
+	}
+	diag = budget.snapshot()
+	if diag.ActiveManualPingCount != workerLimit || diag.PendingManualPingCount != 3 || diag.SaturationCount != 2 {
+		t.Fatalf("manual fanout diagnostics while active = %#v", diag)
 	}
 }
 

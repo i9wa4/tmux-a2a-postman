@@ -33,22 +33,23 @@ import (
 )
 
 type daemonRuntime struct {
-	baseDir     string
-	sessionDir  string
-	contextID   string
-	configPath  string
-	selfSession string
-	cfg         *config.Config
-	watcher     filesystemWatcher
-	adjacency   map[string][]string
-	nodes       map[string]discovery.NodeInfo
-	knownNodes  map[string]bool
-	events      chan<- tui.DaemonEvent
-	configPaths []string
-	nodesDirs   []string
-	daemonState *DaemonState
-	idleTracker *idle.IdleTracker
-	clock       func() time.Time
+	baseDir                         string
+	sessionDir                      string
+	contextID                       string
+	configPath                      string
+	selfSession                     string
+	cfg                             *config.Config
+	watcher                         filesystemWatcher
+	adjacency                       map[string][]string
+	nodes                           map[string]discovery.NodeInfo
+	knownNodes                      map[string]bool
+	events                          chan<- tui.DaemonEvent
+	configPaths                     []string
+	nodesDirs                       []string
+	daemonState                     *DaemonState
+	nonDaemonDeliveryBudgetFallback *nonDaemonDeliveryBudget
+	idleTracker                     *idle.IdleTracker
+	clock                           func() time.Time
 
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
@@ -133,35 +134,36 @@ func newDaemonRuntime(
 ) *daemonRuntime {
 	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
-		baseDir:                       baseDir,
-		sessionDir:                    sessionDir,
-		contextID:                     contextID,
-		configPath:                    configPath,
-		selfSession:                   selfSession,
-		cfg:                           cfg,
-		watcher:                       watcher,
-		adjacency:                     adjacency,
-		nodes:                         nodes,
-		knownNodes:                    knownNodes,
-		events:                        events,
-		configPaths:                   configPaths,
-		nodesDirs:                     nodesDirs,
-		daemonState:                   daemonState,
-		idleTracker:                   idleTracker,
-		sharedNodes:                   sharedNodes,
-		watchedDirs:                   make(map[string]bool),
-		claimedPanes:                  make(map[string]bool),
-		prevSessionNodes:              make(map[string][]string),
-		activePostEvents:              make(map[string]bool),
-		activeAutoPings:               make(map[string]bool),
-		processDaemonSubmit:           processDaemonSubmitRequest,
-		launchDaemonSubmitWorker:      defaultDaemonSubmitWorkerLauncher,
-		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
-		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
-		activeDaemonSubmitKeys:        make(map[string]bool),
-		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
-		activeMailboxProjectionSyncs:  make(map[string]bool),
-		pendingMailboxProjectionSyncs: make(map[string]bool),
+		baseDir:                         baseDir,
+		sessionDir:                      sessionDir,
+		contextID:                       contextID,
+		configPath:                      configPath,
+		selfSession:                     selfSession,
+		cfg:                             cfg,
+		watcher:                         watcher,
+		adjacency:                       adjacency,
+		nodes:                           nodes,
+		knownNodes:                      knownNodes,
+		events:                          events,
+		configPaths:                     configPaths,
+		nodesDirs:                       nodesDirs,
+		daemonState:                     daemonState,
+		nonDaemonDeliveryBudgetFallback: newNonDaemonDeliveryBudget(nil),
+		idleTracker:                     idleTracker,
+		sharedNodes:                     sharedNodes,
+		watchedDirs:                     make(map[string]bool),
+		claimedPanes:                    make(map[string]bool),
+		prevSessionNodes:                make(map[string][]string),
+		activePostEvents:                make(map[string]bool),
+		activeAutoPings:                 make(map[string]bool),
+		processDaemonSubmit:             processDaemonSubmitRequest,
+		launchDaemonSubmitWorker:        defaultDaemonSubmitWorkerLauncher,
+		daemonSubmitSem:                 make(chan struct{}, daemonSubmitWorkerLimit),
+		daemonSubmitResults:             make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
+		activeDaemonSubmitKeys:          make(map[string]bool),
+		scheduleRuntimeTimer:            defaultRuntimeTimerScheduler,
+		activeMailboxProjectionSyncs:    make(map[string]bool),
+		pendingMailboxProjectionSyncs:   make(map[string]bool),
 	}
 }
 
@@ -487,7 +489,7 @@ func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath stri
 }
 
 func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
-	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), now)
+	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), rt.nonDaemonDeliveryRuntimeDiagnostics(), now)
 	return &diag
 }
 
@@ -503,10 +505,11 @@ func runtimeDiagnosticsLogLine(reason string, diagnostics *status.RuntimeDiagnos
 	gc := diagnostics.GoRuntime.GC
 	daemon := diagnostics.Daemon
 	submit := diagnostics.DaemonSubmit
+	nonDaemon := diagnostics.NonDaemonDelivery
 	rss := currentProcessRSSSnapshot()
 
 	return fmt.Sprintf(
-		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s %s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
+		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s %s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s non_daemon_delivery_worker_limit=%d non_daemon_delivery_active_post_count=%d non_daemon_delivery_pending_post_count=%d non_daemon_delivery_active_auto_ping_count=%d non_daemon_delivery_pending_auto_ping_count=%d non_daemon_delivery_active_manual_ping_count=%d non_daemon_delivery_pending_manual_ping_count=%d non_daemon_delivery_saturation_count=%d non_daemon_delivery_last_saturated_at=%s",
 		reason,
 		diagnostics.ObservedAt,
 		processRSSLogFields(rss),
@@ -540,6 +543,15 @@ func runtimeDiagnosticsLogLine(reason string, diagnostics *status.RuntimeDiagnos
 		submit.OldestLateResponseAgeSeconds,
 		submit.SaturationCount,
 		submit.LastSaturatedAt,
+		nonDaemon.WorkerLimit,
+		nonDaemon.ActivePostCount,
+		nonDaemon.PendingPostCount,
+		nonDaemon.ActiveAutoPingCount,
+		nonDaemon.PendingAutoPingCount,
+		nonDaemon.ActiveManualPingCount,
+		nonDaemon.PendingManualPingCount,
+		nonDaemon.SaturationCount,
+		nonDaemon.LastSaturatedAt,
 	)
 }
 
@@ -614,6 +626,20 @@ func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
 		return cap(rt.daemonSubmitSem)
 	}
 	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
+}
+
+func (rt *daemonRuntime) nonDaemonDeliveryBudget() *nonDaemonDeliveryBudget {
+	if rt.daemonState != nil {
+		return rt.daemonState.nonDaemonDeliveryBudgetForUse()
+	}
+	if rt.nonDaemonDeliveryBudgetFallback == nil {
+		rt.nonDaemonDeliveryBudgetFallback = newNonDaemonDeliveryBudget(rt.now)
+	}
+	return rt.nonDaemonDeliveryBudgetFallback
+}
+
+func (rt *daemonRuntime) nonDaemonDeliveryRuntimeDiagnostics() status.NonDaemonDeliveryRuntimeDiagnostics {
+	return rt.nonDaemonDeliveryBudget().snapshot()
 }
 
 func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
@@ -1001,9 +1027,24 @@ func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msg
 }
 
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
+	budget := rt.nonDaemonDeliveryBudget()
+	if !budget.tryStart(nonDaemonDeliveryPathPost) {
+		budget.queue(nonDaemonDeliveryPathPost)
+		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=post file=%s retry_in=%s\n", filename, nonDaemonDeliveryRetryDelay)
+		scheduler := rt.scheduleRuntimeTimer
+		if scheduler == nil {
+			scheduler = defaultRuntimeTimerScheduler
+		}
+		scheduler(nonDaemonDeliveryRetryDelay, "post-delivery-budget-retry", rt.events, func() {
+			budget.unqueue(nonDaemonDeliveryPathPost)
+			rt.dispatchPostDelivery(eventPath, filename, nodes, adjacency, cfg, reservation)
+		})
+		return
+	}
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
 		defer func() {
+			budget.finish(nonDaemonDeliveryPathPost)
 			if reservation.route != "" {
 				rt.daemonState.finishDeliveryRoute(reservation.route, reservation.reservedAt, reservation.hasReservation, deliveredNormally, rt.now())
 			}
@@ -1818,22 +1859,42 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 		dispatchLivenessMap := cloneBoolMap(livenessMap)
 		dispatchAdjacency := cloneStringSliceMap(rt.adjacency)
 		dispatchNodes := cloneNodeInfoMap(freshNodes)
-		sendAutoPing := rt.autoPingSender()
-		go func() {
-			defer rt.finishAutoPing(dispatchNodeKey)
-
-			result, err := sendAutoPing(dispatchNodeInfo, rt.contextID, dispatchNodeKey, dispatchTemplate, rt.cfg, dispatchActiveNodes, dispatchLivenessMap, dispatchAdjacency, dispatchNodes)
-			if err != nil {
-				log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", dispatchNodeKey, err)
-				return
-			}
-			if !result.Delivered {
-				return
-			}
-
-			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, rt.now())
-		}()
+		rt.dispatchAutoPingDelivery(dispatchNodeKey, dispatchNodeInfo, dispatchPending, dispatchTemplate, dispatchActiveNodes, dispatchLivenessMap, dispatchAdjacency, dispatchNodes)
 	}
+}
+
+func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, tmpl string, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) {
+	budget := rt.nonDaemonDeliveryBudget()
+	if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+		budget.queue(nonDaemonDeliveryPathAutoPing)
+		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=auto_ping node=%s retry_in=%s\n", nodeKey, nonDaemonDeliveryRetryDelay)
+		scheduler := rt.scheduleRuntimeTimer
+		if scheduler == nil {
+			scheduler = defaultRuntimeTimerScheduler
+		}
+		scheduler(nonDaemonDeliveryRetryDelay, "auto-ping-budget-retry", rt.events, func() {
+			budget.unqueue(nonDaemonDeliveryPathAutoPing)
+			rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl, activeNodes, livenessMap, adjacency, nodes)
+		})
+		return
+	}
+
+	sendAutoPing := rt.autoPingSender()
+	go func() {
+		defer budget.finish(nonDaemonDeliveryPathAutoPing)
+		defer rt.finishAutoPing(nodeKey)
+
+		result, err := sendAutoPing(nodeInfo, rt.contextID, nodeKey, tmpl, rt.cfg, activeNodes, livenessMap, adjacency, nodes)
+		if err != nil {
+			log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", nodeKey, err)
+			return
+		}
+		if !result.Delivered {
+			return
+		}
+
+		rt.recordDeliveredAutoPing(nodeKey, nodeInfo, pending, rt.now())
+	}()
 }
 
 func (rt *daemonRuntime) autoPingSender() autoPingSender {

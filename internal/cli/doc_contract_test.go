@@ -79,6 +79,7 @@ func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
 	assertContainsNormalized(t, statusHelp, "It requests a point-in-time daemon runtime snapshot with Go memory, GC, goroutine, count-only daemon cardinality fields, and daemon_submit queue health.")
 	assertContainsNormalized(t, statusHelp, "daemon_submit includes worker_limit, active_worker_count, active_request_count, pending_request_count")
 	assertContainsNormalized(t, statusHelp, "late_response_count, oldest_late_response_age_seconds, saturation_count, and last_saturated_at")
+	assertContainsNormalized(t, statusHelp, "non_daemon_delivery includes worker_limit plus active, pending, and saturation counts for post, auto-PING, and manual PING delivery paths.")
 	assertContainsNormalized(t, statusHelp, "This is not a persisted time series.")
 	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
 	for _, hidden := range []string{
