@@ -20,6 +20,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
@@ -78,8 +80,6 @@ type daemonRuntime struct {
 	mailboxProjectionSyncWG       sync.WaitGroup
 }
 
-const daemonSubmitWorkerLimit = 4
-
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
 
 // daemonSubmitWorkerLauncher owns worker scheduling. The worker owns exactly one
@@ -131,6 +131,7 @@ func newDaemonRuntime(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) *daemonRuntime {
+	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
 		baseDir:                       baseDir,
 		sessionDir:                    sessionDir,
@@ -162,6 +163,17 @@ func newDaemonRuntime(
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
 	}
+}
+
+func daemonSubmitWorkerLimitFromConfig(cfg *config.Config) int {
+	if cfg == nil || cfg.DaemonSubmitWorkerLimit == 0 {
+		return config.DefaultDaemonSubmitWorkerLimit
+	}
+	limit, warning := config.EffectiveDaemonSubmitWorkerLimit(cfg.DaemonSubmitWorkerLimit)
+	if warning != "" {
+		log.Printf("postman: WARNING: %s\n", warning)
+	}
+	return limit
 }
 
 func defaultDaemonSubmitWorkerLauncher(worker func()) {
@@ -360,6 +372,14 @@ func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
 	status := rt.dispatchDaemonSubmitRequest(requestPath)
 	if status == daemonSubmitDispatchSaturated {
+		request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+		fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
+		fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
+		fields.DaemonSubmitRequestID = request.RequestID
+		fields.DaemonSubmitCommand = string(request.Command)
+		fields.SubmitPath = string(projection.SubmitPathDaemon)
+		fields.Result = "saturated"
+		msgtrace.Log("daemon_submit_saturate", fields)
 		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
 			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
 	}
@@ -402,6 +422,12 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), sessionNameForDaemonSubmitRequestPath(requestPath), request.Content)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("daemon_submit_dispatch", fields)
 	processor := rt.processDaemonSubmit
 
 	worker := func() {
@@ -477,11 +503,13 @@ func runtimeDiagnosticsLogLine(reason string, diagnostics *status.RuntimeDiagnos
 	gc := diagnostics.GoRuntime.GC
 	daemon := diagnostics.Daemon
 	submit := diagnostics.DaemonSubmit
+	rss := currentProcessRSSSnapshot()
 
 	return fmt.Sprintf(
-		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
+		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=%s observed_at=%s %s heap_alloc_bytes=%d heap_sys_bytes=%d heap_objects=%d stack_inuse_bytes=%d total_alloc_bytes=%d memory_sys_bytes=%d memory_frees_count=%d gc_count=%d gc_next_bytes=%d gc_pause_total_ns=%d gc_last_pause_ns=%d goroutine_count=%d daemon_session_count=%d daemon_node_count=%d daemon_watched_dir_count=%d daemon_claimed_pane_count=%d daemon_active_post_event_count=%d daemon_active_auto_ping_count=%d daemon_active_daemon_submit_count=%d daemon_submit_worker_limit=%d daemon_submit_active_worker_count=%d daemon_submit_active_request_count=%d daemon_submit_pending_request_count=%d daemon_submit_oldest_pending_age_seconds=%d daemon_submit_claimed_request_count=%d daemon_submit_oldest_claimed_age_seconds=%d daemon_submit_late_response_count=%d daemon_submit_oldest_late_response_age_seconds=%d daemon_submit_saturation_count=%d daemon_submit_last_saturated_at=%s",
 		reason,
 		diagnostics.ObservedAt,
+		processRSSLogFields(rss),
 		mem.HeapAllocBytes,
 		mem.HeapSysBytes,
 		mem.HeapObjects,
@@ -565,7 +593,7 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 
 func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
 	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
-		WorkerLimit:        daemonSubmitWorkerLimit,
+		WorkerLimit:        rt.daemonSubmitWorkerLimit(),
 		ActiveWorkerCount:  len(rt.daemonSubmitSem),
 		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
 		SaturationCount:    rt.daemonSubmitSaturationCount,
@@ -579,6 +607,13 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 		scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
 	}
 	return diagnostics
+}
+
+func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
+	if rt.daemonSubmitSem != nil {
+		return cap(rt.daemonSubmitSem)
+	}
+	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
 }
 
 func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
@@ -680,10 +715,10 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
 	}
 	if rt.daemonSubmitSem == nil {
-		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimit)
+		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.daemonSubmitResults == nil {
-		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit)
+		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.activeDaemonSubmitKeys == nil {
 		rt.activeDaemonSubmitKeys = make(map[string]bool)
@@ -711,6 +746,14 @@ func daemonSubmitDispatchKey(requestPath string) string {
 	return "path:" + requestPath
 }
 
+func sessionNameForDaemonSubmitRequestPath(requestPath string) string {
+	sessionDir, ok := daemonSubmitSessionDir(requestPath)
+	if !ok {
+		return ""
+	}
+	return filepath.Base(sessionDir)
+}
+
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
 	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
@@ -733,6 +776,38 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 }
 
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
+	pendingBySession := rt.pendingDaemonSubmitRequestsBySession()
+	for {
+		dispatchedInRound := false
+		for i := range pendingBySession {
+			pending := &pendingBySession[i]
+			for pending.next < len(pending.names) {
+				name := pending.names[pending.next]
+				pending.next++
+				status := rt.dispatchDaemonSubmitRequest(filepath.Join(pending.requestsDir, name))
+				if status == daemonSubmitDispatchSaturated {
+					return
+				}
+				if status == daemonSubmitDispatched {
+					dispatchedInRound = true
+					break
+				}
+			}
+		}
+		if !dispatchedInRound {
+			return
+		}
+	}
+}
+
+type pendingDaemonSubmitSessionRequests struct {
+	requestsDir string
+	names       []string
+	next        int
+}
+
+func (rt *daemonRuntime) pendingDaemonSubmitRequestsBySession() []pendingDaemonSubmitSessionRequests {
+	pendingBySession := []pendingDaemonSubmitSessionRequests{}
 	for _, sessionDir := range runtimeSessionDirs(rt.sessionDir, rt.nodes) {
 		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
 		entries, err := os.ReadDir(requestsDir)
@@ -751,13 +826,14 @@ func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 			names = append(names, entry.Name())
 		}
 		sort.Strings(names)
-		for _, name := range names {
-			status := rt.dispatchDaemonSubmitRequest(filepath.Join(requestsDir, name))
-			if status == daemonSubmitDispatchSaturated {
-				return
-			}
+		if len(names) > 0 {
+			pendingBySession = append(pendingBySession, pendingDaemonSubmitSessionRequests{
+				requestsDir: requestsDir,
+				names:       names,
+			})
 		}
 	}
+	return pendingBySession
 }
 
 func (rt *daemonRuntime) handlePostWatcherEvent(eventPath string, op fswatcher.Op) {
@@ -811,7 +887,15 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	now := rt.now()
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-	syncMailboxProjection(sourceSessionDir)
+	var postTraceFields msgtrace.Fields
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields := msgtrace.FromContent(filename, shadowRelativePath(sourceSessionDir, eventPath), filepath.Base(sourceSessionDir), string(content))
+		fields.ContextID = rt.contextID
+		fields.SubmitPath = string(projection.SubmitPathPost)
+		msgtrace.Log("send_enqueue", fields)
+		postTraceFields = fields
+	}
+	syncMailboxProjectionWithTrace(sourceSessionDir, postTraceFields)
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
@@ -890,6 +974,32 @@ func (rt *daemonRuntime) retryActivePostDelivery(eventPath, filename string) {
 	rt.processActivePostEvent(eventPath, filename)
 }
 
+func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msgtrace.Fields {
+	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
+	sourceSessionName := filepath.Base(sourceSessionDir)
+	fields := msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	}
+	if content, err := os.ReadFile(eventPath); err == nil {
+		fields = msgtrace.FromContent(filename, fields.MessagePath, sourceSessionName, string(content))
+	}
+	if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	if fields.ContextID == "" {
+		fields.ContextID = rt.contextID
+	}
+	return fields
+}
+
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
@@ -905,11 +1015,20 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 		}()
 
+		postTraceFields := rt.postDeliveryTraceFields(eventPath, filename)
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+			attemptFields := postTraceFields
+			attemptFields.DeliveryAttempt = 1
+			msgtrace.Log("delivery_attempt", attemptFields)
 			log.Printf("postman: deliver: picked up %s -> %s (file=%s)\n", msgInfo.From, msgInfo.To, filename)
 		}
 		if err := message.DeliverMessage(eventPath, rt.contextID, nodes, adjacency, cfg, rt.daemonState.IsSessionEnabled, messageEvents, rt.idleTracker, rt.selfSession); err != nil {
+			resultFields := postTraceFields
+			resultFields.DeliveryAttempt = 1
+			resultFields.Result = "error"
+			resultFields.Reason = err.Error()
+			msgtrace.Log("delivery_result", resultFields)
 			rt.events <- tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
@@ -919,17 +1038,24 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 
 		sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 		sourceSessionName := filepath.Base(sourceSessionDir)
-		syncMailboxProjection(sourceSessionDir)
+		syncFields := postTraceFields
+		syncFields.DeliveryAttempt = 1
+		syncMailboxProjectionWithTraceFn(sourceSessionDir, syncFields)
 		if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			recipientFullName := discovery.ResolveNodeName(info.To, sourceSessionName, nodes)
 			if nodeInfo, ok := nodes[recipientFullName]; ok {
-				syncMailboxProjection(nodeInfo.SessionDir)
+				recipientSyncFields := syncFields
+				recipientSyncFields.MessagePath = filepath.Join("inbox", nodeaddr.Simple(info.To), filename)
+				recipientSyncFields.TmuxSession = filepath.Base(nodeInfo.SessionDir)
+				syncMailboxProjectionWithTraceFn(nodeInfo.SessionDir, recipientSyncFields)
 			}
 		}
 
 		suppressNormalDelivery := false
+		var deliveryEvent message.DaemonEvent
 		select {
 		case msgEvent := <-messageEvents:
+			deliveryEvent = msgEvent
 			rt.events <- tui.DaemonEvent{
 				Type:    msgEvent.Type,
 				Message: msgEvent.Message,
@@ -937,6 +1063,26 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			}
 			suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 		default:
+		}
+		if suppressNormalDelivery {
+			reason := messageEventFailureReason(deliveryEvent)
+			if reason == "" {
+				reason = "dead_letter"
+			}
+			deadLetterFields := msgtrace.Fields{
+				MessageID:       filename,
+				MessagePath:     shadowRelativePath(filepath.Dir(filepath.Dir(eventPath)), eventPath),
+				ContextID:       rt.contextID,
+				TmuxSession:     sourceSessionName,
+				DeliveryAttempt: 1,
+				Result:          "dead_letter",
+				Reason:          reason,
+			}
+			if info, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
+				deadLetterFields.Sender = info.From
+				deadLetterFields.Recipient = info.To
+			}
+			msgtrace.Log("delivery_result", deadLetterFields)
 		}
 
 		if !suppressNormalDelivery {
@@ -1003,9 +1149,17 @@ func (rt *daemonRuntime) handleReadWatcherEvent(eventPath string, op fswatcher.O
 		return
 	}
 
-	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
+	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, rt.now())
+	msgtrace.Log("pop_read_archive", msgtrace.Fields{
+		MessageID:   filename,
+		MessagePath: shadowRelativePath(sourceSessionDir, eventPath),
+		Sender:      info.From,
+		Recipient:   info.To,
+		ContextID:   rt.contextID,
+		TmuxSession: sourceSessionName,
+	})
 	rt.scheduleMailboxProjectionSync(sourceSessionDir)
 
 	if info.To == "postman" || info.To == "daemon" {

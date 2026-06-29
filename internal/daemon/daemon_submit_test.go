@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/base64"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -307,6 +310,131 @@ func TestProcessDaemonSubmitRequest_RuntimeProfileRequiresExplicitDestination(t 
 	}
 }
 
+func TestProcessDaemonSubmitRequest_QueueMsThresholdExceededEmitsWarning(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	// CreatedAt far in the past to guarantee queue_ms > 30,000 ms.
+	staleCreatedAt := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-queue-warn",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: staleCreatedAt,
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "event=queue_ms_threshold_exceeded") {
+		t.Fatalf("expected queue_ms_threshold_exceeded WARNING in log; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "threshold_ms=30000") {
+		t.Fatalf("expected threshold_ms=30000 in WARNING log; got:\n%s", logged)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_QueueMsBelowThresholdNoWarning(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	// CreatedAt is current — queue_ms will be well below the 30,000 ms threshold.
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-queue-no-warn",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	logged := buf.String()
+	if strings.Contains(logged, "event=queue_ms_threshold_exceeded") {
+		t.Fatalf("unexpected queue_ms_threshold_exceeded WARNING for fast request; got:\n%s", logged)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_ConfiguredThresholdIsHonored(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "cfg-threshold-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	// Override the package-level threshold to 1 000 ms (1 s) to prove the
+	// configured value is used instead of the default 30 000 ms.
+	original := daemonSubmitQueueWarnThresholdMs
+	daemonSubmitQueueWarnThresholdMs = 1_000
+	t.Cleanup(func() { daemonSubmitQueueWarnThresholdMs = original })
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	// CreatedAt 5 s ago: queue_ms ~5 000, which is above 1 000 but well below
+	// the default 30 000, proving the custom threshold fires.
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-cfg-threshold",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().Add(-5 * time.Second).UTC().Format(time.RFC3339Nano),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "event=queue_ms_threshold_exceeded") {
+		t.Fatalf("expected queue_ms_threshold_exceeded WARNING for custom 1 000 ms threshold; got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "threshold_ms=1000") {
+		t.Fatalf("expected threshold_ms=1000 in WARNING log; got:\n%s", logged)
+	}
+}
+
 func TestProcessDaemonSubmitRequest_AlreadyClaimedRequestIsNoop(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -419,5 +547,93 @@ func TestProcessDaemonSubmitRequest_ConcurrentClaimsPopOnlyOnce(t *testing.T) {
 	}
 	if response.Filename != oldest {
 		t.Fatalf("response.Filename = %q, want %q", response.Filename, oldest)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_RuntimeProfileFileRefusesOverwriteByDefault(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	outputPath := filepath.Join(t.TempDir(), "goroutine.pprof")
+	if err := os.WriteFile(outputPath, []byte("existing"), 0o600); err != nil {
+		t.Fatalf("WriteFile existing: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID:          "req-profile-no-overwrite",
+		Command:            projection.DaemonSubmitRuntimeProfile,
+		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+		ProfileKind:        runtimeprofile.KindGoroutine,
+		ProfileDestination: "file",
+		ProfileOutputPath:  outputPath,
+		ProfileMaxBytes:    runtimeprofile.DefaultMaxBytes,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-profile-no-overwrite"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error == "" {
+		t.Fatal("response.Error = empty, want overwrite refusal error")
+	}
+	if !strings.Contains(response.Error, "already exists") {
+		t.Fatalf("response.Error = %q, want 'already exists'", response.Error)
+	}
+	got, _ := os.ReadFile(outputPath)
+	if string(got) != "existing" {
+		t.Fatalf("existing file was modified: %q", string(got))
+	}
+}
+
+func TestProcessDaemonSubmitRequest_RuntimeProfileFileForceOverwrites(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	outputPath := filepath.Join(t.TempDir(), "goroutine.pprof")
+	if err := os.WriteFile(outputPath, []byte("existing"), 0o600); err != nil {
+		t.Fatalf("WriteFile existing: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID:          "req-profile-force",
+		Command:            projection.DaemonSubmitRuntimeProfile,
+		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+		ProfileKind:        runtimeprofile.KindGoroutine,
+		ProfileDestination: "file",
+		ProfileOutputPath:  outputPath,
+		ProfileMaxBytes:    runtimeprofile.DefaultMaxBytes,
+		ProfileForce:       true,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-profile-force"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("response.Error = %q, want empty (force overwrite succeeded)", response.Error)
+	}
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile profile output: %v", err)
+	}
+	if string(written) == "existing" {
+		t.Fatal("file was not overwritten by --force")
+	}
+	if len(written) == 0 {
+		t.Fatal("overwritten profile is empty")
 	}
 }

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,7 +134,6 @@ scan_interval_seconds = 2.0
 session_scan_interval_seconds = 0.25
 enter_delay_seconds = 1.0
 tmux_timeout_seconds = 10.0
-startup_delay_seconds = 3.0
 base_dir = "/custom/base"
 notification_template = "Custom notification: {{.From}}"
 daemon_message_template = "Custom daemon"
@@ -173,9 +174,6 @@ role = "observer"
 	}
 	if cfg.TmuxTimeout != 10.0 {
 		t.Errorf("TmuxTimeout: got %v, want 10.0", cfg.TmuxTimeout)
-	}
-	if cfg.StartupDelay != 3.0 {
-		t.Errorf("StartupDelay: got %v, want 3.0", cfg.StartupDelay)
 	}
 	if cfg.BaseDir != "/custom/base" {
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/custom/base")
@@ -343,11 +341,71 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.AutoPingDelaySeconds != 20.0 {
 		t.Errorf("default AutoPingDelaySeconds: got %v, want 20.0", cfg.AutoPingDelaySeconds)
 	}
+	if cfg.DaemonSubmitWorkerLimit != DefaultDaemonSubmitWorkerLimit {
+		t.Errorf("default DaemonSubmitWorkerLimit: got %d, want %d", cfg.DaemonSubmitWorkerLimit, DefaultDaemonSubmitWorkerLimit)
+	}
 	if cfg.AutoEnableNewSessions == nil || *cfg.AutoEnableNewSessions {
 		t.Errorf("default AutoEnableNewSessions: got %v, want false (opt-in per #135)", cfg.AutoEnableNewSessions)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestLoadConfig_DaemonSubmitWorkerLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+daemon_submit_worker_limit = 12
+edges = ["orchestrator --- worker"]
+
+[orchestrator]
+role = "coordinator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DaemonSubmitWorkerLimit != 12 {
+		t.Fatalf("DaemonSubmitWorkerLimit = %d, want 12", cfg.DaemonSubmitWorkerLimit)
+	}
+}
+
+func TestEffectiveDaemonSubmitWorkerLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured int
+		want       int
+		wantWarn   bool
+	}{
+		{name: "default for zero", configured: 0, want: DefaultDaemonSubmitWorkerLimit, wantWarn: true},
+		{name: "default for negative", configured: -1, want: DefaultDaemonSubmitWorkerLimit, wantWarn: true},
+		{name: "configured", configured: 12, want: 12},
+		{name: "clamped max", configured: 99, want: MaxDaemonSubmitWorkerLimit, wantWarn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, warning := EffectiveDaemonSubmitWorkerLimit(tt.configured)
+			if got != tt.want {
+				t.Fatalf("EffectiveDaemonSubmitWorkerLimit(%d) = %d, want %d", tt.configured, got, tt.want)
+			}
+			if (warning != "") != tt.wantWarn {
+				t.Fatalf("warning = %q, wantWarn %v", warning, tt.wantWarn)
+			}
+		})
 	}
 }
 
@@ -1808,4 +1866,47 @@ role = "worker"
 	if got != "trusted explicit-config-base" {
 		t.Fatalf("explicit trusted base draft template = %q, want %q", got, "trusted explicit-config-base")
 	}
+}
+
+func TestWarnDeprecatedKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		wantKey string
+	}{
+		{
+			name:    "startup_delay_seconds triggers warning",
+			raw:     "startup_delay_seconds = 10.0\nscan_interval_seconds = 1.0\n",
+			wantKey: "startup_delay_seconds",
+		},
+		{
+			name:    "auto_enable_new_agents triggers warning",
+			raw:     "auto_enable_new_agents = true\n",
+			wantKey: "auto_enable_new_agents",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			warnDeprecatedKeys([]byte(tc.raw), "/fake/config.toml")
+
+			if !strings.Contains(buf.String(), tc.wantKey) {
+				t.Errorf("warnDeprecatedKeys: expected warning containing %q, got: %q", tc.wantKey, buf.String())
+			}
+		})
+	}
+
+	t.Run("no warning for current keys", func(t *testing.T) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+		warnDeprecatedKeys([]byte("scan_interval_seconds = 1.0\nauto_enable_new_sessions = true\n"), "/fake/config.toml")
+
+		if buf.Len() != 0 {
+			t.Errorf("warnDeprecatedKeys: unexpected warning output: %q", buf.String())
+		}
+	})
 }
