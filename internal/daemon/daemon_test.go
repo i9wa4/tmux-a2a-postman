@@ -185,6 +185,19 @@ func TestMessageEventSuppressesNormalDelivery(t *testing.T) {
 	}
 }
 
+func TestMessageEventFailureReason(t *testing.T) {
+	event := message.DaemonEvent{
+		Type:    "message_received",
+		Message: "Dead-letter: orchestrator -> worker (routing denied)",
+		Details: map[string]interface{}{
+			"failure_reason": "routing-denied",
+		},
+	}
+	if got := messageEventFailureReason(event); got != "routing-denied" {
+		t.Fatalf("messageEventFailureReason() = %q, want routing-denied", got)
+	}
+}
+
 func TestScanLiveInboxCounts_CountsUnreadInboxMarkdownFiles(t *testing.T) {
 	sessionDir := t.TempDir()
 	workerInbox := filepath.Join(sessionDir, "inbox", "worker")

@@ -29,14 +29,18 @@ MUST load after sending or live mailbox/session work; first contact uses
    or no-action or no-op decision. `messageType: ping`, `replyPolicy: none`,
    and other metadata do not allow skipping the body. truncated command output
    does not count as a complete read.
-6. Filling an input request closes transport, not task acceptance. After any
+6. Both `send-heredoc` and `pop` output a `submit_path` field
+   (`daemon-submit` or `post`) identifying whether daemon mediation was used or
+   bypassed by direct filesystem access. This applies to all output including
+   empty `pop` results. Use `submit_path` to audit fallback behavior.
+7. Filling an input request closes transport, not task acceptance. After any
    exact reply, check send JSON `fill`, `required_input`, and `notice`.
    DONE/completion or BLOCKED/task-acceptance replies require
    `Task artifact: <artifact-reference>`, Original checklist: PASS, evidence,
    and Remaining blockers: none. Use `BLOCKED` with `Original checklist: FAIL`.
-7. Receivers verify checklist status, durable references, evidence, and
+8. Receivers verify checklist status, durable references, evidence, and
    blockers before relaying, approving, or closing work.
-8. Pane ids require exact tmux verification; missing panes are stale evidence.
+9. Pane ids require exact tmux verification; missing panes are stale evidence.
    Dead letters, missing routes, or stale topology go to
    `postman-config-auditor`. More detail:
    [Session Flow](references/session-flow.md).

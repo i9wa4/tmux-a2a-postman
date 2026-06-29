@@ -318,6 +318,12 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
+Both `send-heredoc` and `pop` prefer daemon-mediated delivery when the running
+daemon owns the session and fall back to direct filesystem access for non-owned
+sessions. Both output a `submit_path` field (`daemon-submit` or `post`) that
+identifies which path was taken, including on empty `pop` results. Operators
+can use this field to detect when daemon mediation was bypassed.
+
 If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
 unknown. The daemon may still commit the side effect after the CLI stops
 waiting, so inspect status, inbox/read state, archived message evidence, or
@@ -325,14 +331,20 @@ recipient-side confirmation before retrying. Use
 `inspect-daemon-submit --id <request_id>` to look up the timed-out request, and
 use `get-status --debug` for bounded `daemon_submit` queue health, including
 pending, claimed, late response, worker, and saturation counts.
+Configure daemon-submit concurrency with
+`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
+values above 16 are clamped with a daemon warning.
 
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
 event=memory_snapshot source=passive_log` lines are intended for normal log
 analysis and require no operator action. They include only scalar Go memory,
-GC, goroutine, daemon cardinality, and daemon-submit queue counters; they omit
-mailbox body content, pane content, local absolute paths, message identifiers,
-node names, and unbounded lists.
+process RSS when supported by the host OS, GC, goroutine, daemon cardinality,
+and daemon-submit queue counters; they omit mailbox body content, pane content,
+local absolute paths, message identifiers, node names, and unbounded lists.
+Linux snapshots include `rss_bytes`; unsupported hosts or read failures mark
+`rss_supported=false` or `rss_available=false` instead of reporting a
+misleading zero value.
 
 For incident diagnostics, `capture-profile` can capture one heap or goroutine
 profile from the running daemon through an explicit daemon-submit request after
@@ -352,12 +364,30 @@ retained objects; goroutine profiles help explain growing goroutine counts or
 stuck work. Captures are point-in-time and may briefly add CPU and memory
 pressure proportional to profile size, bounded by `--max-bytes`.
 
+By default, `capture-profile` refuses to overwrite an existing output file.
+Pass `--force` to allow overwriting:
+
+```sh
+tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof --force
+```
+
 Inspect live session state:
 
 ```sh
 tmux-a2a-postman get-status
 tmux-a2a-postman get-status-oneline
 ```
+
+Message lifecycle logs use `component=message_lifecycle` and stable trace
+fields so operators can follow one message across enqueue, daemon-submit,
+delivery, pop/read archive, dead-letter, projection sync, and late-response
+events. Start with `message_id=<filename>` when known; for daemon-submit
+timeouts, start with `daemon_submit_request_id=<request_id>` and then correlate
+the emitted `message_id`, `sender`, `recipient`, `context_id`,
+`tmux_session`, `input_request_id`, `reply_to`, and `delivery_attempt` fields.
+`message_path` is a local operator log field and may name mailbox-relative or
+daemon-submit files; public reports should use message ids, request ids, and
+repo-relative evidence instead of machine-local paths.
 
 Use explicit subcommands. Running `tmux-a2a-postman` without a subcommand only
 prints usage.

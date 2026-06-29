@@ -35,9 +35,11 @@ Core config:
   skill_path                       postman.md skill catalogs; use inject: ping, inject: compaction_ping, or list syntax for PINGs
   session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.10)
   auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
+  daemon_submit_worker_limit       Daemon-submit worker concurrency (default: 8; maximum: 16)
   notification_template            Pane hint rendered when mail arrives
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
+  daemon_submit_queue_warn_threshold_ms  Queue wait WARNING threshold in ms (default: 30000); emits event=queue_ms_threshold_exceeded when queue_ms >= threshold
   pane_capture_tail_lines          Recent lines scanned for compaction markers (default: 100; 0 = visible pane only)
 
 Skill catalogs:

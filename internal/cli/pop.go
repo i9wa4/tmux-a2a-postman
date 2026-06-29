@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -70,7 +71,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			return fmt.Errorf("daemon submit pop: %w", err)
 		}
 		if response.Empty {
-			return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+			return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon)
 		}
 		remaining := response.UnreadBefore - 1
 		if remaining < 0 {
@@ -80,12 +81,16 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
-		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
+			ContextID:   resolvedContextID,
+			SessionName: sessionName,
+			Node:        nodeName,
+		})
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
 	if len(msgs) == 0 {
-		return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+		return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -98,7 +103,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			// Race: file disappeared between listing and reading; retry once.
 			msgs = message.ScanInboxMessages(inboxPath)
 			if len(msgs) == 0 {
-				return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+				return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 			}
 			sort.Slice(msgs, func(i, j int) bool {
 				return msgs[i].Filename < msgs[j].Filename
@@ -107,7 +112,7 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			data, err = os.ReadFile(abs)
 			if err != nil {
 				if os.IsNotExist(err) {
-					return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir))
+					return writeEmptyPopOutput(ctx.stdout, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost)
 				}
 				return fmt.Errorf("reading message: %w", err)
 			}
@@ -122,7 +127,11 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	remaining--
-	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir))
+	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost, popReceiverContextOptions{
+		ContextID:   resolvedContextID,
+		SessionName: sessionName,
+		Node:        nodeName,
+	})
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {
@@ -132,6 +141,7 @@ func archivePoppedMessage(absPath, filename string) (string, error) {
 type popEmptyOutput struct {
 	Status             string                 `json:"status"`
 	SessionDiagnostics *popSessionDiagnostics `json:"session_diagnostics,omitempty"`
+	SubmitPath         projection.SubmitPath  `json:"submit_path,omitempty"`
 }
 
 type popMessageOutput struct {
@@ -154,11 +164,20 @@ type popMessageOutput struct {
 	Remaining                   *int                    `json:"remaining,omitempty"`
 	ArchivedBodyReadRequired    bool                    `json:"archived_body_read_required,omitempty"`
 	ArchivedBodyReadInstruction string                  `json:"archived_body_read_instruction,omitempty"`
+	ReceiverRuntimeContext      *runtimecontext.Summary `json:"receiver_runtime_context,omitempty"`
+	ReceiverRuntimeContextError string                  `json:"receiver_runtime_context_error,omitempty"`
 	RuntimeContext              *runtimecontext.Summary `json:"runtime_context,omitempty"`
 	RuntimeContextError         string                  `json:"runtime_context_error,omitempty"`
 	PopReceiptPath              string                  `json:"pop_receipt_path,omitempty"`
 	PopReceiptAbsolutePath      string                  `json:"pop_receipt_absolute_path,omitempty"`
 	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
+	SubmitPath                  projection.SubmitPath   `json:"submit_path,omitempty"`
+}
+
+type popReceiverContextOptions struct {
+	ContextID   string
+	SessionName string
+	Node        string
 }
 
 type popSessionDiagnostics struct {
@@ -174,17 +193,18 @@ type popSessionDiagnostics struct {
 
 const archivedBodyReadInstruction = "Read the complete archived Markdown body from markdown_absolute_path when present, otherwise markdown_path, before any handling, routing, reply, status decision, or no-action or no-op decision; messageType, replyPolicy, and other metadata do not waive this; truncated command output is not a complete read."
 
-func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics) error {
-	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics})
+func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath) error {
+	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics, SubmitPath: submitPath})
 }
 
-func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics) error {
+func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
 		output.MarkdownAbsolutePath = markdownPath
 	}
 	if runtimeContextMode == "summary" {
+		output.ReceiverRuntimeContext, output.ReceiverRuntimeContextError = receiverRuntimeContextSummaryForPop(sessionDirFromArchivedMarkdownPath(markdownPath), output.MessageID, receiverOptions)
 		output.RuntimeContext, output.RuntimeContextError = runtimeContextSummaryForMessage(content, markdownPath)
 	}
 	output.UnreadBefore = unreadBefore
@@ -192,6 +212,7 @@ func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath str
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
+	output.SubmitPath = submitPath
 	receiptPath, err := popReceiptPath(markdownPath)
 	if err != nil {
 		return err
@@ -321,6 +342,31 @@ func runtimeContextSummaryForMessage(content, markdownPath string) (*runtimecont
 		return nil, "runtime_context_hash_mismatch: envelope runtimeContextHash does not match archived runtime context content_hash"
 	}
 	return summary, ""
+}
+
+func receiverRuntimeContextSummaryForPop(sessionDir, messageID string, opts popReceiverContextOptions) (*runtimecontext.Summary, string) {
+	if sessionDir == "" {
+		return nil, "receiver_runtime_context_unavailable: archived message path unavailable"
+	}
+	now := time.Now()
+	paneID := config.GetTmuxPaneID()
+	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
+		Now:                        now,
+		Scope:                      "receiver",
+		ContextID:                  opts.ContextID,
+		MessageID:                  messageID,
+		TmuxSession:                opts.SessionName,
+		Node:                       opts.Node,
+		PaneID:                     paneID,
+		Runtime:                    runtimecontext.CollectLaunchCommandMetadata(paneID),
+		SuppressRuntimeAutoCollect: true,
+	})
+	saved, err := runtimecontext.SaveSnapshot(sessionDir, snapshot)
+	if err != nil {
+		return nil, "receiver_runtime_context_unavailable: snapshot could not be saved"
+	}
+	summary := runtimecontext.SummaryFromSnapshot(saved.Snapshot, saved.Path, saved.SizeBytes, now)
+	return &summary, ""
 }
 
 func sessionDirFromArchivedMarkdownPath(markdownPath string) string {
