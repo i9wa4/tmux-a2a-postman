@@ -67,16 +67,17 @@ tmux_timeout_seconds = 30.0          # Timeout for tmux commands
 enter_delay_seconds = 3.0            # Delay before sending Enter key
 enter_verify_delay_seconds = 3.0     # Delay for post-Enter capture comparison (0 = disabled)
 enter_retry_max = 2                  # Max C-m retries on unchanged pane capture (0 = disabled)
-startup_delay_seconds = 10.0         # Initial startup delay
 auto_ping_delay_seconds = 20.0       # Delay before first auto-PING for newly appeared/replacement nodes
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
 retention_period_days = 30            # Inactive runtime cleanup threshold in days (0 = disabled)
 min_delivery_gap_seconds = 1.0         # Duplicate delivery rate limit in seconds (0 = disabled)
 startup_drain_window_seconds = 10.0    # Session-enabled bypass window after daemon start (0 = disabled)
+daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16; values above 16 are clamped)
 
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
+daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
@@ -101,7 +102,6 @@ edges = []
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 ui_node = "messenger"            # Optional target filter for startup auto-PING
 auto_enable_new_sessions = true    # Auto-enable sessions with configured node panes (default: true)
-auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
 
@@ -112,9 +112,7 @@ common_template = ""
 allow_shell_templates = false
 
 # Notification template (when new message arrives)
-notification_template = """Hello, {node}!
-You've got mail: {filename}
-Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
+notification_template = """Hello, {node}! You've got mail: {filename}. Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 
 # Message footer (rendered into the generated header before the sender body separator)
 # Variables: {can_talk_to} - comma-separated list of reachable nodes

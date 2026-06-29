@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +59,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pidDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -80,7 +79,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want duplicate-daemon rejection")
 	}
@@ -110,7 +109,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(pidDir): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile(postman.pid): %v", err)
 	}
 
@@ -130,7 +129,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon rejection")
 	}
@@ -183,7 +182,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonLock(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon lock rejection")
 	}
@@ -233,7 +232,7 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want same-session lock rejection")
 	}
@@ -488,19 +487,24 @@ func TestCleanupExpiredRuntimeState_PreservesLiveAndDurablePaths(t *testing.T) {
 	liveContext := "ctx-live"
 	liveSession := "20240101-review"
 	liveContextDir := writeRuntimeSessionFixture(t, baseDir, liveContext, liveSession, true)
+	liveSnapshotDir := filepath.Join(liveContextDir, liveSession, "snapshot")
+	writeRuntimeSnapshotFixture(t, liveSnapshotDir)
 	liveLog := filepath.Join(liveContextDir, "postman.log")
 	writeRuntimeFileFixture(t, liveLog, "live log")
 	markOldRuntimePath(t, filepath.Join(liveContextDir, liveSession), staleWhen)
+	markOldRuntimePath(t, liveSnapshotDir, staleWhen)
 	markOldRuntimePath(t, liveLog, staleWhen)
 
 	staleContext := "ctx-stale"
 	staleSession := "main"
 	staleContextDir := writeRuntimeSessionFixture(t, baseDir, staleContext, staleSession, false)
 	staleSessionDir := filepath.Join(staleContextDir, staleSession)
+	staleSnapshotDir := filepath.Join(staleSessionDir, "snapshot")
 	staleLog := filepath.Join(staleContextDir, "postman.log")
 	stalePaneActivity := filepath.Join(staleContextDir, "pane-activity.json")
 	staleUnknown := filepath.Join(staleContextDir, "scratch-cache")
 
+	writeRuntimeSnapshotFixture(t, staleSnapshotDir)
 	writeRuntimeFileFixture(t, staleLog, "old log")
 	writeRuntimeFileFixture(t, stalePaneActivity, "{}")
 	if err := os.MkdirAll(staleUnknown, 0o700); err != nil {
@@ -521,8 +525,10 @@ func TestCleanupExpiredRuntimeState_PreservesLiveAndDurablePaths(t *testing.T) {
 
 	assertPathExists(t, lockDir)
 	assertPathExists(t, filepath.Join(liveContextDir, liveSession))
+	assertPathExists(t, liveSnapshotDir)
 	assertPathExists(t, liveLog)
 	assertPathMissing(t, staleSessionDir)
+	assertPathMissing(t, staleSnapshotDir)
 	assertPathMissing(t, staleLog)
 	assertPathMissing(t, stalePaneActivity)
 	assertPathExists(t, staleUnknown)
@@ -564,7 +570,7 @@ func writeRuntimeSessionFixture(t *testing.T, baseDir, contextID, sessionName st
 	}
 	if livePID {
 		pidPath := filepath.Join(contextDir, sessionName, "postman.pid")
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		if err := config.WriteSessionPIDFile(pidPath, os.Getpid()); err != nil {
 			t.Fatalf("WriteFile(postman.pid): %v", err)
 		}
 	}
@@ -580,6 +586,23 @@ func writeRuntimeFileFixture(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q): %v", path, err)
 	}
+}
+
+func writeRuntimeSnapshotFixture(t *testing.T, snapshotDir string) {
+	t.Helper()
+
+	for _, dir := range []string{
+		filepath.Join(snapshotDir, "runtime-context"),
+		filepath.Join(snapshotDir, "daemon-submit", "requests"),
+		filepath.Join(snapshotDir, "daemon-submit", "responses"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", dir, err)
+		}
+	}
+	writeRuntimeFileFixture(t, filepath.Join(snapshotDir, "runtime-context", "rctx_test.json"), "{}")
+	writeRuntimeFileFixture(t, filepath.Join(snapshotDir, "daemon-submit", "requests", "req-test.json"), "{}")
+	writeRuntimeFileFixture(t, filepath.Join(snapshotDir, "daemon-submit", "responses", "req-test.json"), "{}")
 }
 
 func markOldRuntimePath(t *testing.T, path string, when time.Time) {

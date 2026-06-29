@@ -1,6 +1,13 @@
 # Product Direction
 
-tmux-a2a-postman is becoming a simple session runtime for agent teams in tmux.
+tmux-a2a-postman is becoming a simple session runtime for agent teams in tmux:
+a thin but organic coordination layer around existing agents and terminal
+processes.
+
+It should connect those processes lightly from the outside. Mailbox threads,
+reply-required approval threads, journal/projection state, and tmux pane state
+give operators coordination, auditability, approval flow, and continuity
+without requiring postman to own the agent harness.
 
 For project-wide decision rules, see
 [Project Design Philosophy](project-design-philosophy.md).
@@ -22,12 +29,19 @@ Runtime surfaces must stay explicit about which behavior belongs to
 tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI. The
 canonical comparison is
 [Agent Runtime Feature Differences](../agent-runtime-feature-differences.md).
+Postman may add backend-independent command approval and audit rails, but it
+should not claim OS-level sandboxing or total command enforcement. Integrated
+runtimes such as Omnigent may catch up on enforcement and UX; postman's durable
+differentiators are transparent local state, local auditability, operational
+simplicity, and cross-agent or cross-backend use.
 
 It is not becoming:
 
 - a dashboard-first control plane
 - a generic workflow engine
 - a catch-all brand for unrelated agent tools
+- a deeply integrated agent runtime or harness that owns model sessions,
+  runners, sandboxing, and lifecycle policy
 
 The external name stays for now because it still matches the operator loop,
 and the broader runtime shape is not settled enough to justify rename churn.

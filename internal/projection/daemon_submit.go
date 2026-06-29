@@ -26,16 +26,32 @@ const (
 	DaemonSubmitSend               DaemonSubmitCommand = "send"
 	DaemonSubmitPop                DaemonSubmitCommand = "pop"
 	DaemonSubmitRuntimeDiagnostics DaemonSubmitCommand = "runtime-diagnostics"
+	DaemonSubmitRuntimeProfile     DaemonSubmitCommand = "runtime-profile"
 )
 
 type DaemonSubmitRequest struct {
-	SchemaVersion int                 `json:"schema_version"`
-	RequestID     string              `json:"request_id"`
-	Command       DaemonSubmitCommand `json:"command"`
-	CreatedAt     string              `json:"created_at"`
-	Filename      string              `json:"filename,omitempty"`
-	Node          string              `json:"node,omitempty"`
-	Content       string              `json:"content,omitempty"`
+	SchemaVersion      int                 `json:"schema_version"`
+	RequestID          string              `json:"request_id"`
+	Command            DaemonSubmitCommand `json:"command"`
+	CreatedAt          string              `json:"created_at"`
+	Filename           string              `json:"filename,omitempty"`
+	Node               string              `json:"node,omitempty"`
+	Content            string              `json:"content,omitempty"`
+	ProfileKind        string              `json:"profile_kind,omitempty"`
+	ProfileDestination string              `json:"profile_destination,omitempty"`
+	ProfileOutputPath  string              `json:"profile_output_path,omitempty"`
+	ProfileMaxBytes    int64               `json:"profile_max_bytes,omitempty"`
+	ProfileForce       bool                `json:"profile_force,omitempty"`
+}
+
+type RuntimeProfileCapture struct {
+	Kind          string `json:"kind"`
+	Destination   string `json:"destination"`
+	Encoding      string `json:"encoding,omitempty"`
+	ContentBase64 string `json:"content_base64,omitempty"`
+	Bytes         int    `json:"bytes"`
+	MaxBytes      int64  `json:"max_bytes"`
+	OutputPath    string `json:"output_path,omitempty"`
 }
 
 type DaemonSubmitResponse struct {
@@ -49,6 +65,7 @@ type DaemonSubmitResponse struct {
 	MarkdownPath       string                     `json:"markdown_path,omitempty"`
 	UnreadBefore       int                        `json:"unread_before,omitempty"`
 	RuntimeDiagnostics *status.RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
+	RuntimeProfile     *RuntimeProfileCapture     `json:"runtime_profile,omitempty"`
 	Error              string                     `json:"error,omitempty"`
 }
 

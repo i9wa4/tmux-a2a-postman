@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 func TestRunStop_NoActiveDaemonPrintsMessage(t *testing.T) {
@@ -81,7 +83,7 @@ func TestRunStop_StopsDaemonOwningManagedSession(t *testing.T) {
 		}
 	})
 
-	if err := os.WriteFile(filepath.Join(pidDir, "postman.pid"), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), child.Process.Pid); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 
@@ -100,11 +102,86 @@ func TestRunStop_StopsDaemonOwningManagedSession(t *testing.T) {
 	if payload.Session != "managed-session" {
 		t.Fatalf("payload.Session = %q, want managed-session", payload.Session)
 	}
+	if payload.DaemonSession != "daemon-session" {
+		t.Fatalf("payload.DaemonSession = %q, want daemon-session", payload.DaemonSession)
+	}
 	if payload.ContextID != "ctx-owner" {
 		t.Fatalf("payload.ContextID = %q, want ctx-owner", payload.ContextID)
 	}
 	if payload.PID != child.Process.Pid {
 		t.Fatalf("payload.PID = %d, want %d", payload.PID, child.Process.Pid)
+	}
+}
+
+func TestRunStop_StopsDaemonOwnerSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	installFakeTmuxForStop(t, tmpDir, "daemon-session", map[string]string{
+		"daemon-session": "ctx-owner:12345",
+	})
+
+	pidDir := filepath.Join(tmpDir, "ctx-owner", "daemon-session")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll daemon session: %v", err)
+	}
+
+	child := exec.Command("sleep", "60")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- child.Wait()
+	}()
+	t.Cleanup(func() {
+		if child.ProcessState == nil || !child.ProcessState.Exited() {
+			_ = child.Process.Kill()
+		}
+		select {
+		case <-waitCh:
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), child.Process.Pid); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	if err := RunStop(&stdout, nil); err != nil {
+		t.Fatalf("RunStop: %v", err)
+	}
+
+	var payload stopOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "stopped" {
+		t.Fatalf("payload.Status = %q, want stopped; full payload: %s", payload.Status, stdout.String())
+	}
+	if payload.Session != "daemon-session" {
+		t.Fatalf("payload.Session = %q, want daemon-session", payload.Session)
+	}
+	if payload.DaemonSession != "" {
+		t.Fatalf("payload.DaemonSession = %q, want empty for owner session", payload.DaemonSession)
+	}
+	if payload.ContextID != "ctx-owner" {
+		t.Fatalf("payload.ContextID = %q, want ctx-owner", payload.ContextID)
+	}
+	if payload.PID != child.Process.Pid {
+		t.Fatalf("payload.PID = %d, want %d", payload.PID, child.Process.Pid)
+	}
+}
+
+func TestRunStop_SourceContractWaitsOnResolvedDaemonSession(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/stop.go")
+
+	if !strings.Contains(source, "config.IsSessionPIDAlive(baseDir, contextID, daemonSessionName)") {
+		t.Fatal("stop.go no longer waits on the resolved daemon owner session")
+	}
+	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, contextID, sessionName)") {
+		t.Fatal("stop.go still waits on the caller session instead of the resolved daemon owner session")
 	}
 }
 
@@ -118,6 +195,7 @@ func installFakeTmuxForStop(t *testing.T, postmanHome, sessionName string, owner
 		"case \"$*\" in\n" +
 		"  *\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
 		"  \"show-options -gqv @a2a_session_on_managed-session\") printf '%s\\n' '" + owners["managed-session"] + "' ;;\n" +
+		"  \"show-options -gqv @a2a_session_on_daemon-session\") printf '%s\\n' '" + owners["daemon-session"] + "' ;;\n" +
 		"  *) exit 1 ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -128,9 +129,39 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	return payload
 }
 
-func syncMailboxProjection(sessionDir string) {
+func deliveryTraceFieldsFromContent(filename, messagePath, tmuxSession, contextID, content string, info *MessageInfo) msgtrace.Fields {
+	fields := msgtrace.FromContent(filename, messagePath, tmuxSession, content)
+	if fields.ContextID == "" {
+		fields.ContextID = contextID
+	}
+	if info != nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	return fields
+}
+
+func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
+	if fields.TmuxSession == "" {
+		fields.TmuxSession = filepath.Base(sessionDir)
+	}
+	emitTrace := msgtrace.HasMessageContext(fields)
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		fields.Result = "error"
+		fields.Reason = err.Error()
+		if emitTrace {
+			msgtrace.Log("projection_sync", fields)
+		}
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
+		return
+	}
+	fields.Result = "ok"
+	if emitTrace {
+		msgtrace.Log("projection_sync", fields)
 	}
 }
 
@@ -264,6 +295,15 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
 	}
+	fields := msgtrace.FromContent(messageID, shadowRelativePath(sessionDir, dstPath), sessionName, content)
+	if fields.Sender == "" {
+		fields.Sender = from
+	}
+	if fields.Recipient == "" {
+		fields.Recipient = to
+	}
+	fields.Reason = deadLetterFailureReason(dstPath)
+	msgtrace.Log("dead_letter", fields)
 	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:     messageID,
 		From:          from,
@@ -274,7 +314,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		FailureReason: deadLetterFailureReason(dstPath),
 		Content:       content,
 	})
-	syncMailboxProjection(sessionDir)
+	syncMailboxProjectionWithTrace(sessionDir, fields)
 	return nil
 }
 
@@ -317,6 +357,36 @@ type DaemonEvent struct {
 	Type    string
 	Message string
 	Details map[string]interface{}
+}
+
+func emitDeliveryDecisionEvent(events chan<- DaemonEvent, decision deliveryDecision, info *MessageInfo, filename string) {
+	if events == nil || decision.EventReason == "" {
+		return
+	}
+	message := fmt.Sprintf("Dead-letter: %s (%s)", filename, decision.EventReason)
+	if info != nil {
+		message = fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, decision.EventReason)
+	}
+	events <- DaemonEvent{
+		Type:    "message_received",
+		Message: message,
+		Details: map[string]interface{}{
+			"failure_reason": decision.EventReason,
+		},
+	}
+}
+
+func deadLetterDecisionDestination(sessionDir, filename string, decision deliveryDecision) string {
+	return deadLetterDst(sessionDir, filename, decision.DeadLetterSuffix)
+}
+
+func moveToDeadLetterForDecision(sessionDir, sessionName, postPath, dst, filename string, info *MessageInfo, content string) error {
+	from, to := "", ""
+	if info != nil {
+		from = info.From
+		to = info.To
+	}
+	return moveToDeadLetterWithProjection(sessionDir, sessionName, postPath, dst, filename, from, to, content)
 }
 
 // MessageInfo holds parsed information from a message filename.
@@ -447,6 +517,57 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}, nil
 }
 
+func writeRoutingDeniedWarning(sourceSessionDir, contextID string, info *MessageInfo, senderSimpleName, senderFullName string, adjacency map[string][]string, cfg *config.Config) {
+	senderInbox := filepath.Join(sourceSessionDir, "inbox", senderSimpleName)
+	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
+		return
+	}
+
+	var neighbors []string
+	for _, senderKey := range []string{info.From, senderFullName} {
+		if nbrs, ok := adjacency[senderKey]; ok {
+			neighbors = append(neighbors, nbrs...)
+			break
+		}
+	}
+
+	now := time.Now()
+	warnTS := now.Format("20060102-150405")
+	warnFilename := fmt.Sprintf("%s-from-postman-to-%s.md", warnTS, senderSimpleName)
+	neighborsStr := strings.Join(neighbors, ", ")
+	if neighborsStr == "" {
+		neighborsStr = "none"
+	}
+
+	vars := map[string]string{
+		"context_id":          contextID,
+		"node":                senderSimpleName,
+		"iso_timestamp":       now.Format(time.RFC3339),
+		"timestamp":           now.Format(time.RFC3339),
+		"attempted_recipient": info.To,
+		"allowed_edges":       neighborsStr,
+		"reply_command":       envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, senderSimpleName),
+		"session_dir":         sourceSessionDir,
+		"filename":            warnFilename,
+	}
+
+	timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
+	warnContent := template.ExpandTemplate(cfg.EdgeViolationWarningTemplate, vars, timeout, cfg.AllowShellForEdgeViolationWarningTemplate())
+	mode := cfg.EdgeViolationWarningMode
+	if mode == "" {
+		mode = "compact"
+	}
+	if mode == "verbose" {
+		replyInstructions := fmt.Sprintf(
+			"\n\ntmux-a2a-postman send-heredoc --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - Use the quoted heredoc delimiter so shell snippets stay literal.",
+			neighborsStr,
+		)
+		warnContent += replyInstructions
+	}
+	warnPath := filepath.Join(senderInbox, warnFilename)
+	_ = os.WriteFile(warnPath, []byte(warnContent), 0o600)
+}
+
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
 // Multi-session support: postPath is the full path to the message file in post/ directory.
 // The message will be delivered to the recipient's session directory based on NodeInfo.SessionDir.
@@ -465,6 +586,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	sourceSessionDir := filepath.Dir(filepath.Dir(postPath))
 	sourceSessionName := filepath.Base(sourceSessionDir)
 	messageContent := ""
+	policyInput := deliveryPolicyInput{
+		Filename:          filename,
+		SourceSessionName: sourceSessionName,
+		DaemonSession:     daemonSession,
+		QueueCap:          inboxQueueCap,
+	}
 
 	// Check if file still exists (handles duplicate filesystem watcher event)
 	if _, err := os.Stat(postPath); os.IsNotExist(err) {
@@ -474,51 +601,43 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	info, err := ParseMessageFilename(filename)
 	if err != nil {
 		// Parse error: move to dead-letter/ in source session
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixParseError)
+		decision := planDeliveryPolicy(deliveryPolicyInput{
+			Filename:   filename,
+			ParseError: true,
+		})
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		rawContent, readErr := os.ReadFile(postPath)
 		if readErr == nil {
 			messageContent = string(rawContent)
 		}
 		// Issue #53: Notify dead-letter event
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s (parse error)", filename),
-			}
-		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, "", "", messageContent)
+		emitDeliveryDecisionEvent(events, decision, nil, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, nil, messageContent)
 	}
+	policyInput.Info = *info
 	senderSimpleName := nodeaddr.Simple(info.From)
 	recipientSimpleName := nodeaddr.Simple(info.To)
 
 	// Guard: legitimate postman traffic no longer traverses post/, so any
 	// generic from=postman file is a forgery and must be dead-lettered.
 	if info.From == "postman" {
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
+		decision := planDeliveryPolicy(policyInput)
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		log.Printf("postman: SECURITY: forged sender %q in session %q via generic post/ path — dead-lettering %s\n",
 			info.From, sourceSessionName, filename)
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
-			}
-		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+		emitDeliveryDecisionEvent(events, decision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 
 	// Guard: "daemon" remains a reserved sender name only valid for messages
 	// originating from the daemon's own session.
 	if info.From == "daemon" && daemonSession != "" && sourceSessionName != daemonSession {
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForgedSender)
+		decision := planDeliveryPolicy(policyInput)
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		log.Printf("postman: SECURITY: forged sender %q in session %q (daemon session: %q) — dead-lettering %s\n",
 			info.From, sourceSessionName, daemonSession, filename)
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (forged sender)", info.From, info.To),
-			}
-		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+		emitDeliveryDecisionEvent(events, decision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 
 	// Issue #161: Validate frontmatter envelope (skip only for daemon-origin messages)
@@ -532,16 +651,15 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		} else {
 			messageContent = string(rawBytes)
 			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
-			if parseErr != nil || envFrom != info.From || envTo != info.To {
-				dst := deadLetterDst(sourceSessionDir, filename, dlSuffixEnvelopeMismatch)
-				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonEnvelopeMismatch, filename, filepath.Base(dst))
-				if events != nil {
-					events <- DaemonEvent{
-						Type:    "message_received",
-						Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, deadLetterReasonEnvelopeMismatch),
-					}
+			policyInput.EnvelopeChecked = true
+			policyInput.EnvelopeMismatch = parseErr != nil || envFrom != info.From || envTo != info.To
+			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+				if decision.SendDeadLetterNotification {
+					sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 				}
-				return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+				emitDeliveryDecisionEvent(events, decision, info, filename)
+				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 			}
 		}
 	}
@@ -557,60 +675,44 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Resolve recipient name (Issue #33: session-aware adjacency)
 	recipientResolution := resolveRuntimeNode(info.To, sourceSessionName, knownNodes)
+	policyInput.RecipientResolved = true
+	policyInput.RecipientResolution = recipientResolution
 	recipientFullName := recipientResolution.Address
-	if !recipientResolution.Found {
-		// Unknown recipient: move to dead-letter/ in source session
-		deadLetterReason := deadLetterReasonUnknownRecipient
-		deadLetterSuffix := dlSuffixUnknownRecipient
-		eventReason := "unknown recipient"
-		if recipientResolution.FailureReason == router.FailureUnknownSession {
-			deadLetterReason = deadLetterReasonUnknownRecipientSession
-			deadLetterSuffix = dlSuffixUnknownSession
-			eventReason = "unknown recipient session"
+	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+		if decision.SendDeadLetterNotification {
+			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 		}
-		dst := deadLetterDst(sourceSessionDir, filename, deadLetterSuffix)
-		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReason, filename, filepath.Base(dst))
 		// Issue #53: Notify dead-letter event
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (%s)", info.From, info.To, eventReason),
-			}
-		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+		emitDeliveryDecisionEvent(events, decision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 	nodeInfo := knownNodes[recipientFullName]
 
 	// F4: Delivery-time session boundary check.
 	// Reject delivery to a recipient whose session is neither the daemon's own session
 	// nor explicitly enabled. This is the last-resort safety net against 混信.
-	if daemonSession != "" && nodeInfo.SessionName != daemonSession && !isSessionEnabled(nodeInfo.SessionName) {
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixForeignSession)
-		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonForeignSession, filename, filepath.Base(dst))
-		log.Printf("postman: F4: dead-lettering %s — recipient session %q is foreign (daemon session: %q)\n", filename, nodeInfo.SessionName, daemonSession)
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (foreign session)", info.From, info.To),
-			}
+	policyInput.RecipientForeign = daemonSession != "" && nodeInfo.SessionName != daemonSession && !isSessionEnabled(nodeInfo.SessionName)
+	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+		if decision.SendDeadLetterNotification {
+			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+		log.Printf("postman: F4: dead-lettering %s — recipient session %q is foreign (daemon session: %q)\n", filename, nodeInfo.SessionName, daemonSession)
+		emitDeliveryDecisionEvent(events, decision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 
 	// Resolve sender name (Issue #33: session-aware adjacency)
 	senderResolution := resolveRuntimeNode(info.From, sourceSessionName, knownNodes)
+	policyInput.SenderResolved = true
+	policyInput.SenderResolution = senderResolution
 	senderFullName := senderResolution.Address
-	if !senderResolution.Found && info.From != "daemon" {
-		// Unknown sender: move to dead-letter/ in source session
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixUnknownSender)
+	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		// Issue #53: Notify dead-letter event
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (unknown sender)", info.From, info.To),
-			}
-		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+		emitDeliveryDecisionEvent(events, decision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 
 	// Check routing permissions (DEFAULT DENY)
@@ -634,74 +736,20 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				}
 			}
 		}
-		if !allowed {
+		policyInput.RoutingChecked = true
+		policyInput.RoutingAllowed = allowed
+		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 			// Issue #80: Send warning message back to sender
-			senderInbox := filepath.Join(sourceSessionDir, "inbox", senderSimpleName)
-			if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr == nil {
-				// Build list of allowed neighbors for sender
-				var neighbors []string
-				for _, senderKey := range []string{info.From, senderFullName} {
-					if nbrs, ok := adjacency[senderKey]; ok {
-						neighbors = append(neighbors, nbrs...)
-						break
-					}
-				}
-
-				now := time.Now()
-				warnTS := now.Format("20060102-150405")
-				warnFilename := fmt.Sprintf("%s-from-postman-to-%s.md", warnTS, senderSimpleName)
-				neighborsStr := strings.Join(neighbors, ", ")
-				if neighborsStr == "" {
-					neighborsStr = "none"
-				}
-
-				// Issue #92, #222: DM-1 normalized full envelope template
-				warnTemplate := cfg.EdgeViolationWarningTemplate
-
-				// Build variables map for template expansion
-				vars := map[string]string{
-					"context_id":          contextID,
-					"node":                senderSimpleName,
-					"iso_timestamp":       now.Format(time.RFC3339),
-					"timestamp":           now.Format(time.RFC3339),
-					"attempted_recipient": info.To,
-					"allowed_edges":       neighborsStr,
-					"reply_command":       envelope.RenderReplyCommand(cfg.ReplyCommand, contextID, senderSimpleName),
-					"session_dir":         sourceSessionDir,
-					"filename":            warnFilename,
-				}
-
-				// Expand template
-				timeout := time.Duration(cfg.TmuxTimeout * float64(time.Second))
-				warnContent := template.ExpandTemplate(warnTemplate, vars, timeout, cfg.AllowShellForEdgeViolationWarningTemplate())
-
-				// Issue #92: Append reply instructions for verbose mode
-				mode := cfg.EdgeViolationWarningMode
-				if mode == "" {
-					mode = "compact"
-				}
-				if mode == "verbose" {
-					replyInstructions := fmt.Sprintf(
-						"\n\ntmux-a2a-postman send-heredoc --to <allowed-node> <<'POSTMAN_BODY'\n<your message>\nPOSTMAN_BODY\n  - Replace <allowed-node> with one of: %s\n  - Use the quoted heredoc delimiter so shell snippets stay literal.",
-						neighborsStr,
-					)
-					warnContent += replyInstructions
-				}
-				warnPath := filepath.Join(senderInbox, warnFilename)
-				_ = os.WriteFile(warnPath, []byte(warnContent), 0o600)
+			if decision.SendRoutingWarning {
+				writeRoutingDeniedWarning(sourceSessionDir, contextID, info, senderSimpleName, senderFullName, adjacency, cfg)
 			}
 
 			// Routing denied: move to dead-letter/ in source session
-			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixRoutingDenied)
+			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 			log.Printf("📨 postman: routing denied %s -> %s (moved to dead-letter/)\n", info.From, info.To)
 			// Issue #53: Notify dead-letter event
-			if events != nil {
-				events <- DaemonEvent{
-					Type:    "message_received",
-					Message: fmt.Sprintf("Dead-letter: %s -> %s (routing denied)", info.From, info.To),
-				}
-			}
-			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+			emitDeliveryDecisionEvent(events, decision, info, filename)
+			return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 		}
 	}
 
@@ -712,33 +760,31 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Both sessions must be enabled (unless sender is daemon)
 	if info.From != "daemon" {
-		if !isSessionEnabled(senderSessionName) {
-			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
+		policyInput.SenderSessionChecked = true
+		policyInput.SenderSessionEnabled = isSessionEnabled(senderSessionName)
+		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
-			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonSenderSessionDisabled, filename, filepath.Base(dst))
-			// Issue #53: Notify dead-letter event
-			if events != nil {
-				events <- DaemonEvent{
-					Type:    "message_received",
-					Message: fmt.Sprintf("Dead-letter: %s -> %s (sender session disabled)", info.From, info.To),
-				}
+			if decision.SendDeadLetterNotification {
+				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 			}
-			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+			// Issue #53: Notify dead-letter event
+			emitDeliveryDecisionEvent(events, decision, info, filename)
+			return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 		}
 	}
 	if info.From != "daemon" {
-		if !isSessionEnabled(recipientSessionName) {
-			dst := deadLetterDst(sourceSessionDir, filename, dlSuffixSessionDisabled)
+		policyInput.RecipientSessionChecked = true
+		policyInput.RecipientSessionEnabled = isSessionEnabled(recipientSessionName)
+		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
-			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonRecipientSessionDisabled, filename, filepath.Base(dst))
-			// Issue #53: Notify dead-letter event
-			if events != nil {
-				events <- DaemonEvent{
-					Type:    "message_received",
-					Message: fmt.Sprintf("Dead-letter: %s -> %s (recipient session disabled)", info.From, info.To),
-				}
+			if decision.SendDeadLetterNotification {
+				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 			}
-			return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
+			// Issue #53: Notify dead-letter event
+			emitDeliveryDecisionEvent(events, decision, info, filename)
+			return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 		}
 	}
 
@@ -748,23 +794,28 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 
 	// Enforce inbox queue cap: dead-letter overflow beyond inboxQueueCap.
 	// Protects agent-session nodes from unbounded queue growth (#agent-session).
-	if count, countErr := countInboxMessages(recipientInbox); countErr == nil && count >= inboxQueueCap {
-		dst := deadLetterDst(sourceSessionDir, filename, dlSuffixQueueFull)
-		sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, deadLetterReasonQueueFull, filename, filepath.Base(dst))
-		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, count, filename)
-		if events != nil {
-			events <- DaemonEvent{
-				Type:    "message_received",
-				Message: fmt.Sprintf("Dead-letter: %s -> %s (inbox queue full)", info.From, info.To),
+	if count, countErr := countInboxMessages(recipientInbox); countErr == nil {
+		policyInput.QueueChecked = true
+		policyInput.QueueCount = count
+		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+			if decision.SendDeadLetterNotification {
+				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
 			}
+			log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, count, filename)
+			emitDeliveryDecisionEvent(events, decision, info, filename)
+			return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 		}
-		return moveToDeadLetterWithProjection(sourceSessionDir, sourceSessionName, postPath, dst, filename, info.From, info.To, messageContent)
 	}
 
 	dst, err := store.DeliverPostToInbox(postPath, recipientInbox, filename)
 	if err != nil {
 		return err
 	}
+	resultFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+	resultFields.DeliveryAttempt = 1
+	resultFields.Result = "delivered"
+	msgtrace.Log("delivery_result", resultFields)
 	recordMailboxProjectionPayload(sourceSessionDir, sourceSessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
@@ -793,9 +844,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		messageContent,
 		now,
 	)
-	syncMailboxProjection(sourceSessionDir)
+	sourceProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(sourceSessionDir, postPath), sourceSessionName, contextID, messageContent, info)
+	sourceProjectionFields.DeliveryAttempt = 1
+	syncMailboxProjectionWithTrace(sourceSessionDir, sourceProjectionFields)
 	if recipientSessionDir != sourceSessionDir {
-		syncMailboxProjection(recipientSessionDir)
+		recipientProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+		recipientProjectionFields.DeliveryAttempt = 1
+		syncMailboxProjectionWithTrace(recipientSessionDir, recipientProjectionFields)
 	}
 
 	// Send tmux notification to the recipient pane

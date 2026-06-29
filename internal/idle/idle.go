@@ -20,7 +20,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
 
-const compactionPingCooldown = 30 * time.Second
+const (
+	compactionPingCooldown       = 30 * time.Second
+	maxCompactionPrefixTailBytes = 256
+)
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
@@ -48,15 +51,16 @@ type CompactionPingTarget struct {
 
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
-	LastHash              uint32    // CRC32 hash of pane content
-	LastChangeAt          time.Time // Last time content change was detected
-	ChangeCount           int       // Consecutive change count (2 = active)
-	LastCaptureAt         time.Time // Last capture time
-	LastCompactionPingAt  time.Time // Last compaction-triggered PING for this pane
-	LastCompactionTrigger string    // Non-empty while a compaction marker remains in scanned content
-	LastCompactionHash    uint32    // Scanned compaction content hash for the most recent compaction marker state
-	LastCompactionMarkers int       // Marker occurrences in scanned content for the most recent compaction state
-	LastCompactionPrefix  string    // Scanned content through the latest marker occurrence
+	LastHash                  uint32    // CRC32 hash of pane content
+	LastChangeAt              time.Time // Last time content change was detected
+	ChangeCount               int       // Consecutive change count (2 = active)
+	LastCaptureAt             time.Time // Last capture time
+	LastCompactionPingAt      time.Time // Last compaction-triggered PING for this pane
+	LastCompactionTrigger     string    // Non-empty while a compaction marker remains in scanned content
+	LastCompactionHash        uint32    // Scanned compaction content hash for the most recent compaction marker state
+	LastCompactionMarkers     int       // Marker occurrences in scanned content for the most recent compaction state
+	LastCompactionPrefixHash  uint32    // Hash of scanned content through the latest marker occurrence
+	LastCompactionPrefixLines int       // Line count through the latest marker occurrence
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -212,6 +216,8 @@ type compactionMarkerScan struct {
 	Trigger            string
 	MarkerCount        int
 	LatestMarkerPrefix string
+	MarkerPrefixHash   uint32
+	MarkerPrefixLines  int
 }
 
 func compactionTrigger(runtime, content string) string {
@@ -244,14 +250,29 @@ func codexCompactionTriggerScan(content string) compactionMarkerScan {
 }
 
 func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) compactionMarkerScan {
-	lines := strings.Split(content, "\n")
 	markers := 0
-	latestMarkerLine := -1
-	for i, line := range lines {
+	latestMarkerEnd := -1
+	latestMarkerLine := 0
+	lineNumber := 0
+	for lineStart := 0; lineStart <= len(content); {
+		lineEnd := strings.IndexByte(content[lineStart:], '\n')
+		nextLineStart := len(content) + 1
+		if lineEnd < 0 {
+			lineEnd = len(content)
+		} else {
+			lineEnd += lineStart
+			nextLineStart = lineEnd + 1
+		}
+
+		line := content[lineStart:lineEnd]
 		if isMarker(line) {
 			markers++
-			latestMarkerLine = i
+			latestMarkerEnd = lineEnd
+			latestMarkerLine = lineNumber
 		}
+
+		lineNumber++
+		lineStart = nextLineStart
 	}
 	if markers == 0 {
 		return compactionMarkerScan{}
@@ -259,8 +280,21 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 	return compactionMarkerScan{
 		Trigger:            trigger,
 		MarkerCount:        markers,
-		LatestMarkerPrefix: strings.Join(lines[:latestMarkerLine+1], "\n"),
+		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
+		MarkerPrefixHash:   hashContentCRC32(content[:latestMarkerEnd]),
+		MarkerPrefixLines:  latestMarkerLine + 1,
 	}
+}
+
+func compactionPrefixTail(content string, end int) string {
+	if end <= 0 {
+		return ""
+	}
+	start := 0
+	if end > maxCompactionPrefixTailBytes {
+		start = end - maxCompactionPrefixTailBytes
+	}
+	return strings.Clone(content[start:end])
 }
 
 func isCodexCompactionLine(line string) bool {
@@ -301,19 +335,16 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 	if state.LastCompactionTrigger == "" || scan.Trigger != state.LastCompactionTrigger {
 		return false
 	}
-	if state.LastCompactionPrefix == "" {
+	if state.LastCompactionPrefixLines <= 0 {
 		return scan.MarkerCount <= state.LastCompactionMarkers
 	}
-	if state.LastCompactionPrefix == scan.LatestMarkerPrefix {
-		if !strings.Contains(scan.LatestMarkerPrefix, "\n") {
+	if state.LastCompactionPrefixHash == scan.MarkerPrefixHash {
+		if scan.MarkerPrefixLines <= 1 {
 			return state.LastCompactionHash == compactionHash
 		}
 		return true
 	}
-	if !strings.Contains(scan.LatestMarkerPrefix, "\n") {
-		return false
-	}
-	return strings.HasSuffix(state.LastCompactionPrefix, scan.LatestMarkerPrefix)
+	return false
 }
 
 func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, now time.Time) bool {
@@ -332,13 +363,15 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionPingAt = now
 	state.LastCompactionHash = compactionHash
 	state.LastCompactionMarkers = scan.MarkerCount
-	state.LastCompactionPrefix = scan.LatestMarkerPrefix
+	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
+	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 }
 
 func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32) {
 	if sameCompactionMarker(*state, scan, compactionHash) {
 		state.LastCompactionMarkers = scan.MarkerCount
-		state.LastCompactionPrefix = scan.LatestMarkerPrefix
+		state.LastCompactionPrefixHash = scan.MarkerPrefixHash
+		state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 	}
 }
 
@@ -421,7 +454,8 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 					state.LastCompactionTrigger = scan.Trigger
 					state.LastCompactionHash = compactionHash
 					state.LastCompactionMarkers = scan.MarkerCount
-					state.LastCompactionPrefix = scan.LatestMarkerPrefix
+					state.LastCompactionPrefixHash = scan.MarkerPrefixHash
+					state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 				}
 			}
 			t.paneCaptureState[paneID] = state
@@ -447,7 +481,8 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			} else {
 				state.LastCompactionTrigger = ""
 				state.LastCompactionMarkers = 0
-				state.LastCompactionPrefix = ""
+				state.LastCompactionPrefixHash = 0
+				state.LastCompactionPrefixLines = 0
 			}
 		}
 

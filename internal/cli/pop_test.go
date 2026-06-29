@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +105,9 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want read path", payload.MarkdownPath)
 	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q (non-owner direct fallback)", payload.SubmitPath, projection.SubmitPathPost)
+	}
 	if !strings.Contains(readPopArchiveForTest(t, payload), "context stdout payload") {
 		t.Fatalf("archived body missing expected payload")
 	}
@@ -153,6 +155,83 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 	payload := decodePopMessageOutputForTest(t, stdout.String())
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
 		t.Fatalf("MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q (daemon-submit path)", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
+}
+
+func TestRunPop_EmptyDaemonPopReportsSubmitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-empty-daemon"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command: request.Command,
+				Empty:   true,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	var payload popEmptyOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "empty" {
+		t.Fatalf("Status = %q, want empty", payload.Status)
+	}
+	if payload.SubmitPath != projection.SubmitPathDaemon {
+		t.Fatalf("SubmitPath = %q, want %q (daemon-owned empty pop)", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
+}
+
+func TestRunPop_EmptyDirectPopReportsSubmitPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-empty-direct"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return false
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	var payload popEmptyOutput
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if payload.Status != "empty" {
+		t.Fatalf("Status = %q, want empty", payload.Status)
+	}
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q (non-owner direct fallback empty pop)", payload.SubmitPath, projection.SubmitPathPost)
 	}
 }
 
@@ -635,7 +714,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "postman.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
 	if !config.ContextOwnsSession(tmpDir, contextID, "test-session") {

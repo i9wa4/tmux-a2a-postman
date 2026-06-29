@@ -15,6 +15,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
+const (
+	DefaultDaemonSubmitWorkerLimit = 8
+	MaxDaemonSubmitWorkerLimit     = 16
+)
+
 //go:embed postman.default.toml
 var defaultConfigBytes []byte
 
@@ -26,18 +31,19 @@ type Config struct {
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
 	EnterDelay          float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
-	StartupDelay        float64 `toml:"startup_delay_seconds"`
 	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
 	// Node state thresholds.
-	NodeActiveSeconds         float64 `toml:"node_active_seconds"`          // 0-N seconds since pane change: active
-	NodeStaleSeconds          float64 `toml:"node_stale_seconds"`           // Memory cleanup threshold for pane capture
-	MessageTTLSeconds         float64 `toml:"message_ttl_seconds"`          // Stale post/ drain TTL; 0 = disabled
-	RetentionPeriodDays       int     `toml:"retention_period_days"`        // Inactive runtime cleanup threshold in days; 0 = disabled
-	MinDeliveryGapSeconds     float64 `toml:"min_delivery_gap_seconds"`     // Duplicate delivery rate limit; 0 = disabled
-	StartupDrainWindowSeconds float64 `toml:"startup_drain_window_seconds"` // Session-enabled bypass window after daemon start; 0 = disabled (#217)
-	AutoPingDelaySeconds      float64 `toml:"auto_ping_delay_seconds"`      // Delay from discovery/replacement to first auto-PING
+	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
+	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
+	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
+	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
+	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
+	MinDeliveryGapSeconds            float64 `toml:"min_delivery_gap_seconds"`              // Duplicate delivery rate limit; 0 = disabled
+	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
+	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING
+	DaemonSubmitWorkerLimit          int     `toml:"daemon_submit_worker_limit"`            // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -64,7 +70,6 @@ type Config struct {
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
 	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
-	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -97,6 +102,17 @@ func BoolVal(p *bool, defaultVal bool) bool {
 		return defaultVal
 	}
 	return *p
+}
+
+func EffectiveDaemonSubmitWorkerLimit(configured int) (int, string) {
+	switch {
+	case configured <= 0:
+		return DefaultDaemonSubmitWorkerLimit, fmt.Sprintf("daemon_submit_worker_limit=%d is below minimum 1; using default %d", configured, DefaultDaemonSubmitWorkerLimit)
+	case configured > MaxDaemonSubmitWorkerLimit:
+		return MaxDaemonSubmitWorkerLimit, fmt.Sprintf("daemon_submit_worker_limit=%d exceeds maximum %d; clamping to %d", configured, MaxDaemonSubmitWorkerLimit, MaxDaemonSubmitWorkerLimit)
+	default:
+		return configured, ""
+	}
 }
 
 // DefaultConfig returns a Config with zero values.
@@ -277,7 +293,19 @@ func skillCatalogForRuntime(catalogs map[string]string, runtime string) string {
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
+// Deprecated keys are caught here rather than at parse time because the Go TOML
+// decoder silently ignores keys not present in the struct.
 func warnDeprecatedKeys(rawBytes []byte, path string) {
+	deprecated := []string{
+		"startup_delay_seconds",
+		"auto_enable_new_agents",
+	}
+	raw := string(rawBytes)
+	for _, key := range deprecated {
+		if strings.Contains(raw, key) {
+			log.Printf("WARNING: %s: deprecated config key %q will be ignored; remove it from your config", path, key)
+		}
+	}
 }
 
 // loadEmbeddedConfig loads configuration from embedded default_postman.toml.
@@ -488,9 +516,6 @@ func mergeConfig(base, override *Config) {
 	if override.AutoEnableNewSessions != nil {
 		base.AutoEnableNewSessions = override.AutoEnableNewSessions
 	}
-	if override.AutoEnableNewAgents != nil {
-		base.AutoEnableNewAgents = override.AutoEnableNewAgents
-	}
 
 	// Float64 fields
 	if override.ScanInterval != 0 {
@@ -504,9 +529,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.TmuxTimeout != 0 {
 		base.TmuxTimeout = override.TmuxTimeout
-	}
-	if override.StartupDelay != 0 {
-		base.StartupDelay = override.StartupDelay
 	}
 	if override.EnterVerifyDelay != 0 {
 		base.EnterVerifyDelay = override.EnterVerifyDelay
@@ -548,6 +570,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
+		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
+	}
+	if override.DaemonSubmitWorkerLimit != 0 {
+		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
 	}
 
 	// *bool fields: bidirectional override (#219)
