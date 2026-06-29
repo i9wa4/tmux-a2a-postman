@@ -81,7 +81,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want duplicate-daemon rejection")
 	}
@@ -131,7 +131,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon rejection")
 	}
@@ -184,7 +184,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonLock(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon lock rejection")
 	}
@@ -234,7 +234,7 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want same-session lock rejection")
 	}
