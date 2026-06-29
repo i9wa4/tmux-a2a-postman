@@ -1475,8 +1475,6 @@ func (rt *daemonRuntime) emitStatusUpdateIfChanged(allSessions []string) {
 }
 
 func (rt *daemonRuntime) handleInboxCheckTick() {
-	checkSwallowedMessages(rt.nodes, rt.cfg, rt.events, rt.contextID, rt.adjacency, rt.idleTracker, rt.daemonState)
-
 	rt.events <- tui.DaemonEvent{
 		Type: "inbox_unread_count_update",
 		Details: map[string]interface{}{
