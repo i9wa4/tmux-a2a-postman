@@ -66,10 +66,11 @@ type Config struct {
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                 []string `toml:"edges"`
-	ReplyCommand          string   `toml:"reply_command"`
-	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	Edges                 []string                  `toml:"edges"`
+	ReplyCommand          string                    `toml:"reply_command"`
+	UINode                string                    `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions *bool                     `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	WorkspaceTree         []WorkspaceTreeNodeConfig `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -94,6 +95,16 @@ type NodeConfig struct {
 	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
 	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
 	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
+}
+
+// WorkspaceTreeNodeConfig describes one node in the explicit workspace tree hierarchy.
+type WorkspaceTreeNodeConfig struct {
+	SessionName       string `toml:"session"`
+	ID                string `toml:"id"`
+	Label             string `toml:"label"`
+	ParentSessionName string `toml:"parent"`
+	Order             int    `toml:"order"`
+	Root              string `toml:"root"`
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -576,6 +587,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.DaemonSubmitWorkerLimit != 0 {
 		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
+	}
+	if len(override.WorkspaceTree) > 0 {
+		base.WorkspaceTree = override.WorkspaceTree
 	}
 
 	// *bool fields: bidirectional override (#219)

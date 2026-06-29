@@ -25,6 +25,8 @@ skill, not a waiting skill.
 
 2. Do not pass message text as a CLI argument, file-body shortcut, or generic
    pipe-oriented body.
+   When workspace tree hierarchy is configured, `<node>` may also be a tree
+   alias such as `@parent/orchestrator`.
 3. Leave Markdown headings unchanged.
 4. The sender is auto-detected from the current tmux pane title. Use
    `tmux-a2a-postman help send-heredoc` for details.

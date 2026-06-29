@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 type sessionPane struct {
@@ -179,9 +180,71 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Queues = queues
 	result.Windows = buildSessionWindows(result.Nodes, panes)
+	result.WorkspaceTree = buildWorkspaceTreeStatus(cfg, sessionName)
 	result.Compact = buildSessionCompact(result, panes)
 	enrichSessionStatus(&result, sessionDir, time.Now())
 	return result, nil
+}
+
+func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.WorkspaceTreeStatus {
+	topology := workspacetree.BuildFromConfig(cfg)
+	diagnostics := workspaceTreeDiagnostics(topology.Diagnostics())
+	node, ok, reason := topology.NodeForSession(sessionName)
+	if !ok {
+		if reason == workspacetree.FailureUnknownSourceSession && len(diagnostics) == 0 {
+			return nil
+		}
+		return &status.WorkspaceTreeStatus{
+			Diagnostics: diagnostics,
+		}
+	}
+
+	result := &status.WorkspaceTreeStatus{
+		Current: &status.WorkspaceTreeNodeStatus{
+			SessionName: node.SessionName,
+			Label:       node.Label,
+			ID:          node.ID,
+			State:       "configured",
+		},
+		Diagnostics: diagnostics,
+	}
+	if parent, found, _ := topology.NearestParent(sessionName); found {
+		result.Parent = workspaceTreeRef(parent)
+	}
+	if children, childReason := topology.NearestChildren(sessionName); childReason == workspacetree.FailureNone {
+		for _, child := range children {
+			result.Children = append(result.Children, *workspaceTreeRef(child))
+		}
+	}
+	return result
+}
+
+func workspaceTreeRef(node workspacetree.Node) *status.WorkspaceTreeRef {
+	return &status.WorkspaceTreeRef{
+		SessionName: node.SessionName,
+		Label:       node.Label,
+		ID:          node.ID,
+	}
+}
+
+func workspaceTreeDiagnostics(diagnostics []workspacetree.Diagnostic) []status.WorkspaceTreeDiagnostic {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	result := make([]status.WorkspaceTreeDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		result = append(result, status.WorkspaceTreeDiagnostic{
+			Code:              diagnostic.Code,
+			ID:                diagnostic.ID,
+			IDs:               append([]string{}, diagnostic.IDs...),
+			SessionName:       diagnostic.SessionName,
+			SessionNames:      append([]string{}, diagnostic.SessionNames...),
+			ParentSessionName: diagnostic.ParentSessionName,
+			Labels:            append([]string{}, diagnostic.Labels...),
+			Message:           diagnostic.Message,
+		})
+	}
+	return result
 }
 
 func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, nodeName, direction string) []status.InputRequestDetail {

@@ -801,6 +801,63 @@ role = "worker"
 	}
 }
 
+func TestSendMessage_WorkspaceParentAliasCompilesToExplicitRecipient(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["test-session:messenger --- repo-session:orchestrator"]
+
+[[postman.workspace_tree]]
+session = "repo-session"
+label = "repo"
+
+[[postman.workspace_tree]]
+session = "test-session"
+label = "api"
+parent = "repo-session"
+
+["test-session:messenger"]
+role = "messenger"
+
+["repo-session:orchestrator"]
+role = "orchestrator"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := runSendHeredocWithBody(t, "hello", []string{
+		"--config", configPath,
+		"--context-id", "ctx-send-workspace-parent",
+		"--to", "@parent/orchestrator",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+
+	postDir := filepath.Join(tmpDir, "ctx-send-workspace-parent", "test-session", "post")
+	entries, err := os.ReadDir(postDir)
+	if err != nil {
+		t.Fatalf("ReadDir post: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post entry count = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Name(), "-to-repo-session:orchestrator.md") {
+		t.Fatalf("post filename missing compiled recipient: %q", entries[0].Name())
+	}
+	content, err := os.ReadFile(filepath.Join(postDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	if !strings.Contains(string(content), "to: repo-session:orchestrator") {
+		t.Fatalf("message frontmatter missing compiled recipient: %s", string(content))
+	}
+}
+
 func TestSendMessage_AllowsMixedSenderGraphKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
