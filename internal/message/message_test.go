@@ -471,6 +471,66 @@ func TestDeliverMessage_CrossSessionExplicitRecipient(t *testing.T) {
 	}
 }
 
+func TestDeliverMessageTraceLogsPreserveEnvelopeCorrelation(t *testing.T) {
+	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
+	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs source failed: %v", err)
+	}
+	recipientSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(recipientSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs recipient failed: %v", err)
+	}
+
+	filename := "20260201-030000-from-orchestrator-to-review-session:worker.md"
+	replyTo := "20260201-025500-from-worker-to-orchestrator.md"
+	postPath := filepath.Join(sourceSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: review-session:worker\n  messageId: " + filename + "\n  replyPolicy: required\n  replyTo: " + replyTo + "\n  input_request_id: ireq_delivery_456\n  timestamp: 2026-02-01T03:00:00Z\n---\n\ntest message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sender-session:orchestrator": {PaneID: "%2", SessionName: "sender-session", SessionDir: sourceSessionDir},
+		"review-session:worker":       {PaneID: "%1", SessionName: "review-session", SessionDir: recipientSessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"review-session:worker"},
+	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	if err := DeliverMessage(postPath, "runtime-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	logOut := buf.String()
+	for _, want := range []string{
+		"event=delivery_result",
+		"event=projection_sync",
+		"input_request_id=ireq_delivery_456",
+		"reply_to=" + replyTo,
+		"context_id=envelope-ctx",
+		"message_path=post/" + filename,
+		"message_path=inbox/worker/" + filename,
+	} {
+		if !strings.Contains(logOut, want) {
+			t.Fatalf("delivery trace log missing %q:\n%s", want, logOut)
+		}
+	}
+}
+
 func TestRouting_Allowed(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "test") // basename must match session name in nodes map
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

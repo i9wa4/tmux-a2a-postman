@@ -113,7 +113,7 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 	}
 }
 
-func RunStartWithFlags(contextID, configPath string) error {
+func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {
 		contextID = fmt.Sprintf("%s-%04x",
@@ -137,7 +137,11 @@ func RunStartWithFlags(contextID, configPath string) error {
 	contextDir := filepath.Join(baseDir, contextID)
 
 	// Setup log output (Issue #36: always log to file)
-	logPath := filepath.Join(contextDir, "postman.log")
+	logPath := logFilePath
+	if logPath == "" {
+		// Default to $baseDir/{contextID}/postman.log
+		logPath = filepath.Join(contextDir, "postman.log")
+	}
 	logDir := filepath.Dir(logPath)
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
@@ -645,6 +649,7 @@ func RunStartWithFlags(contextID, configPath string) error {
 	} else {
 		log.Println("postman: TUI exited (unknown state)")
 	}
+
 	log.Println("postman: daemon exiting normally")
 	return nil
 }

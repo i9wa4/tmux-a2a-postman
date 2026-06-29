@@ -13,17 +13,21 @@ func TestDispatch_StartCallsStartHandler(t *testing.T) {
 		"start",
 		nil,
 		Config{
-			ContextID:  "ctx-start",
-			ConfigPath: "/tmp/postman.toml",
+			ContextID:   "ctx-start",
+			ConfigPath:  "/tmp/postman.toml",
+			LogFilePath: "/tmp/postman.log",
 		},
 		Handlers{
-			Start: func(contextID, configPath string) error {
+			Start: func(contextID, configPath, logFilePath string) error {
 				called = true
 				if contextID != "ctx-start" {
 					t.Fatalf("contextID = %q, want %q", contextID, "ctx-start")
 				}
 				if configPath != "/tmp/postman.toml" {
 					t.Fatalf("configPath = %q, want %q", configPath, "/tmp/postman.toml")
+				}
+				if logFilePath != "/tmp/postman.log" {
+					t.Fatalf("logFilePath = %q, want %q", logFilePath, "/tmp/postman.log")
 				}
 				return nil
 			},
