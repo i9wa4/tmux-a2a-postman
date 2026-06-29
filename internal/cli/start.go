@@ -113,7 +113,7 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 	}
 }
 
-func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) error {
+func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	// Auto-generate context ID if not specified
 	if contextID == "" {
 		contextID = fmt.Sprintf("%s-%04x",
@@ -446,10 +446,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 
 	// Start daemon loop in goroutine
 	daemonEvents := make(chan tui.DaemonEvent, 100)
-	var tuiEvents chan tui.DaemonEvent
-	if !noTUI {
-		tuiEvents = make(chan tui.DaemonEvent, 200)
-	}
+	tuiEvents := make(chan tui.DaemonEvent, 200)
 	safeGo("tui-status-relay", nil, func() {
 		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
 	})
@@ -500,196 +497,190 @@ func RunStartWithFlags(contextID, configPath, logFilePath string, noTUI bool) er
 		}
 	}
 
-	// Start TUI or wait for shutdown
-	if noTUI {
-		// No TUI mode: log only, block until ctx.Done()
-		<-ctx.Done()
-	} else {
-		// TUI mode with command channel (Issue #47)
-		tuiCommands := make(chan tui.TUICommand, 10)
+	// Start TUI with command channel (Issue #47)
+	tuiCommands := make(chan tui.TUICommand, 10)
 
-		// Start TUI command handler goroutine
-		safeGo("tui-command-handler", daemonEvents, func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case cmd := <-tuiCommands:
-					// Issue #47: Handle TUI commands
-					switch cmd.Type {
-					case "send_ping":
-						cachedPtr := sharedNodes.Load()
-						var freshNodes map[string]discovery.NodeInfo
-						if cachedPtr != nil {
-							cached := *cachedPtr
-							freshNodes = make(map[string]discovery.NodeInfo, len(cached))
-							for k, v := range cached {
-								freshNodes[k] = v
-							}
+	// Start TUI command handler goroutine
+	safeGo("tui-command-handler", daemonEvents, func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cmd := <-tuiCommands:
+				// Issue #47: Handle TUI commands
+				switch cmd.Type {
+				case "send_ping":
+					cachedPtr := sharedNodes.Load()
+					var freshNodes map[string]discovery.NodeInfo
+					if cachedPtr != nil {
+						cached := *cachedPtr
+						freshNodes = make(map[string]discovery.NodeInfo, len(cached))
+						for k, v := range cached {
+							freshNodes[k] = v
 						}
-						// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
-						activationNodesFilter := activationNodeNames(cfg)
-						targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
-						if cachedPtr == nil || len(targetNodes) == 0 {
-							activationBlocked := false
-							// Attempt a fresh discovery before giving up (catches panes
-							// that set titles after startup or after the last scan).
-							freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-							if discErr == nil && len(freshDiscovered) > 0 {
-								freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
+					}
+					// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
+					activationNodesFilter := activationNodeNames(cfg)
+					targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
+					if cachedPtr == nil || len(targetNodes) == 0 {
+						activationBlocked := false
+						// Attempt a fresh discovery before giving up (catches panes
+						// that set titles after startup or after the last scan).
+						freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+						if discErr == nil && len(freshDiscovered) > 0 {
+							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
+							sharedNodes.Store(&freshNodes)
+							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
+						}
+						if len(targetNodes) == 0 {
+							activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
+							switch {
+							case activationErr == nil:
+								daemonState.SetSessionEnabled(cmd.Target, true)
+								freshNodes = activatedNodes
 								sharedNodes.Store(&freshNodes)
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
-							}
-							if len(targetNodes) == 0 {
-								activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
-								switch {
-								case activationErr == nil:
-									daemonState.SetSessionEnabled(cmd.Target, true)
-									freshNodes = activatedNodes
-									sharedNodes.Store(&freshNodes)
-									targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "status_update",
-										Message: fmt.Sprintf("Activated session %s for ping", cmd.Target),
-										Details: map[string]interface{}{"session": cmd.Target},
-									}
-								case errors.Is(activationErr, errPingSessionOwned):
-									activationBlocked = true
-									log.Printf("postman: PING blocked for session %s — %v\n", cmd.Target, activationErr)
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "status_update",
-										Message: fmt.Sprintf("Session %s is owned by another daemon", cmd.Target),
-										Details: map[string]interface{}{"session": cmd.Target},
-									}
-								default:
-									activationBlocked = true
-									log.Printf("postman: session activation for PING failed on %s: %v\n", cmd.Target, activationErr)
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "status_update",
-										Message: fmt.Sprintf("Failed to activate session %s", cmd.Target),
-										Details: map[string]interface{}{"session": cmd.Target},
-									}
-								}
-							}
-							if len(targetNodes) == 0 {
-								if activationBlocked {
-									break
-								}
-								if cachedPtr == nil {
-									log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
-								} else {
-									log.Printf("postman: PING skipped for session %s — 0 nodes matched in session (total discovered across all sessions: %d)\n", cmd.Target, len(freshNodes))
-								}
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
-									Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
+									Message: fmt.Sprintf("Activated session %s for ping", cmd.Target),
 									Details: map[string]interface{}{"session": cmd.Target},
 								}
-								break
-							}
-						}
-						// Build active nodes from freshNodes (not stale startup nodes)
-						activeNodes := activePingNodeNames(freshNodes)
-						// Send PING to all discovered nodes in the target session.
-						livenessMap := idleTracker.GetLivenessMap()
-						pingAdjacency, _ := config.ParseEdges(cfg.Edges)
-						if pingAdjacency == nil {
-							pingAdjacency = map[string][]string{}
-						}
-						sessionTarget := cmd.Target
-						go func() {
-							workerLimit := daemonState.BeginManualPingFanout(len(targetNodes))
-							defer daemonState.FinishManualPingFanout()
-							var wg sync.WaitGroup
-							var successCount, failCount atomic.Int32
-							type pingTarget struct {
-								name string
-								info discovery.NodeInfo
-							}
-							targets := make([]pingTarget, 0, len(targetNodes))
-							for nodeName, nodeInfo := range targetNodes {
-								targets = append(targets, pingTarget{name: nodeName, info: nodeInfo})
-							}
-							sort.Slice(targets, func(i, j int) bool {
-								return targets[i].name < targets[j].name
-							})
-							jobs := make(chan pingTarget)
-							for i := 0; i < workerLimit; i++ {
-								wg.Add(1)
-								go func() {
-									defer wg.Done()
-									for target := range jobs {
-										daemonState.UnqueueManualPingDelivery()
-										if !daemonState.StartManualPingDelivery() {
-											failCount.Add(1)
-											log.Printf("postman: WARNING: manual PING budget unexpectedly saturated for %s\n", target.name)
-											daemonEvents <- tui.DaemonEvent{
-												Type:    "message_received",
-												Message: fmt.Sprintf("PING failed for %s: manual PING budget saturated", target.name),
-											}
-											continue
-										}
-										func() {
-											defer daemonState.FinishManualPingDelivery()
-											if err := ping.SendPingToNode(target.info, contextID, target.name,
-												cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
-												pingAdjacency, freshNodes); err != nil {
-												log.Printf("❌ postman: PING to %s failed: %v\n", target.name, err)
-												failCount.Add(1)
-												daemonEvents <- tui.DaemonEvent{
-													Type:    "message_received",
-													Message: fmt.Sprintf("PING failed for %s: %v", target.name, err),
-												}
-											} else {
-												log.Printf("📮 postman: PING sent to %s\n", target.name)
-												successCount.Add(1)
-												daemonEvents <- tui.DaemonEvent{
-													Type:    "message_received",
-													Message: fmt.Sprintf("PING sent to %s", target.name),
-												}
-											}
-										}()
-									}
-								}()
-							}
-							for _, target := range targets {
-								jobs <- target
-							}
-							close(jobs)
-							wg.Wait()
-							total := int(successCount.Load()) + int(failCount.Load())
-							daemonEvents <- tui.DaemonEvent{
-								Type:    "status_update",
-								Message: fmt.Sprintf("PING: %d/%d dispatched", successCount.Load(), total),
-								Details: map[string]interface{}{"session": sessionTarget},
-							}
-							time.AfterFunc(30*time.Second, func() {
+							case errors.Is(activationErr, errPingSessionOwned):
+								activationBlocked = true
+								log.Printf("postman: PING blocked for session %s — %v\n", cmd.Target, activationErr)
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",
-									Message: "",
-									Details: map[string]interface{}{"session": sessionTarget},
+									Message: fmt.Sprintf("Session %s is owned by another daemon", cmd.Target),
+									Details: map[string]interface{}{"session": cmd.Target},
 								}
-							})
-						}()
+							default:
+								activationBlocked = true
+								log.Printf("postman: session activation for PING failed on %s: %v\n", cmd.Target, activationErr)
+								daemonEvents <- tui.DaemonEvent{
+									Type:    "status_update",
+									Message: fmt.Sprintf("Failed to activate session %s", cmd.Target),
+									Details: map[string]interface{}{"session": cmd.Target},
+								}
+							}
+						}
+						if len(targetNodes) == 0 {
+							if activationBlocked {
+								break
+							}
+							if cachedPtr == nil {
+								log.Printf("postman: PING skipped for session %s — no nodes discovered yet\n", cmd.Target)
+							} else {
+								log.Printf("postman: PING skipped for session %s — 0 nodes matched in session (total discovered across all sessions: %d)\n", cmd.Target, len(freshNodes))
+							}
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "status_update",
+								Message: fmt.Sprintf("Nodes not yet discovered for session %s \u2014 press 'p' again", cmd.Target),
+								Details: map[string]interface{}{"session": cmd.Target},
+							}
+							break
+						}
 					}
+					// Build active nodes from freshNodes (not stale startup nodes)
+					activeNodes := activePingNodeNames(freshNodes)
+					// Send PING to all discovered nodes in the target session.
+					livenessMap := idleTracker.GetLivenessMap()
+					pingAdjacency, _ := config.ParseEdges(cfg.Edges)
+					if pingAdjacency == nil {
+						pingAdjacency = map[string][]string{}
+					}
+					sessionTarget := cmd.Target
+					go func() {
+						workerLimit := daemonState.BeginManualPingFanout(len(targetNodes))
+						defer daemonState.FinishManualPingFanout()
+						var wg sync.WaitGroup
+						var successCount, failCount atomic.Int32
+						type pingTarget struct {
+							name string
+							info discovery.NodeInfo
+						}
+						targets := make([]pingTarget, 0, len(targetNodes))
+						for nodeName, nodeInfo := range targetNodes {
+							targets = append(targets, pingTarget{name: nodeName, info: nodeInfo})
+						}
+						sort.Slice(targets, func(i, j int) bool {
+							return targets[i].name < targets[j].name
+						})
+						jobs := make(chan pingTarget)
+						for i := 0; i < workerLimit; i++ {
+							wg.Add(1)
+							go func() {
+								defer wg.Done()
+								for target := range jobs {
+									daemonState.UnqueueManualPingDelivery()
+									if !daemonState.StartManualPingDelivery() {
+										failCount.Add(1)
+										log.Printf("postman: WARNING: manual PING budget unexpectedly saturated for %s\n", target.name)
+										daemonEvents <- tui.DaemonEvent{
+											Type:    "message_received",
+											Message: fmt.Sprintf("PING failed for %s: manual PING budget saturated", target.name),
+										}
+										continue
+									}
+									func() {
+										defer daemonState.FinishManualPingDelivery()
+										if err := ping.SendPingToNode(target.info, contextID, target.name,
+											cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
+											pingAdjacency, freshNodes); err != nil {
+											log.Printf("❌ postman: PING to %s failed: %v\n", target.name, err)
+											failCount.Add(1)
+											daemonEvents <- tui.DaemonEvent{
+												Type:    "message_received",
+												Message: fmt.Sprintf("PING failed for %s: %v", target.name, err),
+											}
+										} else {
+											log.Printf("📮 postman: PING sent to %s\n", target.name)
+											successCount.Add(1)
+											daemonEvents <- tui.DaemonEvent{
+												Type:    "message_received",
+												Message: fmt.Sprintf("PING sent to %s", target.name),
+											}
+										}
+									}()
+								}
+							}()
+						}
+						for _, target := range targets {
+							jobs <- target
+						}
+						close(jobs)
+						wg.Wait()
+						total := int(successCount.Load()) + int(failCount.Load())
+						daemonEvents <- tui.DaemonEvent{
+							Type:    "status_update",
+							Message: fmt.Sprintf("PING: %d/%d dispatched", successCount.Load(), total),
+							Details: map[string]interface{}{"session": sessionTarget},
+						}
+						time.AfterFunc(30*time.Second, func() {
+							daemonEvents <- tui.DaemonEvent{
+								Type:    "status_update",
+								Message: "",
+								Details: map[string]interface{}{"session": sessionTarget},
+							}
+						})
+					}()
 				}
 			}
-		})
+		}
+	})
 
-		p := tea.NewProgram(tui.InitialModel(tuiEvents, tuiCommands, cfg, contextID))
-		finalModel, err := p.Run()
-		if err != nil {
-			log.Printf("postman: TUI exited with error: %v\n", err)
-			return fmt.Errorf("TUI error: %w", err)
+	p := tea.NewProgram(tui.InitialModel(tuiEvents, tuiCommands, cfg, contextID))
+	finalModel, err := p.Run()
+	if err != nil {
+		log.Printf("postman: TUI exited with error: %v\n", err)
+		return fmt.Errorf("TUI error: %w", err)
+	}
+	// Issue #57: Log TUI exit reason
+	if model, ok := finalModel.(tui.Model); ok {
+		if !model.Quitting() {
+			log.Println("postman: TUI exited (unexpected termination)")
 		}
-		// Issue #57: Log TUI exit reason
-		if model, ok := finalModel.(tui.Model); ok {
-			if !model.Quitting() {
-				log.Println("postman: TUI exited (unexpected termination)")
-			}
-		} else {
-			log.Println("postman: TUI exited (unknown state)")
-		}
+	} else {
+		log.Println("postman: TUI exited (unknown state)")
 	}
 
 	log.Println("postman: daemon exiting normally")

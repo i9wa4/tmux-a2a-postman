@@ -16,10 +16,9 @@ func TestDispatch_StartCallsStartHandler(t *testing.T) {
 			ContextID:   "ctx-start",
 			ConfigPath:  "/tmp/postman.toml",
 			LogFilePath: "/tmp/postman.log",
-			NoTUI:       true,
 		},
 		Handlers{
-			Start: func(contextID, configPath, logFilePath string, noTUI bool) error {
+			Start: func(contextID, configPath, logFilePath string) error {
 				called = true
 				if contextID != "ctx-start" {
 					t.Fatalf("contextID = %q, want %q", contextID, "ctx-start")
@@ -29,9 +28,6 @@ func TestDispatch_StartCallsStartHandler(t *testing.T) {
 				}
 				if logFilePath != "/tmp/postman.log" {
 					t.Fatalf("logFilePath = %q, want %q", logFilePath, "/tmp/postman.log")
-				}
-				if !noTUI {
-					t.Fatal("noTUI = false, want true")
 				}
 				return nil
 			},

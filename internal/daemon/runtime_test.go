@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -66,6 +67,130 @@ func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRunt
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for daemon-submit worker result")
 		return daemonSubmitRuntimeResult{}
+	}
+}
+
+func TestPostDeliveryTraceFieldsPreservesEnvelopeCorrelation(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "source-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	filename := "20260626-010000-from-orchestrator-to-worker.md"
+	eventPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyTo: 20260626-005900-from-worker-to-orchestrator.md\n  input_request_id: ireq_attempt_123\n  timestamp: 2026-06-26T01:00:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(eventPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rt := &daemonRuntime{contextID: "runtime-ctx"}
+	fields := rt.postDeliveryTraceFields(eventPath, filename)
+
+	if fields.MessageID != filename {
+		t.Fatalf("MessageID = %q, want %q", fields.MessageID, filename)
+	}
+	if fields.MessagePath != filepath.Join("post", filename) {
+		t.Fatalf("MessagePath = %q, want post-relative filename", fields.MessagePath)
+	}
+	if fields.ContextID != "envelope-ctx" {
+		t.Fatalf("ContextID = %q, want envelope-ctx", fields.ContextID)
+	}
+	if fields.InputRequestID != "ireq_attempt_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_attempt_123", fields.InputRequestID)
+	}
+	if fields.ReplyTo != "20260626-005900-from-worker-to-orchestrator.md" {
+		t.Fatalf("ReplyTo = %q", fields.ReplyTo)
+	}
+}
+
+func TestDispatchPostDeliveryPreservesProjectionSyncCorrelationAfterMove(t *testing.T) {
+	installRuntimeTestTmux(t, t.TempDir())
+
+	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
+	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs source: %v", err)
+	}
+	recipientSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(recipientSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs recipient: %v", err)
+	}
+
+	filename := "20260626-011500-from-orchestrator-to-review-session:worker.md"
+	postPath := filepath.Join(sourceSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: review-session:worker\n  messageId: " + filename + "\n  replyTo: 20260626-011400-from-review-session:worker-to-orchestrator.md\n  input_request_id: ireq_runtime_123\n  timestamp: 2026-06-26T01:15:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sender-session:orchestrator": {SessionName: "sender-session", SessionDir: sourceSessionDir, PaneID: "%1"},
+		"review-session:worker":       {SessionName: "review-session", SessionDir: recipientSessionDir, PaneID: "%2"},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"review-session:worker"},
+	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+	rt := &daemonRuntime{
+		contextID:   "runtime-ctx",
+		selfSession: "sender-session",
+		nodes:       nodes,
+		adjacency:   adjacency,
+		cfg:         cfg,
+		events:      make(chan tui.DaemonEvent, 8),
+		daemonState: NewDaemonState(0, "runtime-ctx"),
+		idleTracker: idle.NewIdleTracker(),
+	}
+	rt.daemonState.SetSessionEnabled("sender-session", true)
+	rt.daemonState.SetSessionEnabled("review-session", true)
+
+	originalSync := syncMailboxProjectionWithTraceFn
+	captured := make(chan msgtrace.Fields, 2)
+	syncMailboxProjectionWithTraceFn = func(sessionDir string, fields msgtrace.Fields) {
+		captured <- fields
+		originalSync(sessionDir, fields)
+	}
+	t.Cleanup(func() { syncMailboxProjectionWithTraceFn = originalSync })
+
+	rt.dispatchPostDelivery(postPath, filename, nodes, adjacency, cfg, postDeliveryReservation{})
+	waitForInboxEntries(t, recipientSessionDir, "worker", 1)
+
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after delivery: %v", err)
+	}
+
+	byPath := map[string]msgtrace.Fields{}
+	for i := 0; i < 2; i++ {
+		select {
+		case fields := <-captured:
+			byPath[fields.MessagePath] = fields
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for runtime projection_sync call %d", i+1)
+		}
+	}
+
+	if len(byPath) != 2 {
+		t.Fatalf("captured runtime sync calls = %d, want 2", len(byPath))
+	}
+	sourceFields, ok := byPath[filepath.Join("post", filename)]
+	if !ok {
+		t.Fatalf("missing source projection_sync fields: %#v", captured)
+	}
+	recipientFields, ok := byPath[filepath.Join("inbox", "worker", filename)]
+	if !ok {
+		t.Fatalf("missing recipient projection_sync fields: %#v", captured)
+	}
+	for name, fields := range map[string]msgtrace.Fields{"source": sourceFields, "recipient": recipientFields} {
+		if fields.InputRequestID != "ireq_runtime_123" {
+			t.Fatalf("%s InputRequestID = %q, want ireq_runtime_123", name, fields.InputRequestID)
+		}
+		if fields.ReplyTo != "20260626-011400-from-review-session:worker-to-orchestrator.md" {
+			t.Fatalf("%s ReplyTo = %q", name, fields.ReplyTo)
+		}
+		if fields.ContextID != "envelope-ctx" {
+			t.Fatalf("%s ContextID = %q, want envelope-ctx", name, fields.ContextID)
+		}
 	}
 }
 
