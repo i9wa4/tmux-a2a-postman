@@ -17,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -134,9 +135,39 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	return payload
 }
 
-func syncMailboxProjection(sessionDir string) {
+func deliveryTraceFieldsFromContent(filename, messagePath, tmuxSession, contextID, content string, info *MessageInfo) msgtrace.Fields {
+	fields := msgtrace.FromContent(filename, messagePath, tmuxSession, content)
+	if fields.ContextID == "" {
+		fields.ContextID = contextID
+	}
+	if info != nil {
+		if fields.Sender == "" {
+			fields.Sender = info.From
+		}
+		if fields.Recipient == "" {
+			fields.Recipient = info.To
+		}
+	}
+	return fields
+}
+
+func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
+	if fields.TmuxSession == "" {
+		fields.TmuxSession = filepath.Base(sessionDir)
+	}
+	emitTrace := msgtrace.HasMessageContext(fields)
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		fields.Result = "error"
+		fields.Reason = err.Error()
+		if emitTrace {
+			msgtrace.Log("projection_sync", fields)
+		}
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
+		return
+	}
+	fields.Result = "ok"
+	if emitTrace {
+		msgtrace.Log("projection_sync", fields)
 	}
 }
 
@@ -270,6 +301,15 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
 		return err
 	}
+	fields := msgtrace.FromContent(messageID, shadowRelativePath(sessionDir, dstPath), sessionName, content)
+	if fields.Sender == "" {
+		fields.Sender = from
+	}
+	if fields.Recipient == "" {
+		fields.Recipient = to
+	}
+	fields.Reason = deadLetterFailureReason(dstPath)
+	msgtrace.Log("dead_letter", fields)
 	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:     messageID,
 		From:          from,
@@ -280,7 +320,7 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		FailureReason: deadLetterFailureReason(dstPath),
 		Content:       content,
 	})
-	syncMailboxProjection(sessionDir)
+	syncMailboxProjectionWithTrace(sessionDir, fields)
 	return nil
 }
 
@@ -336,6 +376,9 @@ func emitDeliveryDecisionEvent(events chan<- DaemonEvent, decision deliveryDecis
 	events <- DaemonEvent{
 		Type:    "message_received",
 		Message: message,
+		Details: map[string]interface{}{
+			"failure_reason": decision.EventReason,
+		},
 	}
 }
 
@@ -775,6 +818,10 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if err != nil {
 		return err
 	}
+	resultFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+	resultFields.DeliveryAttempt = 1
+	resultFields.Result = "delivered"
+	msgtrace.Log("delivery_result", resultFields)
 	recordMailboxProjectionPayload(sourceSessionDir, sourceSessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      info.From,
@@ -803,9 +850,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		messageContent,
 		now,
 	)
-	syncMailboxProjection(sourceSessionDir)
+	sourceProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(sourceSessionDir, postPath), sourceSessionName, contextID, messageContent, info)
+	sourceProjectionFields.DeliveryAttempt = 1
+	syncMailboxProjectionWithTrace(sourceSessionDir, sourceProjectionFields)
 	if recipientSessionDir != sourceSessionDir {
-		syncMailboxProjection(recipientSessionDir)
+		recipientProjectionFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
+		recipientProjectionFields.DeliveryAttempt = 1
+		syncMailboxProjectionWithTrace(recipientSessionDir, recipientProjectionFields)
 	}
 
 	// Send tmux notification to the recipient pane
