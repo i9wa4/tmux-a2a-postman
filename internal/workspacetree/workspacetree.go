@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	ParentAliasPrefix = "@parent/"
+	ParentAlias       = "@parent"
 	ChildAliasPrefix  = "@child/"
+	ParentAliasPrefix = ParentAlias + "/"
 )
 
 type FailureReason string
@@ -34,6 +35,7 @@ type Registration struct {
 	ID                string
 	Label             string
 	ParentSessionName string
+	Representative    string
 	Order             int
 	Root              string
 }
@@ -43,6 +45,7 @@ type Node struct {
 	ID                string
 	Label             string
 	ParentSessionName string
+	Representative    string
 	Order             int
 }
 
@@ -102,6 +105,7 @@ func Build(registrations []Registration) Topology {
 			ID:                id,
 			Label:             label,
 			ParentSessionName: parentSessionName,
+			Representative:    strings.TrimSpace(registration.Representative),
 			Order:             registration.Order,
 		})
 		topology.bySession[sessionName] = append(topology.bySession[sessionName], idx)
@@ -230,7 +234,15 @@ func (t Topology) ResolveAlias(alias, sourceSessionName string, nodeExists func(
 		}
 		matches := selectChildren(children, parsed.selector)
 		if len(matches) == 0 {
-			return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureNoChild}
+			if parsed.nodeName == "" && len(children) == 1 {
+				parsed.nodeName = parsed.selector
+				parsed.selector = ""
+				matches = children
+			} else if parsed.nodeName == "" && len(children) > 1 {
+				return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureAmbiguousChild}
+			} else {
+				return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureNoChild}
+			}
 		}
 		if len(matches) > 1 {
 			return AliasResolution{Input: alias, AliasKind: parsed.kind, Selector: parsed.selector, NodeName: parsed.nodeName, FailureReason: FailureAmbiguousChild}
@@ -240,13 +252,27 @@ func (t Topology) ResolveAlias(alias, sourceSessionName string, nodeExists func(
 		return AliasResolution{Input: alias, FailureReason: FailureInvalidAlias}
 	}
 
-	address := nodeaddr.Full(parsed.nodeName, target.SessionName)
+	resolvedNodeName := parsed.nodeName
+	address := nodeaddr.Full(resolvedNodeName, target.SessionName)
+	if parsed.nodeName == "" {
+		if target.Representative == "" {
+			return AliasResolution{
+				Input:         alias,
+				SessionName:   target.SessionName,
+				AliasKind:     parsed.kind,
+				Selector:      parsed.selector,
+				FailureReason: FailureUnknownNode,
+			}
+		}
+		resolvedNodeName = target.Representative
+		address = nodeaddr.Full(resolvedNodeName, target.SessionName)
+	}
 	if nodeExists != nil && !nodeExists(address) {
 		return AliasResolution{
 			Input:         alias,
 			Address:       address,
 			SessionName:   target.SessionName,
-			NodeName:      parsed.nodeName,
+			NodeName:      resolvedNodeName,
 			AliasKind:     parsed.kind,
 			Selector:      parsed.selector,
 			FailureReason: FailureUnknownNode,
@@ -256,7 +282,7 @@ func (t Topology) ResolveAlias(alias, sourceSessionName string, nodeExists func(
 		Input:       alias,
 		Address:     address,
 		SessionName: target.SessionName,
-		NodeName:    parsed.nodeName,
+		NodeName:    resolvedNodeName,
 		AliasKind:   parsed.kind,
 		Selector:    parsed.selector,
 		Found:       true,
@@ -272,6 +298,29 @@ func ValidateAliasSyntax(alias string) error {
 	return err
 }
 
+func (t Topology) RelationshipAlias(viewpointAddress, targetAddress string) (string, bool) {
+	viewSessionName, _, viewHasSession := nodeaddr.Split(viewpointAddress)
+	targetSessionName, targetNodeName, targetHasSession := nodeaddr.Split(targetAddress)
+	if !viewHasSession || !targetHasSession {
+		return "", false
+	}
+	view, ok, _ := t.NodeForSession(viewSessionName)
+	if !ok {
+		return "", false
+	}
+	target, ok, _ := t.NodeForSession(targetSessionName)
+	if !ok || target.Representative == "" || targetNodeName != target.Representative {
+		return "", false
+	}
+	if view.ParentSessionName == target.SessionName {
+		return ParentAlias, true
+	}
+	if target.ParentSessionName == view.SessionName {
+		return ChildAliasPrefix + target.Label, true
+	}
+	return "", false
+}
+
 type parsedAlias struct {
 	kind     string
 	selector string
@@ -280,6 +329,8 @@ type parsedAlias struct {
 
 func parseAlias(alias string) (parsedAlias, error) {
 	switch {
+	case alias == ParentAlias:
+		return parsedAlias{kind: "parent"}, nil
 	case strings.HasPrefix(alias, ParentAliasPrefix):
 		nodeName := strings.TrimPrefix(alias, ParentAliasPrefix)
 		if err := validateAliasNode(nodeName); err != nil {
@@ -291,10 +342,13 @@ func parseAlias(alias string) (parsedAlias, error) {
 		parts := strings.Split(rest, "/")
 		switch len(parts) {
 		case 1:
+			if strings.TrimSpace(parts[0]) == "" {
+				return parsedAlias{}, fmt.Errorf("child selector or node is required")
+			}
 			if err := validateAliasNode(parts[0]); err != nil {
 				return parsedAlias{}, err
 			}
-			return parsedAlias{kind: "child", nodeName: parts[0]}, nil
+			return parsedAlias{kind: "child", selector: parts[0]}, nil
 		case 2:
 			if strings.TrimSpace(parts[0]) == "" {
 				return parsedAlias{}, fmt.Errorf("child selector is required")

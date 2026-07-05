@@ -250,6 +250,7 @@ edges = ["messenger --- worker"]
 session = "repo"
 label = "repo"
 id = "repo-root"
+representative = "orchestrator"
 order = 10
 root = "/workspace/repo"
 
@@ -277,7 +278,7 @@ role = "worker"
 	if len(cfg.WorkspaceTree) != 2 {
 		t.Fatalf("WorkspaceTree length = %d, want 2", len(cfg.WorkspaceTree))
 	}
-	if got := cfg.WorkspaceTree[0]; got.SessionName != "repo" || got.Label != "repo" || got.Root != "/workspace/repo" || got.ID != "repo-root" || got.Order != 10 {
+	if got := cfg.WorkspaceTree[0]; got.SessionName != "repo" || got.Label != "repo" || got.Root != "/workspace/repo" || got.ID != "repo-root" || got.Representative != "orchestrator" || got.Order != 10 {
 		t.Fatalf("WorkspaceTree[0] = %#v, want repo node", got)
 	}
 	if got := cfg.WorkspaceTree[1]; got.SessionName != "project" || got.Label != "api" || got.ParentSessionName != "repo" || got.Order != 20 {

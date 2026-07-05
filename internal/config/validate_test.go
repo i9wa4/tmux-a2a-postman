@@ -263,16 +263,17 @@ func TestValidateConfig_WorkspaceTree(t *testing.T) {
 			{SessionName: "repo", Label: "repo", Root: "/workspace/repo", ID: "repo-root"},
 			{SessionName: "", ParentSessionName: "repo"},
 			{SessionName: "project", Label: "bad_label", ParentSessionName: "repo"},
-			{SessionName: "docs", ID: "bad_id", ParentSessionName: "bad/parent"},
+			{SessionName: "docs", ID: "bad_id", ParentSessionName: "bad/parent", Representative: "bad/representative"},
 		},
 	}
 
 	errors := ValidateConfig(cfg)
 	wantFields := map[string]bool{
-		"workspace_tree[1].session": false,
-		"workspace_tree[2].label":   false,
-		"workspace_tree[3].parent":  false,
-		"workspace_tree[3].id":      false,
+		"workspace_tree[1].session":        false,
+		"workspace_tree[2].label":          false,
+		"workspace_tree[3].parent":         false,
+		"workspace_tree[3].id":             false,
+		"workspace_tree[3].representative": false,
 	}
 	for _, err := range errors {
 		if _, ok := wantFields[err.Field]; ok && err.Severity == "error" {

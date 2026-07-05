@@ -144,6 +144,13 @@ func ValidateConfig(cfg *Config) []ValidationError {
 				Severity: "error",
 			})
 		}
+		if node.Representative != "" && !binding.ValidateNodeName(node.Representative) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".representative",
+				Message:  fmt.Sprintf("representative %q must match %s", node.Representative, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
 		if strings.TrimSpace(node.Root) != "" && !strings.HasPrefix(strings.TrimSpace(node.Root), "/") {
 			errors = append(errors, ValidationError{
 				Field:    field + ".root",

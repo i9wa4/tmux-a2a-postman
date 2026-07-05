@@ -98,10 +98,15 @@ func TestDuplicateHierarchySessionsAreReportedAndAmbiguous(t *testing.T) {
 
 func TestResolveAliasCompilesToExplicitSessionNodeAddress(t *testing.T) {
 	topology := Build([]Registration{
-		{SessionName: "repo", ID: "repo-id", Label: "repo"},
-		{SessionName: "api", ID: "api-id", Label: "api", ParentSessionName: "repo"},
-		{SessionName: "docs", ID: "docs-id", Label: "docs", ParentSessionName: "repo"},
+		{SessionName: "repo", ID: "repo-id", Label: "repo", Representative: "orchestrator"},
+		{SessionName: "api", ID: "api-id", Label: "api", ParentSessionName: "repo", Representative: "worker"},
+		{SessionName: "docs", ID: "docs-id", Label: "docs", ParentSessionName: "repo", Representative: "worker"},
 	})
+
+	defaultParent := topology.ResolveAlias("@parent", "api", nil)
+	if !defaultParent.Found || defaultParent.Address != "repo:orchestrator" {
+		t.Fatalf("default parent alias = %#v, want repo:orchestrator", defaultParent)
+	}
 
 	parent := topology.ResolveAlias("@parent/orchestrator", "api", nil)
 	if !parent.Found || parent.Address != "repo:orchestrator" {
@@ -116,6 +121,30 @@ func TestResolveAliasCompilesToExplicitSessionNodeAddress(t *testing.T) {
 	byID := topology.ResolveAlias("@child/docs-id/worker", "repo", nil)
 	if !byID.Found || byID.Address != "docs:worker" {
 		t.Fatalf("child alias by id = %#v, want docs:worker", byID)
+	}
+
+	defaultChild := topology.ResolveAlias("@child/api", "repo", nil)
+	if !defaultChild.Found || defaultChild.Address != "api:worker" {
+		t.Fatalf("default child alias = %#v, want api:worker", defaultChild)
+	}
+}
+
+func TestRelationshipAliasNamesRepresentativeContacts(t *testing.T) {
+	topology := Build([]Registration{
+		{SessionName: "repo", Label: "repo", Representative: "orchestrator"},
+		{SessionName: "api", Label: "api", ParentSessionName: "repo", Representative: "worker"},
+	})
+
+	parent, ok := topology.RelationshipAlias("api:worker", "repo:orchestrator")
+	if !ok || parent != "@parent" {
+		t.Fatalf("parent contact alias = %q/%v, want @parent", parent, ok)
+	}
+	child, ok := topology.RelationshipAlias("repo:orchestrator", "api:worker")
+	if !ok || child != "@child/api" {
+		t.Fatalf("child contact alias = %q/%v, want @child/api", child, ok)
+	}
+	if alias, ok := topology.RelationshipAlias("repo:orchestrator", "api:reviewer"); ok {
+		t.Fatalf("non-representative child alias = %q/%v, want none", alias, ok)
 	}
 }
 

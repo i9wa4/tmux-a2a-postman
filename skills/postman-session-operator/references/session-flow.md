@@ -28,9 +28,10 @@ and recipient before delivery. A failed `send-heredoc` is stronger evidence
 than stale footer text.
 
 When workspace tree hierarchy is configured in `postman.toml`,
-`send-heredoc --to` accepts tree aliases (`@parent/<node>`, `@child/<node>`,
-or `@child/<label-or-session-or-id>/<node>`). The CLI compiles a successful
-alias to an explicit `session:node` recipient before writing the message.
+`send-heredoc --to` accepts tree aliases (`@parent`, `@parent/<node>`,
+`@child/<label-or-session-or-id>`, `@child/<node>` for a single child, or
+`@child/<label-or-session-or-id>/<node>`). The CLI compiles a successful alias
+to an explicit `session:node` recipient before writing the message.
 
 Use `--reply-required` when the recipient must answer. Use `--no-reply` for
 terminal or informational mail. Without either flag, reply policy is resolved

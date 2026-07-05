@@ -225,6 +225,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	if err := cliutil.ValidateNodeAddress("--to", recipient); err != nil {
 		return err
 	}
+	workspaceTopology := workspacetree.BuildFromConfig(cfg)
 
 	var resolvedContextID string
 	if *contextID != "" {
@@ -348,7 +349,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"recipient":                      recipient,
 		"timestamp":                      now.Format(time.RFC3339),
 		"can_talk_to":                    canTalkTo,
-		"contacts_section":               envelope.ContactSection(cfg, talksToList),
+		"contacts_section":               contactSectionForViewpoint(cfg, workspaceTopology, talksToList, senderFullName),
 		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, recipient), "<recipient>", recipient),
 		"message_id":                     filename,
@@ -420,7 +421,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		}
 		footerTalksToList := talksToListForFooter(adjacency, recipient)
 		footerVars["can_talk_to"] = strings.Join(footerTalksToList, ", ")
-		footerVars["contacts_section"] = envelope.ContactSection(cfg, footerTalksToList)
+		footerVars["contacts_section"] = contactSectionForViewpoint(cfg, workspaceTopology, footerTalksToList, recipient)
 		footerVars["reply_command"] = strings.ReplaceAll(
 			envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, sender),
 			"<recipient>",
@@ -721,6 +722,42 @@ func talksToListForFooter(adjacency map[string][]string, nodeName string) []stri
 		return talksToList
 	}
 	return config.GetTalksTo(adjacency, nodeSimpleName)
+}
+
+func contactSectionForViewpoint(cfg *config.Config, topology workspacetree.Topology, nodes []string, viewpoint string) string {
+	contactLines := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node == "" {
+			continue
+		}
+		role := ""
+		if cfg != nil {
+			nodeConfig := cfg.GetNodeConfig(node)
+			if nodeConfig.Role == "" {
+				nodeConfig = cfg.GetNodeConfig(nodeaddr.Simple(node))
+			}
+			role = envelope.ContactRoleSummary(nodeConfig.Role)
+		}
+		displayNode := node
+		hasAlias := false
+		if alias, ok := topology.RelationshipAlias(viewpoint, node); ok {
+			displayNode = alias + ": " + node
+			hasAlias = true
+		}
+		if role != "" {
+			if hasAlias {
+				contactLines = append(contactLines, fmt.Sprintf("- %s - %s", displayNode, role))
+			} else {
+				contactLines = append(contactLines, fmt.Sprintf("- %s: %s", displayNode, role))
+			}
+		} else {
+			contactLines = append(contactLines, fmt.Sprintf("- %s", displayNode))
+		}
+	}
+	if len(contactLines) == 0 {
+		return "- none"
+	}
+	return strings.Join(contactLines, "\n")
 }
 
 func renderSendBody(content, body, footer string) string {

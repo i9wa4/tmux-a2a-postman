@@ -13,6 +13,7 @@ func RegistrationsFromConfig(cfg *config.Config) []Registration {
 			ID:                node.ID,
 			Label:             node.Label,
 			ParentSessionName: node.ParentSessionName,
+			Representative:    node.Representative,
 			Order:             node.Order,
 			Root:              node.Root,
 		})

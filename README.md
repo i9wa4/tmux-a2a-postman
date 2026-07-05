@@ -309,10 +309,16 @@ accepts tree aliases and writes the compiled explicit recipient into the
 message:
 
 ```sh
-tmux-a2a-postman send-heredoc --to @parent/orchestrator <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to @parent <<'POSTMAN_BODY'
 Coordinate this project with the configured parent session.
 POSTMAN_BODY
 ```
+
+Use `@parent/<node>` to address a specific parent node, or
+`@child/<label-or-session-or-id>` to address a configured child
+representative. Message footers keep the concrete `session:node` recipient and
+add relationship aliases, such as `@parent` or `@child/api`, when they are
+available.
 
 Read the next inbox message:
 
