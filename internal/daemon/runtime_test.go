@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -66,6 +67,130 @@ func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRunt
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for daemon-submit worker result")
 		return daemonSubmitRuntimeResult{}
+	}
+}
+
+func TestPostDeliveryTraceFieldsPreservesEnvelopeCorrelation(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "source-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	filename := "20260626-010000-from-orchestrator-to-worker.md"
+	eventPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyTo: 20260626-005900-from-worker-to-orchestrator.md\n  input_request_id: ireq_attempt_123\n  timestamp: 2026-06-26T01:00:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(eventPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rt := &daemonRuntime{contextID: "runtime-ctx"}
+	fields := rt.postDeliveryTraceFields(eventPath, filename)
+
+	if fields.MessageID != filename {
+		t.Fatalf("MessageID = %q, want %q", fields.MessageID, filename)
+	}
+	if fields.MessagePath != filepath.Join("post", filename) {
+		t.Fatalf("MessagePath = %q, want post-relative filename", fields.MessagePath)
+	}
+	if fields.ContextID != "envelope-ctx" {
+		t.Fatalf("ContextID = %q, want envelope-ctx", fields.ContextID)
+	}
+	if fields.InputRequestID != "ireq_attempt_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_attempt_123", fields.InputRequestID)
+	}
+	if fields.ReplyTo != "20260626-005900-from-worker-to-orchestrator.md" {
+		t.Fatalf("ReplyTo = %q", fields.ReplyTo)
+	}
+}
+
+func TestDispatchPostDeliveryPreservesProjectionSyncCorrelationAfterMove(t *testing.T) {
+	installRuntimeTestTmux(t, t.TempDir())
+
+	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
+	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs source: %v", err)
+	}
+	recipientSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(recipientSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs recipient: %v", err)
+	}
+
+	filename := "20260626-011500-from-orchestrator-to-review-session:worker.md"
+	postPath := filepath.Join(sourceSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: review-session:worker\n  messageId: " + filename + "\n  replyTo: 20260626-011400-from-review-session:worker-to-orchestrator.md\n  input_request_id: ireq_runtime_123\n  timestamp: 2026-06-26T01:15:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sender-session:orchestrator": {SessionName: "sender-session", SessionDir: sourceSessionDir, PaneID: "%1"},
+		"review-session:worker":       {SessionName: "review-session", SessionDir: recipientSessionDir, PaneID: "%2"},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"review-session:worker"},
+	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+	rt := &daemonRuntime{
+		contextID:   "runtime-ctx",
+		selfSession: "sender-session",
+		nodes:       nodes,
+		adjacency:   adjacency,
+		cfg:         cfg,
+		events:      make(chan tui.DaemonEvent, 8),
+		daemonState: NewDaemonState(0, "runtime-ctx"),
+		idleTracker: idle.NewIdleTracker(),
+	}
+	rt.daemonState.SetSessionEnabled("sender-session", true)
+	rt.daemonState.SetSessionEnabled("review-session", true)
+
+	originalSync := syncMailboxProjectionWithTraceFn
+	captured := make(chan msgtrace.Fields, 2)
+	syncMailboxProjectionWithTraceFn = func(sessionDir string, fields msgtrace.Fields) {
+		captured <- fields
+		originalSync(sessionDir, fields)
+	}
+	t.Cleanup(func() { syncMailboxProjectionWithTraceFn = originalSync })
+
+	rt.dispatchPostDelivery(postPath, filename, nodes, adjacency, cfg, postDeliveryReservation{})
+	waitForInboxEntries(t, recipientSessionDir, "worker", 1)
+
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after delivery: %v", err)
+	}
+
+	byPath := map[string]msgtrace.Fields{}
+	for i := 0; i < 2; i++ {
+		select {
+		case fields := <-captured:
+			byPath[fields.MessagePath] = fields
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for runtime projection_sync call %d", i+1)
+		}
+	}
+
+	if len(byPath) != 2 {
+		t.Fatalf("captured runtime sync calls = %d, want 2", len(byPath))
+	}
+	sourceFields, ok := byPath[filepath.Join("post", filename)]
+	if !ok {
+		t.Fatalf("missing source projection_sync fields: %#v", captured)
+	}
+	recipientFields, ok := byPath[filepath.Join("inbox", "worker", filename)]
+	if !ok {
+		t.Fatalf("missing recipient projection_sync fields: %#v", captured)
+	}
+	for name, fields := range map[string]msgtrace.Fields{"source": sourceFields, "recipient": recipientFields} {
+		if fields.InputRequestID != "ireq_runtime_123" {
+			t.Fatalf("%s InputRequestID = %q, want ireq_runtime_123", name, fields.InputRequestID)
+		}
+		if fields.ReplyTo != "20260626-011400-from-review-session:worker-to-orchestrator.md" {
+			t.Fatalf("%s ReplyTo = %q", name, fields.ReplyTo)
+		}
+		if fields.ContextID != "envelope-ctx" {
+			t.Fatalf("%s ContextID = %q, want envelope-ctx", name, fields.ContextID)
+		}
 	}
 }
 
@@ -239,7 +364,7 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 	}) {
 		t.Fatalf("Daemon cardinality = %#v", diagnostics.Daemon)
 	}
-	if diagnostics.DaemonSubmit.WorkerLimit != daemonSubmitWorkerLimit ||
+	if diagnostics.DaemonSubmit.WorkerLimit != config.DefaultDaemonSubmitWorkerLimit ||
 		diagnostics.DaemonSubmit.ActiveWorkerCount != 0 ||
 		diagnostics.DaemonSubmit.ActiveRequestCount != 1 ||
 		diagnostics.DaemonSubmit.PendingRequestCount != 1 ||
@@ -274,6 +399,52 @@ func TestDispatchRuntimeDiagnosticsSubmitRequestWritesBoundedCounts(t *testing.T
 		}
 	}
 	assertRuntimeDiagnosticsHasNoArrays(t, diagnostics)
+}
+
+func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want int
+	}{
+		{name: "nil config uses default", cfg: nil, want: config.DefaultDaemonSubmitWorkerLimit},
+		{name: "missing config uses default", cfg: &config.Config{}, want: config.DefaultDaemonSubmitWorkerLimit},
+		{name: "configured", cfg: &config.Config{DaemonSubmitWorkerLimit: 12}, want: 12},
+		{name: "above max clamps", cfg: &config.Config{DaemonSubmitWorkerLimit: 99}, want: config.MaxDaemonSubmitWorkerLimit},
+		{name: "negative uses default", cfg: &config.Config{DaemonSubmitWorkerLimit: -1}, want: config.DefaultDaemonSubmitWorkerLimit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := newDaemonRuntime(
+				"",
+				"",
+				"",
+				tt.cfg,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				"",
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				"",
+			)
+			if got := cap(rt.daemonSubmitSem); got != tt.want {
+				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)
+			}
+			if got := cap(rt.daemonSubmitResults); got != tt.want {
+				t.Fatalf("daemonSubmitResults cap = %d, want %d", got, tt.want)
+			}
+			if got := rt.daemonSubmitRuntimeDiagnostics(time.Now()).WorkerLimit; got != tt.want {
+				t.Fatalf("diagnostic worker limit = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }
 
 func assertRuntimeDiagnosticsHasNoArrays(t *testing.T, diagnostics *status.RuntimeDiagnostics) {
@@ -358,12 +529,22 @@ func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
 		log.SetOutput(originalOutput)
 		log.SetFlags(originalFlags)
 	})
+	originalRSS := currentProcessRSSSnapshot
+	currentProcessRSSSnapshot = func() processRSSSnapshot {
+		return processRSSSnapshot{Supported: true, Available: true, Bytes: 123456}
+	}
+	t.Cleanup(func() {
+		currentProcessRSSSnapshot = originalRSS
+	})
 
 	rt.logRuntimeDiagnosticsSnapshot("startup", now)
 	line := buf.String()
 	for _, want := range []string{
 		"postman: component=daemon_runtime event=memory_snapshot source=passive_log reason=startup",
 		"observed_at=2026-06-02T00:00:00Z",
+		"rss_supported=true",
+		"rss_available=true",
+		"rss_bytes=123456",
 		"heap_alloc_bytes=",
 		"heap_sys_bytes=",
 		"heap_objects=",
@@ -395,6 +576,36 @@ func TestLogRuntimeDiagnosticsSnapshotWritesPassiveScalarLine(t *testing.T) {
 		if strings.Contains(line, forbidden) {
 			t.Fatalf("runtime diagnostics log leaked %q in %q", forbidden, line)
 		}
+	}
+}
+
+func TestRuntimeDiagnosticsLogLineMarksUnsupportedRSSExplicitly(t *testing.T) {
+	originalRSS := currentProcessRSSSnapshot
+	currentProcessRSSSnapshot = func() processRSSSnapshot {
+		return processRSSSnapshot{}
+	}
+	t.Cleanup(func() {
+		currentProcessRSSSnapshot = originalRSS
+	})
+
+	diagnostics := status.NewRuntimeDiagnostics(
+		"daemon_runtime",
+		status.DaemonRuntimeCardinality{},
+		status.DaemonSubmitRuntimeDiagnostics{},
+		time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
+	)
+
+	line := runtimeDiagnosticsLogLine("interval", &diagnostics)
+	for _, want := range []string{
+		"rss_supported=false",
+		"rss_available=false",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("runtime diagnostics log missing %q in %q", want, line)
+		}
+	}
+	if strings.Contains(line, "rss_bytes=") {
+		t.Fatalf("unsupported RSS log included rss_bytes in %q", line)
 	}
 }
 
@@ -874,7 +1085,8 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 		launchDaemonSubmitWorker: workerHarness.launch,
 	}
 
-	for i := 0; i < daemonSubmitWorkerLimit; i++ {
+	workerLimit := config.DefaultDaemonSubmitWorkerLimit
+	for i := 0; i < workerLimit; i++ {
 		requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 			RequestID: fmt.Sprintf("req-send-%d", i),
 			Command:   projection.DaemonSubmitSend,
@@ -889,11 +1101,11 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 			t.Fatalf("dispatch request %d status = %v, want dispatched", i, status)
 		}
 	}
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
-	if got := len(rt.daemonSubmitSem); got != daemonSubmitWorkerLimit {
-		t.Fatalf("active worker slots = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(rt.daemonSubmitSem); got != workerLimit {
+		t.Fatalf("active worker slots = %d, want %d", got, workerLimit)
 	}
 
 	extraPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
@@ -909,8 +1121,8 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	if status := rt.dispatchDaemonSubmitRequest(extraPath); status != daemonSubmitDispatchSaturated {
 		t.Fatalf("dispatch saturated request status = %v, want saturated", status)
 	}
-	if got := len(workerHarness.workers); got != daemonSubmitWorkerLimit {
-		t.Fatalf("queued workers after saturation = %d, want %d", got, daemonSubmitWorkerLimit)
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers after saturation = %d, want %d", got, workerLimit)
 	}
 	if rt.daemonSubmitSaturationCount != 1 {
 		t.Fatalf("daemonSubmitSaturationCount = %d, want 1", rt.daemonSubmitSaturationCount)
@@ -1325,6 +1537,78 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 }
 
+func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-round-robin"
+	highVolumeSessionDir := filepath.Join(baseDir, contextID, "a-high-volume")
+	lowVolumeSessionDir := filepath.Join(baseDir, contextID, "b-low-volume")
+	for _, sessionDir := range []string{highVolumeSessionDir, lowVolumeSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	workerLimit := 4
+	for i := 1; i <= workerLimit; i++ {
+		if _, err := projection.WriteDaemonSubmitRequest(highVolumeSessionDir, projection.DaemonSubmitRequest{
+			RequestID: fmt.Sprintf("high-%02d", i),
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  fmt.Sprintf("20260601-1200%02d-r1111-from-orchestrator-to-worker.md", i),
+			Content:   "high-volume",
+		}); err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(high-%02d): %v", i, err)
+		}
+	}
+	if _, err := projection.WriteDaemonSubmitRequest(lowVolumeSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "low-01",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120001-r2222-from-orchestrator-to-worker.md",
+		Content:   "low-volume",
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(low-01): %v", err)
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	var started []string
+	rt := &daemonRuntime{
+		sessionDir: highVolumeSessionDir,
+		cfg:        &config.Config{DaemonSubmitWorkerLimit: workerLimit},
+		nodes: map[string]discovery.NodeInfo{
+			"b-low-volume:worker": {
+				SessionName: "b-low-volume",
+				SessionDir:  lowVolumeSessionDir,
+			},
+		},
+		processDaemonSubmit: func(requestPath string) (daemonSubmitProcessResult, error) {
+			request, err := projection.ReadDaemonSubmitRequest(requestPath)
+			if err != nil {
+				return daemonSubmitProcessResult{}, err
+			}
+			started = append(started, request.RequestID)
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+
+	rt.dispatchPendingDaemonSubmitRequests()
+	if got := len(workerHarness.workers); got != workerLimit {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
+	}
+	for len(workerHarness.workers) > 0 {
+		workerHarness.runNext(t)
+	}
+
+	wantStarted := []string{"high-01", "low-01", "high-02", "high-03"}
+	if !reflect.DeepEqual(started, wantStarted) {
+		t.Fatalf("started requests = %#v, want round-robin order %#v", started, wantStarted)
+	}
+}
+
 func TestHandlePostWatcherEvent_RateLimitedMessageSchedulesSingleRetry(t *testing.T) {
 	tmpDir := t.TempDir()
 	installRuntimeTestTmux(t, tmpDir)
@@ -1732,6 +2016,81 @@ func waitForAutoPingEventIdle(t *testing.T, rt *daemonRuntime, nodeKey string, t
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func TestNewAutoPingDispatchSnapshot_ClonesDispatchInputs(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%1",
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		},
+	}
+	activeNodes := []string{"worker"}
+	livenessMap := map[string]bool{"review:worker": true}
+	adjacency := map[string][]string{"review:worker": {"review:critic"}}
+
+	snapshot := newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+
+	nodes["review:worker"] = discovery.NodeInfo{PaneID: "%2", SessionName: "review", SessionDir: "mutated"}
+	activeNodes[0] = "mutated"
+	livenessMap["review:worker"] = false
+	adjacency["review:worker"][0] = "review:mutated"
+
+	if got := snapshot.nodes["review:worker"].PaneID; got != "%1" {
+		t.Fatalf("snapshot node pane = %q, want original %%1", got)
+	}
+	if got := snapshot.activeNodes[0]; got != "worker" {
+		t.Fatalf("snapshot active node = %q, want worker", got)
+	}
+	if got := snapshot.livenessMap["review:worker"]; !got {
+		t.Fatal("snapshot liveness was mutated")
+	}
+	if got := snapshot.adjacency["review:worker"][0]; got != "review:critic" {
+		t.Fatalf("snapshot adjacency = %q, want review:critic", got)
+	}
+}
+
+var autoPingSnapshotSink *autoPingDispatchSnapshot
+
+func BenchmarkAutoPingDispatchSnapshotAllocations(b *testing.B) {
+	const nodeCount = 256
+	nodes := make(map[string]discovery.NodeInfo, nodeCount)
+	livenessMap := make(map[string]bool, nodeCount)
+	adjacency := make(map[string][]string, nodeCount)
+	activeNodes := make([]string, 0, nodeCount)
+	for i := 0; i < nodeCount; i++ {
+		nodeKey := fmt.Sprintf("review:worker-%03d", i)
+		nodes[nodeKey] = discovery.NodeInfo{
+			PaneID:      fmt.Sprintf("%%%d", i),
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		}
+		livenessMap[nodeKey] = true
+		adjacency[nodeKey] = []string{"review:orchestrator", "review:critic"}
+		activeNodes = append(activeNodes, fmt.Sprintf("worker-%03d", i))
+	}
+
+	b.Run("legacy_per_target_clone", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < nodeCount; j++ {
+				autoPingSnapshotSink = &autoPingDispatchSnapshot{
+					activeNodes: append([]string(nil), activeNodes...),
+					livenessMap: cloneBoolMap(livenessMap),
+					adjacency:   cloneStringSliceMap(adjacency),
+					nodes:       cloneNodeInfoMap(nodes),
+				}
+			}
+		}
+	})
+
+	b.Run("batched_snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			autoPingSnapshotSink = newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+		}
+	})
 }
 
 func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
@@ -2409,6 +2768,7 @@ func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *tes
 	rt.daemonState.SetSessionEnabled("review", true)
 
 	rt.dispatchPendingAutoPings(rt.nodes, false, now)
+	waitForAutoPingEventIdle(t, rt, "review:worker", 2*time.Second)
 
 	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
 	if err != nil {

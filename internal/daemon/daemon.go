@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
@@ -31,9 +32,15 @@ import (
 )
 
 const (
-	inboxCheckInterval            = 30 * time.Second
-	runtimeDiagnosticsLogInterval = 10 * time.Minute
+	inboxCheckInterval                            = 30 * time.Second
+	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
+	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 )
+
+// daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
+// in milliseconds. Initialized from config at daemon startup; tests may
+// override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
+var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -98,8 +105,28 @@ func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, v
 }
 
 func syncMailboxProjection(sessionDir string) {
+	syncMailboxProjectionWithTrace(sessionDir, msgtrace.Fields{TmuxSession: filepath.Base(sessionDir)})
+}
+
+var syncMailboxProjectionWithTraceFn = syncMailboxProjectionWithTrace
+
+func syncMailboxProjectionWithTrace(sessionDir string, fields msgtrace.Fields) {
+	if fields.TmuxSession == "" {
+		fields.TmuxSession = filepath.Base(sessionDir)
+	}
+	emitTrace := msgtrace.HasMessageContext(fields)
 	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		fields.Result = "error"
+		fields.Reason = err.Error()
+		if emitTrace {
+			msgtrace.Log("projection_sync", fields)
+		}
 		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
+		return
+	}
+	fields.Result = "ok"
+	if emitTrace {
+		msgtrace.Log("projection_sync", fields)
 	}
 }
 
@@ -168,11 +195,16 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
 	}
 	postPath := filepath.Join(postDir, request.Filename)
+	fields := msgtrace.FromContent(request.Filename, filepath.Join("post", request.Filename), filepath.Base(sessionDir), request.Content)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
 	log.Printf("postman: component=%s event=send_write_start submit_path=%s session=%s request=%s file=%s bytes=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), request.RequestID, request.Filename, len(request.Content))
 	if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("writing post message: %w", err)
 	}
+	msgtrace.Log("send_enqueue", fields)
 	log.Printf("postman: component=%s event=send_write_done submit_path=%s session=%s request=%s file=%s\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), request.RequestID, request.Filename)
 	return projection.DaemonSubmitResponse{
@@ -234,6 +266,11 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	if err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
+	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("pop_read_archive", fields)
 	recordDaemonSubmitPopRead(sessionDir, readPath, msgs[0].Filename, string(data))
 	return projection.DaemonSubmitResponse{
 		RequestID:    request.RequestID,
@@ -282,7 +319,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 		if request.ProfileOutputPath == "" {
 			return response, fmt.Errorf("daemon submit runtime-profile file destination missing output path")
 		}
-		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data); err != nil {
+		if err := writeRuntimeProfileFile(request.ProfileOutputPath, request.RequestID, data, request.ProfileForce); err != nil {
 			return response, err
 		}
 		response.RuntimeProfile = &projection.RuntimeProfileCapture{
@@ -298,7 +335,7 @@ func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitR
 	return response, nil
 }
 
-func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
+func writeRuntimeProfileFile(outputPath, requestID string, data []byte, force bool) error {
 	if outputPath == "" {
 		return fmt.Errorf("profile output path is required")
 	}
@@ -314,6 +351,11 @@ func writeRuntimeProfileFile(outputPath, requestID string, data []byte) error {
 			return fmt.Errorf("profile output directory: %w", err)
 		} else if !info.IsDir() {
 			return fmt.Errorf("profile output directory is not a directory")
+		}
+	}
+	if !force {
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("profile output file already exists: %s (use --force to overwrite)", outputPath)
 		}
 	}
 	tmpPath := outputPath + "." + requestID + ".tmp"
@@ -379,6 +421,11 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	if err != nil {
 		return daemonSubmitProcessResult{}, err
 	}
+	requestTrace := msgtrace.FromContent(request.Filename, request.Filename, filepath.Base(sessionDir), request.Content)
+	requestTrace.DaemonSubmitRequestID = request.RequestID
+	requestTrace.DaemonSubmitCommand = string(request.Command)
+	requestTrace.SubmitPath = string(projection.SubmitPathDaemon)
+	msgtrace.Log("daemon_submit_accept", requestTrace)
 	result := daemonSubmitProcessResult{
 		Command:    request.Command,
 		SessionDir: sessionDir,
@@ -387,6 +434,10 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	queueMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, processingStartedAt))
 	log.Printf("postman: component=%s event=request_processing submit_path=%s command=%s session=%s request=%s file=%s queue_ms=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, request.Filename, queueMs)
+	if queueMs >= daemonSubmitQueueWarnThresholdMs {
+		log.Printf("postman: WARNING: component=%s event=queue_ms_threshold_exceeded submit_path=%s command=%s session=%s request=%s queue_ms=%d threshold_ms=%d\n",
+			projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, queueMs, daemonSubmitQueueWarnThresholdMs)
+	}
 
 	var response projection.DaemonSubmitResponse
 	switch request.Command {
@@ -422,6 +473,21 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	totalMs := daemonSubmitDurationMillis(daemonSubmitDurationSince(request.CreatedAt, responseWrittenAt))
 	log.Printf("postman: component=%s event=response_written submit_path=%s command=%s session=%s request=%s file=%s error=%t queue_ms=%d handler_ms=%d total_ms=%d\n",
 		projection.SubmitPathDaemon, projection.SubmitPathDaemon, request.Command, filepath.Base(sessionDir), request.RequestID, response.Filename, response.Error != "", queueMs, handlerMs, totalMs)
+	resultTrace := requestTrace
+	if response.Filename != "" {
+		resultTrace.MessageID = response.Filename
+	}
+	if response.MarkdownPath != "" {
+		resultTrace.MessagePath = filepath.Join("read", filepath.Base(response.MarkdownPath))
+	}
+	if response.Error != "" {
+		resultTrace.Result = "error"
+		resultTrace.Reason = response.Error
+		msgtrace.Log("daemon_submit_reject", resultTrace)
+	} else {
+		resultTrace.Result = "ok"
+		msgtrace.Log("daemon_submit_result", resultTrace)
+	}
 	if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
 	}
@@ -614,6 +680,11 @@ func runDaemonLoopWithWatcherEvents(
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
 ) {
+	// Apply configurable queue warning threshold before any workers start.
+	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
+		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
 	// "send on closed channel" panics. Let the channel be garbage collected when all
@@ -1057,6 +1128,14 @@ func (ds *DaemonState) hasNodeSentSince(nodeName string, since time.Time) bool {
 
 func messageEventSuppressesNormalDelivery(event message.DaemonEvent) bool {
 	return event.Type == "message_received" && strings.HasPrefix(event.Message, "Dead-letter:")
+}
+
+func messageEventFailureReason(event message.DaemonEvent) string {
+	if event.Details == nil {
+		return ""
+	}
+	reason, _ := event.Details["failure_reason"].(string)
+	return reason
 }
 
 // checkPaneRestarts detects pane restarts and sends PING (Issue #98).
