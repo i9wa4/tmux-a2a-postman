@@ -117,15 +117,16 @@ type PostmanFields struct {
 }
 
 type BuildOptions struct {
-	Now         time.Time
-	Scope       string
-	ContextID   string
-	MessageID   string
-	TmuxSession string
-	Node        string
-	PaneID      string
-	CWD         string
-	Runtime     RuntimeMetadata
+	Now                        time.Time
+	Scope                      string
+	ContextID                  string
+	MessageID                  string
+	TmuxSession                string
+	Node                       string
+	PaneID                     string
+	CWD                        string
+	Runtime                    RuntimeMetadata
+	SuppressRuntimeAutoCollect bool
 }
 
 type SavedSnapshot struct {
@@ -154,7 +155,7 @@ func BuildSnapshot(opts BuildOptions) Snapshot {
 	displayCWD := displayPath(cwd)
 	displayCWD = tracker.sanitizeString(displayCWD, defaultStringLimit)
 	runtimeMetadata := opts.Runtime
-	if runtimeMetadata == (RuntimeMetadata{}) {
+	if runtimeMetadata == (RuntimeMetadata{}) && !opts.SuppressRuntimeAutoCollect {
 		runtimeMetadata = CollectRuntimeMetadata(opts.PaneID)
 	}
 	runtimeMetadataPtr := sanitizeRuntimeMetadata(runtimeMetadata, &tracker)
@@ -473,6 +474,10 @@ func sanitizeRuntimeMetadata(runtime RuntimeMetadata, tracker *redactionTracker)
 func CollectRuntimeMetadata(paneID string) RuntimeMetadata {
 	launchCommand := detectLaunchCommand(paneID)
 	return RuntimeMetadataFromLaunchCommand(launchCommand, os.Getenv("SUBDIR"))
+}
+
+func CollectLaunchCommandMetadata(paneID string) RuntimeMetadata {
+	return RuntimeMetadata{LaunchCommand: detectLaunchCommand(paneID)}
 }
 
 func RuntimeMetadataFromLaunchCommand(launchCommand, fallbackSubdir string) RuntimeMetadata {
