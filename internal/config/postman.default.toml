@@ -244,11 +244,6 @@ you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your me
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# delivery_idle_timeout_seconds = 0  # Re-deliver swallowed messages after N idle seconds (0 = disabled) (#282)
-# delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message (0 = use default 3) (#282)
-
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
 enter_delay_seconds = 0    # 0 = use global enter_delay_seconds
-delivery_idle_timeout_seconds = 0  # 0 = disabled
-delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message

@@ -1706,7 +1706,6 @@ scan_interval_seconds = 5.0
 
 [worker]
 template = "from toml"
-delivery_idle_timeout_seconds = 300
 `)
 	writeFile(t, filepath.Join(xdgDir, "postman.md"), "## `worker` Node\n\nfrom markdown\n")
 
@@ -1716,9 +1715,6 @@ delivery_idle_timeout_seconds = 300
 	}
 	if cfg.Nodes["worker"].Template != "from markdown" {
 		t.Errorf("worker.Template: got %q, want %q", cfg.Nodes["worker"].Template, "from markdown")
-	}
-	if cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds != 300 {
-		t.Errorf("worker.DeliveryIdleTimeoutSeconds: got %v, want 300", cfg.Nodes["worker"].DeliveryIdleTimeoutSeconds)
 	}
 	if cfg.ScanInterval != 5.0 {
 		t.Errorf("ScanInterval: got %v, want 5.0", cfg.ScanInterval)
