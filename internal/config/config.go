@@ -69,7 +69,7 @@ type Config struct {
 	Edges                 []string `toml:"edges"`
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
+	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -88,12 +88,10 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template                   string  `toml:"template"`
-	Role                       string  `toml:"role"`
-	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
-	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
-	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
-	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
+	Template   string  `toml:"template"`
+	Role       string  `toml:"role"`
+	EnterCount int     `toml:"enter_count"`         // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
+	EnterDelay float64 `toml:"enter_delay_seconds"` // 0 = use global default
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -604,12 +602,6 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
-		if overNode.DeliveryIdleTimeoutSeconds != 0 {
-			baseNode.DeliveryIdleTimeoutSeconds = overNode.DeliveryIdleTimeoutSeconds
-		}
-		if overNode.DeliveryIdleRetryMax != 0 {
-			baseNode.DeliveryIdleRetryMax = overNode.DeliveryIdleRetryMax
-		}
 		base.Nodes[name] = baseNode
 	}
 
@@ -619,12 +611,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeDefaults.EnterDelay != 0 {
 		base.NodeDefaults.EnterDelay = override.NodeDefaults.EnterDelay
-	}
-	if override.NodeDefaults.DeliveryIdleTimeoutSeconds != 0 {
-		base.NodeDefaults.DeliveryIdleTimeoutSeconds = override.NodeDefaults.DeliveryIdleTimeoutSeconds
-	}
-	if override.NodeDefaults.DeliveryIdleRetryMax != 0 {
-		base.NodeDefaults.DeliveryIdleRetryMax = override.NodeDefaults.DeliveryIdleRetryMax
 	}
 }
 
@@ -1295,12 +1281,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
-	}
-	if specific.DeliveryIdleTimeoutSeconds != 0 {
-		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
-	}
-	if specific.DeliveryIdleRetryMax != 0 {
-		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
 }

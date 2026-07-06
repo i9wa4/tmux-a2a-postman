@@ -54,7 +54,12 @@ sends the normal pane notification when inbox delivery succeeds.
 - Recipients: every discovered node in the selected tmux session.
 - Notes: not limited by startup `ui_node`. During the startup auto-PING delay,
   the TUI disables `p` and shows a readiness countdown instead of dispatching a
-  manual PING. If the session is owned by another daemon, the send is blocked.
+  manual PING. If an operator sends after the countdown while a startup or
+  discovery auto-PING is still pending for the same node and pane, the
+  successful operator PING resolves that pending automatic wake so the next
+  scan does not deliver duplicate daemon PING mail. If the session is owned by
+  another daemon, the send is blocked. Pressing `p` again is still an
+  intentional operator retry and can send another direct PING.
 
 ### 1.5. Compaction Recovery
 
@@ -64,7 +69,10 @@ sends the normal pane notification when inbox delivery succeeds.
 - Source: daemon pane capture.
 - Recipients: the node whose pane showed the newer compaction marker.
 - Notes: the first observed marker is treated as baseline. Later newer markers
-  can send compaction-triggered PINGs.
+  can send compaction-triggered PINGs. A successful compaction-triggered PING
+  resolves any pending automatic wake for the same node and pane instead of
+  allowing a later scan to deliver duplicate startup, discovery, or
+  pane-restart PING mail.
 
 `auto_ping_delay_seconds = 0` makes queued auto-PINGs due immediately. With the
 default full-scan interval of `scan_interval_seconds = 1`, a due auto-PING is
@@ -72,6 +80,12 @@ normally delivered on the next full scan. If delivery is retryable, for example
 because the target inbox queue is full, the pending auto-PING remains in the
 journal and the daemon tries again on later scans. One in-flight auto-PING per
 node is allowed at a time.
+
+The dedupe key is the discovered node key plus pane ID. A successful direct
+operator or compaction PING records a delivered auto-PING journal event with a
+`resolution_reason` such as `operator_tui` or `compaction`. Later automatic
+discovery for the same node and pane does not queue another PING. A replacement
+pane is a new wake event and can still queue `pane_restart`.
 
 ## 2. Contact Hints
 
@@ -133,7 +147,9 @@ stored message metadata and daemon logs before treating it as suspicious:
 - `messageType: ping`, `from: postman`, and `replyPolicy: none` identify daemon
   PING mail.
 - Auto-PINGs should have a matching pending/delivered journal event with reason
-  `startup`, `discovered`, or `pane_restart`.
+  `startup`, `discovered`, or `pane_restart`. Direct operator or compaction
+  PINGs can also resolve pending automatic wake debt with a delivered event
+  carrying `resolution_reason`.
 - Compaction PINGs should follow a new compaction marker and should not repeat
   faster than the per-pane cooldown.
 - Operator TUI PINGs should match a recent `p` keypress on the selected session.

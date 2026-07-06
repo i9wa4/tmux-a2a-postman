@@ -316,7 +316,7 @@ func (rt *daemonRuntime) bootstrap() {
 	}
 	rt.dispatchPendingDaemonSubmitRequests()
 	rt.recordPendingAutoPings(startupAutoPingNodeKeys(rt.nodes, rt.cfg), rt.nodes, "startup", now)
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, now)
 	rt.dispatchPendingPostMessages()
 }
@@ -914,7 +914,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		rt.logPaneIDChanges(freshNodes)
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
-		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
+		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), now)
 
 		allSessions, _ := discovery.DiscoverAllSessions()
 		if allSessions == nil {
@@ -1261,7 +1261,7 @@ func (rt *daemonRuntime) handleScanTick() {
 		}
 	}
 
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
 	rt.pruneKnownNodes(freshNodes)
 	newNodes := rt.detectNewNodes(freshNodes)
 	now := rt.now()
@@ -1339,7 +1339,7 @@ func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool 
 	if rt == nil || rt.cfg == nil || rt.daemonState == nil {
 		return false
 	}
-	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, true) {
+	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, false) {
 		return false
 	}
 
@@ -1455,7 +1455,7 @@ func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string
 	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", now)
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
-	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
+	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), now)
 	rt.emitStatusUpdateIfChanged(allSessions)
 }
 
@@ -1482,8 +1482,6 @@ func (rt *daemonRuntime) emitStatusUpdateIfChanged(allSessions []string) {
 }
 
 func (rt *daemonRuntime) handleInboxCheckTick() {
-	checkSwallowedMessages(rt.nodes, rt.cfg, rt.events, rt.contextID, rt.adjacency, rt.idleTracker, rt.daemonState)
-
 	rt.events <- tui.DaemonEvent{
 		Type: "inbox_unread_count_update",
 		Details: map[string]interface{}{
@@ -1711,6 +1709,8 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 			if reason == "" {
 				reason = existing.Reason
 			}
+		} else if exists && existing.DeliveredAt != "" && existing.PaneID == nodeInfo.PaneID {
+			return
 		}
 	}
 	if reason == "" {
