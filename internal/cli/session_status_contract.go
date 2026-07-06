@@ -82,49 +82,46 @@ func projectedInputRequestCounts(sessionDir, sessionName string) (projection.Mes
 	return projected, true
 }
 
-func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionStatus, error) {
+type sessionStatusInputs struct {
+	contextID        string
+	sessionName      string
+	sessionDir       string
+	orderedEdgeNodes []string
+	edgeNodeRank     map[string]int
+	nodes            map[string]discovery.NodeInfo
+	paneActivity     map[string]paneActivityEvidence
+	queues           status.SessionQueues
+	inputRequests    projection.MessageInputRequestState
+	useInputRequests bool
+	panes            []sessionPane
+	inboxCounts      map[string]int
+	delivery         *status.DeliveryStatus
+	blockedByNode    map[string][]projection.BlockedReport
+	now              time.Time
+}
+
+func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus {
 	result := status.SessionStatus{
 		SchemaVersion: status.SchemaVersion,
-		ContextID:     contextID,
-		SessionName:   sessionName,
-	}
-	if !ownsCanonicalSessionStatus(baseDir, contextID, sessionName) {
-		result.VisibleState = "unavailable"
-		result.Compact = compactSessionStatusMark(result.VisibleState)
-		return result, nil
+		ContextID:     inputs.contextID,
+		SessionName:   inputs.sessionName,
 	}
 
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-	if err != nil {
-		return result, fmt.Errorf("discovering nodes: %w", err)
-	}
-
-	orderedEdgeNodes := orderedEdgeNodeNames(cfg.Edges)
-	edgeNodes := make(map[string]bool, len(orderedEdgeNodes))
-	edgeNodeRank := make(map[string]int, len(orderedEdgeNodes))
-	for idx, nodeName := range orderedEdgeNodes {
-		edgeNodes[nodeName] = true
-		edgeNodeRank[nodeName] = idx
-	}
-	sessionDir := filepath.Join(baseDir, contextID, sessionName)
-	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
-	queues := collectSessionQueues(sessionDir)
-	inputRequests, useInputRequests := projectedInputRequestCounts(sessionDir, sessionName)
-	panes, err := discoverSessionPanes(sessionName)
-	if err != nil {
-		return result, err
+	edgeNodes := make(map[string]bool, len(inputs.orderedEdgeNodes))
+	for _, name := range inputs.orderedEdgeNodes {
+		edgeNodes[name] = true
 	}
 
 	paneBySimpleName := make(map[string]sessionPane)
-	for _, pane := range panes {
+	for _, pane := range inputs.panes {
 		if !edgeNodes[pane.title] {
 			continue
 		}
 		paneBySimpleName[pane.title] = pane
 	}
 
-	for nodeName, nodeInfo := range nodes {
-		if nodeInfo.SessionName != sessionName {
+	for nodeName, nodeInfo := range inputs.nodes {
+		if nodeInfo.SessionName != inputs.sessionName {
 			continue
 		}
 		simpleName := nodeaddr.Simple(nodeName)
@@ -133,30 +130,26 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		}
 
 		pane := paneBySimpleName[simpleName]
-		inboxCount := countMarkdownFiles(filepath.Join(sessionDir, "inbox", simpleName))
-		if useProjectedInboxCounts {
-			inboxCount = inboxCounts[simpleName]
-		}
 		node := status.NodeStatus{
 			Name:           simpleName,
 			PaneID:         nodeInfo.PaneID,
-			PaneState:      paneActivity[nodeInfo.PaneID].Status,
-			InboxCount:     inboxCount,
+			PaneState:      inputs.paneActivity[nodeInfo.PaneID].Status,
+			InboxCount:     inputs.inboxCounts[simpleName],
 			CurrentCommand: pane.currentCommand,
-			ScreenProgress: paneActivity[nodeInfo.PaneID].ScreenProgress,
+			ScreenProgress: inputs.paneActivity[nodeInfo.PaneID].ScreenProgress,
 		}
 		if node.ScreenProgress == nil {
 			node.ScreenProgress = missingScreenProgressEvidence()
 		}
 		inputRequiredCount := -1
-		if useInputRequests {
-			node.InputRequiredCount = inputRequests.InputRequiredCounts[simpleName]
-			node.WaitingOnInputCount = inputRequests.WaitingOnInputCounts[simpleName]
-			node.InfoUnreadCount = inputRequests.InfoUnreadCounts[simpleName]
-			node.InputRequired = statusInputRequestDetails(inputRequests.InputRequired, simpleName, "inbound")
-			node.WaitingOnInput = statusInputRequestDetails(inputRequests.WaitingOnInput, simpleName, "outbound")
+		if inputs.useInputRequests {
+			node.InputRequiredCount = inputs.inputRequests.InputRequiredCounts[simpleName]
+			node.WaitingOnInputCount = inputs.inputRequests.WaitingOnInputCounts[simpleName]
+			node.InfoUnreadCount = inputs.inputRequests.InfoUnreadCounts[simpleName]
+			node.InputRequired = statusInputRequestDetails(inputs.inputRequests.InputRequired, simpleName, "inbound")
+			node.WaitingOnInput = statusInputRequestDetails(inputs.inputRequests.WaitingOnInput, simpleName, "outbound")
 			inputRequiredCount = node.InputRequiredCount
-			if node.InboxCount > inputRequests.UnreadCounts[simpleName] {
+			if node.InboxCount > inputs.inputRequests.UnreadCounts[simpleName] {
 				inputRequiredCount = -1
 			}
 		}
@@ -165,8 +158,8 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	}
 
 	sort.Slice(result.Nodes, func(i, j int) bool {
-		leftRank, leftOK := edgeNodeRank[result.Nodes[i].Name]
-		rightRank, rightOK := edgeNodeRank[result.Nodes[j].Name]
+		leftRank, leftOK := inputs.edgeNodeRank[result.Nodes[i].Name]
+		rightRank, rightOK := inputs.edgeNodeRank[result.Nodes[j].Name]
 		if leftOK && rightOK && leftRank != rightRank {
 			return leftRank < rightRank
 		}
@@ -177,11 +170,87 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	})
 	result.NodeCount = len(result.Nodes)
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
-	result.Queues = queues
-	result.Windows = buildSessionWindows(result.Nodes, panes)
-	result.Compact = buildSessionCompact(result, panes)
-	enrichSessionStatus(&result, sessionDir, time.Now())
-	return result, nil
+	result.Queues = inputs.queues
+	result.Windows = buildSessionWindows(result.Nodes, inputs.panes)
+	result.Compact = buildSessionCompact(result, inputs.panes)
+	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode)
+	return result
+}
+
+func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string, cfg *config.Config, inboxCounts map[string]int, useProjectedInboxCounts bool) (status.SessionStatus, error) {
+	if !ownsCanonicalSessionStatus(baseDir, contextID, sessionName) {
+		result := status.SessionStatus{
+			SchemaVersion: status.SchemaVersion,
+			ContextID:     contextID,
+			SessionName:   sessionName,
+			VisibleState:  "unavailable",
+		}
+		result.Compact = compactSessionStatusMark(result.VisibleState)
+		return result, nil
+	}
+
+	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+	if err != nil {
+		return status.SessionStatus{}, fmt.Errorf("discovering nodes: %w", err)
+	}
+
+	orderedEdgeNodes := orderedEdgeNodeNames(cfg.Edges)
+	edgeNodeRank := make(map[string]int, len(orderedEdgeNodes))
+	edgeNodes := make(map[string]bool, len(orderedEdgeNodes))
+	for idx, nodeName := range orderedEdgeNodes {
+		edgeNodes[nodeName] = true
+		edgeNodeRank[nodeName] = idx
+	}
+
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
+	queues := collectSessionQueues(sessionDir)
+	inputRequests, useInputRequests := projectedInputRequestCounts(sessionDir, sessionName)
+	panes, err := discoverSessionPanes(sessionName)
+	if err != nil {
+		return status.SessionStatus{}, err
+	}
+
+	nodeInboxCounts := make(map[string]int)
+	for nodeName, nodeInfo := range nodes {
+		if nodeInfo.SessionName != sessionName {
+			continue
+		}
+		simpleName := nodeaddr.Simple(nodeName)
+		if !edgeNodes[simpleName] {
+			continue
+		}
+		if useProjectedInboxCounts {
+			nodeInboxCounts[simpleName] = inboxCounts[simpleName]
+		} else {
+			nodeInboxCounts[simpleName] = countMarkdownFiles(filepath.Join(sessionDir, "inbox", simpleName))
+		}
+	}
+
+	now := time.Now()
+	blockedByNode := map[string][]projection.BlockedReport{}
+	if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, sessionName); err == nil && ok {
+		blockedByNode = blocked.ReportsByNode
+	}
+	delivery := collectSessionDelivery(sessionDir, queues, now)
+
+	return buildSessionStatusSnapshot(sessionStatusInputs{
+		contextID:        contextID,
+		sessionName:      sessionName,
+		sessionDir:       sessionDir,
+		orderedEdgeNodes: orderedEdgeNodes,
+		edgeNodeRank:     edgeNodeRank,
+		nodes:            nodes,
+		paneActivity:     paneActivity,
+		queues:           queues,
+		inputRequests:    inputRequests,
+		useInputRequests: useInputRequests,
+		panes:            panes,
+		inboxCounts:      nodeInboxCounts,
+		delivery:         delivery,
+		blockedByNode:    blockedByNode,
+		now:              now,
+	}), nil
 }
 
 func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, nodeName, direction string) []status.InputRequestDetail {
