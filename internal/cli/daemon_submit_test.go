@@ -209,6 +209,62 @@ func TestDaemonSubmitRoundTripperRemovesStaleResponseAndWaitsForFresh(t *testing
 	}
 }
 
+func TestDaemonSubmitRoundTripperRemovesMismatchedRequestIDResponseAndWaitsForFresh(t *testing.T) {
+	createdAt := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	readCalls := 0
+	removed := []string{}
+	transport := daemonSubmitRoundTripper{
+		now: func() time.Time {
+			return createdAt.Add(time.Second)
+		},
+		newRequestID: func(time.Time) (string, error) {
+			return "req-current", nil
+		},
+		writeRequest: func(string, projection.DaemonSubmitRequest) (string, error) {
+			return "/state/requests/req-current.json", nil
+		},
+		readResponse: func(string) (projection.DaemonSubmitResponse, error) {
+			readCalls++
+			if readCalls == 1 {
+				return projection.DaemonSubmitResponse{
+					RequestID: "req-old",
+					Command:   projection.DaemonSubmitPop,
+					HandledAt: createdAt.Add(time.Second).Format(time.RFC3339Nano),
+					Empty:     true,
+				}, nil
+			}
+			return projection.DaemonSubmitResponse{
+				RequestID: "req-current",
+				Command:   projection.DaemonSubmitPop,
+				HandledAt: createdAt.Add(time.Second).Format(time.RFC3339Nano),
+				Filename:  "fresh.md",
+			}, nil
+		},
+		removeResponse: func(path string) error {
+			removed = append(removed, path)
+			return nil
+		},
+		sleep: func(time.Duration) {},
+	}
+
+	outcome, err := transport.roundTrip("/session", projection.DaemonSubmitRequest{
+		Command: projection.DaemonSubmitPop,
+		Node:    "worker",
+	}, time.Second)
+	if err != nil {
+		t.Fatalf("roundTrip: %v", err)
+	}
+	if outcome.StaleResponseCount != 1 {
+		t.Fatalf("outcome.StaleResponseCount = %d, want 1", outcome.StaleResponseCount)
+	}
+	if outcome.Response.Filename != "fresh.md" {
+		t.Fatalf("outcome.Response.Filename = %q, want fresh.md", outcome.Response.Filename)
+	}
+	if len(removed) != 2 {
+		t.Fatalf("removed = %#v, want mismatched and fresh response removals", removed)
+	}
+}
+
 func TestDaemonSubmitRoundTripperAcceptsSecondPrecisionHandledAt(t *testing.T) {
 	createdAt := time.Date(2026, time.June, 1, 1, 0, 0, 750000000, time.UTC)
 	transport := daemonSubmitRoundTripper{

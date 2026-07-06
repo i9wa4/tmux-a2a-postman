@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -119,7 +120,11 @@ func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, stri
 		}
 		entry, err := parseSkillCatalogEntry(skillFile)
 		if err != nil {
-			return nil, resolvedPath, err
+			// A single unparseable SKILL.md must not abort the whole catalog —
+			// and with it the entire postman.md config load (issue #612). Warn
+			// and skip just this skill so edges/nodes still load.
+			log.Printf("postman: WARNING: skipping skill %s: %v\n", dirEntry.Name(), err)
+			continue
 		}
 		if entry.Name == "" {
 			entry.Name = dirEntry.Name()
@@ -254,8 +259,18 @@ func parseSkillFrontmatter(content string) (map[string]string, error) {
 		if trimmed == "" {
 			continue
 		}
+		// Indented lines belong to a nested mapping or sequence under a
+		// previous top-level key (e.g. the `metadata:` block that standard
+		// SKILL.md frontmatter carries). We only consume top-level `name` and
+		// `description`, so skip nested content instead of failing — otherwise
+		// one third-party SKILL.md aborts the entire config load (issue #612).
 		if hasIndentPrefix(line) {
-			return nil, unsupportedFrontmatterSyntaxError(i+1, line)
+			continue
+		}
+		// Top-level YAML sequence item. SKILL.md frontmatter is a mapping, so
+		// this only appears as part of a value we ignore; skip it.
+		if trimmed == "-" || strings.HasPrefix(trimmed, "- ") {
+			continue
 		}
 		idx := strings.Index(line, ":")
 		if idx == -1 {
