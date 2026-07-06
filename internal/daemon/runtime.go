@@ -1711,6 +1711,8 @@ func (rt *daemonRuntime) recordPendingAutoPing(nodeKey string, nodeInfo discover
 			if reason == "" {
 				reason = existing.Reason
 			}
+		} else if exists && existing.DeliveredAt != "" && existing.PaneID == nodeInfo.PaneID {
+			return
 		}
 	}
 	if reason == "" {
