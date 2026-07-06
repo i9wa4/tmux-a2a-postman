@@ -849,6 +849,89 @@ skill_path:
 	assertContains(t, cfg.CommonTemplate, "- `markdown`: Markdown rules.")
 }
 
+// Regression for issue #612: a SKILL.md carrying standard nested-YAML
+// frontmatter (a `metadata:` mapping) and a block-scalar description must not
+// abort the whole postman.md config load. The strict frontmatter parser used
+// to reject the indented `metadata:` lines, and that error bubbled up and
+// discarded edges/nodes, leaving the daemon with zero ping targets.
+func TestLoadMarkdownConfig_SkillPathNestedYAMLFrontmatterDoesNotAbortConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "collab", "SKILL.md"), `---
+name: collab
+license: MIT
+metadata:
+  version: "1.0.0"
+description: |
+  Collaboration helper skill.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+---
+
+## ` + "`edges`" + `
+
+` + "```mermaid" + `
+graph LR
+    agent --- orchestrator
+` + "```" + `
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	// Edges must survive — discovery and ping-target selection depend on them.
+	if len(cfg.Edges) == 0 {
+		t.Fatal("edges were dropped; SKILL.md nested frontmatter aborted the config load")
+	}
+	// The nested-frontmatter skill still yields name + description.
+	assertContains(t, cfg.CommonTemplate, "- `collab`: Collaboration helper skill.")
+}
+
+// Regression for issue #612 (defect B): a single genuinely unparseable
+// SKILL.md in a skill_path directory must be skipped with a warning, not
+// abort the entire catalog load (and with it every edge/node).
+func TestLoadMarkdownConfig_SkillPathUnparseableSkillIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "skills", "broken", "SKILL.md"), `---
+this line has no colon and is not a list item
+---
+`)
+	writeFile(t, filepath.Join(dir, "skills", "good", "SKILL.md"), `---
+name: good
+description: A valid skill.
+---
+`)
+	content := `---
+skill_path:
+  - path: skills
+---
+
+## ` + "`edges`" + `
+
+` + "```mermaid" + `
+graph LR
+    agent --- orchestrator
+` + "```" + `
+`
+	path := filepath.Join(dir, "postman.md")
+	writeFile(t, path, content)
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	if len(cfg.Edges) == 0 {
+		t.Fatal("edges were dropped; one bad SKILL.md aborted the whole catalog")
+	}
+	assertContains(t, cfg.CommonTemplate, "- `good`: A valid skill.")
+	assertNotContains(t, cfg.CommonTemplate, "- `broken`")
+}
+
 func TestLoadMarkdownConfig_SkillPathExplicitAllSkillName(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "skills", "all", "SKILL.md"), `---
