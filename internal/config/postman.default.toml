@@ -34,7 +34,7 @@
 #   {reply_to}       - Message id this message references, when supplied
 #   {input_request_id}  - Exact input request id for reply-required messages
 #   {fills_input_request_id} - Exact input request id this message fills
-#   {sender_runtime_context} - Generated compact sender runtime context block
+#   {sender_runtime_context} - Optional compatibility sender runtime context block
 #   {runtime_context_id} - Runtime context snapshot id
 #   {runtime_context_scope} - Runtime context scope, usually sender
 #   {runtime_context_captured_at} - Runtime context capture timestamp
@@ -101,7 +101,7 @@ edges = []
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 ui_node = "messenger"            # Optional target filter for startup auto-PING
-auto_enable_new_sessions = true    # Auto-enable sessions with configured node panes (default: true)
+auto_enable_new_sessions = false   # Auto-enable sessions with configured node panes (default: false; opt-in per #135)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
 
@@ -204,7 +204,6 @@ params:
 
 {template}
 
-{sender_runtime_context}
 ## Sender Message
 
 ---

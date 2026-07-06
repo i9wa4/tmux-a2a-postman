@@ -344,8 +344,8 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.DaemonSubmitWorkerLimit != DefaultDaemonSubmitWorkerLimit {
 		t.Errorf("default DaemonSubmitWorkerLimit: got %d, want %d", cfg.DaemonSubmitWorkerLimit, DefaultDaemonSubmitWorkerLimit)
 	}
-	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
-		t.Errorf("default AutoEnableNewSessions: got %v, want true", cfg.AutoEnableNewSessions)
+	if cfg.AutoEnableNewSessions == nil || *cfg.AutoEnableNewSessions {
+		t.Errorf("default AutoEnableNewSessions: got %v, want false (opt-in per #135)", cfg.AutoEnableNewSessions)
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
