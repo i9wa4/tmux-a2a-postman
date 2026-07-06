@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -66,6 +67,130 @@ func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRunt
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for daemon-submit worker result")
 		return daemonSubmitRuntimeResult{}
+	}
+}
+
+func TestPostDeliveryTraceFieldsPreservesEnvelopeCorrelation(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "source-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	filename := "20260626-010000-from-orchestrator-to-worker.md"
+	eventPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyTo: 20260626-005900-from-worker-to-orchestrator.md\n  input_request_id: ireq_attempt_123\n  timestamp: 2026-06-26T01:00:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(eventPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rt := &daemonRuntime{contextID: "runtime-ctx"}
+	fields := rt.postDeliveryTraceFields(eventPath, filename)
+
+	if fields.MessageID != filename {
+		t.Fatalf("MessageID = %q, want %q", fields.MessageID, filename)
+	}
+	if fields.MessagePath != filepath.Join("post", filename) {
+		t.Fatalf("MessagePath = %q, want post-relative filename", fields.MessagePath)
+	}
+	if fields.ContextID != "envelope-ctx" {
+		t.Fatalf("ContextID = %q, want envelope-ctx", fields.ContextID)
+	}
+	if fields.InputRequestID != "ireq_attempt_123" {
+		t.Fatalf("InputRequestID = %q, want ireq_attempt_123", fields.InputRequestID)
+	}
+	if fields.ReplyTo != "20260626-005900-from-worker-to-orchestrator.md" {
+		t.Fatalf("ReplyTo = %q", fields.ReplyTo)
+	}
+}
+
+func TestDispatchPostDeliveryPreservesProjectionSyncCorrelationAfterMove(t *testing.T) {
+	installRuntimeTestTmux(t, t.TempDir())
+
+	sourceSessionDir := filepath.Join(t.TempDir(), "sender-session")
+	if err := config.CreateSessionDirs(sourceSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs source: %v", err)
+	}
+	recipientSessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(recipientSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs recipient: %v", err)
+	}
+
+	filename := "20260626-011500-from-orchestrator-to-review-session:worker.md"
+	postPath := filepath.Join(sourceSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: envelope-ctx\n  from: orchestrator\n  to: review-session:worker\n  messageId: " + filename + "\n  replyTo: 20260626-011400-from-review-session:worker-to-orchestrator.md\n  input_request_id: ireq_runtime_123\n  timestamp: 2026-06-26T01:15:00+09:00\n---\n\nbody\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"sender-session:orchestrator": {SessionName: "sender-session", SessionDir: sourceSessionDir, PaneID: "%1"},
+		"review-session:worker":       {SessionName: "review-session", SessionDir: recipientSessionDir, PaneID: "%2"},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"review-session:worker"},
+	}
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+	}
+	rt := &daemonRuntime{
+		contextID:   "runtime-ctx",
+		selfSession: "sender-session",
+		nodes:       nodes,
+		adjacency:   adjacency,
+		cfg:         cfg,
+		events:      make(chan tui.DaemonEvent, 8),
+		daemonState: NewDaemonState(0, "runtime-ctx"),
+		idleTracker: idle.NewIdleTracker(),
+	}
+	rt.daemonState.SetSessionEnabled("sender-session", true)
+	rt.daemonState.SetSessionEnabled("review-session", true)
+
+	originalSync := syncMailboxProjectionWithTraceFn
+	captured := make(chan msgtrace.Fields, 2)
+	syncMailboxProjectionWithTraceFn = func(sessionDir string, fields msgtrace.Fields) {
+		captured <- fields
+		originalSync(sessionDir, fields)
+	}
+	t.Cleanup(func() { syncMailboxProjectionWithTraceFn = originalSync })
+
+	rt.dispatchPostDelivery(postPath, filename, nodes, adjacency, cfg, postDeliveryReservation{})
+	waitForInboxEntries(t, recipientSessionDir, "worker", 1)
+
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after delivery: %v", err)
+	}
+
+	byPath := map[string]msgtrace.Fields{}
+	for i := 0; i < 2; i++ {
+		select {
+		case fields := <-captured:
+			byPath[fields.MessagePath] = fields
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for runtime projection_sync call %d", i+1)
+		}
+	}
+
+	if len(byPath) != 2 {
+		t.Fatalf("captured runtime sync calls = %d, want 2", len(byPath))
+	}
+	sourceFields, ok := byPath[filepath.Join("post", filename)]
+	if !ok {
+		t.Fatalf("missing source projection_sync fields: %#v", captured)
+	}
+	recipientFields, ok := byPath[filepath.Join("inbox", "worker", filename)]
+	if !ok {
+		t.Fatalf("missing recipient projection_sync fields: %#v", captured)
+	}
+	for name, fields := range map[string]msgtrace.Fields{"source": sourceFields, "recipient": recipientFields} {
+		if fields.InputRequestID != "ireq_runtime_123" {
+			t.Fatalf("%s InputRequestID = %q, want ireq_runtime_123", name, fields.InputRequestID)
+		}
+		if fields.ReplyTo != "20260626-011400-from-review-session:worker-to-orchestrator.md" {
+			t.Fatalf("%s ReplyTo = %q", name, fields.ReplyTo)
+		}
+		if fields.ContextID != "envelope-ctx" {
+			t.Fatalf("%s ContextID = %q, want envelope-ctx", name, fields.ContextID)
+		}
 	}
 }
 
@@ -626,6 +751,8 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithConfiguredPanes(t *tes
 		daemonState:  NewDaemonState(0, contextID),
 		events:       events,
 	}
+	autoEnable := true
+	rt.cfg.AutoEnableNewSessions = &autoEnable
 	rt.cfg.Edges = []string{"messenger --- orchestrator"}
 
 	rt.handleSessionScanTick()
@@ -696,6 +823,8 @@ func TestHandleSessionScanTick_AutoActivatesNewSessionWithNodesOnlyConfiguredPan
 		daemonState:  NewDaemonState(0, contextID),
 		events:       events,
 	}
+	autoEnable := true
+	rt.cfg.AutoEnableNewSessions = &autoEnable
 	rt.cfg.Edges = nil
 	rt.cfg.NodeOrder = []string{"worker", "critic"}
 	rt.cfg.Nodes = map[string]config.NodeConfig{
@@ -1893,6 +2022,81 @@ func waitForAutoPingEventIdle(t *testing.T, rt *daemonRuntime, nodeKey string, t
 	}
 }
 
+func TestNewAutoPingDispatchSnapshot_ClonesDispatchInputs(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%1",
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		},
+	}
+	activeNodes := []string{"worker"}
+	livenessMap := map[string]bool{"review:worker": true}
+	adjacency := map[string][]string{"review:worker": {"review:critic"}}
+
+	snapshot := newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+
+	nodes["review:worker"] = discovery.NodeInfo{PaneID: "%2", SessionName: "review", SessionDir: "mutated"}
+	activeNodes[0] = "mutated"
+	livenessMap["review:worker"] = false
+	adjacency["review:worker"][0] = "review:mutated"
+
+	if got := snapshot.nodes["review:worker"].PaneID; got != "%1" {
+		t.Fatalf("snapshot node pane = %q, want original %%1", got)
+	}
+	if got := snapshot.activeNodes[0]; got != "worker" {
+		t.Fatalf("snapshot active node = %q, want worker", got)
+	}
+	if got := snapshot.livenessMap["review:worker"]; !got {
+		t.Fatal("snapshot liveness was mutated")
+	}
+	if got := snapshot.adjacency["review:worker"][0]; got != "review:critic" {
+		t.Fatalf("snapshot adjacency = %q, want review:critic", got)
+	}
+}
+
+var autoPingSnapshotSink *autoPingDispatchSnapshot
+
+func BenchmarkAutoPingDispatchSnapshotAllocations(b *testing.B) {
+	const nodeCount = 256
+	nodes := make(map[string]discovery.NodeInfo, nodeCount)
+	livenessMap := make(map[string]bool, nodeCount)
+	adjacency := make(map[string][]string, nodeCount)
+	activeNodes := make([]string, 0, nodeCount)
+	for i := 0; i < nodeCount; i++ {
+		nodeKey := fmt.Sprintf("review:worker-%03d", i)
+		nodes[nodeKey] = discovery.NodeInfo{
+			PaneID:      fmt.Sprintf("%%%d", i),
+			SessionName: "review",
+			SessionDir:  "review-dir",
+		}
+		livenessMap[nodeKey] = true
+		adjacency[nodeKey] = []string{"review:orchestrator", "review:critic"}
+		activeNodes = append(activeNodes, fmt.Sprintf("worker-%03d", i))
+	}
+
+	b.Run("legacy_per_target_clone", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < nodeCount; j++ {
+				autoPingSnapshotSink = &autoPingDispatchSnapshot{
+					activeNodes: append([]string(nil), activeNodes...),
+					livenessMap: cloneBoolMap(livenessMap),
+					adjacency:   cloneStringSliceMap(adjacency),
+					nodes:       cloneNodeInfoMap(nodes),
+				}
+			}
+		}
+	})
+
+	b.Run("batched_snapshot", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			autoPingSnapshotSink = newAutoPingDispatchSnapshot(nodes, activeNodes, livenessMap, adjacency)
+		}
+	})
+}
+
 func TestDetectNewNodes_ReturnsOnlyNewNodesWithoutAutoEnable(t *testing.T) {
 	freshNodes := map[string]discovery.NodeInfo{
 		"self:known": {
@@ -2742,6 +2946,109 @@ func TestRecordPendingAutoPing_UsesDefaultAutoPingDelay(t *testing.T) {
 	}
 	if got, want := pending.NotBeforeAt, now.Add(20*time.Second).Format(time.RFC3339Nano); got != want {
 		t.Fatalf("NotBeforeAt: got %q, want %q", got, want)
+	}
+}
+
+func TestRecordPendingAutoPing_SkipsSamePaneAfterDirectPingDelivery(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 45, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:          "review:worker",
+		SessionName:      "review",
+		NodeName:         "worker",
+		PaneID:           "%77",
+		Reason:           "operator_tui",
+		ResolutionReason: "operator_tui",
+		TriggeredAt:      now.Format(time.RFC3339Nano),
+		NotBeforeAt:      now.Format(time.RFC3339Nano),
+		DeliveredAt:      now.Format(time.RFC3339Nano),
+	}, now); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			AutoPingDelaySeconds: 20,
+		},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%77",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "discovered", now.Add(time.Second))
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	node := state.Nodes["review:worker"]
+	if node.Pending {
+		t.Fatalf("same-pane discovered auto-PING queued after direct delivery: %#v", node)
+	}
+	if node.DeliveredAt == "" || node.ResolutionReason != "operator_tui" {
+		t.Fatalf("direct delivery state not preserved: %#v", node)
+	}
+}
+
+func TestRecordPendingAutoPing_AllowsReplacementPaneAfterDirectPingDelivery(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.May, 4, 14, 46, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:          "review:worker",
+		SessionName:      "review",
+		NodeName:         "worker",
+		PaneID:           "%77",
+		Reason:           "operator_tui",
+		ResolutionReason: "operator_tui",
+		TriggeredAt:      now.Format(time.RFC3339Nano),
+		NotBeforeAt:      now.Format(time.RFC3339Nano),
+		DeliveredAt:      now.Format(time.RFC3339Nano),
+	}, now); err != nil {
+		t.Fatalf("RecordProcessEvent(delivered): %v", err)
+	}
+
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			AutoPingDelaySeconds: 20,
+		},
+	}
+	rt.recordPendingAutoPing("review:worker", discovery.NodeInfo{
+		PaneID:      "%78",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "pane_restart", now.Add(time.Second))
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	node := state.Nodes["review:worker"]
+	if !node.Pending || node.PaneID != "%78" || node.Reason != "pane_restart" {
+		t.Fatalf("replacement pane auto-PING was not queued: %#v", node)
 	}
 }
 

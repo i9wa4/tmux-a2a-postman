@@ -10,7 +10,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRunStartWithFlags_SourceContractDoesNotWatchConfigForHotReload(t *testing.T) {
@@ -79,7 +81,7 @@ func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want duplicate-daemon rejection")
 	}
@@ -129,7 +131,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonInOtherSession(t *testing.T) 
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err := RunStartWithFlags(contextID, configPath, "", true)
+	err := RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon rejection")
 	}
@@ -182,7 +184,7 @@ func TestRunStartWithFlags_RejectsCurrentUserDaemonLock(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want current-user daemon lock rejection")
 	}
@@ -232,7 +234,7 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	t.Setenv("TMUX_PANE", "%11")
 	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	err = RunStartWithFlags(contextID, configPath, "", true)
+	err = RunStartWithFlags(contextID, configPath, "")
 	if err == nil {
 		t.Fatal("RunStartWithFlags() error = nil, want same-session lock rejection")
 	}
@@ -395,11 +397,98 @@ func TestPingTargetsForSession_BroadcastsAllNodesInSession(t *testing.T) {
 	}
 }
 
+func TestRecordDirectPingDeliveredClearsPendingStartupAutoPing(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.June, 28, 7, 40, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-startup", "review", now)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%11",
+		Reason:       "startup",
+		TriggeredAt:  now.Add(-20 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	recordDirectPingDelivered("review:worker", discovery.NodeInfo{
+		PaneID:      "%11",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}, "operator_tui", now.Add(time.Second))
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState: %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState ok = false, want true")
+	}
+	got := state.Nodes["review:worker"]
+	if got.Pending {
+		t.Fatalf("pending startup auto-PING remained after direct operator PING: %#v", got)
+	}
+	if got.Reason != "startup" || got.ResolutionReason != "operator_tui" || got.DeliveredAt == "" {
+		t.Fatalf("resolved startup state = %#v", got)
+	}
+}
+
+func TestRecordDirectPingDeliveredAllowsIntentionalOperatorRetry(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.June, 28, 7, 41, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-retry", "review", now)
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%11",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}
+
+	recordDirectPingDelivered("review:worker", nodeInfo, "operator_tui", now)
+	recordDirectPingDelivered("review:worker", nodeInfo, "operator_tui", now.Add(time.Second))
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	delivered := 0
+	for _, event := range events {
+		if event.Type == projection.AutoPingDeliveredEventType {
+			delivered++
+		}
+	}
+	if delivered != 2 {
+		t.Fatalf("delivered event count = %d, want 2 for intentional retry", delivered)
+	}
+}
+
 func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	tracker := idle.NewIdleTracker()
 	sessionDir := filepath.Join(t.TempDir(), "review")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.June, 28, 7, 42, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-compaction", "review", now)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%11",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-20 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
 	}
 
 	nodes := map[string]discovery.NodeInfo{
@@ -441,6 +530,31 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Claude rules.") {
 		t.Fatalf("compaction-triggered PING body = %q, want compaction skill catalog", string(body))
+	}
+
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState: %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState ok = false, want true")
+	}
+	got := state.Nodes["review:worker"]
+	if got.Pending {
+		t.Fatalf("compaction PING did not clear pending automatic wake: %#v", got)
+	}
+	if got.Reason != "discovered" || got.ResolutionReason != "compaction" {
+		t.Fatalf("compaction-resolved state = %#v", got)
+	}
+}
+
+func installStartTestJournalManager(t *testing.T, sessionDir, contextID, sessionName string, now time.Time) {
+	t.Helper()
+	manager := journal.NewManager(contextID, os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, sessionName, now); err != nil {
+		t.Fatalf("Bootstrap journal manager: %v", err)
 	}
 }
 

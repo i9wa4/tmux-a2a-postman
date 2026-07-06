@@ -307,7 +307,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n{sender_runtime_context}\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 	runtimeSnapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{

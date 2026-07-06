@@ -34,7 +34,7 @@
 #   {reply_to}       - Message id this message references, when supplied
 #   {input_request_id}  - Exact input request id for reply-required messages
 #   {fills_input_request_id} - Exact input request id this message fills
-#   {sender_runtime_context} - Generated compact sender runtime context block
+#   {sender_runtime_context} - Optional compatibility sender runtime context block
 #   {runtime_context_id} - Runtime context snapshot id
 #   {runtime_context_scope} - Runtime context scope, usually sender
 #   {runtime_context_captured_at} - Runtime context capture timestamp
@@ -67,7 +67,6 @@ tmux_timeout_seconds = 30.0          # Timeout for tmux commands
 enter_delay_seconds = 3.0            # Delay before sending Enter key
 enter_verify_delay_seconds = 3.0     # Delay for post-Enter capture comparison (0 = disabled)
 enter_retry_max = 2                  # Max C-m retries on unchanged pane capture (0 = disabled)
-startup_delay_seconds = 10.0         # Initial startup delay
 auto_ping_delay_seconds = 20.0       # Delay before first auto-PING for newly appeared/replacement nodes
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
 retention_period_days = 30            # Inactive runtime cleanup threshold in days (0 = disabled)
@@ -102,8 +101,7 @@ edges = []
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 ui_node = "messenger"            # Optional target filter for startup auto-PING
-auto_enable_new_sessions = true    # Auto-enable sessions with configured node panes (default: true)
-auto_enable_new_agents = true      # Auto-enable agents in already-enabled sessions (default: true)
+auto_enable_new_sessions = false   # Auto-enable sessions with configured node panes (default: false; opt-in per #135)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
 
@@ -206,7 +204,6 @@ params:
 
 {template}
 
-{sender_runtime_context}
 ## Sender Message
 
 ---
@@ -247,11 +244,6 @@ you can't talk to "{attempted_recipient}". Can talk to: {allowed_edges}. Your me
 # - Node role and responsibilities
 # - Instructions and constraints
 # """
-# delivery_idle_timeout_seconds = 0  # Re-deliver swallowed messages after N idle seconds (0 = disabled) (#282)
-# delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message (0 = use default 3) (#282)
-
 [node_defaults]
 enter_count = 2            # Codex CLI needs 2 Enters; auto-falls back to 1 for non-codex runtimes
 enter_delay_seconds = 0    # 0 = use global enter_delay_seconds
-delivery_idle_timeout_seconds = 0  # 0 = disabled
-delivery_idle_retry_max = 3        # Maximum re-delivery attempts per message

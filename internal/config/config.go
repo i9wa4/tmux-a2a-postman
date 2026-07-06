@@ -31,7 +31,6 @@ type Config struct {
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
 	EnterDelay          float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
-	StartupDelay        float64 `toml:"startup_delay_seconds"`
 	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
 	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
 
@@ -70,8 +69,7 @@ type Config struct {
 	Edges                 []string `toml:"edges"`
 	ReplyCommand          string   `toml:"reply_command"`
 	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (true) (#219)
-	AutoEnableNewAgents   *bool    `toml:"auto_enable_new_agents"`   // nil = use default (true) (#219)
+	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -90,12 +88,10 @@ type Config struct {
 
 // NodeConfig holds per-node configuration.
 type NodeConfig struct {
-	Template                   string  `toml:"template"`
-	Role                       string  `toml:"role"`
-	EnterCount                 int     `toml:"enter_count"`                   // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
-	EnterDelay                 float64 `toml:"enter_delay_seconds"`           // 0 = use global default
-	DeliveryIdleTimeoutSeconds float64 `toml:"delivery_idle_timeout_seconds"` // Issue #282: 0 = disabled
-	DeliveryIdleRetryMax       int     `toml:"delivery_idle_retry_max"`       // Issue #282: max re-delivery attempts (0 = use default 3)
+	Template   string  `toml:"template"`
+	Role       string  `toml:"role"`
+	EnterCount int     `toml:"enter_count"`         // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
+	EnterDelay float64 `toml:"enter_delay_seconds"` // 0 = use global default
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -295,7 +291,19 @@ func skillCatalogForRuntime(catalogs map[string]string, runtime string) string {
 }
 
 // warnDeprecatedKeys logs a warning if deprecated TOML keys are found in rawBytes.
+// Deprecated keys are caught here rather than at parse time because the Go TOML
+// decoder silently ignores keys not present in the struct.
 func warnDeprecatedKeys(rawBytes []byte, path string) {
+	deprecated := []string{
+		"startup_delay_seconds",
+		"auto_enable_new_agents",
+	}
+	raw := string(rawBytes)
+	for _, key := range deprecated {
+		if strings.Contains(raw, key) {
+			log.Printf("WARNING: %s: deprecated config key %q will be ignored; remove it from your config", path, key)
+		}
+	}
 }
 
 // loadEmbeddedConfig loads configuration from embedded default_postman.toml.
@@ -506,9 +514,6 @@ func mergeConfig(base, override *Config) {
 	if override.AutoEnableNewSessions != nil {
 		base.AutoEnableNewSessions = override.AutoEnableNewSessions
 	}
-	if override.AutoEnableNewAgents != nil {
-		base.AutoEnableNewAgents = override.AutoEnableNewAgents
-	}
 
 	// Float64 fields
 	if override.ScanInterval != 0 {
@@ -522,9 +527,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.TmuxTimeout != 0 {
 		base.TmuxTimeout = override.TmuxTimeout
-	}
-	if override.StartupDelay != 0 {
-		base.StartupDelay = override.StartupDelay
 	}
 	if override.EnterVerifyDelay != 0 {
 		base.EnterVerifyDelay = override.EnterVerifyDelay
@@ -600,12 +602,6 @@ func mergeConfig(base, override *Config) {
 		if overNode.EnterDelay != 0 {
 			baseNode.EnterDelay = overNode.EnterDelay
 		}
-		if overNode.DeliveryIdleTimeoutSeconds != 0 {
-			baseNode.DeliveryIdleTimeoutSeconds = overNode.DeliveryIdleTimeoutSeconds
-		}
-		if overNode.DeliveryIdleRetryMax != 0 {
-			baseNode.DeliveryIdleRetryMax = overNode.DeliveryIdleRetryMax
-		}
 		base.Nodes[name] = baseNode
 	}
 
@@ -615,12 +611,6 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.NodeDefaults.EnterDelay != 0 {
 		base.NodeDefaults.EnterDelay = override.NodeDefaults.EnterDelay
-	}
-	if override.NodeDefaults.DeliveryIdleTimeoutSeconds != 0 {
-		base.NodeDefaults.DeliveryIdleTimeoutSeconds = override.NodeDefaults.DeliveryIdleTimeoutSeconds
-	}
-	if override.NodeDefaults.DeliveryIdleRetryMax != 0 {
-		base.NodeDefaults.DeliveryIdleRetryMax = override.NodeDefaults.DeliveryIdleRetryMax
 	}
 }
 
@@ -1291,12 +1281,6 @@ func (cfg *Config) GetNodeConfig(name string) NodeConfig {
 	}
 	if specific.EnterDelay != 0 {
 		result.EnterDelay = specific.EnterDelay
-	}
-	if specific.DeliveryIdleTimeoutSeconds != 0 {
-		result.DeliveryIdleTimeoutSeconds = specific.DeliveryIdleTimeoutSeconds
-	}
-	if specific.DeliveryIdleRetryMax != 0 {
-		result.DeliveryIdleRetryMax = specific.DeliveryIdleRetryMax
 	}
 	return result
 }

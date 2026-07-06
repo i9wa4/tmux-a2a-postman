@@ -129,6 +129,18 @@ func TestRuntimeContextIncludesLaunchCommandAndAddDirInMarkdownAndSummary(t *tes
 	}
 }
 
+func TestCollectLaunchCommandMetadataOmitsAddDirContext(t *testing.T) {
+	t.Setenv("TMUX_A2A_POSTMAN_LAUNCH_COMMAND", "/usr/bin/codex --yolo --add-dir /workspace/internal --model gpt-5.5")
+
+	metadata := CollectLaunchCommandMetadata("%99")
+	if metadata.LaunchCommand == "" {
+		t.Fatalf("LaunchCommand is empty")
+	}
+	if metadata.AddDir != nil {
+		t.Fatalf("AddDir = %#v, want omitted for receiver pop context", metadata.AddDir)
+	}
+}
+
 func TestSaveSnapshotPreservesFullLaunchCommandAndAddDirContext(t *testing.T) {
 	tmpDir := t.TempDir()
 	addDir := filepath.Join(tmpDir, "internal")
