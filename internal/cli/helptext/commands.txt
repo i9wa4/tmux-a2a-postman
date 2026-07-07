@@ -71,6 +71,16 @@ inspect-message
     tmux-a2a-postman inspect-message --id <message_id> --path
     tmux-a2a-postman inspect-message --id <message_id> --body
 
+execute-bash
+  Run a bash command through command approval choreography.
+  Output: command stdout/stderr; refusal metadata on stderr.
+  Usage:
+    tmux-a2a-postman execute-bash --label <label> --command <bash>
+
+inspect-command-approvals
+  Inspect pending and decided command approval threads.
+  Output: JSON
+
 version
   Print the build version JSON.
   Usage:
@@ -91,4 +101,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, capture-profile, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, capture-profile, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, execute-bash, inspect-command-approvals, version, help
