@@ -23,21 +23,21 @@ type CommandApprovalThread struct {
 	ThreadID  string `json:"thread_id"`
 	Requester string `json:"requester,omitempty"`
 	Reviewer  string `json:"reviewer,omitempty"`
-	// ReviewerNode is the config-resolved, validated reviewer_node captured
+	// CommandApproverNode is the config-resolved, validated command_approver_node captured
 	// at request time (#626). Decision validation MUST compare against this
 	// field, never Reviewer (a requester-influenceable audit label) — see
 	// applyCommandApprovalDecision.
-	ReviewerNode      string                `json:"reviewer_node,omitempty"`
-	Mode              string                `json:"mode,omitempty"`
-	Label             string                `json:"label,omitempty"`
-	Category          string                `json:"category,omitempty"`
-	CommandHash       string                `json:"command_hash,omitempty"`
-	Status            CommandApprovalStatus `json:"status"`
-	Reason            string                `json:"reason,omitempty"`
-	RequestedAt       string                `json:"requested_at,omitempty"`
-	ExpiresAt         string                `json:"expires_at,omitempty"`
-	DecidedAt         string                `json:"decided_at,omitempty"`
-	DecisionMessageID string                `json:"decision_message_id,omitempty"`
+	CommandApproverNode string                `json:"command_approver_node,omitempty"`
+	Mode                string                `json:"mode,omitempty"`
+	Label               string                `json:"label,omitempty"`
+	Category            string                `json:"category,omitempty"`
+	CommandHash         string                `json:"command_hash,omitempty"`
+	Status              CommandApprovalStatus `json:"status"`
+	Reason              string                `json:"reason,omitempty"`
+	RequestedAt         string                `json:"requested_at,omitempty"`
+	ExpiresAt           string                `json:"expires_at,omitempty"`
+	DecidedAt           string                `json:"decided_at,omitempty"`
+	DecisionMessageID   string                `json:"decision_message_id,omitempty"`
 }
 
 type CommandApprovalState struct {
@@ -112,18 +112,18 @@ func applyCommandApprovalRequest(threads map[string]CommandApprovalThread, event
 	}
 
 	threads[event.ThreadID] = CommandApprovalThread{
-		ThreadID:     event.ThreadID,
-		Requester:    payload.Requester,
-		Reviewer:     payload.Reviewer,
-		ReviewerNode: payload.ReviewerNode,
-		Mode:         payload.Mode,
-		Label:        payload.Label,
-		Category:     payload.Category,
-		CommandHash:  payload.CommandHash,
-		Status:       CommandApprovalStatusPending,
-		Reason:       payload.Reason,
-		RequestedAt:  event.OccurredAt,
-		ExpiresAt:    payload.ExpiresAt,
+		ThreadID:            event.ThreadID,
+		Requester:           payload.Requester,
+		Reviewer:            payload.Reviewer,
+		CommandApproverNode: payload.CommandApproverNode,
+		Mode:                payload.Mode,
+		Label:               payload.Label,
+		Category:            payload.Category,
+		CommandHash:         payload.CommandHash,
+		Status:              CommandApprovalStatusPending,
+		Reason:              payload.Reason,
+		RequestedAt:         event.OccurredAt,
+		ExpiresAt:           payload.ExpiresAt,
 	}
 	return nil
 }
@@ -151,17 +151,17 @@ func applyCommandApprovalDecision(threads map[string]CommandApprovalThread, even
 		}
 		return nil
 	}
-	// #626 B1: validate against thread.ReviewerNode (the config-resolved,
-	// validated reviewer_node captured at request time), never
+	// #626 B1: validate against thread.CommandApproverNode (the config-resolved,
+	// validated command_approver_node captured at request time), never
 	// thread.Reviewer (a plain requester-influenceable audit label). Both
 	// sides of the old thread.Reviewer comparison were requester-controlled
 	// — the requester's own policy match set thread.Reviewer, and the
 	// requester's own --record-decision/--reviewer or reply "from" set
 	// payload.Reviewer — making self-approval trivial. An empty
-	// thread.ReviewerNode (no valid reviewer_node was configured for this
+	// thread.CommandApproverNode (no valid command_approver_node was configured for this
 	// request) must never be treated as a match; it means this thread was
 	// created without a real reviewer, so no decision on it can be trusted.
-	if thread.ReviewerNode == "" || payload.Reviewer != thread.ReviewerNode {
+	if thread.CommandApproverNode == "" || payload.Reviewer != thread.CommandApproverNode {
 		thread.Status = CommandApprovalStatusWrongReviewer
 		thread.Reason = payload.Reason
 		thread.DecidedAt = event.OccurredAt

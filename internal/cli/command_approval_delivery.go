@@ -20,7 +20,7 @@ import (
 var discoverNodesForCommandApprovalDeliveryFn = discovery.DiscoverNodesWithCollisions
 
 // deliverCommandApprovalRequest sends a reply-required postman message to
-// the resolved reviewer_node when a command needs approval (#626). This is
+// the resolved command_approver_node when a command needs approval (#626). This is
 // best-effort: a delivery failure is logged, not returned as an error — the
 // approval request has already been journaled by the caller regardless, so
 // a failed delivery only means the reviewer must be notified some other way
@@ -35,15 +35,15 @@ var discoverNodesForCommandApprovalDeliveryFn = discovery.DiscoverNodesWithColli
 // for the reviewer, reusing the existing fill-tracking UX; the reviewer's
 // reply must preserve the given thread_id in its own frontmatter for the
 // decision to be recorded automatically.
-func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, requesterSessionName string, policy resolvedCommandApprovalPolicy, reviewerNode, threadID, commandHash, reason string, storeCommandText bool, now time.Time) {
+func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, requesterSessionName string, policy resolvedCommandApprovalPolicy, commandApproverNode, threadID, commandHash, reason string, storeCommandText bool, now time.Time) {
 	nodes, _, err := discoverNodesForCommandApprovalDeliveryFn(baseDir, contextID, requesterSessionName)
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: discovering nodes: %v\n", err)
 		return
 	}
-	reviewerInfo, ok := nodes[reviewerNode]
+	reviewerInfo, ok := nodes[commandApproverNode]
 	if !ok {
-		log.Printf("postman: WARNING: command approval delivery: reviewer_node %q not found among discovered nodes; falling back to inspect-command-approvals\n", reviewerNode)
+		log.Printf("postman: WARNING: command approval delivery: command_approver_node %q not found among discovered nodes; falling back to inspect-command-approvals\n", commandApproverNode)
 		return
 	}
 	if err := config.CreateSessionDirs(reviewerInfo.SessionDir); err != nil {
@@ -55,7 +55,7 @@ func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, reque
 		log.Printf("postman: WARNING: command approval delivery: generating input request id: %v\n", err)
 		return
 	}
-	filename, err := message.GenerateFilename(now.Format("20060102-150405"), policy.Requester, reviewerNode, reviewerInfo.SessionName)
+	filename, err := message.GenerateFilename(now.Format("20060102-150405"), policy.Requester, commandApproverNode, reviewerInfo.SessionName)
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: generating filename: %v\n", err)
 		return
@@ -74,7 +74,7 @@ func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, reque
 
 	content := fmt.Sprintf(
 		"---\nparams:\n  contextId: %s\n  from: %s\n  to: %s\n  messageId: %s\n  replyPolicy: required\n  input_request_id: %s\n  thread_id: %s\n  timestamp: %s\n---\n\n%s\n",
-		contextID, policy.Requester, reviewerNode, filename, inputRequestID, threadID, now.UTC().Format(time.RFC3339), body.String(),
+		contextID, policy.Requester, commandApproverNode, filename, inputRequestID, threadID, now.UTC().Format(time.RFC3339), body.String(),
 	)
 
 	// Write to draft/ then rename into post/ (matching send_message.go's

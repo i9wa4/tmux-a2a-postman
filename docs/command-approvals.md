@@ -14,7 +14,7 @@ requester = "worker"
 label = "nix-build"
 category = "verification"
 reviewer = "orchestrator"
-reviewer_node = "orchestrator"
+command_approver_node = "orchestrator"
 mode = "blocking"
 approval_ttl_seconds = 900
 ```
@@ -23,26 +23,27 @@ approval_ttl_seconds = 900
 match any value. CLI flags may override `reviewer`, `mode`, and expiry for a
 single command.
 
-`reviewer` is a plain audit label with no topology meaning. `reviewer_node`
-is different: it names a real, configured node (same family as `ui_node`),
-either globally under `[postman]` or per policy here, overriding the global
-default. It is what makes a mode restrictive at all — see the fail-open rule
-below.
+`reviewer` is a plain audit label with no topology meaning.
+`command_approver_node` is different: it names a real, configured node (same
+family as `ui_node`), either globally under `[postman]` or per policy here,
+overriding the global default. It is what makes a mode restrictive at all — see
+the fail-open rule below.
 
 ### 1.1. Fail-open rule (#626)
 
-Unless a VALID `reviewer_node` is configured — the field set AND resolving to
-a node that actually exists in this config — every command is treated as
-approved, in every mode, including `blocking`. This covers both an
-unconfigured `reviewer_node` and one that names a node that doesn't exist (a
-typo). Approval only becomes restrictive once a valid `reviewer_node` exists.
+Unless a VALID `command_approver_node` is configured — the field set AND
+resolving to a node that actually exists in this config — every command is
+treated as approved, in every mode, including `blocking`. This covers both an
+unconfigured `command_approver_node` and one that names a node that doesn't
+exist (a typo). Approval only becomes restrictive once a valid
+`command_approver_node` exists.
 
 Such commands are recorded with the decision `auto_approved_no_reviewer`,
 distinct from a real recorded approval, so the audit trail never confuses the
-two. A configured-but-unresolvable `reviewer_node` also produces a load-time
-warning and a visible `command_approval.unresolved_reviewers` marker in
-`get-status`, so a typo that silently disables blocking mode is loud rather
-than a silent no-op.
+two. A configured-but-unresolvable `command_approver_node` also produces a
+load-time warning and a visible `command_approval.unresolved_command_approvers`
+marker in `get-status`, so a typo that silently disables blocking mode is loud
+rather than a silent no-op.
 
 ## 2. Running Commands
 
@@ -75,8 +76,8 @@ changed-digest approvals do not run.
 ## 4. Decisions
 
 When `execute-bash` requests approval, it prints the approval thread id in the
-wrapper metadata. The configured `reviewer_node`, running `--record-decision`
-from its own pane, can decide the thread explicitly:
+wrapper metadata. The configured `command_approver_node`, running
+`--record-decision` from its own pane, can decide the thread explicitly:
 
 ```sh
 tmux-a2a-postman execute-bash \
@@ -88,14 +89,14 @@ tmux-a2a-postman execute-bash \
 The decision's reviewer identity always comes from the calling process's own
 tmux pane title, never from a flag; a `--reviewer` flag passed here has no
 effect on the outcome. A caller whose pane identity is not the thread's
-`reviewer_node` is refused with an error and no decision is recorded (#626
-B1-residual).
+`command_approver_node` is refused with an error and no decision is recorded
+(#626 B1-residual).
 
 Use `--record-decision rejected` to reject a pending command.
 
-### 4.1. Delivery to a valid reviewer_node (#626)
+### 4.1. Delivery to a valid command_approver_node (#626)
 
-When a valid `reviewer_node` is configured and a command needs approval,
+When a valid `command_approver_node` is configured and a command needs approval,
 `execute-bash` also delivers a reply-required postman message to that node
 directly, carrying the command hash, label, mode, and the approval thread id
 — so the reviewer does not have to poll `inspect-command-approvals`. To
@@ -107,23 +108,23 @@ reply on a command approval thread whose body does not start with one of
 those two prefixes is logged as a warning and not recorded as a decision at
 all — use `--record-decision` directly if you need to attach a reply body
 that doesn't fit that convention. Delivery itself is best-effort — a
-delivery failure (for example, the reviewer_node is not currently
+delivery failure (for example, the command_approver_node is not currently
 discoverable) is logged but never blocks or duplicates the already-journaled
 approval request.
 
 Only a reply whose sender matches the request's config-resolved
-`reviewer_node` is ever honored; a reply from anyone else is recorded as
+`command_approver_node` is ever honored; a reply from anyone else is recorded as
 `wrong_reviewer` and has no effect on the command, regardless of what the
 policy's `reviewer` audit label says (#626 B1) — the `reviewer` label itself
 is a plain, requester-influenceable string and has no bearing on this check.
 
-The same authenticated-caller requirement applies to `--record-decision`
-(#626 B1-residual): the decision's reviewer identity is always the calling
-process's own tmux pane title, never the `--reviewer` flag. A caller whose
-pane identity is not the thread's `reviewer_node` is refused outright, with
-no decision recorded — passing `--reviewer <reviewer_node_name>` on the
-command line has no effect on this check, since that name is a plain,
-readable config value, not proof of who is actually calling.
+The same authenticated-caller requirement applies to `--record-decision` (#626
+B1-residual): the decision's reviewer identity is always the calling process's
+own tmux pane title, never the `--reviewer` flag. A caller whose pane identity
+is not the thread's `command_approver_node` is refused outright, with no
+decision recorded — passing `--reviewer <command_approver_node_name>` on the
+command line has no effect on this check, since that name is a plain, readable
+config value, not proof of who is actually calling.
 
 ## 5. Inspection
 

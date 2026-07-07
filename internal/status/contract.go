@@ -164,17 +164,17 @@ type WorkspaceTreeStatus struct {
 	Diagnostics []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
 }
 
-// CommandApprovalUnresolvedReviewer surfaces a configured-but-unresolvable
-// reviewer_node so a typo that silently disables blocking mode (#626's fail
+// CommandApprovalUnresolvedApprover surfaces a configured-but-unresolvable
+// command_approver_node so a typo that silently disables blocking mode (#626's fail
 // open rule) is loud and auditable rather than a silent no-op.
-type CommandApprovalUnresolvedReviewer struct {
+type CommandApprovalUnresolvedApprover struct {
 	Field   string `json:"field"`
 	Value   string `json:"value"`
 	Message string `json:"message"`
 }
 
 type CommandApprovalStatus struct {
-	UnresolvedReviewers []CommandApprovalUnresolvedReviewer `json:"unresolved_reviewers,omitempty"`
+	UnresolvedCommandApprovers []CommandApprovalUnresolvedApprover `json:"unresolved_command_approvers,omitempty"`
 }
 
 type SessionStatus struct {

@@ -55,13 +55,13 @@ func (e commandExitError) ExitCode() int {
 }
 
 type resolvedCommandApprovalPolicy struct {
-	Requester            string
-	Reviewer             string
-	Mode                 string
-	Label                string
-	Category             string
-	TTL                  time.Duration
-	ReviewerNodeOverride string // per-policy reviewer_node override, if any (#626)
+	Requester                   string
+	Reviewer                    string
+	Mode                        string
+	Label                       string
+	Category                    string
+	TTL                         time.Duration
+	CommandApproverNodeOverride string // per-policy command_approver_node override, if any (#626)
 }
 
 type commandApprovalEvaluation struct {
@@ -158,7 +158,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		resolvedThreadID = commandApprovalThreadID(policy, commandHash)
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
-	reviewerNode, validReviewer := cfg.ResolveReviewerNode(policy.ReviewerNodeOverride)
+	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode(policy.CommandApproverNodeOverride)
 
 	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
 	if err != nil {
@@ -166,14 +166,14 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	if !evaluation.Allowed {
 		// Reached only when validReviewer is true: evaluateCommandApproval
-		// short-circuits to Allowed:true whenever no valid reviewer_node is
-		// configured, so reviewerNode here is always the trusted,
+		// short-circuits to Allowed:true whenever no valid command_approver_node is
+		// configured, so commandApproverNode here is always the trusted,
 		// config-resolved node name (#626 B1) — never a requester-supplied
 		// value.
-		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, reviewerNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
+		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
-		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, reviewerNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
+		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -273,10 +273,10 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	// #626 B1-residual: the decision's reviewer identity is the CALLER's
 	// own authenticated identity (tmux pane title), never a flag.
 	// --reviewer must never influence whether a decision is accepted — a
-	// requester could otherwise pass --reviewer <reviewer_node_name>,
+	// requester could otherwise pass --reviewer <command_approver_node_name>,
 	// trivially readable from postman.toml or get-status, and self-approve
 	// exactly as before. The caller is accepted only when this
-	// authenticated identity matches the thread's own ReviewerNode, the
+	// authenticated identity matches the thread's own CommandApproverNode, the
 	// trusted, config-resolved value captured once at request time (#626
 	// B1) — never re-resolved from current config, so a decision can't be
 	// laundered through a config change between request and decision time
@@ -289,14 +289,14 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if err != nil {
 		return err
 	}
-	var reviewerNode string
+	var commandApproverNode string
 	if ok {
 		if thread, found := state.Threads[opts.threadID]; found {
-			reviewerNode = thread.ReviewerNode
+			commandApproverNode = thread.CommandApproverNode
 		}
 	}
-	if reviewerNode == "" || authenticatedCaller != reviewerNode {
-		return fmt.Errorf("--record-decision refused: caller %q is not the configured reviewer_node for thread %q", authenticatedCaller, opts.threadID)
+	if commandApproverNode == "" || authenticatedCaller != commandApproverNode {
+		return fmt.Errorf("--record-decision refused: caller %q is not the configured command_approver_node for thread %q", authenticatedCaller, opts.threadID)
 	}
 
 	payload := journal.CommandApprovalDecisionPayload{
@@ -372,7 +372,7 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 		if candidate.ApprovalTTLSeconds > 0 {
 			policy.TTL = time.Duration(candidate.ApprovalTTLSeconds * float64(time.Second))
 		}
-		policy.ReviewerNodeOverride = strings.TrimSpace(candidate.ReviewerNode)
+		policy.CommandApproverNodeOverride = strings.TrimSpace(candidate.CommandApproverNode)
 		break
 	}
 	if strings.TrimSpace(reviewerFlag) != "" {
@@ -433,21 +433,21 @@ func validateCommandApprovalThreadID(threadID string) error {
 
 // commandApprovalDecisionAutoApprovedNoReviewer is the distinct decision
 // label used whenever the unified fail-open rule (#626) applies: no valid
-// reviewer_node is configured, so the command is approved regardless of
+// command_approver_node is configured, so the command is approved regardless of
 // mode. This must never be conflated with an actual recorded approval.
 const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
 
 func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
 	if !validReviewer {
 		// #626 decided requirement 1 (unified fail-open rule): unless a
-		// valid reviewer_node is configured, every command is treated as
+		// valid command_approver_node is configured, every command is treated as
 		// approved across all three modes, including blocking. This is
 		// evaluated before any projection lookup so a missing/unresolvable
-		// reviewer_node never depends on prior approval state.
+		// command_approver_node never depends on prior approval state.
 		return commandApprovalEvaluation{
 			Decision: commandApprovalDecisionAutoApprovedNoReviewer,
 			Allowed:  true,
-			Reason:   "no valid reviewer_node configured; command approval fails open",
+			Reason:   "no valid command_approver_node configured; command approval fails open",
 		}, nil
 	}
 	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
@@ -553,17 +553,17 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 	}
 }
 
-func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, reviewerNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
+func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
 	payload := journal.CommandApprovalRequestPayload{
-		Requester:    policy.Requester,
-		Reviewer:     policy.Reviewer,
-		ReviewerNode: reviewerNode,
-		Mode:         policy.Mode,
-		Label:        policy.Label,
-		Category:     policy.Category,
-		CommandHash:  commandHash,
-		Reason:       reason,
-		ExpiresAt:    expiresAt,
+		Requester:           policy.Requester,
+		Reviewer:            policy.Reviewer,
+		CommandApproverNode: commandApproverNode,
+		Mode:                policy.Mode,
+		Label:               policy.Label,
+		Category:            policy.Category,
+		CommandHash:         commandHash,
+		Reason:              reason,
+		ExpiresAt:           expiresAt,
 	}
 	if storeCommandText {
 		payload.CommandText = commandText

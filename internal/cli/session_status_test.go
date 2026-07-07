@@ -1033,16 +1033,16 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 	}
 }
 
-// TestBuildCommandApprovalStatus_UnresolvedReviewers guards #626 decided
+// TestBuildCommandApprovalStatus_UnresolvedCommandApprovers guards #626 decided
 // requirement 2's get-status marker: both an unresolvable global
-// reviewer_node and an unresolvable per-policy override must surface as
-// distinct UnresolvedReviewers entries.
-func TestBuildCommandApprovalStatus_UnresolvedReviewers(t *testing.T) {
+// command_approver_node and an unresolvable per-policy override must surface as
+// distinct UnresolvedCommandApprovers entries.
+func TestBuildCommandApprovalStatus_UnresolvedCommandApprovers(t *testing.T) {
 	cfg := &config.Config{
-		ReviewerNode: "typo-reviewer",
-		Nodes:        map[string]config.NodeConfig{"orchestrator": {}},
+		CommandApproverNode: "typo-reviewer",
+		Nodes:               map[string]config.NodeConfig{"orchestrator": {}},
 		CommandApproval: []config.CommandApprovalPolicy{
-			{Requester: "worker", Label: "deploy", ReviewerNode: "another-typo"},
+			{Requester: "worker", Label: "deploy", CommandApproverNode: "another-typo"},
 			{Requester: "worker", Label: "diagnostic"}, // no override: must not duplicate the global warning
 		},
 	}
@@ -1051,33 +1051,33 @@ func TestBuildCommandApprovalStatus_UnresolvedReviewers(t *testing.T) {
 	if got == nil {
 		t.Fatal("buildCommandApprovalStatus() = nil, want a populated status")
 	}
-	if len(got.UnresolvedReviewers) != 2 {
-		t.Fatalf("UnresolvedReviewers = %#v, want exactly 2 entries", got.UnresolvedReviewers)
+	if len(got.UnresolvedCommandApprovers) != 2 {
+		t.Fatalf("UnresolvedCommandApprovers = %#v, want exactly 2 entries", got.UnresolvedCommandApprovers)
 	}
 	wantFields := map[string]bool{
-		"reviewer_node":                     false,
-		"command_approval[0].reviewer_node": false,
+		"command_approver_node":                     false,
+		"command_approval[0].command_approver_node": false,
 	}
-	for _, entry := range got.UnresolvedReviewers {
+	for _, entry := range got.UnresolvedCommandApprovers {
 		if _, ok := wantFields[entry.Field]; ok {
 			wantFields[entry.Field] = true
 		}
 	}
 	for field, found := range wantFields {
 		if !found {
-			t.Fatalf("missing UnresolvedReviewers entry for %s in %#v", field, got.UnresolvedReviewers)
+			t.Fatalf("missing UnresolvedCommandApprovers entry for %s in %#v", field, got.UnresolvedCommandApprovers)
 		}
 	}
 }
 
-// TestBuildCommandApprovalStatus_NoUnresolvedReviewers guards against a
-// false-positive marker when reviewer_node resolves cleanly or isn't
+// TestBuildCommandApprovalStatus_NoUnresolvedCommandApprovers guards against a
+// false-positive marker when command_approver_node resolves cleanly or isn't
 // configured at all.
-func TestBuildCommandApprovalStatus_NoUnresolvedReviewers(t *testing.T) {
+func TestBuildCommandApprovalStatus_NoUnresolvedCommandApprovers(t *testing.T) {
 	for _, cfg := range []*config.Config{
 		nil,
 		{},
-		{ReviewerNode: "orchestrator", Nodes: map[string]config.NodeConfig{"orchestrator": {}}},
+		{CommandApproverNode: "orchestrator", Nodes: map[string]config.NodeConfig{"orchestrator": {}}},
 	} {
 		if got := buildCommandApprovalStatus(cfg); got != nil {
 			t.Fatalf("buildCommandApprovalStatus(%#v) = %#v, want nil", cfg, got)

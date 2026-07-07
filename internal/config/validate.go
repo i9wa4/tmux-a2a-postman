@@ -153,29 +153,29 @@ func ValidateConfig(cfg *Config) []ValidationError {
 		}
 	}
 
-	// Rule 5: reviewer_node resolvability check (severity: warning, #626).
-	// An unresolvable reviewer_node is never a load error — the unified
+	// Rule 5: command_approver_node resolvability check (severity: warning, #626).
+	// An unresolvable command_approver_node is never a load error — the unified
 	// fail-open rule means command approval simply stays permissive in that
 	// case — but it MUST be loud (a typo here silently disables blocking
 	// mode otherwise) and auditable, per the decided requirements.
-	if name := strings.TrimSpace(cfg.ReviewerNode); name != "" {
+	if name := strings.TrimSpace(cfg.CommandApproverNode); name != "" {
 		if _, exists := cfg.Nodes[name]; !exists {
 			errors = append(errors, ValidationError{
-				Field:    "reviewer_node",
-				Message:  fmt.Sprintf("reviewer_node %q does not match any configured node; command approval will fail open until this is fixed", name),
+				Field:    "command_approver_node",
+				Message:  fmt.Sprintf("command_approver_node %q does not match any configured node; command approval will fail open until this is fixed", name),
 				Severity: "warning",
 			})
 		}
 	}
 	for i, policy := range cfg.CommandApproval {
-		name := strings.TrimSpace(policy.ReviewerNode)
+		name := strings.TrimSpace(policy.CommandApproverNode)
 		if name == "" {
 			continue
 		}
 		if _, exists := cfg.Nodes[name]; !exists {
 			errors = append(errors, ValidationError{
-				Field:    fmt.Sprintf("command_approval[%d].reviewer_node", i),
-				Message:  fmt.Sprintf("reviewer_node %q does not match any configured node; this policy will fail open until this is fixed", name),
+				Field:    fmt.Sprintf("command_approval[%d].command_approver_node", i),
+				Message:  fmt.Sprintf("command_approver_node %q does not match any configured node; this policy will fail open until this is fixed", name),
 				Severity: "warning",
 			})
 		}

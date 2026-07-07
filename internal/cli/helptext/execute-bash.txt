@@ -23,7 +23,7 @@ Decision flags:
   --record-decision <decision> approved or rejected. The decision's reviewer
                                 identity is always the calling process's own
                                 tmux pane title, never --reviewer; a caller
-                                whose pane is not the thread's reviewer_node
+                                whose pane is not the thread's command_approver_node
                                 is refused and no decision is recorded.
 
 Modes:
@@ -32,26 +32,26 @@ Modes:
   blocking   Runs only when the matching thread has a non-expired approved decision
              from the configured reviewer for the exact command digest.
 
-Fail-open rule (reviewer_node):
+Fail-open rule (command_approver_node):
   Every mode above, including blocking, only becomes restrictive once a VALID
-  reviewer_node is configured (postman.toml [postman] reviewer_node, or a
-  per-policy reviewer_node override under [[postman.command_approval]] —
+  command_approver_node is configured (postman.toml [postman] command_approver_node, or a
+  per-policy command_approver_node override under [[postman.command_approval]] —
   naming a real, configured node, same family as ui_node). Unset, or set to a
   node name that does not resolve, means every command runs, recorded
   distinctly as auto_approved_no_reviewer rather than a real approval. An
-  unresolvable reviewer_node also produces a load-time warning and a visible
+  unresolvable command_approver_node also produces a load-time warning and a visible
   marker in get-status, so a typo never silently disables blocking mode.
 
-  When a valid reviewer_node exists, execute-bash also delivers the approval
+  When a valid command_approver_node exists, execute-bash also delivers the approval
   request to it directly as a reply-required message; reply with a body
   starting APPROVED:/NOT APPROVED: and the given thread_id to record a
   decision without running --record-decision yourself. A reply body that
   doesn't start with one of those two prefixes is logged and not recorded.
-  Only a reply whose sender matches the resolved reviewer_node is ever
+  Only a reply whose sender matches the resolved command_approver_node is ever
   honored, regardless of the reviewer audit label. The same rule applies to
   --record-decision itself: the decision's reviewer identity is always the
   calling process's own tmux pane title, never the --reviewer flag, and a
-  caller whose pane is not the reviewer_node is refused outright.
+  caller whose pane is not the command_approver_node is refused outright.
 
 Bypass boundary:
   This wrapper coordinates command review through Postman. It does not sandbox

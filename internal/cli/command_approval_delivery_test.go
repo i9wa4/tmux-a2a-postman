@@ -91,7 +91,7 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 }
 
 // TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort guards the
-// no-op-not-crash behavior when the reviewer_node isn't currently
+// no-op-not-crash behavior when the command_approver_node isn't currently
 // discoverable: delivery must log and return without writing anything or
 // panicking, since the approval request has already been journaled by the
 // caller regardless of delivery outcome.

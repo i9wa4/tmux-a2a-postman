@@ -267,7 +267,7 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 			ThreadID: threadID,
 		}, true
 	case strings.HasPrefix(threadID, "command-approval-"):
-		// #626: a reply to a reviewer_node-delivered command approval
+		// #626: a reply to a command_approver_node-delivered command approval
 		// request (execute-bash mints this exact thread id prefix via
 		// commandApprovalThreadID). Reuses the same APPROVED:/NOT
 		// APPROVED: body-prefix convention as the orchestrator/critic case
