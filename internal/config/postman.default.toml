@@ -98,6 +98,32 @@ base_dir = ""                      # Override session dir (default: XDG_STATE_HO
 # ]
 edges = []
 
+# Optional workspace tree hierarchy for cross-session tree aliases.
+# Hierarchy is captured from explicit session metadata at daemon/CLI load time;
+# pane cwd changes do not affect routing eligibility. There is no directory-root
+# inference — parent/child relationships are always explicit config entries.
+# Public status reports labels and stable IDs only.
+# Alias syntax:
+#   @parent                              # parent representative
+#   @parent/<node>
+#   @child/<label-or-session-or-id>       # selected child representative
+#   @child/<node>                         # only when there is one configured child
+#   @child/<label-or-session-or-id>/<node>
+#
+# [[postman.workspace_tree]]
+# session = "repo"
+# label = "repo"
+# id = "repo-root"
+# representative = "orchestrator"
+# order = 10
+#
+# [[postman.workspace_tree]]
+# session = "project"
+# label = "api"
+# parent = "repo"
+# representative = "worker"
+# order = 20
+
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
 ui_node = "messenger"            # Optional target filter for startup auto-PING

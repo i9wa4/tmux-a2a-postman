@@ -202,7 +202,7 @@ func ContactSection(cfg *config.Config, nodes []string) string {
 			if nodeConfig.Role == "" {
 				nodeConfig = cfg.GetNodeConfig(nodeaddr.Simple(node))
 			}
-			role = summarizeContactRole(nodeConfig.Role)
+			role = ContactRoleSummary(nodeConfig.Role)
 		}
 		if role != "" {
 			contactLines = append(contactLines, fmt.Sprintf("- %s: %s", node, role))
@@ -216,7 +216,7 @@ func ContactSection(cfg *config.Config, nodes []string) string {
 	return strings.Join(contactLines, "\n")
 }
 
-func summarizeContactRole(role string) string {
+func ContactRoleSummary(role string) string {
 	role = strings.ReplaceAll(role, "\r\n", "\n")
 	for _, line := range strings.Split(role, "\n") {
 		line = strings.TrimSpace(line)

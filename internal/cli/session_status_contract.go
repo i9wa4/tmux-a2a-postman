@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 type sessionPane struct {
@@ -86,6 +87,7 @@ type sessionStatusInputs struct {
 	contextID        string
 	sessionName      string
 	sessionDir       string
+	cfg              *config.Config
 	orderedEdgeNodes []string
 	edgeNodeRank     map[string]int
 	nodes            map[string]discovery.NodeInfo
@@ -172,8 +174,70 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Queues = inputs.queues
 	result.Windows = buildSessionWindows(result.Nodes, inputs.panes)
+	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
 	result.Compact = buildSessionCompact(result, inputs.panes)
 	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode)
+	return result
+}
+
+func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.WorkspaceTreeStatus {
+	topology := workspacetree.BuildFromConfig(cfg)
+	diagnostics := workspaceTreeDiagnostics(topology.Diagnostics())
+	node, ok, reason := topology.NodeForSession(sessionName)
+	if !ok {
+		if reason == workspacetree.FailureUnknownSourceSession && len(diagnostics) == 0 {
+			return nil
+		}
+		return &status.WorkspaceTreeStatus{
+			Diagnostics: diagnostics,
+		}
+	}
+
+	result := &status.WorkspaceTreeStatus{
+		Current: &status.WorkspaceTreeNodeStatus{
+			SessionName: node.SessionName,
+			Label:       node.Label,
+			ID:          node.ID,
+			State:       "configured",
+		},
+		Diagnostics: diagnostics,
+	}
+	if parent, found, _ := topology.NearestParent(sessionName); found {
+		result.Parent = workspaceTreeRef(parent)
+	}
+	if children, childReason := topology.NearestChildren(sessionName); childReason == workspacetree.FailureNone {
+		for _, child := range children {
+			result.Children = append(result.Children, *workspaceTreeRef(child))
+		}
+	}
+	return result
+}
+
+func workspaceTreeRef(node workspacetree.Node) *status.WorkspaceTreeRef {
+	return &status.WorkspaceTreeRef{
+		SessionName: node.SessionName,
+		Label:       node.Label,
+		ID:          node.ID,
+	}
+}
+
+func workspaceTreeDiagnostics(diagnostics []workspacetree.Diagnostic) []status.WorkspaceTreeDiagnostic {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	result := make([]status.WorkspaceTreeDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		result = append(result, status.WorkspaceTreeDiagnostic{
+			Code:              diagnostic.Code,
+			ID:                diagnostic.ID,
+			IDs:               append([]string{}, diagnostic.IDs...),
+			SessionName:       diagnostic.SessionName,
+			SessionNames:      append([]string{}, diagnostic.SessionNames...),
+			ParentSessionName: diagnostic.ParentSessionName,
+			Labels:            append([]string{}, diagnostic.Labels...),
+			Message:           diagnostic.Message,
+		})
+	}
 	return result
 }
 
@@ -238,6 +302,7 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		contextID:        contextID,
 		sessionName:      sessionName,
 		sessionDir:       sessionDir,
+		cfg:              cfg,
 		orderedEdgeNodes: orderedEdgeNodes,
 		edgeNodeRank:     edgeNodeRank,
 		nodes:            nodes,

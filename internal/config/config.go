@@ -66,10 +66,11 @@ type Config struct {
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                 []string `toml:"edges"`
-	ReplyCommand          string   `toml:"reply_command"`
-	UINode                string   `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool    `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
+	Edges                 []string                  `toml:"edges"`
+	ReplyCommand          string                    `toml:"reply_command"`
+	UINode                string                    `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions *bool                     `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
+	WorkspaceTree         []WorkspaceTreeNodeConfig `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -92,6 +93,16 @@ type NodeConfig struct {
 	Role       string  `toml:"role"`
 	EnterCount int     `toml:"enter_count"`         // Issue #126: Number of Enter keystrokes to send (0/1 = single, 2+ = double)
 	EnterDelay float64 `toml:"enter_delay_seconds"` // 0 = use global default
+}
+
+// WorkspaceTreeNodeConfig describes one node in the explicit workspace tree hierarchy.
+type WorkspaceTreeNodeConfig struct {
+	SessionName       string `toml:"session"`
+	ID                string `toml:"id"`
+	Label             string `toml:"label"`
+	ParentSessionName string `toml:"parent"`
+	Representative    string `toml:"representative"`
+	Order             int    `toml:"order"`
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -574,6 +585,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.DaemonSubmitWorkerLimit != 0 {
 		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
+	}
+	if len(override.WorkspaceTree) > 0 {
+		base.WorkspaceTree = override.WorkspaceTree
 	}
 
 	// *bool fields: bidirectional override (#219)

@@ -133,23 +133,55 @@ type SessionQueues struct {
 	DeadLetterCount int `json:"dead_letter_count"`
 }
 
+type WorkspaceTreeRef struct {
+	SessionName string `json:"session_name"`
+	Label       string `json:"label,omitempty"`
+	ID          string `json:"id"`
+}
+
+type WorkspaceTreeNodeStatus struct {
+	SessionName string `json:"session_name"`
+	Label       string `json:"label,omitempty"`
+	ID          string `json:"id"`
+	State       string `json:"state"`
+}
+
+type WorkspaceTreeDiagnostic struct {
+	Code              string   `json:"code"`
+	ID                string   `json:"id,omitempty"`
+	IDs               []string `json:"ids,omitempty"`
+	SessionName       string   `json:"session_name,omitempty"`
+	SessionNames      []string `json:"session_names,omitempty"`
+	ParentSessionName string   `json:"parent_session_name,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	Message           string   `json:"message,omitempty"`
+}
+
+type WorkspaceTreeStatus struct {
+	Current     *WorkspaceTreeNodeStatus  `json:"current,omitempty"`
+	Parent      *WorkspaceTreeRef         `json:"parent,omitempty"`
+	Children    []WorkspaceTreeRef        `json:"children,omitempty"`
+	Diagnostics []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
+}
+
 type SessionStatus struct {
-	SchemaVersion      int                 `json:"schema_version"`
-	ContextID          string              `json:"context_id"`
-	SessionName        string              `json:"session_name"`
-	NodeCount          int                 `json:"node_count"`
-	VisibleState       string              `json:"visible_state"`
-	Severity           string              `json:"severity,omitempty"`
-	SeveritySource     string              `json:"severity_source,omitempty"`
-	SeverityReason     string              `json:"severity_reason,omitempty"`
-	Compact            string              `json:"compact"`
-	CompactSeverity    string              `json:"compact_severity,omitempty"`
-	Queues             SessionQueues       `json:"queues"`
-	Delivery           *DeliveryStatus     `json:"delivery,omitempty"`
-	RuntimeDiagnostics *RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
-	Tasks              []TaskRunProjection `json:"tasks,omitempty"`
-	Nodes              []NodeStatus        `json:"nodes"`
-	Windows            []SessionWindow     `json:"windows"`
+	SchemaVersion      int                  `json:"schema_version"`
+	ContextID          string               `json:"context_id"`
+	SessionName        string               `json:"session_name"`
+	NodeCount          int                  `json:"node_count"`
+	VisibleState       string               `json:"visible_state"`
+	Severity           string               `json:"severity,omitempty"`
+	SeveritySource     string               `json:"severity_source,omitempty"`
+	SeverityReason     string               `json:"severity_reason,omitempty"`
+	Compact            string               `json:"compact"`
+	CompactSeverity    string               `json:"compact_severity,omitempty"`
+	Queues             SessionQueues        `json:"queues"`
+	Delivery           *DeliveryStatus      `json:"delivery,omitempty"`
+	RuntimeDiagnostics *RuntimeDiagnostics  `json:"runtime_diagnostics,omitempty"`
+	Tasks              []TaskRunProjection  `json:"tasks,omitempty"`
+	WorkspaceTree      *WorkspaceTreeStatus `json:"workspace_tree,omitempty"`
+	Nodes              []NodeStatus         `json:"nodes"`
+	Windows            []SessionWindow      `json:"windows"`
 }
 
 type TaskRunProjection struct {
