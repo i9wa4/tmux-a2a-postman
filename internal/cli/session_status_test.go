@@ -471,6 +471,12 @@ func TestRunGetSessionStatus_DebugIncludesDaemonRuntimeDiagnostics(t *testing.T)
 		LateResponseCount:            1,
 		OldestLateResponseAgeSeconds: 45,
 		SaturationCount:              0,
+	}, status.NonDaemonDeliveryRuntimeDiagnostics{
+		WorkerLimit:          8,
+		ActivePostCount:      1,
+		PendingPostCount:     2,
+		ActiveAutoPingCount:  3,
+		PendingAutoPingCount: 4,
 	}, time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)))
 
 	stdout, _, runErr := captureCommandOutput(t, func() error {

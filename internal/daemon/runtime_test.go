@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -592,6 +593,7 @@ func TestRuntimeDiagnosticsLogLineMarksUnsupportedRSSExplicitly(t *testing.T) {
 		"daemon_runtime",
 		status.DaemonRuntimeCardinality{},
 		status.DaemonSubmitRuntimeDiagnostics{},
+		status.NonDaemonDeliveryRuntimeDiagnostics{},
 		time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
 	)
 
@@ -1133,6 +1135,365 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	}
 	if !rt.daemonSubmitLastSaturatedAt.Equal(now) {
 		t.Fatalf("daemonSubmitLastSaturatedAt = %s, want %s", rt.daemonSubmitLastSaturatedAt, now)
+	}
+}
+
+func TestDispatchPostDelivery_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		clock: func() time.Time {
+			return now
+		},
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathPost) {
+			t.Fatalf("pre-fill post slot %d failed", i)
+		}
+	}
+
+	rt.dispatchPostDelivery(
+		filepath.Join(t.TempDir(), "post", "20260603-090000-r1111-from-a-to-b.md"),
+		"20260603-090000-r1111-from-a-to-b.md",
+		nil,
+		nil,
+		config.DefaultConfig(),
+		postDeliveryReservation{},
+	)
+
+	if len(timerHarness.calls) != 1 {
+		t.Fatalf("scheduled retries = %d, want 1", len(timerHarness.calls))
+	}
+	if got := timerHarness.calls[0].name; got != "post-delivery-budget-retry" {
+		t.Fatalf("retry timer name = %q, want post-delivery-budget-retry", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActivePostCount != budget.workerLimit() || diag.PendingPostCount != 1 || diag.SaturationCount != 1 {
+		t.Fatalf("non-daemon diagnostics after post saturation = %#v", diag)
+	}
+}
+
+// TestDispatchPostDelivery_RetryReadsSharedNodesUnderRealScheduler guards
+// Issue #572 R2: the saturation-retry closure in dispatchPostDelivery runs on
+// its own goroutine via the real time.AfterFunc-based scheduler (not
+// runtimeTimerHarness, which invokes callbacks synchronously in the test's
+// own goroutine and so cannot exercise this race). Concurrently, this test's
+// writer goroutine mutates rt.nodes the same way the runtime's select loop
+// does. Before the R2 fix, the retry closure read rt.nodes directly and
+// raced with that writer under -race; it must instead read through
+// rt.sharedNodes.
+func TestDispatchPostDelivery_RetryReadsSharedNodesUnderRealScheduler(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 5, 0, 0, time.UTC)
+	rt := &daemonRuntime{
+		daemonState: NewDaemonState(0, "ctx-budget-real-scheduler"),
+		events:      make(chan tui.DaemonEvent, 8),
+		clock: func() time.Time {
+			return now
+		},
+	}
+	initialNodes := map[string]discovery.NodeInfo{
+		"review:worker": {SessionName: "review", PaneID: "%1"},
+	}
+	rt.nodes = initialNodes
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes.Store(&initialNodes)
+	rt.sharedNodes = &sharedNodes
+
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathPost) {
+			t.Fatalf("pre-fill post slot %d failed", i)
+		}
+	}
+
+	// The pre-filled slots are never released, so the recursive
+	// dispatchPostDelivery call made by the retry closure always
+	// re-saturates and asks to be rescheduled again. scheduleRuntimeTimer
+	// only arms a real timer (via defaultRuntimeTimerScheduler) on its first
+	// call, so exactly one retry actually fires on its own goroutine — that
+	// single firing is enough to exercise the race-critical read against
+	// the writer goroutine below. The second call (the re-saturated retry
+	// asking to be rescheduled again) is a deliberate no-op, so the test
+	// never arms an unbounded chain of real timers.
+	var retryScheduled atomic.Int32
+	rt.scheduleRuntimeTimer = func(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func()) {
+		if retryScheduled.Add(1) > 1 {
+			return
+		}
+		defaultRuntimeTimerScheduler(delay, name, events, callback)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			fresh := map[string]discovery.NodeInfo{
+				fmt.Sprintf("review:worker-%d", i): {SessionName: "review", PaneID: "%1"},
+			}
+			rt.nodes = fresh
+			rt.storeSharedNodes()
+			i++
+		}
+	}()
+
+	rt.dispatchPostDelivery(
+		filepath.Join(t.TempDir(), "post", "20260603-090500-r2222-from-a-to-b.md"),
+		"20260603-090500-r2222-from-a-to-b.md",
+		nil,
+		nil,
+		config.DefaultConfig(),
+		postDeliveryReservation{},
+	)
+
+	// retryScheduled reaches 2 once: the real timer has fired, the closure
+	// has read nodes (racing against the writer goroutine above), and its
+	// recursive dispatchPostDelivery call has re-saturated and asked to be
+	// rescheduled again (a no-op, per the wrapper above).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && retryScheduled.Load() < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+
+	if got := retryScheduled.Load(); got != 2 {
+		t.Fatalf("scheduleRuntimeTimer calls = %d, want exactly 2 (one real retry firing, one re-saturated no-op)", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActivePostCount != budget.workerLimit() || diag.PendingPostCount != 1 {
+		t.Fatalf("non-daemon diagnostics after retry cycle = %#v", diag)
+	}
+}
+
+func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 1, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time {
+			return now
+		},
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+			t.Fatalf("pre-fill auto-PING slot %d failed", i)
+		}
+	}
+
+	rt.dispatchAutoPingDelivery(
+		"review:worker",
+		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
+		projection.AutoPingNodeState{},
+		"PING {node}",
+		nil,
+		nil,
+		nil,
+		nil,
+		0,
+	)
+
+	if calls.Load() != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0 while budget saturated", calls.Load())
+	}
+	if len(timerHarness.calls) != 1 {
+		t.Fatalf("scheduled retries = %d, want 1", len(timerHarness.calls))
+	}
+	if got := timerHarness.calls[0].name; got != "auto-ping-budget-retry" {
+		t.Fatalf("retry timer name = %q, want auto-ping-budget-retry", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActiveAutoPingCount != budget.workerLimit() || diag.PendingAutoPingCount != 1 || diag.SaturationCount != 1 {
+		t.Fatalf("non-daemon diagnostics after auto-PING saturation = %#v", diag)
+	}
+}
+
+// TestDispatchAutoPing_DropsAfterMaxStaleRetries guards Issue #572 M1: once
+// a saturated auto-PING has exhausted maxAutoPingStaleRetries, it must be
+// dropped (not rescheduled against ever-staler topology) and must release
+// its beginAutoPing in-flight marker so the next scan can re-attempt the
+// node with fresh data.
+func TestDispatchAutoPing_DropsAfterMaxStaleRetries(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 3, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time {
+			return now
+		},
+	}
+	if !rt.beginAutoPing("review:worker") {
+		t.Fatal("beginAutoPing: want true for first call")
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+			t.Fatalf("pre-fill auto-PING slot %d failed", i)
+		}
+	}
+
+	rt.dispatchAutoPingDelivery(
+		"review:worker",
+		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
+		projection.AutoPingNodeState{},
+		"PING {node}",
+		nil, nil, nil, nil,
+		maxAutoPingStaleRetries,
+	)
+
+	if calls.Load() != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0 for a dropped stale retry", calls.Load())
+	}
+	if len(timerHarness.calls) != 0 {
+		t.Fatalf("scheduled retries = %d, want 0 (dropped, not rescheduled)", len(timerHarness.calls))
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.PendingAutoPingCount != 0 {
+		t.Fatalf("PendingAutoPingCount after drop = %d, want 0 (unqueue called)", diag.PendingAutoPingCount)
+	}
+	if rt.beginAutoPing("review:worker") != true {
+		t.Fatal("beginAutoPing after drop: want true — finishAutoPing should have released the in-flight marker")
+	}
+}
+
+// TestNonDaemonBudget_BoundsConcurrentInFlightUnderBurst directly tests
+// Issue #572 AC#4's literal claim — goroutine counts bounded under bursts —
+// at the semaphore primitive dispatchPostDelivery/dispatchAutoPingDelivery/
+// manual-PING all wrap: a burst well beyond workerLimit() must never let
+// more than workerLimit() holders be active at once.
+func TestNonDaemonBudget_BoundsConcurrentInFlightUnderBurst(t *testing.T) {
+	budget := newNonDaemonDeliveryBudget(time.Now)
+	limit := budget.workerLimit()
+	burst := limit * 4
+
+	var wg sync.WaitGroup
+	var active int32
+	var maxActive int32
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !budget.tryStart(nonDaemonDeliveryPathPost) {
+				time.Sleep(time.Millisecond)
+			}
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prevMax := atomic.LoadInt32(&maxActive)
+				if cur <= prevMax || atomic.CompareAndSwapInt32(&maxActive, prevMax, cur) {
+					break
+				}
+			}
+			time.Sleep(3 * time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			budget.finish(nonDaemonDeliveryPathPost)
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxActive); got > int32(limit) {
+		t.Fatalf("max concurrent in-flight post deliveries under burst = %d, want <= %d", got, limit)
+	}
+	if diag := budget.snapshot(); diag.ActivePostCount != 0 || diag.PendingPostCount != 0 {
+		t.Fatalf("diagnostics after burst drains = %#v, want zeroed", diag)
+	}
+}
+
+func TestNonDaemonBudget_BoundsManualPingFanout(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 2, 0, 0, time.UTC)
+	budget := newNonDaemonDeliveryBudget(func() time.Time { return now })
+
+	workerLimit := budget.beginManualFanout(config.DefaultDaemonSubmitWorkerLimit + 3)
+	if workerLimit != config.DefaultDaemonSubmitWorkerLimit {
+		t.Fatalf("manual worker limit = %d, want %d", workerLimit, config.DefaultDaemonSubmitWorkerLimit)
+	}
+	diag := budget.snapshot()
+	if diag.PendingManualPingCount != config.DefaultDaemonSubmitWorkerLimit+3 || diag.SaturationCount != 1 || diag.LastSaturatedAt == "" {
+		t.Fatalf("manual fanout diagnostics after begin = %#v", diag)
+	}
+
+	for i := 0; i < workerLimit; i++ {
+		budget.unqueue(nonDaemonDeliveryPathManualPing)
+		if !budget.tryStart(nonDaemonDeliveryPathManualPing) {
+			t.Fatalf("manual worker %d could not start", i)
+		}
+	}
+	if budget.tryStart(nonDaemonDeliveryPathManualPing) {
+		t.Fatal("manual worker started beyond budget limit")
+	}
+	diag = budget.snapshot()
+	if diag.ActiveManualPingCount != workerLimit || diag.PendingManualPingCount != 3 || diag.SaturationCount != 2 {
+		t.Fatalf("manual fanout diagnostics while active = %#v", diag)
+	}
+}
+
+// TestNonDaemonBudget_SerializesConcurrentManualFanouts guards against
+// Issue #572 B2: overlapping manual-PING fanout rounds (e.g. two quick "p"
+// keypresses) must not run concurrently, or finishManualFanout's
+// reset-to-zero corrupts a still-running round's pending/saturation
+// counters and manualPingSem gets overcommitted across rounds.
+func TestNonDaemonBudget_SerializesConcurrentManualFanouts(t *testing.T) {
+	budget := newNonDaemonDeliveryBudget(time.Now)
+
+	const rounds = 6
+	var active int32
+	var maxActive int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < rounds; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			budget.beginManualFanout(2)
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prevMax := atomic.LoadInt32(&maxActive)
+				if cur <= prevMax || atomic.CompareAndSwapInt32(&maxActive, prevMax, cur) {
+					break
+				}
+			}
+			time.Sleep(2 * time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			budget.finishManualFanout()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxActive); got != 1 {
+		t.Fatalf("max concurrent manual-PING fanout rounds = %d, want 1 (serialized)", got)
+	}
+	diag := budget.snapshot()
+	if diag.PendingManualPingCount != 0 || diag.SaturationCount != 0 {
+		t.Fatalf("diagnostics after all serialized rounds finished = %#v, want zeroed", diag)
 	}
 }
 

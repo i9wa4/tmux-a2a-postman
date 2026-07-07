@@ -530,6 +530,7 @@ type DaemonState struct {
 	lastDeliveryBySenderRecipient map[string]time.Time       // Issue #211: Rate limit duplicate deliveries (sender:recipient -> time)
 	reservedDeliveryByRoute       map[string]time.Time       // Issue #393: in-flight rate-limit reservations (sender:recipient -> time)
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
+	nonDaemonDeliveryBudget       *nonDaemonDeliveryBudget   // Issue #572: bounded concurrency for post/auto-PING/manual-PING delivery
 	clock                         func() time.Time
 }
 
@@ -553,8 +554,54 @@ func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock
 		prevPaneToNode:                make(map[string]string),          // paneID -> nodeKey mapping
 		lastDeliveryBySenderRecipient: make(map[string]time.Time),       // Issue #211
 		reservedDeliveryByRoute:       make(map[string]time.Time),
+		nonDaemonDeliveryBudget:       newNonDaemonDeliveryBudget(clock),
 		clock:                         clock,
 	}
+}
+
+// NonDaemonDeliveryWorkerLimit returns the shared worker limit applied to
+// post/auto-PING/manual-PING delivery paths (Issue #572).
+func (ds *DaemonState) NonDaemonDeliveryWorkerLimit() int {
+	return ds.nonDaemonDeliveryBudgetForUse().workerLimit()
+}
+
+// BeginManualPingFanout reserves a bounded worker count for a manual PING
+// fanout of the given size, returning the number of workers to actually
+// spawn (capped at the shared delivery budget's worker limit).
+func (ds *DaemonState) BeginManualPingFanout(total int) int {
+	return ds.nonDaemonDeliveryBudgetForUse().beginManualFanout(total)
+}
+
+// StartManualPingDelivery attempts to acquire a manual-PING delivery slot.
+func (ds *DaemonState) StartManualPingDelivery() bool {
+	return ds.nonDaemonDeliveryBudgetForUse().tryStart(nonDaemonDeliveryPathManualPing)
+}
+
+// FinishManualPingDelivery releases a manual-PING delivery slot.
+func (ds *DaemonState) FinishManualPingDelivery() {
+	ds.nonDaemonDeliveryBudgetForUse().finish(nonDaemonDeliveryPathManualPing)
+}
+
+// UnqueueManualPingDelivery decrements the pending-manual-PING counter for a
+// job that a worker has just picked up from the fanout queue.
+func (ds *DaemonState) UnqueueManualPingDelivery() {
+	ds.nonDaemonDeliveryBudgetForUse().unqueue(nonDaemonDeliveryPathManualPing)
+}
+
+// FinishManualPingFanout resets manual-PING fanout bookkeeping once a fanout
+// round completes.
+func (ds *DaemonState) FinishManualPingFanout() {
+	ds.nonDaemonDeliveryBudgetForUse().finishManualFanout()
+}
+
+func (ds *DaemonState) nonDaemonDeliveryBudgetForUse() *nonDaemonDeliveryBudget {
+	if ds == nil {
+		return newNonDaemonDeliveryBudget(nil)
+	}
+	if ds.nonDaemonDeliveryBudget == nil {
+		ds.nonDaemonDeliveryBudget = newNonDaemonDeliveryBudget(ds.clock)
+	}
+	return ds.nonDaemonDeliveryBudget
 }
 
 func (ds *DaemonState) now() time.Time {
