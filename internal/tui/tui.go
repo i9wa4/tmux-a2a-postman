@@ -61,6 +61,21 @@ type DaemonEvent struct {
 // DaemonEventMsg wraps DaemonEvent for tea.Msg interface.
 type DaemonEventMsg DaemonEvent
 
+// SendEventNonBlocking attempts to deliver event on events without blocking.
+// If the channel is nil, full, or has no ready receiver, the event is
+// dropped rather than stalling the caller (Issue #572 B1: a blocking send
+// here previously let a stalled TUI relay wedge budget-gated delivery
+// goroutines forever, leaking their concurrency slot).
+func SendEventNonBlocking(events chan<- DaemonEvent, event DaemonEvent) {
+	if events == nil {
+		return
+	}
+	select {
+	case events <- event:
+	default:
+	}
+}
+
 type startupReadinessTickMsg time.Time
 
 // TUICommand represents a command from TUI to the daemon.

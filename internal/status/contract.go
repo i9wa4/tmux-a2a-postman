@@ -218,13 +218,28 @@ type DaemonSubmitRuntimeDiagnostics struct {
 	LastSaturatedAt              string `json:"last_saturated_at,omitempty"`
 }
 
+// NonDaemonDeliveryRuntimeDiagnostics reports the shared post/auto-PING/
+// manual-PING delivery budget's state (Issue #572).
+type NonDaemonDeliveryRuntimeDiagnostics struct {
+	WorkerLimit            int    `json:"worker_limit"`
+	ActivePostCount        int    `json:"active_post_count"`
+	PendingPostCount       int    `json:"pending_post_count"`
+	ActiveAutoPingCount    int    `json:"active_auto_ping_count"`
+	PendingAutoPingCount   int    `json:"pending_auto_ping_count"`
+	ActiveManualPingCount  int    `json:"active_manual_ping_count"`
+	PendingManualPingCount int    `json:"pending_manual_ping_count"`
+	SaturationCount        int    `json:"saturation_count"`
+	LastSaturatedAt        string `json:"last_saturated_at,omitempty"`
+}
+
 type RuntimeDiagnostics struct {
-	Source       string                         `json:"source"`
-	PointInTime  bool                           `json:"point_in_time"`
-	ObservedAt   string                         `json:"observed_at"`
-	GoRuntime    GoRuntimeDiagnostics           `json:"go_runtime"`
-	Daemon       DaemonRuntimeCardinality       `json:"daemon"`
-	DaemonSubmit DaemonSubmitRuntimeDiagnostics `json:"daemon_submit"`
+	Source            string                              `json:"source"`
+	PointInTime       bool                                `json:"point_in_time"`
+	ObservedAt        string                              `json:"observed_at"`
+	GoRuntime         GoRuntimeDiagnostics                `json:"go_runtime"`
+	Daemon            DaemonRuntimeCardinality            `json:"daemon"`
+	DaemonSubmit      DaemonSubmitRuntimeDiagnostics      `json:"daemon_submit"`
+	NonDaemonDelivery NonDaemonDeliveryRuntimeDiagnostics `json:"non_daemon_delivery"`
 }
 
 type AllSessionStatus struct {

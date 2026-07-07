@@ -47,8 +47,11 @@ type daemonRuntime struct {
 	configPaths []string
 	nodesDirs   []string
 	daemonState *DaemonState
-	idleTracker *idle.IdleTracker
-	clock       func() time.Time
+	// nonDaemonDeliveryBudgetFallback backs nonDaemonDeliveryBudget() when
+	// daemonState is nil (e.g. in tests constructing a bare daemonRuntime).
+	nonDaemonDeliveryBudgetFallback *nonDaemonDeliveryBudget
+	idleTracker                     *idle.IdleTracker
+	clock                           func() time.Time
 
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
 
@@ -494,7 +497,7 @@ func (rt *daemonRuntime) processRuntimeDiagnosticsSubmitRequest(requestPath stri
 }
 
 func (rt *daemonRuntime) runtimeDiagnostics(now time.Time) *status.RuntimeDiagnostics {
-	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), now)
+	diag := status.NewRuntimeDiagnostics("daemon_runtime", rt.runtimeCardinality(), rt.daemonSubmitRuntimeDiagnostics(now), rt.nonDaemonDeliveryRuntimeDiagnostics(), now)
 	return &diag
 }
 
@@ -621,6 +624,24 @@ func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
 		return cap(rt.daemonSubmitSem)
 	}
 	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
+}
+
+// nonDaemonDeliveryBudget returns the shared post/auto-PING/manual-PING
+// delivery budget (Issue #572), preferring the one owned by daemonState so
+// the budget is consistent across the daemon; falls back to a
+// runtime-local budget when daemonState is unavailable (e.g. in tests).
+func (rt *daemonRuntime) nonDaemonDeliveryBudget() *nonDaemonDeliveryBudget {
+	if rt.daemonState != nil {
+		return rt.daemonState.nonDaemonDeliveryBudgetForUse()
+	}
+	if rt.nonDaemonDeliveryBudgetFallback == nil {
+		rt.nonDaemonDeliveryBudgetFallback = newNonDaemonDeliveryBudget(rt.now)
+	}
+	return rt.nonDaemonDeliveryBudgetFallback
+}
+
+func (rt *daemonRuntime) nonDaemonDeliveryRuntimeDiagnostics() status.NonDaemonDeliveryRuntimeDiagnostics {
+	return rt.nonDaemonDeliveryBudget().snapshot()
 }
 
 func scanDaemonSubmitRequests(sessionDir string, now time.Time, diagnostics *status.DaemonSubmitRuntimeDiagnostics) {
@@ -1008,9 +1029,47 @@ func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msg
 }
 
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
+	budget := rt.nonDaemonDeliveryBudget()
+	if !budget.tryStart(nonDaemonDeliveryPathPost) {
+		budget.queue(nonDaemonDeliveryPathPost)
+		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=post file=%s retry_in=%s\n", filename, nonDaemonDeliveryRetryDelay)
+		scheduler := rt.scheduleRuntimeTimer
+		if scheduler == nil {
+			scheduler = defaultRuntimeTimerScheduler
+		}
+		scheduler(nonDaemonDeliveryRetryDelay, "post-delivery-budget-retry", rt.events, func() {
+			budget.unqueue(nonDaemonDeliveryPathPost)
+			// Issue #572 M1: re-read nodes at retry time rather than reusing
+			// the nodes captured at the original (now stale) dispatch
+			// attempt — a rescan between the two may have repointed
+			// rt.nodes at fresher topology (e.g. a pane repurposed to a
+			// different node). This runs on its own timer goroutine while
+			// the select-loop writes rt.nodes lock-free, so the retry reads
+			// through rt.sharedNodes (an atomic.Pointer already used
+			// cross-goroutine at start.go:556) instead of rt.nodes
+			// directly. rt.adjacency is set once at construction and never
+			// mutated afterward, so it is safe to read directly here.
+			var retryNodes map[string]discovery.NodeInfo
+			if rt.sharedNodes != nil {
+				if cached := rt.sharedNodes.Load(); cached != nil {
+					retryNodes = *cached
+				}
+			}
+			if retryNodes == nil {
+				// Only reached when sharedNodes is unset (e.g. a
+				// daemonRuntime built directly in a test); in production
+				// sharedNodes is always populated before the runtime loop
+				// starts, so this fallback never races with rt.nodes writes.
+				retryNodes = rt.nodes
+			}
+			rt.dispatchPostDelivery(eventPath, filename, retryNodes, rt.adjacency, cfg, reservation)
+		})
+		return
+	}
 	go func(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config) {
 		deliveredNormally := false
 		defer func() {
+			budget.finish(nonDaemonDeliveryPathPost)
 			if reservation.route != "" {
 				rt.daemonState.finishDeliveryRoute(reservation.route, reservation.reservedAt, reservation.hasReservation, deliveredNormally, rt.now())
 			}
@@ -1036,10 +1095,10 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			resultFields.Result = "error"
 			resultFields.Reason = err.Error()
 			msgtrace.Log("delivery_result", resultFields)
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
-			}
+			})
 			return
 		}
 
@@ -1063,11 +1122,11 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		select {
 		case msgEvent := <-messageEvents:
 			deliveryEvent = msgEvent
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    msgEvent.Type,
 				Message: msgEvent.Message,
 				Details: msgEvent.Details,
-			}
+			})
 			suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 		default:
 		}
@@ -1097,24 +1156,24 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 
 		if !suppressNormalDelivery {
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    "message_received",
 				Message: fmt.Sprintf("Delivered: %s", filename),
 				Details: map[string]interface{}{
 					"session": sourceSessionName,
 				},
-			}
+			})
 		}
 
 		if !suppressNormalDelivery {
 			if _, err := message.ParseMessageFilename(filename); err == nil {
 				nodeStates := rt.idleTracker.GetNodeStates()
-				rt.events <- tui.DaemonEvent{
+				tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 					Type: "node_activity_update",
 					Details: map[string]interface{}{
 						"node_states": nodeStates,
 					},
-				}
+				})
 			}
 		}
 	}(eventPath, filename, nodes, adjacency, cfg)
@@ -1821,30 +1880,67 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 			dispatchSnapshot = newAutoPingDispatchSnapshot(freshNodes, activeNodes, livenessMap, rt.adjacency)
 		}
 
-		dispatchNodeKey := nodeKey
-		dispatchNodeInfo := nodeInfo
-		dispatchPending := pending
-		dispatchTemplate := tmpl
-		dispatchActiveNodes := dispatchSnapshot.activeNodes
-		dispatchLivenessMap := dispatchSnapshot.livenessMap
-		dispatchAdjacency := dispatchSnapshot.adjacency
-		dispatchNodes := dispatchSnapshot.nodes
-		sendAutoPing := rt.autoPingSender()
-		go func() {
-			defer rt.finishAutoPing(dispatchNodeKey)
-
-			result, err := sendAutoPing(dispatchNodeInfo, rt.contextID, dispatchNodeKey, dispatchTemplate, rt.cfg, dispatchActiveNodes, dispatchLivenessMap, dispatchAdjacency, dispatchNodes)
-			if err != nil {
-				log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", dispatchNodeKey, err)
-				return
-			}
-			if !result.Delivered {
-				return
-			}
-
-			rt.recordDeliveredAutoPing(dispatchNodeKey, dispatchNodeInfo, dispatchPending, rt.now())
-		}()
+		rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl,
+			dispatchSnapshot.activeNodes, dispatchSnapshot.livenessMap,
+			dispatchSnapshot.adjacency, dispatchSnapshot.nodes, 0)
 	}
+}
+
+// maxAutoPingStaleRetries bounds how many times a saturated auto-PING is
+// retried against its original (increasingly stale) topology snapshot
+// before being dropped (Issue #572 M1). Unlike post-delivery, auto-PING's
+// activeNodes/livenessMap/adjacency/nodes cannot always be re-read from a
+// single rt field at retry time — callers of dispatchPendingAutoPings pass
+// differently-scoped freshNodes per call site, so blindly substituting a
+// "current" snapshot risks silently changing which nodes are considered.
+// Capping retries bounds the staleness window instead; re-resolving a truly
+// fresh scan on retry is deferred pending a closer look at those call sites.
+const maxAutoPingStaleRetries = 3
+
+// dispatchAutoPingDelivery sends one auto-PING under the shared non-daemon
+// delivery budget (Issue #572). When the auto-PING path is saturated, the
+// send is queued and retried after nonDaemonDeliveryRetryDelay instead of
+// spawning an unbounded goroutine. attempt counts retries so far (0 for the
+// initial dispatch); after maxAutoPingStaleRetries the PING is dropped
+// rather than retried indefinitely against stale topology (M1).
+func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, tmpl string, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, attempt int) {
+	budget := rt.nonDaemonDeliveryBudget()
+	if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+		budget.queue(nonDaemonDeliveryPathAutoPing)
+		if attempt >= maxAutoPingStaleRetries {
+			budget.unqueue(nonDaemonDeliveryPathAutoPing)
+			rt.finishAutoPing(nodeKey)
+			log.Printf("postman: WARNING: component=non_daemon_delivery event=stale_retry_dropped path=auto_ping node=%s attempts=%d\n", nodeKey, attempt)
+			return
+		}
+		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=auto_ping node=%s retry_in=%s attempt=%d\n", nodeKey, nonDaemonDeliveryRetryDelay, attempt)
+		scheduler := rt.scheduleRuntimeTimer
+		if scheduler == nil {
+			scheduler = defaultRuntimeTimerScheduler
+		}
+		scheduler(nonDaemonDeliveryRetryDelay, "auto-ping-budget-retry", rt.events, func() {
+			budget.unqueue(nonDaemonDeliveryPathAutoPing)
+			rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl, activeNodes, livenessMap, adjacency, nodes, attempt+1)
+		})
+		return
+	}
+
+	sendAutoPing := rt.autoPingSender()
+	go func() {
+		defer budget.finish(nonDaemonDeliveryPathAutoPing)
+		defer rt.finishAutoPing(nodeKey)
+
+		result, err := sendAutoPing(nodeInfo, rt.contextID, nodeKey, tmpl, rt.cfg, activeNodes, livenessMap, adjacency, nodes)
+		if err != nil {
+			log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", nodeKey, err)
+			return
+		}
+		if !result.Delivered {
+			return
+		}
+
+		rt.recordDeliveredAutoPing(nodeKey, nodeInfo, pending, rt.now())
+	}()
 }
 
 func newAutoPingDispatchSnapshot(freshNodes map[string]discovery.NodeInfo, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string) *autoPingDispatchSnapshot {
