@@ -1039,7 +1039,12 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 		scheduler(nonDaemonDeliveryRetryDelay, "post-delivery-budget-retry", rt.events, func() {
 			budget.unqueue(nonDaemonDeliveryPathPost)
-			rt.dispatchPostDelivery(eventPath, filename, nodes, adjacency, cfg, reservation)
+			// Issue #572 M1: re-read rt.nodes/rt.adjacency at retry time
+			// rather than reusing the nodes/adjacency captured at the
+			// original (now stale) dispatch attempt — a rescan between
+			// the two may have repointed rt.nodes/rt.adjacency at fresher
+			// topology (e.g. a pane repurposed to a different node).
+			rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.adjacency, cfg, reservation)
 		})
 		return
 	}
@@ -1072,10 +1077,10 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			resultFields.Result = "error"
 			resultFields.Reason = err.Error()
 			msgtrace.Log("delivery_result", resultFields)
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    "error",
 				Message: fmt.Sprintf("deliver %s: %v", filename, err),
-			}
+			})
 			return
 		}
 
@@ -1099,11 +1104,11 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		select {
 		case msgEvent := <-messageEvents:
 			deliveryEvent = msgEvent
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    msgEvent.Type,
 				Message: msgEvent.Message,
 				Details: msgEvent.Details,
-			}
+			})
 			suppressNormalDelivery = messageEventSuppressesNormalDelivery(msgEvent)
 		default:
 		}
@@ -1133,24 +1138,24 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 
 		if !suppressNormalDelivery {
-			rt.events <- tui.DaemonEvent{
+			tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 				Type:    "message_received",
 				Message: fmt.Sprintf("Delivered: %s", filename),
 				Details: map[string]interface{}{
 					"session": sourceSessionName,
 				},
-			}
+			})
 		}
 
 		if !suppressNormalDelivery {
 			if _, err := message.ParseMessageFilename(filename); err == nil {
 				nodeStates := rt.idleTracker.GetNodeStates()
-				rt.events <- tui.DaemonEvent{
+				tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 					Type: "node_activity_update",
 					Details: map[string]interface{}{
 						"node_states": nodeStates,
 					},
-				}
+				})
 			}
 		}
 	}(eventPath, filename, nodes, adjacency, cfg)
@@ -1859,26 +1864,45 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 
 		rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl,
 			dispatchSnapshot.activeNodes, dispatchSnapshot.livenessMap,
-			dispatchSnapshot.adjacency, dispatchSnapshot.nodes)
+			dispatchSnapshot.adjacency, dispatchSnapshot.nodes, 0)
 	}
 }
+
+// maxAutoPingStaleRetries bounds how many times a saturated auto-PING is
+// retried against its original (increasingly stale) topology snapshot
+// before being dropped (Issue #572 M1). Unlike post-delivery, auto-PING's
+// activeNodes/livenessMap/adjacency/nodes cannot always be re-read from a
+// single rt field at retry time — callers of dispatchPendingAutoPings pass
+// differently-scoped freshNodes per call site, so blindly substituting a
+// "current" snapshot risks silently changing which nodes are considered.
+// Capping retries bounds the staleness window instead; re-resolving a truly
+// fresh scan on retry is deferred pending a closer look at those call sites.
+const maxAutoPingStaleRetries = 3
 
 // dispatchAutoPingDelivery sends one auto-PING under the shared non-daemon
 // delivery budget (Issue #572). When the auto-PING path is saturated, the
 // send is queued and retried after nonDaemonDeliveryRetryDelay instead of
-// spawning an unbounded goroutine.
-func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, tmpl string, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo) {
+// spawning an unbounded goroutine. attempt counts retries so far (0 for the
+// initial dispatch); after maxAutoPingStaleRetries the PING is dropped
+// rather than retried indefinitely against stale topology (M1).
+func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo discovery.NodeInfo, pending projection.AutoPingNodeState, tmpl string, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, attempt int) {
 	budget := rt.nonDaemonDeliveryBudget()
 	if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
 		budget.queue(nonDaemonDeliveryPathAutoPing)
-		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=auto_ping node=%s retry_in=%s\n", nodeKey, nonDaemonDeliveryRetryDelay)
+		if attempt >= maxAutoPingStaleRetries {
+			budget.unqueue(nonDaemonDeliveryPathAutoPing)
+			rt.finishAutoPing(nodeKey)
+			log.Printf("postman: WARNING: component=non_daemon_delivery event=stale_retry_dropped path=auto_ping node=%s attempts=%d\n", nodeKey, attempt)
+			return
+		}
+		log.Printf("postman: WARNING: component=non_daemon_delivery event=workers_saturated path=auto_ping node=%s retry_in=%s attempt=%d\n", nodeKey, nonDaemonDeliveryRetryDelay, attempt)
 		scheduler := rt.scheduleRuntimeTimer
 		if scheduler == nil {
 			scheduler = defaultRuntimeTimerScheduler
 		}
 		scheduler(nonDaemonDeliveryRetryDelay, "auto-ping-budget-retry", rt.events, func() {
 			budget.unqueue(nonDaemonDeliveryPathAutoPing)
-			rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl, activeNodes, livenessMap, adjacency, nodes)
+			rt.dispatchAutoPingDelivery(nodeKey, nodeInfo, pending, tmpl, activeNodes, livenessMap, adjacency, nodes, attempt+1)
 		})
 		return
 	}

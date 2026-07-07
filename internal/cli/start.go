@@ -658,10 +658,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 									if !daemonState.StartManualPingDelivery() {
 										failCount.Add(1)
 										log.Printf("postman: WARNING: manual PING budget unexpectedly saturated for %s\n", target.name)
-										daemonEvents <- tui.DaemonEvent{
+										tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
 											Type:    "message_received",
 											Message: fmt.Sprintf("PING failed for %s: manual PING budget saturated", target.name),
-										}
+										})
 										continue
 									}
 									func() {
@@ -672,20 +672,20 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 										if err != nil {
 											log.Printf("❌ postman: PING to %s failed: %v\n", target.name, err)
 											failCount.Add(1)
-											daemonEvents <- tui.DaemonEvent{
+											tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
 												Type:    "message_received",
 												Message: fmt.Sprintf("PING failed for %s: %v", target.name, err),
-											}
+											})
 										} else {
 											if result.Delivered {
 												recordDirectPingDelivered(target.name, target.info, "operator_tui", time.Now())
 											}
 											log.Printf("📮 postman: PING sent to %s\n", target.name)
 											successCount.Add(1)
-											daemonEvents <- tui.DaemonEvent{
+											tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
 												Type:    "message_received",
 												Message: fmt.Sprintf("PING sent to %s", target.name),
-											}
+											})
 										}
 									}()
 								}

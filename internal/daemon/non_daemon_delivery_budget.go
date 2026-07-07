@@ -10,6 +10,13 @@ import (
 
 const nonDaemonDeliveryRetryDelay = 100 * time.Millisecond
 
+// nonDaemonDeliveryBudget bounds concurrency for the post/auto-PING/
+// manual-PING delivery paths (Issue #572). Despite the "shared" name, it is
+// three INDEPENDENT per-path pools of workerLimit() each (postSem/
+// autoPingSem/manualPingSem below) — not one pool shared across paths, and
+// not coupled to config.DaemonSubmitWorkerLimit (the unrelated daemon-submit
+// CLI worker pool). At most 3*workerLimit() non-daemon-submit deliveries can
+// be in flight concurrently, split evenly across the three paths.
 type nonDaemonDeliveryPath string
 
 const (
@@ -20,6 +27,13 @@ const (
 
 type nonDaemonDeliveryBudget struct {
 	mu sync.Mutex
+
+	// manualFanoutMu serializes manual-PING fanout rounds (Issue #572 B2):
+	// beginManualFanout locks it and finishManualFanout unlocks it, so a
+	// second overlapping "p" keypress blocks until the prior round's
+	// pending/saturation bookkeeping has been finalized, instead of both
+	// rounds sharing manualPingSem and corrupting each other's counters.
+	manualFanoutMu sync.Mutex
 
 	postSem       chan struct{}
 	autoPingSem   chan struct{}
@@ -125,8 +139,16 @@ func (b *nonDaemonDeliveryBudget) unqueue(path nonDaemonDeliveryPath) {
 	}
 }
 
+// beginManualFanout starts a manual-PING fanout round, serialized against
+// any other round via manualFanoutMu (Issue #572 B2). Every call that
+// returns must be paired with a later call to finishManualFanout, including
+// the total<=0 case, to release the lock.
 func (b *nonDaemonDeliveryBudget) beginManualFanout(total int) int {
-	if b == nil || total <= 0 {
+	if b == nil {
+		return 0
+	}
+	b.manualFanoutMu.Lock()
+	if total <= 0 {
 		return 0
 	}
 	limit := b.workerLimit()
@@ -146,6 +168,7 @@ func (b *nonDaemonDeliveryBudget) finishManualFanout() {
 	b.manualSaturatedHit = false
 	b.pendingManualPing = 0
 	b.mu.Unlock()
+	b.manualFanoutMu.Unlock()
 }
 
 func (b *nonDaemonDeliveryBudget) queueManual(count int) {

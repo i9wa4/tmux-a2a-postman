@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1208,6 +1209,7 @@ func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		0,
 	)
 
 	if calls.Load() != 0 {
@@ -1222,6 +1224,103 @@ func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
 	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
 	if diag.ActiveAutoPingCount != budget.workerLimit() || diag.PendingAutoPingCount != 1 || diag.SaturationCount != 1 {
 		t.Fatalf("non-daemon diagnostics after auto-PING saturation = %#v", diag)
+	}
+}
+
+// TestDispatchAutoPing_DropsAfterMaxStaleRetries guards Issue #572 M1: once
+// a saturated auto-PING has exhausted maxAutoPingStaleRetries, it must be
+// dropped (not rescheduled against ever-staler topology) and must release
+// its beginAutoPing in-flight marker so the next scan can re-attempt the
+// node with fresh data.
+func TestDispatchAutoPing_DropsAfterMaxStaleRetries(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 3, 0, 0, time.UTC)
+	timerHarness := &runtimeTimerHarness{}
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		daemonState:          NewDaemonState(0, "ctx-budget"),
+		events:               make(chan tui.DaemonEvent, 8),
+		scheduleRuntimeTimer: timerHarness.schedule,
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+		clock: func() time.Time {
+			return now
+		},
+	}
+	if !rt.beginAutoPing("review:worker") {
+		t.Fatal("beginAutoPing: want true for first call")
+	}
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathAutoPing) {
+			t.Fatalf("pre-fill auto-PING slot %d failed", i)
+		}
+	}
+
+	rt.dispatchAutoPingDelivery(
+		"review:worker",
+		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
+		projection.AutoPingNodeState{},
+		"PING {node}",
+		nil, nil, nil, nil,
+		maxAutoPingStaleRetries,
+	)
+
+	if calls.Load() != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0 for a dropped stale retry", calls.Load())
+	}
+	if len(timerHarness.calls) != 0 {
+		t.Fatalf("scheduled retries = %d, want 0 (dropped, not rescheduled)", len(timerHarness.calls))
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.PendingAutoPingCount != 0 {
+		t.Fatalf("PendingAutoPingCount after drop = %d, want 0 (unqueue called)", diag.PendingAutoPingCount)
+	}
+	if rt.beginAutoPing("review:worker") != true {
+		t.Fatal("beginAutoPing after drop: want true — finishAutoPing should have released the in-flight marker")
+	}
+}
+
+// TestNonDaemonBudget_BoundsConcurrentInFlightUnderBurst directly tests
+// Issue #572 AC#4's literal claim — goroutine counts bounded under bursts —
+// at the semaphore primitive dispatchPostDelivery/dispatchAutoPingDelivery/
+// manual-PING all wrap: a burst well beyond workerLimit() must never let
+// more than workerLimit() holders be active at once.
+func TestNonDaemonBudget_BoundsConcurrentInFlightUnderBurst(t *testing.T) {
+	budget := newNonDaemonDeliveryBudget(time.Now)
+	limit := budget.workerLimit()
+	burst := limit * 4
+
+	var wg sync.WaitGroup
+	var active int32
+	var maxActive int32
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !budget.tryStart(nonDaemonDeliveryPathPost) {
+				time.Sleep(time.Millisecond)
+			}
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prevMax := atomic.LoadInt32(&maxActive)
+				if cur <= prevMax || atomic.CompareAndSwapInt32(&maxActive, prevMax, cur) {
+					break
+				}
+			}
+			time.Sleep(3 * time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			budget.finish(nonDaemonDeliveryPathPost)
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxActive); got > int32(limit) {
+		t.Fatalf("max concurrent in-flight post deliveries under burst = %d, want <= %d", got, limit)
+	}
+	if diag := budget.snapshot(); diag.ActivePostCount != 0 || diag.PendingPostCount != 0 {
+		t.Fatalf("diagnostics after burst drains = %#v, want zeroed", diag)
 	}
 }
 
@@ -1250,6 +1349,51 @@ func TestNonDaemonBudget_BoundsManualPingFanout(t *testing.T) {
 	diag = budget.snapshot()
 	if diag.ActiveManualPingCount != workerLimit || diag.PendingManualPingCount != 3 || diag.SaturationCount != 2 {
 		t.Fatalf("manual fanout diagnostics while active = %#v", diag)
+	}
+}
+
+// TestNonDaemonBudget_SerializesConcurrentManualFanouts guards against
+// Issue #572 B2: overlapping manual-PING fanout rounds (e.g. two quick "p"
+// keypresses) must not run concurrently, or finishManualFanout's
+// reset-to-zero corrupts a still-running round's pending/saturation
+// counters and manualPingSem gets overcommitted across rounds.
+func TestNonDaemonBudget_SerializesConcurrentManualFanouts(t *testing.T) {
+	budget := newNonDaemonDeliveryBudget(time.Now)
+
+	const rounds = 6
+	var active int32
+	var maxActive int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i := 0; i < rounds; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			budget.beginManualFanout(2)
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prevMax := atomic.LoadInt32(&maxActive)
+				if cur <= prevMax || atomic.CompareAndSwapInt32(&maxActive, prevMax, cur) {
+					break
+				}
+			}
+			time.Sleep(2 * time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			budget.finishManualFanout()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxActive); got != 1 {
+		t.Fatalf("max concurrent manual-PING fanout rounds = %d, want 1 (serialized)", got)
+	}
+	diag := budget.snapshot()
+	if diag.PendingManualPingCount != 0 || diag.SaturationCount != 0 {
+		t.Fatalf("diagnostics after all serialized rounds finished = %#v, want zeroed", diag)
 	}
 }
 
