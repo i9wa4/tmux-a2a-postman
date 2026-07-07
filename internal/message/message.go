@@ -266,6 +266,26 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 			},
 			ThreadID: threadID,
 		}, true
+	case strings.HasPrefix(threadID, "command-approval-"):
+		// #626: a reply to a reviewer_node-delivered command approval
+		// request (execute-bash mints this exact thread id prefix via
+		// commandApprovalThreadID). Reuses the same APPROVED:/NOT
+		// APPROVED: body-prefix convention as the orchestrator/critic case
+		// above, but records via #625's own CommandApproval* event types,
+		// never the older ApprovalDecidedEventType/ApprovalDecisionPayload
+		// pair used by that unrelated hardcoded flow.
+		decision, ok := approvalDecisionFromContent(content)
+		if !ok {
+			return approvalDeliveryEvent{}, false
+		}
+		return approvalDeliveryEvent{
+			EventType: journal.CommandApprovalDecidedEventType,
+			Payload: journal.CommandApprovalDecisionPayload{
+				Reviewer: sender,
+				Decision: decision,
+			},
+			ThreadID: threadID,
+		}, true
 	default:
 		return approvalDeliveryEvent{}, false
 	}

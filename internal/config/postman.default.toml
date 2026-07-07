@@ -130,6 +130,22 @@ ui_node = "messenger"            # Optional target filter for startup auto-PING
 auto_enable_new_sessions = false   # Auto-enable sessions with configured node panes (default: false; opt-in per #135)
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
+# reviewer_node = "orchestrator"   # Optional default reviewer for execute-bash command approval (Issue #626).
+#                                  # Unset, or set to a node that doesn't resolve, means every command approval
+#                                  # mode fails open (runs, audited as auto_approved_no_reviewer) — including
+#                                  # blocking. Only a VALID reviewer_node makes any mode restrictive. Override
+#                                  # per policy with reviewer_node under [[postman.command_approval]] below.
+
+# Command approval policies for execute-bash (Issue #484/#625/#626). Optional; no policies means every
+# execute-bash invocation uses the advisory default. reviewer_node here overrides the global default above.
+# [[postman.command_approval]]
+# requester = "worker"
+# label = "nix-build"
+# category = "verification"
+# reviewer = "orchestrator"
+# reviewer_node = "orchestrator"
+# mode = "blocking"
+# approval_ttl_seconds = 900
 
 # Common template (prepended to all node templates)
 common_template = ""

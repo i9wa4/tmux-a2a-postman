@@ -54,12 +54,13 @@ func (e commandExitError) ExitCode() int {
 }
 
 type resolvedCommandApprovalPolicy struct {
-	Requester string
-	Reviewer  string
-	Mode      string
-	Label     string
-	Category  string
-	TTL       time.Duration
+	Requester            string
+	Reviewer             string
+	Mode                 string
+	Label                string
+	Category             string
+	TTL                  time.Duration
+	ReviewerNodeOverride string // per-policy reviewer_node override, if any (#626)
 }
 
 type commandApprovalEvaluation struct {
@@ -155,14 +156,18 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		resolvedThreadID = commandApprovalThreadID(policy, commandHash)
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
+	reviewerNode, validReviewer := cfg.ResolveReviewerNode(policy.ReviewerNodeOverride)
 
-	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, ctx.now())
+	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
 	if err != nil {
 		return err
 	}
 	if !evaluation.Allowed {
 		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
+		}
+		if validReviewer {
+			deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, reviewerNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
 		}
 	}
 
@@ -338,6 +343,7 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 		if candidate.ApprovalTTLSeconds > 0 {
 			policy.TTL = time.Duration(candidate.ApprovalTTLSeconds * float64(time.Second))
 		}
+		policy.ReviewerNodeOverride = strings.TrimSpace(candidate.ReviewerNode)
 		break
 	}
 	if strings.TrimSpace(reviewerFlag) != "" {
@@ -375,7 +381,25 @@ func commandApprovalThreadID(policy resolvedCommandApprovalPolicy, commandHash s
 	return "command-approval-" + hex.EncodeToString(sum[:8])
 }
 
-func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, now time.Time) (commandApprovalEvaluation, error) {
+// commandApprovalDecisionAutoApprovedNoReviewer is the distinct decision
+// label used whenever the unified fail-open rule (#626) applies: no valid
+// reviewer_node is configured, so the command is approved regardless of
+// mode. This must never be conflated with an actual recorded approval.
+const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
+
+func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
+	if !validReviewer {
+		// #626 decided requirement 1 (unified fail-open rule): unless a
+		// valid reviewer_node is configured, every command is treated as
+		// approved across all three modes, including blocking. This is
+		// evaluated before any projection lookup so a missing/unresolvable
+		// reviewer_node never depends on prior approval state.
+		return commandApprovalEvaluation{
+			Decision: commandApprovalDecisionAutoApprovedNoReviewer,
+			Allowed:  true,
+			Reason:   "no valid reviewer_node configured; command approval fails open",
+		}, nil
+	}
 	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
 	if err != nil {
 		return commandApprovalEvaluation{}, err
@@ -444,6 +468,9 @@ func evaluationForThread(thread projection.CommandApprovalThread) commandApprova
 }
 
 func decisionForPolicy(mode string, evaluation commandApprovalEvaluation, override bool) string {
+	if evaluation.Decision == commandApprovalDecisionAutoApprovedNoReviewer {
+		return evaluation.Decision
+	}
 	if evaluation.Allowed {
 		return "approved"
 	}

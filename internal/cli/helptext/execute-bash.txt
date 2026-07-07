@@ -28,6 +28,21 @@ Modes:
   blocking   Runs only when the matching thread has a non-expired approved decision
              from the configured reviewer for the exact command digest.
 
+Fail-open rule (reviewer_node):
+  Every mode above, including blocking, only becomes restrictive once a VALID
+  reviewer_node is configured (postman.toml [postman] reviewer_node, or a
+  per-policy reviewer_node override under [[postman.command_approval]] —
+  naming a real, configured node, same family as ui_node). Unset, or set to a
+  node name that does not resolve, means every command runs, recorded
+  distinctly as auto_approved_no_reviewer rather than a real approval. An
+  unresolvable reviewer_node also produces a load-time warning and a visible
+  marker in get-status, so a typo never silently disables blocking mode.
+
+  When a valid reviewer_node exists, execute-bash also delivers the approval
+  request to it directly as a reply-required message; reply with a body
+  starting APPROVED:/NOT APPROVED: and the given thread_id to record a
+  decision without running --record-decision yourself.
+
 Bypass boundary:
   This wrapper coordinates command review through Postman. It does not sandbox
   bash, prevent direct shell execution, or enforce OS-level policy. Use it for

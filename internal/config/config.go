@@ -72,6 +72,7 @@ type Config struct {
 	AutoEnableNewSessions *bool                     `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
 	WorkspaceTree         []WorkspaceTreeNodeConfig `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
 	CommandApproval       []CommandApprovalPolicy   `toml:"command_approval"`
+	ReviewerNode          string                    `toml:"reviewer_node"` // Optional default reviewer node for command approval (#626); unset/unresolvable = fail-open
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -95,6 +96,7 @@ type CommandApprovalPolicy struct {
 	Reviewer           string  `toml:"reviewer"`
 	Mode               string  `toml:"mode"`
 	ApprovalTTLSeconds float64 `toml:"approval_ttl_seconds"`
+	ReviewerNode       string  `toml:"reviewer_node"` // Optional per-policy override of the global reviewer_node (#626)
 }
 
 // NodeConfig holds per-node configuration.
@@ -113,6 +115,28 @@ type WorkspaceTreeNodeConfig struct {
 	ParentSessionName string `toml:"parent"`
 	Representative    string `toml:"representative"`
 	Order             int    `toml:"order"`
+}
+
+// ResolveReviewerNode resolves the effective reviewer_node for a command
+// approval policy, preferring a per-policy override over the global default
+// (#626). valid reports whether the resolved name matches a node known to
+// this config (the same set edges/workspace_tree validate against). An
+// empty or unresolvable name is never valid — callers MUST fail open in
+// that case rather than treat an invalid name as if it were configured, per
+// the decided unified fail-open rule.
+func (cfg *Config) ResolveReviewerNode(policyOverride string) (name string, valid bool) {
+	if cfg == nil {
+		return "", false
+	}
+	name = strings.TrimSpace(policyOverride)
+	if name == "" {
+		name = strings.TrimSpace(cfg.ReviewerNode)
+	}
+	if name == "" {
+		return "", false
+	}
+	_, exists := cfg.Nodes[name]
+	return name, exists
 }
 
 // BoolVal dereferences a *bool with a default fallback (#219).
@@ -530,6 +554,9 @@ func mergeConfig(base, override *Config) {
 	if override.UINode != "" || override.uiNodeSet {
 		base.UINode = override.UINode
 		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
+	}
+	if override.ReviewerNode != "" {
+		base.ReviewerNode = override.ReviewerNode
 	}
 	// *bool merge: bidirectional override — nil = unset (use base), non-nil = explicit (#219)
 	if override.AutoEnableNewSessions != nil {

@@ -18,18 +18,20 @@ import (
 )
 
 type executeBashFixture struct {
-	baseDir     string
-	contextID   string
-	sessionName string
-	sessionDir  string
-	now         time.Time
-	policies    []config.CommandApprovalPolicy
-	stdout      bytes.Buffer
-	stderr      bytes.Buffer
-	runCount    int
-	commands    []string
-	runStatus   int
-	runErr      error
+	baseDir      string
+	contextID    string
+	sessionName  string
+	sessionDir   string
+	now          time.Time
+	policies     []config.CommandApprovalPolicy
+	reviewerNode string
+	nodes        map[string]config.NodeConfig
+	stdout       bytes.Buffer
+	stderr       bytes.Buffer
+	runCount     int
+	commands     []string
+	runStatus    int
+	runErr       error
 }
 
 func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
@@ -45,6 +47,15 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 		sessionDir:  filepath.Join(baseDir, contextID, sessionName),
 		now:         time.Date(2026, time.June, 1, 10, 0, 0, 0, time.UTC),
 		policies:    policies,
+		// #626: every existing fixture test uses "orchestrator" as the
+		// approval Reviewer label; defaulting it here as a valid
+		// reviewer_node too keeps these tests exercising the real
+		// advisory/warn-only/blocking evaluation path instead of the
+		// unified fail-open rule (which only applies when no VALID
+		// reviewer_node is configured). Tests exercising the fail-open rule
+		// itself override reviewerNode/nodes before calling context().
+		reviewerNode: "orchestrator",
+		nodes:        map[string]config.NodeConfig{"orchestrator": {}},
 	}
 }
 
@@ -56,6 +67,8 @@ func (f *executeBashFixture) context() commandContext {
 			return &config.Config{
 				BaseDir:         f.baseDir,
 				CommandApproval: f.policies,
+				ReviewerNode:    f.reviewerNode,
+				Nodes:           f.nodes,
 			}, nil
 		},
 		getTmuxPaneName:    func() string { return "worker" },
@@ -325,6 +338,73 @@ func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	}
 	if fixture.runCount != 1 {
 		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingFailsOpenWhenReviewerNodeUnconfigured guards
+// #626's decided requirement 1 (unified fail-open rule): with no
+// reviewer_node configured at all, even blocking mode must run the command,
+// recorded distinctly as auto_approved_no_reviewer rather than a real
+// approval.
+func TestRunExecuteBashBlockingFailsOpenWhenReviewerNodeUnconfigured(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.reviewerNode = ""
+	fixture.nodes = nil
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf unconfigured",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
+		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
+	}
+}
+
+// TestRunExecuteBashBlockingFailsOpenWhenReviewerNodeUnresolvable guards the
+// second case of #626's decided requirement 1: reviewer_node configured but
+// naming a node that doesn't exist must fail open exactly like an
+// unconfigured reviewer_node, not fail closed.
+func TestRunExecuteBashBlockingFailsOpenWhenReviewerNodeUnresolvable(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.reviewerNode = "typo-reviewer"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf unresolvable",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
+		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
 	}
 }
 
