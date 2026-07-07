@@ -1039,12 +1039,30 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}
 		scheduler(nonDaemonDeliveryRetryDelay, "post-delivery-budget-retry", rt.events, func() {
 			budget.unqueue(nonDaemonDeliveryPathPost)
-			// Issue #572 M1: re-read rt.nodes/rt.adjacency at retry time
-			// rather than reusing the nodes/adjacency captured at the
-			// original (now stale) dispatch attempt — a rescan between
-			// the two may have repointed rt.nodes/rt.adjacency at fresher
-			// topology (e.g. a pane repurposed to a different node).
-			rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.adjacency, cfg, reservation)
+			// Issue #572 M1: re-read nodes at retry time rather than reusing
+			// the nodes captured at the original (now stale) dispatch
+			// attempt — a rescan between the two may have repointed
+			// rt.nodes at fresher topology (e.g. a pane repurposed to a
+			// different node). This runs on its own timer goroutine while
+			// the select-loop writes rt.nodes lock-free, so the retry reads
+			// through rt.sharedNodes (an atomic.Pointer already used
+			// cross-goroutine at start.go:556) instead of rt.nodes
+			// directly. rt.adjacency is set once at construction and never
+			// mutated afterward, so it is safe to read directly here.
+			var retryNodes map[string]discovery.NodeInfo
+			if rt.sharedNodes != nil {
+				if cached := rt.sharedNodes.Load(); cached != nil {
+					retryNodes = *cached
+				}
+			}
+			if retryNodes == nil {
+				// Only reached when sharedNodes is unset (e.g. a
+				// daemonRuntime built directly in a test); in production
+				// sharedNodes is always populated before the runtime loop
+				// starts, so this fallback never races with rt.nodes writes.
+				retryNodes = rt.nodes
+			}
+			rt.dispatchPostDelivery(eventPath, filename, retryNodes, rt.adjacency, cfg, reservation)
 		})
 		return
 	}

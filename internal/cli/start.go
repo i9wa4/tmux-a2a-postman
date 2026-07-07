@@ -697,17 +697,17 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						close(jobs)
 						wg.Wait()
 						total := int(successCount.Load()) + int(failCount.Load())
-						daemonEvents <- tui.DaemonEvent{
+						tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
 							Type:    "status_update",
 							Message: fmt.Sprintf("PING: %d/%d dispatched", successCount.Load(), total),
 							Details: map[string]interface{}{"session": sessionTarget},
-						}
+						})
 						time.AfterFunc(30*time.Second, func() {
-							daemonEvents <- tui.DaemonEvent{
+							tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
 								Type:    "status_update",
 								Message: "",
 								Details: map[string]interface{}{"session": sessionTarget},
-							}
+							})
 						})
 					}()
 				}

@@ -1177,6 +1177,106 @@ func TestDispatchPostDelivery_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
 	}
 }
 
+// TestDispatchPostDelivery_RetryReadsSharedNodesUnderRealScheduler guards
+// Issue #572 R2: the saturation-retry closure in dispatchPostDelivery runs on
+// its own goroutine via the real time.AfterFunc-based scheduler (not
+// runtimeTimerHarness, which invokes callbacks synchronously in the test's
+// own goroutine and so cannot exercise this race). Concurrently, this test's
+// writer goroutine mutates rt.nodes the same way the runtime's select loop
+// does. Before the R2 fix, the retry closure read rt.nodes directly and
+// raced with that writer under -race; it must instead read through
+// rt.sharedNodes.
+func TestDispatchPostDelivery_RetryReadsSharedNodesUnderRealScheduler(t *testing.T) {
+	now := time.Date(2026, 6, 3, 9, 5, 0, 0, time.UTC)
+	rt := &daemonRuntime{
+		daemonState: NewDaemonState(0, "ctx-budget-real-scheduler"),
+		events:      make(chan tui.DaemonEvent, 8),
+		clock: func() time.Time {
+			return now
+		},
+	}
+	initialNodes := map[string]discovery.NodeInfo{
+		"review:worker": {SessionName: "review", PaneID: "%1"},
+	}
+	rt.nodes = initialNodes
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes.Store(&initialNodes)
+	rt.sharedNodes = &sharedNodes
+
+	budget := rt.nonDaemonDeliveryBudget()
+	for i := 0; i < budget.workerLimit(); i++ {
+		if !budget.tryStart(nonDaemonDeliveryPathPost) {
+			t.Fatalf("pre-fill post slot %d failed", i)
+		}
+	}
+
+	// The pre-filled slots are never released, so the recursive
+	// dispatchPostDelivery call made by the retry closure always
+	// re-saturates and asks to be rescheduled again. scheduleRuntimeTimer
+	// only arms a real timer (via defaultRuntimeTimerScheduler) on its first
+	// call, so exactly one retry actually fires on its own goroutine — that
+	// single firing is enough to exercise the race-critical read against
+	// the writer goroutine below. The second call (the re-saturated retry
+	// asking to be rescheduled again) is a deliberate no-op, so the test
+	// never arms an unbounded chain of real timers.
+	var retryScheduled atomic.Int32
+	rt.scheduleRuntimeTimer = func(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func()) {
+		if retryScheduled.Add(1) > 1 {
+			return
+		}
+		defaultRuntimeTimerScheduler(delay, name, events, callback)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			fresh := map[string]discovery.NodeInfo{
+				fmt.Sprintf("review:worker-%d", i): {SessionName: "review", PaneID: "%1"},
+			}
+			rt.nodes = fresh
+			rt.storeSharedNodes()
+			i++
+		}
+	}()
+
+	rt.dispatchPostDelivery(
+		filepath.Join(t.TempDir(), "post", "20260603-090500-r2222-from-a-to-b.md"),
+		"20260603-090500-r2222-from-a-to-b.md",
+		nil,
+		nil,
+		config.DefaultConfig(),
+		postDeliveryReservation{},
+	)
+
+	// retryScheduled reaches 2 once: the real timer has fired, the closure
+	// has read nodes (racing against the writer goroutine above), and its
+	// recursive dispatchPostDelivery call has re-saturated and asked to be
+	// rescheduled again (a no-op, per the wrapper above).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && retryScheduled.Load() < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+
+	if got := retryScheduled.Load(); got != 2 {
+		t.Fatalf("scheduleRuntimeTimer calls = %d, want exactly 2 (one real retry firing, one re-saturated no-op)", got)
+	}
+	diag := rt.nonDaemonDeliveryRuntimeDiagnostics()
+	if diag.ActivePostCount != budget.workerLimit() || diag.PendingPostCount != 1 {
+		t.Fatalf("non-daemon diagnostics after retry cycle = %#v", diag)
+	}
+}
+
 func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
 	now := time.Date(2026, 6, 3, 9, 1, 0, 0, time.UTC)
 	timerHarness := &runtimeTimerHarness{}
