@@ -117,18 +117,12 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
-	resolvedRequester, err := resolveExecuteBashRequester(ctx, *requester)
-	if err != nil {
-		return err
-	}
 	if *recordDecision != "" {
 		return recordExecuteBashDecision(ctx, executeBashDecisionOptions{
 			sessionDir:       sessionDir,
 			contextID:        resolvedContextID,
 			sessionName:      resolvedSessionName,
 			threadID:         *threadID,
-			reviewer:         *reviewer,
-			fallbackReviewer: resolvedRequester,
 			decision:         *recordDecision,
 			reason:           *reason,
 			storeCommandText: *storeCommandText,
@@ -136,6 +130,10 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		})
 	}
 
+	resolvedRequester, err := resolveExecuteBashRequester(ctx, *requester)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(*label) == "" {
 		return fmt.Errorf("--label is required")
 	}
@@ -252,8 +250,6 @@ type executeBashDecisionOptions struct {
 	contextID        string
 	sessionName      string
 	threadID         string
-	reviewer         string
-	fallbackReviewer string
 	decision         string
 	reason           string
 	storeCommandText bool
@@ -267,21 +263,44 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if err := validateCommandApprovalThreadID(strings.TrimSpace(opts.threadID)); err != nil {
 		return err
 	}
-	reviewer := strings.TrimSpace(opts.reviewer)
-	if reviewer == "" {
-		reviewer = strings.TrimSpace(opts.fallbackReviewer)
-	}
-	if reviewer == "" {
-		return fmt.Errorf("--reviewer is required with --record-decision when requester auto-detection is unavailable")
-	}
 	decision := strings.TrimSpace(opts.decision)
 	switch decision {
 	case string(journal.ApprovalDecisionApproved), string(journal.ApprovalDecisionRejected):
 	default:
 		return fmt.Errorf("--record-decision must be approved or rejected")
 	}
+
+	// #626 B1-residual: the decision's reviewer identity is the CALLER's
+	// own authenticated identity (tmux pane title), never a flag.
+	// --reviewer must never influence whether a decision is accepted — a
+	// requester could otherwise pass --reviewer <reviewer_node_name>,
+	// trivially readable from postman.toml or get-status, and self-approve
+	// exactly as before. The caller is accepted only when this
+	// authenticated identity matches the thread's own ReviewerNode, the
+	// trusted, config-resolved value captured once at request time (#626
+	// B1) — never re-resolved from current config, so a decision can't be
+	// laundered through a config change between request and decision time
+	// either.
+	authenticatedCaller := strings.TrimSpace(ctx.getTmuxPaneName())
+	if authenticatedCaller == "" {
+		return fmt.Errorf("--record-decision requires a resolvable tmux pane title identity; run inside tmux")
+	}
+	state, ok, err := projection.ProjectCommandApprovalState(opts.sessionDir, ctx.now())
+	if err != nil {
+		return err
+	}
+	var reviewerNode string
+	if ok {
+		if thread, found := state.Threads[opts.threadID]; found {
+			reviewerNode = thread.ReviewerNode
+		}
+	}
+	if reviewerNode == "" || authenticatedCaller != reviewerNode {
+		return fmt.Errorf("--record-decision refused: caller %q is not the configured reviewer_node for thread %q", authenticatedCaller, opts.threadID)
+	}
+
 	payload := journal.CommandApprovalDecisionPayload{
-		Reviewer: reviewer,
+		Reviewer: authenticatedCaller,
 		Decision: journal.ApprovalDecision(decision),
 		Reason:   opts.reason,
 	}
@@ -290,7 +309,7 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	}
 	result := executeBashResult{
 		Status:         "decision_recorded",
-		Reviewer:       reviewer,
+		Reviewer:       authenticatedCaller,
 		ThreadID:       opts.threadID,
 		Decision:       decision,
 		Reason:         opts.reason,

@@ -3,7 +3,7 @@ execute-bash — run bash through command approval choreography
 Usage:
   tmux-a2a-postman execute-bash --label <label> --command <bash>
   tmux-a2a-postman execute-bash --label <label> --mode blocking --reviewer <node> --command <bash>
-  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved --reviewer <node>
+  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved
 
 Execution flags:
   --label <label>              Command label used for policy matching and audit
@@ -20,7 +20,11 @@ Execution flags:
 
 Decision flags:
   --thread-id <thread>         Approval thread id to decide or reuse
-  --record-decision <decision> approved or rejected
+  --record-decision <decision> approved or rejected. The decision's reviewer
+                                identity is always the calling process's own
+                                tmux pane title, never --reviewer; a caller
+                                whose pane is not the thread's reviewer_node
+                                is refused and no decision is recorded.
 
 Modes:
   advisory   Records request and audit metadata, then runs even without approval.
@@ -44,8 +48,10 @@ Fail-open rule (reviewer_node):
   decision without running --record-decision yourself. A reply body that
   doesn't start with one of those two prefixes is logged and not recorded.
   Only a reply whose sender matches the resolved reviewer_node is ever
-  honored, regardless of the reviewer audit label, so self-approval by the
-  requester is not possible.
+  honored, regardless of the reviewer audit label. The same rule applies to
+  --record-decision itself: the decision's reviewer identity is always the
+  calling process's own tmux pane title, never the --reviewer flag, and a
+  caller whose pane is not the reviewer_node is refused outright.
 
 Bypass boundary:
   This wrapper coordinates command review through Postman. It does not sandbox

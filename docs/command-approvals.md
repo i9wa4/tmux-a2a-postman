@@ -75,15 +75,21 @@ changed-digest approvals do not run.
 ## 4. Decisions
 
 When `execute-bash` requests approval, it prints the approval thread id in the
-wrapper metadata. A reviewer can decide the thread explicitly:
+wrapper metadata. The configured `reviewer_node`, running `--record-decision`
+from its own pane, can decide the thread explicitly:
 
 ```sh
 tmux-a2a-postman execute-bash \
   --thread-id command-approval-... \
-  --reviewer orchestrator \
   --record-decision approved \
   --reason "digest reviewed"
 ```
+
+The decision's reviewer identity always comes from the calling process's own
+tmux pane title, never from a flag; a `--reviewer` flag passed here has no
+effect on the outcome. A caller whose pane identity is not the thread's
+`reviewer_node` is refused with an error and no decision is recorded (#626
+B1-residual).
 
 Use `--record-decision rejected` to reject a pending command.
 
@@ -108,9 +114,16 @@ approval request.
 Only a reply whose sender matches the request's config-resolved
 `reviewer_node` is ever honored; a reply from anyone else is recorded as
 `wrong_reviewer` and has no effect on the command, regardless of what the
-policy's `reviewer` audit label says (#626 B1) — this is what makes
-self-approval impossible even though the `reviewer` label itself is a plain,
-requester-influenceable string.
+policy's `reviewer` audit label says (#626 B1) — the `reviewer` label itself
+is a plain, requester-influenceable string and has no bearing on this check.
+
+The same authenticated-caller requirement applies to `--record-decision`
+(#626 B1-residual): the decision's reviewer identity is always the calling
+process's own tmux pane title, never the `--reviewer` flag. A caller whose
+pane identity is not the thread's `reviewer_node` is refused outright, with
+no decision recorded — passing `--reviewer <reviewer_node_name>` on the
+command line has no effect on this check, since that name is a plain,
+readable config value, not proof of who is actually calling.
 
 ## 5. Inspection
 

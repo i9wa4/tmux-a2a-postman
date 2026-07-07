@@ -1593,7 +1593,14 @@ func TestDeliverMessage_AppendsReplayableApprovalEventsForCrossSessionThread(t *
 // event directly into requesterSessionDir, mirroring what
 // recordCommandApprovalRequest in internal/cli/execute_bash.go does. Test
 // helper for the #626 B1 message-package coverage below.
-func seedCommandApprovalRequest(t *testing.T, requesterSessionDir, contextID, sessionName, threadID, requester, reviewerNode string, now time.Time) {
+// seedCommandApprovalRequest journals a command approval request.
+// reviewerLabel seeds thread.Reviewer (the plain, requester-influenceable
+// audit label) independently of reviewerNode (the trusted, config-resolved
+// field #626 B1 requires decisions to be checked against) — callers that
+// need to prove a test is actually diagnostic of the ReviewerNode binding,
+// rather than incidentally passing because Reviewer happens to differ too,
+// should set reviewerLabel to something Reviewer alone would have accepted.
+func seedCommandApprovalRequest(t *testing.T, requesterSessionDir, contextID, sessionName, threadID, requester, reviewerLabel, reviewerNode string, now time.Time) {
 	t.Helper()
 	writer, err := journal.OpenCurrentWriter(requesterSessionDir)
 	if err != nil {
@@ -1607,7 +1614,7 @@ func seedCommandApprovalRequest(t *testing.T, requesterSessionDir, contextID, se
 		journal.VisibilityOperatorVisible,
 		journal.CommandApprovalRequestPayload{
 			Requester:    requester,
-			Reviewer:     "unassigned",
+			Reviewer:     reviewerLabel,
 			ReviewerNode: reviewerNode,
 			Mode:         "blocking",
 			Label:        "protected",
@@ -1643,7 +1650,7 @@ func TestDeliverMessage_CommandApprovalReplyFromRealReviewerNodeRecordsApproval(
 
 	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
 	threadID := "command-approval-aabbccddeeff0011"
-	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626", "requester-session", threadID, "worker", "orchestrator", now)
+	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626", "requester-session", threadID, "worker", "unassigned", "orchestrator", now)
 
 	nodes := map[string]discovery.NodeInfo{
 		"requester-session:worker":      {PaneID: "%1", SessionName: "requester-session", SessionDir: requesterSessionDir},
@@ -1704,7 +1711,16 @@ func TestDeliverMessage_CommandApprovalReplyFromWrongSenderIsRejected(t *testing
 
 	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
 	threadID := "command-approval-1122334455667788"
-	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626b", "requester-session", threadID, "worker", "orchestrator", now)
+	// thread.Reviewer is deliberately seeded to "worker" — the exact
+	// identity the attacker's reply claims to be from — so this test is
+	// only diagnostic of the ReviewerNode binding (#626 B1): under the old,
+	// vulnerable Reviewer-based check this reply would have matched and
+	// been accepted; only checking against the differing ReviewerNode
+	// ("orchestrator") catches it. Guardian's QA found the prior version of
+	// this test (seeded with Reviewer: "unassigned") passed identically
+	// whether or not the ReviewerNode fix was in place, since "unassigned"
+	// never matched the attacker's claimed identity under either check.
+	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626b", "requester-session", threadID, "worker", "worker", "orchestrator", now)
 
 	nodes := map[string]discovery.NodeInfo{
 		"requester-session:worker": {PaneID: "%1", SessionName: "requester-session", SessionDir: requesterSessionDir},
