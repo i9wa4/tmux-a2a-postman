@@ -51,12 +51,14 @@ func runGetSessionStatusWithContext(ctx commandContext, args []string) error {
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
 	debug := fs.Bool("debug", false, "Include point-in-time daemon runtime memory, GC, goroutine, and cardinality diagnostics")
+	tasks := fs.Bool("tasks", false, "Include read-only external task/run projection when task_id or run_id metadata exists")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	result, ok, err := collectResolvedSessionStatusWithContext(ctx, *contextID, "", *configPath, sessionStatusOptions{
 		IncludeRuntimeDiagnostics: *debug,
+		IncludeTasks:              *tasks,
 	})
 	if err != nil {
 		return err
@@ -81,6 +83,7 @@ type sessionStatusCollector func(baseDir, contextID, sessionName string, cfg *co
 
 type sessionStatusOptions struct {
 	IncludeRuntimeDiagnostics bool
+	IncludeTasks              bool
 }
 
 func resolveSessionStatusTargetWithContext(ctx commandContext, contextIDFlag, sessionFlag, configPath string) (sessionStatusTarget, bool, error) {
@@ -162,7 +165,35 @@ func collectResolvedSessionStatusWithContext(ctx commandContext, contextIDFlag, 
 		}
 		result.RuntimeDiagnostics = diagnostics
 	}
+	if options.IncludeTasks {
+		sessionDir := filepath.Join(target.baseDir, target.contextID, target.sessionName)
+		result.Tasks = statusTaskRunProjection(sessionDir, target.sessionName)
+	}
 	return result, true, nil
+}
+
+func statusTaskRunProjection(sessionDir, sessionName string) []status.TaskRunProjection {
+	projected, ok, err := projection.ProjectTaskRunState(sessionDir, sessionName)
+	if err != nil || !ok {
+		return nil
+	}
+	result := make([]status.TaskRunProjection, 0, len(projected.Tasks))
+	for _, task := range projected.Tasks {
+		result = append(result, status.TaskRunProjection{
+			TaskID:               task.TaskID,
+			RunID:                task.RunID,
+			OriginatingMessageID: task.OriginatingMessageID,
+			ThreadID:             task.ThreadID,
+			AssignedNode:         task.AssignedNode,
+			LatestMessageID:      task.LatestMessageID,
+			OpenInputRequestIDs:  task.OpenInputRequestIDs,
+			State:                task.State,
+			TerminalMessageID:    task.TerminalMessageID,
+			Ambiguous:            task.Ambiguous,
+			AmbiguityReason:      task.AmbiguityReason,
+		})
+	}
+	return result
 }
 
 func collectRuntimeDiagnosticsFromDaemonWithContext(ctx commandContext, target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {

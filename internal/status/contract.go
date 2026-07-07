@@ -147,8 +147,23 @@ type SessionStatus struct {
 	Queues             SessionQueues       `json:"queues"`
 	Delivery           *DeliveryStatus     `json:"delivery,omitempty"`
 	RuntimeDiagnostics *RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
+	Tasks              []TaskRunProjection `json:"tasks,omitempty"`
 	Nodes              []NodeStatus        `json:"nodes"`
 	Windows            []SessionWindow     `json:"windows"`
+}
+
+type TaskRunProjection struct {
+	TaskID               string   `json:"task_id,omitempty"`
+	RunID                string   `json:"run_id,omitempty"`
+	OriginatingMessageID string   `json:"originating_message_id,omitempty"`
+	ThreadID             string   `json:"thread_id,omitempty"`
+	AssignedNode         string   `json:"assigned_node,omitempty"`
+	LatestMessageID      string   `json:"latest_message_id,omitempty"`
+	OpenInputRequestIDs  []string `json:"open_input_request_ids,omitempty"`
+	State                string   `json:"state"`
+	TerminalMessageID    string   `json:"terminal_message_id,omitempty"`
+	Ambiguous            bool     `json:"ambiguous,omitempty"`
+	AmbiguityReason      string   `json:"ambiguity_reason,omitempty"`
 }
 
 type DaemonOwner struct {
