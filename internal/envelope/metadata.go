@@ -16,6 +16,8 @@ type Metadata struct {
 	MessageType              string
 	Timestamp                string
 	ThreadID                 string
+	TaskID                   string
+	RunID                    string
 	InputRequestID           string
 	FillsInputRequestID      string
 	InputRequestSetID        string
@@ -175,6 +177,10 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.Timestamp = value
 			case "thread_id":
 				metadata.ThreadID = value
+			case "task_id":
+				metadata.TaskID = value
+			case "run_id":
+				metadata.RunID = value
 			case "input_request_id":
 				metadata.InputRequestID = value
 			case "fills_input_request_id":

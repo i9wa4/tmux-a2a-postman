@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 )
@@ -77,6 +78,84 @@ func TestRunGetSessionStatusWithContextWritesJSONToConfiguredStdout(t *testing.T
 	}
 	if payload.ContextID != "ctx-status" || payload.SessionName != "review" || payload.VisibleState != "ready" {
 		t.Fatalf("payload = %#v, want injected status", payload)
+	}
+}
+
+func TestRunGetSessionStatusWithContextIncludesTaskProjection(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-status"
+	sessionName := "review"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	now := time.Date(2026, time.June, 17, 12, 0, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, contextID, sessionName, 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: task-request.md\n" +
+		"  task_id: TASK-123\n" +
+		"  run_id: run-1\n" +
+		"  thread_id: thread-1\n" +
+		"  replyPolicy: required\n" +
+		"  input_request_id: ireq_123\n" +
+		"---\n\nplease work\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: "task-request.md",
+		From:      "orchestrator",
+		To:        "worker",
+		Content:   content,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(task-request.md): %v", err)
+	}
+
+	var stdout strings.Builder
+	ctx := commandContext{
+		stdout: &stdout,
+		stderr: io.Discard,
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{BaseDir: tmpDir}, nil
+		},
+		resolveContextID: func(contextID string) (string, error) {
+			return contextID, nil
+		},
+		getTmuxSessionName: func() string {
+			return sessionName
+		},
+		collectSessionStatus: func(_, contextID, sessionName string, _ *config.Config) (status.SessionStatus, error) {
+			return status.SessionStatus{
+				SchemaVersion: status.SchemaVersion,
+				ContextID:     contextID,
+				SessionName:   sessionName,
+				VisibleState:  "ready",
+				Nodes:         []status.NodeStatus{},
+				Windows:       []status.SessionWindow{},
+			}, nil
+		},
+	}
+
+	if err := runGetSessionStatusWithContext(ctx, []string{"--context-id", contextID, "--tasks"}); err != nil {
+		t.Fatalf("runGetSessionStatusWithContext: %v", err)
+	}
+
+	var payload status.SessionStatus
+	if err := json.Unmarshal([]byte(stdout.String()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout.String(), err)
+	}
+	if len(payload.Tasks) != 1 {
+		t.Fatalf("tasks = %#v, want one", payload.Tasks)
+	}
+	task := payload.Tasks[0]
+	if task.TaskID != "TASK-123" || task.RunID != "run-1" || task.OriginatingMessageID != "task-request.md" {
+		t.Fatalf("unexpected task identity: %#v", task)
+	}
+	if task.ThreadID != "thread-1" || task.AssignedNode != "worker" || task.LatestMessageID != "task-request.md" {
+		t.Fatalf("unexpected task routing: %#v", task)
+	}
+	if task.State != "waiting_input" || len(task.OpenInputRequestIDs) != 1 || task.OpenInputRequestIDs[0] != "ireq_123" {
+		t.Fatalf("unexpected task input state: %#v", task)
 	}
 }
 
