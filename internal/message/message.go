@@ -111,6 +111,12 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 	if payload.ThreadID == "" {
 		payload.ThreadID = metadata.ThreadID
 	}
+	if payload.TaskID == "" {
+		payload.TaskID = metadata.TaskID
+	}
+	if payload.RunID == "" {
+		payload.RunID = metadata.RunID
+	}
 	if payload.InputRequestID == "" {
 		payload.InputRequestID = metadata.InputRequestID
 	}
