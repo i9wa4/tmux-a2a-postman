@@ -96,10 +96,21 @@ directly, carrying the command hash, label, mode, and the approval thread id
 record a decision by replying instead of running `--record-decision`
 directly, start the reply body with `APPROVED: <reason>` or
 `NOT APPROVED: <reason>` and keep the given `thread_id` in the reply's own
-frontmatter; the daemon records the decision automatically on delivery.
-Delivery is best-effort — a delivery failure (for example, the reviewer_node
-is not currently discoverable) is logged but never blocks or duplicates the
-already-journaled approval request.
+frontmatter; the daemon records the decision automatically on delivery. A
+reply on a command approval thread whose body does not start with one of
+those two prefixes is logged as a warning and not recorded as a decision at
+all — use `--record-decision` directly if you need to attach a reply body
+that doesn't fit that convention. Delivery itself is best-effort — a
+delivery failure (for example, the reviewer_node is not currently
+discoverable) is logged but never blocks or duplicates the already-journaled
+approval request.
+
+Only a reply whose sender matches the request's config-resolved
+`reviewer_node` is ever honored; a reply from anyone else is recorded as
+`wrong_reviewer` and has no effect on the command, regardless of what the
+policy's `reviewer` audit label says (#626 B1) — this is what makes
+self-approval impossible even though the `reviewer` label itself is a plain,
+requester-influenceable string.
 
 ## 5. Inspection
 

@@ -95,14 +95,20 @@ func appendCommandApprovalRequestForTest(t *testing.T, writer *journal.Writer, t
 		journal.CommandApprovalRequestedEventType,
 		journal.VisibilityOperatorVisible,
 		journal.CommandApprovalRequestPayload{
-			Requester:   "worker",
-			Reviewer:    reviewer,
-			Mode:        "blocking",
-			Label:       "nix-build",
-			Category:    "verification",
-			CommandHash: "sha256:test",
-			Reason:      "verify build",
-			ExpiresAt:   expiresAt.Format(time.RFC3339Nano),
+			Requester: "worker",
+			Reviewer:  reviewer,
+			// #626 B1: ReviewerNode is the trusted field decisions are
+			// actually validated against now; mirroring the plain Reviewer
+			// label here keeps this test's existing approved/wrong-reviewer
+			// intent intact (a decision claiming to be "orchestrator"
+			// matches, "critic" does not).
+			ReviewerNode: reviewer,
+			Mode:         "blocking",
+			Label:        "nix-build",
+			Category:     "verification",
+			CommandHash:  "sha256:test",
+			Reason:       "verify build",
+			ExpiresAt:    expiresAt.Format(time.RFC3339Nano),
 		},
 		journal.AppendOptions{ThreadID: threadID},
 		now,

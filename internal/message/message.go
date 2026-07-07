@@ -276,6 +276,7 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 		// pair used by that unrelated hardcoded flow.
 		decision, ok := approvalDecisionFromContent(content)
 		if !ok {
+			log.Printf("postman: WARNING: message %s on command approval thread %s did not start with APPROVED:/NOT APPROVED: — not recorded as a decision\n", messageID, threadID)
 			return approvalDeliveryEvent{}, false
 		}
 		return approvalDeliveryEvent{

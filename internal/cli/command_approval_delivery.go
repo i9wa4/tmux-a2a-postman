@@ -13,6 +13,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
+// discoverNodesForCommandApprovalDeliveryFn is a seam over
+// discovery.DiscoverNodesWithCollisions (#626 M2): the real implementation
+// shells out to tmux, which is unavailable/nondeterministic in unit tests;
+// tests override this var and restore it via t.Cleanup.
+var discoverNodesForCommandApprovalDeliveryFn = discovery.DiscoverNodesWithCollisions
+
 // deliverCommandApprovalRequest sends a reply-required postman message to
 // the resolved reviewer_node when a command needs approval (#626). This is
 // best-effort: a delivery failure is logged, not returned as an error — the
@@ -30,7 +36,7 @@ import (
 // reply must preserve the given thread_id in its own frontmatter for the
 // decision to be recorded automatically.
 func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, requesterSessionName string, policy resolvedCommandApprovalPolicy, reviewerNode, threadID, commandHash, reason string, storeCommandText bool, now time.Time) {
-	nodes, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, requesterSessionName)
+	nodes, _, err := discoverNodesForCommandApprovalDeliveryFn(baseDir, contextID, requesterSessionName)
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: discovering nodes: %v\n", err)
 		return
@@ -71,12 +77,26 @@ func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, reque
 		contextID, policy.Requester, reviewerNode, filename, inputRequestID, threadID, now.UTC().Format(time.RFC3339), body.String(),
 	)
 
+	// Write to draft/ then rename into post/ (matching send_message.go's
+	// atomicity convention, #626 FIX-SOON) rather than writing post/
+	// directly — this was the only post/ writer skipping it, and a partial
+	// direct write could be picked up mid-write by the daemon's watcher.
+	draftDir := filepath.Join(reviewerInfo.SessionDir, "draft")
+	if err := os.MkdirAll(draftDir, 0o700); err != nil {
+		log.Printf("postman: WARNING: command approval delivery: creating draft directory: %v\n", err)
+		return
+	}
+	draftPath := filepath.Join(draftDir, filename)
+	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
+		log.Printf("postman: WARNING: command approval delivery: writing draft: %v\n", err)
+		return
+	}
 	postDir := filepath.Join(reviewerInfo.SessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: creating post directory: %v\n", err)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(postDir, filename), []byte(content), 0o644); err != nil {
-		log.Printf("postman: WARNING: command approval delivery: writing message: %v\n", err)
+	if err := os.Rename(draftPath, filepath.Join(postDir, filename)); err != nil {
+		log.Printf("postman: WARNING: command approval delivery: moving message into post: %v\n", err)
 	}
 }

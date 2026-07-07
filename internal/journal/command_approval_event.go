@@ -17,6 +17,12 @@ type CommandApprovalRequestPayload struct {
 	Reason      string `json:"reason,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	CommandText string `json:"command_text,omitempty"`
+	// ReviewerNode is the config-resolved, validated reviewer_node (#626) at
+	// the moment this request was created — never requester-controlled,
+	// unlike Reviewer above (a plain policy-matched audit label). Decisions
+	// MUST be validated against this field, not Reviewer, or the requester
+	// can self-approve by controlling both sides of the comparison.
+	ReviewerNode string `json:"reviewer_node,omitempty"`
 }
 
 type CommandApprovalDecisionPayload struct {

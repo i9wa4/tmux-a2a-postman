@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -152,6 +153,9 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	commandHash := commandDigest(commandText)
 	resolvedThreadID := strings.TrimSpace(*threadID)
+	if err := validateCommandApprovalThreadID(resolvedThreadID); err != nil {
+		return err
+	}
 	if resolvedThreadID == "" {
 		resolvedThreadID = commandApprovalThreadID(policy, commandHash)
 	}
@@ -163,12 +167,15 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	if !evaluation.Allowed {
-		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
+		// Reached only when validReviewer is true: evaluateCommandApproval
+		// short-circuits to Allowed:true whenever no valid reviewer_node is
+		// configured, so reviewerNode here is always the trusted,
+		// config-resolved node name (#626 B1) — never a requester-supplied
+		// value.
+		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, reviewerNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
-		if validReviewer {
-			deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, reviewerNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
-		}
+		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, reviewerNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -256,6 +263,9 @@ type executeBashDecisionOptions struct {
 func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptions) error {
 	if strings.TrimSpace(opts.threadID) == "" {
 		return fmt.Errorf("--thread-id is required with --record-decision")
+	}
+	if err := validateCommandApprovalThreadID(strings.TrimSpace(opts.threadID)); err != nil {
+		return err
 	}
 	reviewer := strings.TrimSpace(opts.reviewer)
 	if reviewer == "" {
@@ -381,6 +391,27 @@ func commandApprovalThreadID(policy resolvedCommandApprovalPolicy, commandHash s
 	return "command-approval-" + hex.EncodeToString(sum[:8])
 }
 
+var commandApprovalThreadIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validateCommandApprovalThreadID rejects a --thread-id containing anything
+// outside a conservative safe charset (#626 M1). resolvedThreadID gets
+// interpolated directly into hand-built YAML frontmatter in
+// deliverCommandApprovalRequest via fmt.Sprintf, and that frontmatter is
+// parsed by a naive line scanner (internal/envelope) — a newline plus
+// indentation in an otherwise-unvalidated --thread-id could inject or
+// override other params fields (for example forcing replyPolicy: none to
+// hide the delivered request). An empty value is fine here; the caller then
+// derives a fresh, safe thread id via commandApprovalThreadID.
+func validateCommandApprovalThreadID(threadID string) error {
+	if threadID == "" {
+		return nil
+	}
+	if !commandApprovalThreadIDPattern.MatchString(threadID) {
+		return fmt.Errorf("--thread-id %q contains characters outside [A-Za-z0-9._-]", threadID)
+	}
+	return nil
+}
+
 // commandApprovalDecisionAutoApprovedNoReviewer is the distinct decision
 // label used whenever the unified fail-open rule (#626) applies: no valid
 // reviewer_node is configured, so the command is approved regardless of
@@ -503,16 +534,17 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 	}
 }
 
-func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
+func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, reviewerNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
 	payload := journal.CommandApprovalRequestPayload{
-		Requester:   policy.Requester,
-		Reviewer:    policy.Reviewer,
-		Mode:        policy.Mode,
-		Label:       policy.Label,
-		Category:    policy.Category,
-		CommandHash: commandHash,
-		Reason:      reason,
-		ExpiresAt:   expiresAt,
+		Requester:    policy.Requester,
+		Reviewer:     policy.Reviewer,
+		ReviewerNode: reviewerNode,
+		Mode:         policy.Mode,
+		Label:        policy.Label,
+		Category:     policy.Category,
+		CommandHash:  commandHash,
+		Reason:       reason,
+		ExpiresAt:    expiresAt,
 	}
 	if storeCommandText {
 		payload.CommandText = commandText

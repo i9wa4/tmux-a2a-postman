@@ -308,6 +308,163 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 	}
 }
 
+// TestRunExecuteBashBlockingRejectsSelfDeclaredReviewer guards #626 B1: a
+// requester who controls both the policy match (thus thread.Reviewer) and
+// the --record-decision --reviewer flag must NOT be able to self-approve a
+// blocking-mode command by making the two requester-controlled strings
+// match each other. The decision must only be honored when its reviewer
+// matches the config-resolved reviewer_node, which the requester has no
+// flag to control.
+func TestRunExecuteBashBlockingRejectsSelfDeclaredReviewer(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "worker", // requester-controlled label naming itself as reviewer
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.reviewerNode = "orchestrator" // the actual, admin-configured reviewer_node
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}, "worker": {}}
+	commandText := "printf self-approve"
+
+	// First invocation: creates the approval request and blocks.
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "worker",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "worker",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	// Requester self-declares as reviewer for the decision, exactly as in
+	// the reported exploit.
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--thread-id", threadID,
+		"--reviewer", "worker",
+		"--record-decision", "approved",
+	))
+	if err != nil {
+		t.Fatalf("record-decision error = %v", err)
+	}
+
+	// Second invocation must still refuse: the recorded decision's reviewer
+	// ("worker") does not match the trusted reviewer_node ("orchestrator").
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "worker",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("second invocation error = nil, want blocking refusal (self-approval must not succeed)")
+	}
+	if !strings.Contains(err.Error(), "reviewer does not match") {
+		t.Fatalf("error = %v, want wrong-reviewer refusal", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (self-approved command must never run)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingAcceptsRealReviewerNodeDespiteUnassignedLabel
+// guards the honest-admin side of #626 B1: when policy.Reviewer is left at
+// its "unassigned" default (no matching command_approval policy sets a
+// Reviewer label) but a valid reviewer_node is configured, a decision from
+// that real reviewer_node must be accepted — it must not get stuck as
+// wrong_reviewer just because the audit label never matched anything.
+func TestRunExecuteBashBlockingAcceptsRealReviewerNodeDespiteUnassignedLabel(t *testing.T) {
+	fixture := newExecuteBashFixture(t) // no policies: Reviewer stays "unassigned"
+	fixture.reviewerNode = "orchestrator"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	commandText := "printf honest-reviewer"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "unassigned",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--thread-id", threadID,
+		"--reviewer", "orchestrator",
+		"--record-decision", "approved",
+	))
+	if err != nil {
+		t.Fatalf("record-decision error = %v", err)
+	}
+
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err != nil {
+		t.Fatalf("second invocation error = %v, want the real reviewer_node's approval honored", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashRejectsThreadIDInjection guards #626 M1: --thread-id is
+// interpolated directly into hand-built YAML frontmatter for delivery to
+// the reviewer_node, so a newline (with or without a fake params key) must
+// be rejected before it ever reaches that interpolation, both on the
+// request path and the --record-decision path.
+func TestRunExecuteBashRejectsThreadIDInjection(t *testing.T) {
+	malicious := "safe-id\n  replyPolicy: none"
+
+	t.Run("request path", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "protected",
+			"--thread-id", malicious,
+			"--command", "printf injected",
+		))
+		if err == nil {
+			t.Fatal("error = nil, want rejection of unsafe --thread-id")
+		}
+		if !strings.Contains(err.Error(), "thread-id") {
+			t.Fatalf("error = %v, want a --thread-id rejection message", err)
+		}
+		if fixture.runCount != 0 {
+			t.Fatalf("runCount = %d, want 0", fixture.runCount)
+		}
+	})
+
+	t.Run("record-decision path", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--thread-id", malicious,
+			"--reviewer", "orchestrator",
+			"--record-decision", "approved",
+		))
+		if err == nil {
+			t.Fatal("error = nil, want rejection of unsafe --thread-id")
+		}
+		if !strings.Contains(err.Error(), "thread-id") {
+			t.Fatalf("error = %v, want a --thread-id rejection message", err)
+		}
+	})
+}
+
 func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	policyConfig := config.CommandApprovalPolicy{
 		Requester: "worker",
@@ -543,18 +700,23 @@ func (f *executeBashFixture) appendCommandApprovalRequest(t *testing.T, policy r
 	writer := f.openWriter(t)
 	commandHash := commandDigest(commandText)
 	threadID := commandApprovalThreadID(policy, commandHash)
+	// #626 B1: ReviewerNode mirrors the fixture's own reviewerNode, exactly
+	// as recordCommandApprovalRequest always populates it from the
+	// config-resolved node in production — this is the field decisions are
+	// actually validated against now, never the plain Reviewer label.
 	_, err := writer.AppendEventWithOptions(
 		journal.CommandApprovalRequestedEventType,
 		journal.VisibilityOperatorVisible,
 		journal.CommandApprovalRequestPayload{
-			Requester:   policy.Requester,
-			Reviewer:    policy.Reviewer,
-			Mode:        policy.Mode,
-			Label:       policy.Label,
-			Category:    policy.Category,
-			CommandHash: commandHash,
-			Reason:      "review requested",
-			ExpiresAt:   expiresAt.UTC().Format(time.RFC3339Nano),
+			Requester:    policy.Requester,
+			Reviewer:     policy.Reviewer,
+			ReviewerNode: f.reviewerNode,
+			Mode:         policy.Mode,
+			Label:        policy.Label,
+			Category:     policy.Category,
+			CommandHash:  commandHash,
+			Reason:       "review requested",
+			ExpiresAt:    expiresAt.UTC().Format(time.RFC3339Nano),
 		},
 		journal.AppendOptions{ThreadID: threadID},
 		f.now,

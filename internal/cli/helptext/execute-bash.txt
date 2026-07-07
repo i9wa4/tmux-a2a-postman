@@ -41,7 +41,11 @@ Fail-open rule (reviewer_node):
   When a valid reviewer_node exists, execute-bash also delivers the approval
   request to it directly as a reply-required message; reply with a body
   starting APPROVED:/NOT APPROVED: and the given thread_id to record a
-  decision without running --record-decision yourself.
+  decision without running --record-decision yourself. A reply body that
+  doesn't start with one of those two prefixes is logged and not recorded.
+  Only a reply whose sender matches the resolved reviewer_node is ever
+  honored, regardless of the reviewer audit label, so self-approval by the
+  requester is not possible.
 
 Bypass boundary:
   This wrapper coordinates command review through Postman. It does not sandbox

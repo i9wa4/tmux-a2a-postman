@@ -1032,3 +1032,55 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "⚫")
 	}
 }
+
+// TestBuildCommandApprovalStatus_UnresolvedReviewers guards #626 decided
+// requirement 2's get-status marker: both an unresolvable global
+// reviewer_node and an unresolvable per-policy override must surface as
+// distinct UnresolvedReviewers entries.
+func TestBuildCommandApprovalStatus_UnresolvedReviewers(t *testing.T) {
+	cfg := &config.Config{
+		ReviewerNode: "typo-reviewer",
+		Nodes:        map[string]config.NodeConfig{"orchestrator": {}},
+		CommandApproval: []config.CommandApprovalPolicy{
+			{Requester: "worker", Label: "deploy", ReviewerNode: "another-typo"},
+			{Requester: "worker", Label: "diagnostic"}, // no override: must not duplicate the global warning
+		},
+	}
+
+	got := buildCommandApprovalStatus(cfg)
+	if got == nil {
+		t.Fatal("buildCommandApprovalStatus() = nil, want a populated status")
+	}
+	if len(got.UnresolvedReviewers) != 2 {
+		t.Fatalf("UnresolvedReviewers = %#v, want exactly 2 entries", got.UnresolvedReviewers)
+	}
+	wantFields := map[string]bool{
+		"reviewer_node":                     false,
+		"command_approval[0].reviewer_node": false,
+	}
+	for _, entry := range got.UnresolvedReviewers {
+		if _, ok := wantFields[entry.Field]; ok {
+			wantFields[entry.Field] = true
+		}
+	}
+	for field, found := range wantFields {
+		if !found {
+			t.Fatalf("missing UnresolvedReviewers entry for %s in %#v", field, got.UnresolvedReviewers)
+		}
+	}
+}
+
+// TestBuildCommandApprovalStatus_NoUnresolvedReviewers guards against a
+// false-positive marker when reviewer_node resolves cleanly or isn't
+// configured at all.
+func TestBuildCommandApprovalStatus_NoUnresolvedReviewers(t *testing.T) {
+	for _, cfg := range []*config.Config{
+		nil,
+		{},
+		{ReviewerNode: "orchestrator", Nodes: map[string]config.NodeConfig{"orchestrator": {}}},
+	} {
+		if got := buildCommandApprovalStatus(cfg); got != nil {
+			t.Fatalf("buildCommandApprovalStatus(%#v) = %#v, want nil", cfg, got)
+		}
+	}
+}
