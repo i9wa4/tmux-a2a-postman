@@ -127,15 +127,16 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 
 	projected := TaskRunState{Tasks: make([]TaskRunDetail, 0, len(byKey))}
 	for _, acc := range byKey {
-		if len(acc.threadIDs) > 1 {
+		switch {
+		case len(acc.threadIDs) > 1:
 			acc.detail.Ambiguous = true
 			acc.detail.State = "ambiguous"
 			acc.detail.AmbiguityReason = "multiple thread_id values for external task/run id"
-		} else if len(acc.openRequests) > 0 {
+		case len(acc.openRequests) > 0:
 			acc.detail.State = "waiting_input"
-		} else if acc.detail.TerminalMessageID != "" {
+		case acc.detail.TerminalMessageID != "":
 			acc.detail.State = "terminal"
-		} else {
+		default:
 			acc.detail.State = "active"
 		}
 		acc.detail.OpenInputRequestIDs = sortedMapKeys(acc.openRequests)
