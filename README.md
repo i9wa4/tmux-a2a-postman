@@ -476,6 +476,22 @@ role guidance under role headings, and optional `skill_path` catalogs in the
 frontmatter. Every node named in the graph is materialized automatically; mark
 the human-facing role with the Mermaid `ui_node` class.
 
+### 6.1. Node-designation config fields
+
+`ui_node` is the only node-designation field shipped today: it marks the
+human-facing role, as described above.
+
+Planned / not-yet-available:
+
+- `command_approver_node` — names the trusted node authorized to decide
+  command approval requests from `execute-bash`. In
+  [PR #627](https://github.com/i9wa4/tmux-a2a-postman/pull/627), not yet
+  merged into `main`.
+- `diplomat_node` — tree-derived cross-session edge authorization. Design
+  stage only, tracked in
+  [issue #624](https://github.com/i9wa4/tmux-a2a-postman/issues/624); no
+  implementation exists yet.
+
 Detailed configuration references:
 
 - [postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
