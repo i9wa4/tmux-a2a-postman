@@ -633,35 +633,68 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 					}
 					sessionTarget := cmd.Target
 					go func() {
+						workerLimit := daemonState.BeginManualPingFanout(len(targetNodes))
+						defer daemonState.FinishManualPingFanout()
 						var wg sync.WaitGroup
 						var successCount, failCount atomic.Int32
-						for nodeName, nodeInfo := range targetNodes {
-							wg.Add(1)
-							go func(name string, info discovery.NodeInfo) {
-								defer wg.Done()
-								result, err := ping.SendPingToNodeWithResult(info, contextID, name,
-									cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
-									pingAdjacency, freshNodes)
-								if err != nil {
-									log.Printf("❌ postman: PING to %s failed: %v\n", name, err)
-									failCount.Add(1)
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "message_received",
-										Message: fmt.Sprintf("PING failed for %s: %v", name, err),
-									}
-								} else {
-									if result.Delivered {
-										recordDirectPingDelivered(name, info, "operator_tui", time.Now())
-									}
-									log.Printf("📮 postman: PING sent to %s\n", name)
-									successCount.Add(1)
-									daemonEvents <- tui.DaemonEvent{
-										Type:    "message_received",
-										Message: fmt.Sprintf("PING sent to %s", name),
-									}
-								}
-							}(nodeName, nodeInfo)
+						type pingTarget struct {
+							name string
+							info discovery.NodeInfo
 						}
+						targets := make([]pingTarget, 0, len(targetNodes))
+						for nodeName, nodeInfo := range targetNodes {
+							targets = append(targets, pingTarget{name: nodeName, info: nodeInfo})
+						}
+						sort.Slice(targets, func(i, j int) bool {
+							return targets[i].name < targets[j].name
+						})
+						jobs := make(chan pingTarget)
+						for i := 0; i < workerLimit; i++ {
+							wg.Add(1)
+							go func() {
+								defer wg.Done()
+								for target := range jobs {
+									daemonState.UnqueueManualPingDelivery()
+									if !daemonState.StartManualPingDelivery() {
+										failCount.Add(1)
+										log.Printf("postman: WARNING: manual PING budget unexpectedly saturated for %s\n", target.name)
+										daemonEvents <- tui.DaemonEvent{
+											Type:    "message_received",
+											Message: fmt.Sprintf("PING failed for %s: manual PING budget saturated", target.name),
+										}
+										continue
+									}
+									func() {
+										defer daemonState.FinishManualPingDelivery()
+										result, err := ping.SendPingToNodeWithResult(target.info, contextID, target.name,
+											cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
+											pingAdjacency, freshNodes)
+										if err != nil {
+											log.Printf("❌ postman: PING to %s failed: %v\n", target.name, err)
+											failCount.Add(1)
+											daemonEvents <- tui.DaemonEvent{
+												Type:    "message_received",
+												Message: fmt.Sprintf("PING failed for %s: %v", target.name, err),
+											}
+										} else {
+											if result.Delivered {
+												recordDirectPingDelivered(target.name, target.info, "operator_tui", time.Now())
+											}
+											log.Printf("📮 postman: PING sent to %s\n", target.name)
+											successCount.Add(1)
+											daemonEvents <- tui.DaemonEvent{
+												Type:    "message_received",
+												Message: fmt.Sprintf("PING sent to %s", target.name),
+											}
+										}
+									}()
+								}
+							}()
+						}
+						for _, target := range targets {
+							jobs <- target
+						}
+						close(jobs)
 						wg.Wait()
 						total := int(successCount.Load()) + int(failCount.Load())
 						daemonEvents <- tui.DaemonEvent{
