@@ -99,7 +99,7 @@ func run(paths []string, cfg thresholdConfig) error {
 
 func readSamples(paths []string) ([]statusSample, error) {
 	if len(paths) == 0 {
-		return nil, errors.New("usage: daemon-soak-check [flags] <get-status-debug-json>...")
+		return nil, errors.New("usage: daemon-soak-check [flags] <get-status-debug-json>")
 	}
 	sort.Strings(paths)
 	samples := make([]statusSample, 0, len(paths))
