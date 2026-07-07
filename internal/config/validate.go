@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
 // ValidationError represents a configuration validation issue (Issue #70).
@@ -104,6 +106,52 @@ func ValidateConfig(cfg *Config) []ValidationError {
 
 	// Rule 4: Deprecated fields (none currently, placeholder for future)
 	// Add deprecated field checks here as needed
+	for i, node := range cfg.WorkspaceTree {
+		field := fmt.Sprintf("workspace_tree[%d]", i)
+		if strings.TrimSpace(node.SessionName) == "" {
+			errors = append(errors, ValidationError{
+				Field:    field + ".session",
+				Message:  "session is required",
+				Severity: "error",
+			})
+		} else if _, err := ValidateSessionName(node.SessionName); err != nil {
+			errors = append(errors, ValidationError{
+				Field:    field + ".session",
+				Message:  err.Error(),
+				Severity: "error",
+			})
+		}
+		if strings.TrimSpace(node.ParentSessionName) != "" {
+			if _, err := ValidateSessionName(node.ParentSessionName); err != nil {
+				errors = append(errors, ValidationError{
+					Field:    field + ".parent",
+					Message:  err.Error(),
+					Severity: "error",
+				})
+			}
+		}
+		if node.Label != "" && !binding.ValidateNodeName(node.Label) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".label",
+				Message:  fmt.Sprintf("label %q must match %s", node.Label, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
+		if node.ID != "" && !binding.ValidateNodeName(node.ID) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".id",
+				Message:  fmt.Sprintf("id %q must match %s", node.ID, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
+		if node.Representative != "" && !binding.ValidateNodeName(node.Representative) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".representative",
+				Message:  fmt.Sprintf("representative %q must match %s", node.Representative, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
+	}
 
 	return errors
 }

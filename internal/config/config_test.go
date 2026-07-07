@@ -235,6 +235,56 @@ edges = [
 	}
 }
 
+func TestLoadConfig_WorkspaceTree(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+edges = ["messenger --- worker"]
+
+[[postman.workspace_tree]]
+session = "repo"
+label = "repo"
+id = "repo-root"
+representative = "orchestrator"
+order = 10
+
+[[postman.workspace_tree]]
+session = "project"
+label = "api"
+parent = "repo"
+order = 20
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if len(cfg.WorkspaceTree) != 2 {
+		t.Fatalf("WorkspaceTree length = %d, want 2", len(cfg.WorkspaceTree))
+	}
+	if got := cfg.WorkspaceTree[0]; got.SessionName != "repo" || got.Label != "repo" || got.ID != "repo-root" || got.Representative != "orchestrator" || got.Order != 10 {
+		t.Fatalf("WorkspaceTree[0] = %#v, want repo node", got)
+	}
+	if got := cfg.WorkspaceTree[1]; got.SessionName != "project" || got.Label != "api" || got.ParentSessionName != "repo" || got.Order != 20 {
+		t.Fatalf("WorkspaceTree[1] = %#v, want project child node", got)
+	}
+}
+
 func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
