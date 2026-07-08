@@ -3,7 +3,7 @@ execute-bash — run bash through command approval choreography
 Usage:
   tmux-a2a-postman execute-bash --label <label> --command <bash>
   tmux-a2a-postman execute-bash --label <label> --mode blocking --reviewer <node> --command <bash>
-  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved --reviewer <node>
+  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved
 
 Execution flags:
   --label <label>              Command label used for policy matching and audit
@@ -20,13 +20,38 @@ Execution flags:
 
 Decision flags:
   --thread-id <thread>         Approval thread id to decide or reuse
-  --record-decision <decision> approved or rejected
+  --record-decision <decision> approved or rejected. The decision's reviewer
+                                identity is always the calling process's own
+                                tmux pane title, never --reviewer; a caller
+                                whose pane is not the thread's command_approver_node
+                                is refused and no decision is recorded.
 
 Modes:
   advisory   Records request and audit metadata, then runs even without approval.
   warn-only  Records request and blocks unless --override-approval is supplied.
   blocking   Runs only when the matching thread has a non-expired approved decision
              from the configured reviewer for the exact command digest.
+
+Fail-open rule (command_approver_node):
+  Every mode above, including blocking, only becomes restrictive once a VALID
+  command_approver_node is configured (postman.toml [postman] command_approver_node, or a
+  per-policy command_approver_node override under [[postman.command_approval]] —
+  naming a real, configured node, same family as ui_node). Unset, or set to a
+  node name that does not resolve, means every command runs, recorded
+  distinctly as auto_approved_no_reviewer rather than a real approval. An
+  unresolvable command_approver_node also produces a load-time warning and a visible
+  marker in get-status, so a typo never silently disables blocking mode.
+
+  When a valid command_approver_node exists, execute-bash also delivers the approval
+  request to it directly as a reply-required message; reply with a body
+  starting APPROVED:/NOT APPROVED: and the given thread_id to record a
+  decision without running --record-decision yourself. A reply body that
+  doesn't start with one of those two prefixes is logged and not recorded.
+  Only a reply whose sender matches the resolved command_approver_node is ever
+  honored, regardless of the reviewer audit label. The same rule applies to
+  --record-decision itself: the decision's reviewer identity is always the
+  calling process's own tmux pane title, never the --reviewer flag, and a
+  caller whose pane is not the command_approver_node is refused outright.
 
 Bypass boundary:
   This wrapper coordinates command review through Postman. It does not sandbox

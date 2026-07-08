@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -54,12 +55,13 @@ func (e commandExitError) ExitCode() int {
 }
 
 type resolvedCommandApprovalPolicy struct {
-	Requester string
-	Reviewer  string
-	Mode      string
-	Label     string
-	Category  string
-	TTL       time.Duration
+	Requester                   string
+	Reviewer                    string
+	Mode                        string
+	Label                       string
+	Category                    string
+	TTL                         time.Duration
+	CommandApproverNodeOverride string // per-policy command_approver_node override, if any (#626)
 }
 
 type commandApprovalEvaluation struct {
@@ -115,18 +117,12 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("creating session directories: %w", err)
 	}
 
-	resolvedRequester, err := resolveExecuteBashRequester(ctx, *requester)
-	if err != nil {
-		return err
-	}
 	if *recordDecision != "" {
 		return recordExecuteBashDecision(ctx, executeBashDecisionOptions{
 			sessionDir:       sessionDir,
 			contextID:        resolvedContextID,
 			sessionName:      resolvedSessionName,
 			threadID:         *threadID,
-			reviewer:         *reviewer,
-			fallbackReviewer: resolvedRequester,
 			decision:         *recordDecision,
 			reason:           *reason,
 			storeCommandText: *storeCommandText,
@@ -134,6 +130,10 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		})
 	}
 
+	resolvedRequester, err := resolveExecuteBashRequester(ctx, *requester)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(*label) == "" {
 		return fmt.Errorf("--label is required")
 	}
@@ -151,19 +151,29 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	commandHash := commandDigest(commandText)
 	resolvedThreadID := strings.TrimSpace(*threadID)
+	if err := validateCommandApprovalThreadID(resolvedThreadID); err != nil {
+		return err
+	}
 	if resolvedThreadID == "" {
 		resolvedThreadID = commandApprovalThreadID(policy, commandHash)
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
+	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode(policy.CommandApproverNodeOverride)
 
-	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, ctx.now())
+	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
 	if err != nil {
 		return err
 	}
 	if !evaluation.Allowed {
-		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
+		// Reached only when validReviewer is true: evaluateCommandApproval
+		// short-circuits to Allowed:true whenever no valid command_approver_node is
+		// configured, so commandApproverNode here is always the trusted,
+		// config-resolved node name (#626 B1) — never a requester-supplied
+		// value.
+		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
+		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -240,8 +250,6 @@ type executeBashDecisionOptions struct {
 	contextID        string
 	sessionName      string
 	threadID         string
-	reviewer         string
-	fallbackReviewer string
 	decision         string
 	reason           string
 	storeCommandText bool
@@ -252,12 +260,8 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if strings.TrimSpace(opts.threadID) == "" {
 		return fmt.Errorf("--thread-id is required with --record-decision")
 	}
-	reviewer := strings.TrimSpace(opts.reviewer)
-	if reviewer == "" {
-		reviewer = strings.TrimSpace(opts.fallbackReviewer)
-	}
-	if reviewer == "" {
-		return fmt.Errorf("--reviewer is required with --record-decision when requester auto-detection is unavailable")
+	if err := validateCommandApprovalThreadID(strings.TrimSpace(opts.threadID)); err != nil {
+		return err
 	}
 	decision := strings.TrimSpace(opts.decision)
 	switch decision {
@@ -265,8 +269,38 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	default:
 		return fmt.Errorf("--record-decision must be approved or rejected")
 	}
+
+	// #626 B1-residual: the decision's reviewer identity is the CALLER's
+	// own authenticated identity (tmux pane title), never a flag.
+	// --reviewer must never influence whether a decision is accepted — a
+	// requester could otherwise pass --reviewer <command_approver_node_name>,
+	// trivially readable from postman.toml or get-status, and self-approve
+	// exactly as before. The caller is accepted only when this
+	// authenticated identity matches the thread's own CommandApproverNode, the
+	// trusted, config-resolved value captured once at request time (#626
+	// B1) — never re-resolved from current config, so a decision can't be
+	// laundered through a config change between request and decision time
+	// either.
+	authenticatedCaller := strings.TrimSpace(ctx.getTmuxPaneName())
+	if authenticatedCaller == "" {
+		return fmt.Errorf("--record-decision requires a resolvable tmux pane title identity; run inside tmux")
+	}
+	state, ok, err := projection.ProjectCommandApprovalState(opts.sessionDir, ctx.now())
+	if err != nil {
+		return err
+	}
+	var commandApproverNode string
+	if ok {
+		if thread, found := state.Threads[opts.threadID]; found {
+			commandApproverNode = thread.CommandApproverNode
+		}
+	}
+	if commandApproverNode == "" || authenticatedCaller != commandApproverNode {
+		return fmt.Errorf("--record-decision refused: caller %q is not the configured command_approver_node for thread %q", authenticatedCaller, opts.threadID)
+	}
+
 	payload := journal.CommandApprovalDecisionPayload{
-		Reviewer: reviewer,
+		Reviewer: authenticatedCaller,
 		Decision: journal.ApprovalDecision(decision),
 		Reason:   opts.reason,
 	}
@@ -275,7 +309,7 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	}
 	result := executeBashResult{
 		Status:         "decision_recorded",
-		Reviewer:       reviewer,
+		Reviewer:       authenticatedCaller,
 		ThreadID:       opts.threadID,
 		Decision:       decision,
 		Reason:         opts.reason,
@@ -338,6 +372,7 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 		if candidate.ApprovalTTLSeconds > 0 {
 			policy.TTL = time.Duration(candidate.ApprovalTTLSeconds * float64(time.Second))
 		}
+		policy.CommandApproverNodeOverride = strings.TrimSpace(candidate.CommandApproverNode)
 		break
 	}
 	if strings.TrimSpace(reviewerFlag) != "" {
@@ -375,7 +410,46 @@ func commandApprovalThreadID(policy resolvedCommandApprovalPolicy, commandHash s
 	return "command-approval-" + hex.EncodeToString(sum[:8])
 }
 
-func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, now time.Time) (commandApprovalEvaluation, error) {
+var commandApprovalThreadIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validateCommandApprovalThreadID rejects a --thread-id containing anything
+// outside a conservative safe charset (#626 M1). resolvedThreadID gets
+// interpolated directly into hand-built YAML frontmatter in
+// deliverCommandApprovalRequest via fmt.Sprintf, and that frontmatter is
+// parsed by a naive line scanner (internal/envelope) — a newline plus
+// indentation in an otherwise-unvalidated --thread-id could inject or
+// override other params fields (for example forcing replyPolicy: none to
+// hide the delivered request). An empty value is fine here; the caller then
+// derives a fresh, safe thread id via commandApprovalThreadID.
+func validateCommandApprovalThreadID(threadID string) error {
+	if threadID == "" {
+		return nil
+	}
+	if !commandApprovalThreadIDPattern.MatchString(threadID) {
+		return fmt.Errorf("--thread-id %q contains characters outside [A-Za-z0-9._-]", threadID)
+	}
+	return nil
+}
+
+// commandApprovalDecisionAutoApprovedNoReviewer is the distinct decision
+// label used whenever the unified fail-open rule (#626) applies: no valid
+// command_approver_node is configured, so the command is approved regardless of
+// mode. This must never be conflated with an actual recorded approval.
+const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
+
+func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
+	if !validReviewer {
+		// #626 decided requirement 1 (unified fail-open rule): unless a
+		// valid command_approver_node is configured, every command is treated as
+		// approved across all three modes, including blocking. This is
+		// evaluated before any projection lookup so a missing/unresolvable
+		// command_approver_node never depends on prior approval state.
+		return commandApprovalEvaluation{
+			Decision: commandApprovalDecisionAutoApprovedNoReviewer,
+			Allowed:  true,
+			Reason:   "no valid command_approver_node configured; command approval fails open",
+		}, nil
+	}
 	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
 	if err != nil {
 		return commandApprovalEvaluation{}, err
@@ -444,6 +518,9 @@ func evaluationForThread(thread projection.CommandApprovalThread) commandApprova
 }
 
 func decisionForPolicy(mode string, evaluation commandApprovalEvaluation, override bool) string {
+	if evaluation.Decision == commandApprovalDecisionAutoApprovedNoReviewer {
+		return evaluation.Decision
+	}
 	if evaluation.Allowed {
 		return "approved"
 	}
@@ -476,16 +553,17 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 	}
 }
 
-func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
+func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
 	payload := journal.CommandApprovalRequestPayload{
-		Requester:   policy.Requester,
-		Reviewer:    policy.Reviewer,
-		Mode:        policy.Mode,
-		Label:       policy.Label,
-		Category:    policy.Category,
-		CommandHash: commandHash,
-		Reason:      reason,
-		ExpiresAt:   expiresAt,
+		Requester:           policy.Requester,
+		Reviewer:            policy.Reviewer,
+		CommandApproverNode: commandApproverNode,
+		Mode:                policy.Mode,
+		Label:               policy.Label,
+		Category:            policy.Category,
+		CommandHash:         commandHash,
+		Reason:              reason,
+		ExpiresAt:           expiresAt,
 	}
 	if storeCommandText {
 		payload.CommandText = commandText

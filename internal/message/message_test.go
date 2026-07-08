@@ -1589,6 +1589,179 @@ func TestDeliverMessage_AppendsReplayableApprovalEventsForCrossSessionThread(t *
 	}
 }
 
+// seedCommandApprovalRequest writes a command_approval_requested journal
+// event directly into requesterSessionDir, mirroring what
+// recordCommandApprovalRequest in internal/cli/execute_bash.go does. Test
+// helper for the #626 B1 message-package coverage below.
+// seedCommandApprovalRequest journals a command approval request.
+// reviewerLabel seeds thread.Reviewer (the plain, requester-influenceable
+// audit label) independently of commandApproverNode (the trusted, config-resolved
+// field #626 B1 requires decisions to be checked against) — callers that
+// need to prove a test is actually diagnostic of the CommandApproverNode binding,
+// rather than incidentally passing because Reviewer happens to differ too,
+// should set reviewerLabel to something Reviewer alone would have accepted.
+func seedCommandApprovalRequest(t *testing.T, requesterSessionDir, contextID, sessionName, threadID, requester, reviewerLabel, commandApproverNode string, now time.Time) {
+	t.Helper()
+	writer, err := journal.OpenCurrentWriter(requesterSessionDir)
+	if err != nil {
+		writer, err = journal.OpenShadowWriter(requesterSessionDir, contextID, sessionName, os.Getpid(), now)
+		if err != nil {
+			t.Fatalf("OpenShadowWriter() error = %v", err)
+		}
+	}
+	_, err = writer.AppendEventWithOptions(
+		journal.CommandApprovalRequestedEventType,
+		journal.VisibilityOperatorVisible,
+		journal.CommandApprovalRequestPayload{
+			Requester:           requester,
+			Reviewer:            reviewerLabel,
+			CommandApproverNode: commandApproverNode,
+			Mode:                "blocking",
+			Label:               "protected",
+			CommandHash:         "sha256:deadbeef",
+		},
+		journal.AppendOptions{ThreadID: threadID},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+	}
+}
+
+// TestDeliverMessage_CommandApprovalReplyFromRealCommandApproverNodeRecordsApproval
+// guards #626 B1 at the message-package layer: a reply whose sender matches
+// the request's trusted, config-resolved CommandApproverNode, starting the body
+// with APPROVED:, must be recorded as an approved decision through the real
+// DeliverMessage path (not a synthetic call to the unexported hook), the
+// same way the pre-existing orchestrator/critic flow is tested above.
+func TestDeliverMessage_CommandApprovalReplyFromRealCommandApproverNodeRecordsApproval(t *testing.T) {
+	requesterSessionDir := filepath.Join(t.TempDir(), "requester-session")
+	if err := config.CreateSessionDirs(requesterSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(requester) failed: %v", err)
+	}
+	reviewerSessionDir := filepath.Join(t.TempDir(), "reviewer-session")
+	if err := config.CreateSessionDirs(reviewerSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(reviewer) failed: %v", err)
+	}
+
+	manager := journal.NewManager("test-ctx-626", 31338)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
+	threadID := "command-approval-aabbccddeeff0011"
+	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626", "requester-session", threadID, "worker", "unassigned", "orchestrator", now)
+
+	nodes := map[string]discovery.NodeInfo{
+		"requester-session:worker":      {PaneID: "%1", SessionName: "requester-session", SessionDir: requesterSessionDir},
+		"reviewer-session:orchestrator": {PaneID: "%2", SessionName: "reviewer-session", SessionDir: reviewerSessionDir},
+	}
+	adjacency := map[string][]string{
+		"worker":                        {"reviewer-session:orchestrator"},
+		"reviewer-session:orchestrator": {"requester-session:worker"},
+	}
+	cfg := &config.Config{}
+
+	replyFilename := "20260708-010001-r0001-from-reviewer-session:orchestrator-to-requester-session:worker.md"
+	replyPath := filepath.Join(reviewerSessionDir, "post", replyFilename)
+	replyContent := "---\nparams:\n  contextId: test-ctx-626\n  from: reviewer-session:orchestrator\n  to: requester-session:worker\n  thread_id: " + threadID + "\n  timestamp: 2026-07-08T01:00:01Z\n---\n\nAPPROVED: digest reviewed.\n"
+	if err := os.WriteFile(replyPath, []byte(replyContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(replyPath) failed: %v", err)
+	}
+
+	if err := DeliverMessage(replyPath, "test-ctx-626", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage(reply) failed: %v", err)
+	}
+
+	state, ok, err := projection.ProjectCommandApprovalState(requesterSessionDir, now)
+	if err != nil {
+		t.Fatalf("ProjectCommandApprovalState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCommandApprovalState() ok = false, want true")
+	}
+	thread, found := state.Threads[threadID]
+	if !found {
+		t.Fatalf("missing thread %q in %#v", threadID, state.Threads)
+	}
+	if thread.Status != projection.CommandApprovalStatusApproved {
+		t.Fatalf("thread status = %q, want %q", thread.Status, projection.CommandApprovalStatusApproved)
+	}
+}
+
+// TestDeliverMessage_CommandApprovalReplyFromWrongSenderIsRejected is the
+// negative counterpart: a reply claiming to be a decision on the same
+// thread, but sent by a node other than the request's trusted
+// CommandApproverNode, must be rejected as wrong_reviewer, not silently accepted.
+// This is the same B1 self-approval class guardian flagged, exercised
+// through the real message delivery path instead of the CLI.
+func TestDeliverMessage_CommandApprovalReplyFromWrongSenderIsRejected(t *testing.T) {
+	requesterSessionDir := filepath.Join(t.TempDir(), "requester-session")
+	if err := config.CreateSessionDirs(requesterSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(requester) failed: %v", err)
+	}
+	attackerSessionDir := filepath.Join(t.TempDir(), "attacker-session")
+	if err := config.CreateSessionDirs(attackerSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(attacker) failed: %v", err)
+	}
+
+	manager := journal.NewManager("test-ctx-626b", 31339)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+
+	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
+	threadID := "command-approval-1122334455667788"
+	// thread.Reviewer is deliberately seeded to "worker" — the exact
+	// identity the attacker's reply claims to be from — so this test is
+	// only diagnostic of the CommandApproverNode binding (#626 B1): under the old,
+	// vulnerable Reviewer-based check this reply would have matched and
+	// been accepted; only checking against the differing CommandApproverNode
+	// ("orchestrator") catches it. Guardian's QA found the prior version of
+	// this test (seeded with Reviewer: "unassigned") passed identically
+	// whether or not the CommandApproverNode fix was in place, since "unassigned"
+	// never matched the attacker's claimed identity under either check.
+	seedCommandApprovalRequest(t, requesterSessionDir, "test-ctx-626b", "requester-session", threadID, "worker", "worker", "orchestrator", now)
+
+	nodes := map[string]discovery.NodeInfo{
+		"requester-session:worker": {PaneID: "%1", SessionName: "requester-session", SessionDir: requesterSessionDir},
+		"attacker-session:worker":  {PaneID: "%2", SessionName: "attacker-session", SessionDir: attackerSessionDir},
+	}
+	adjacency := map[string][]string{
+		"worker":                  {"attacker-session:worker"},
+		"attacker-session:worker": {"requester-session:worker"},
+	}
+	cfg := &config.Config{}
+
+	// The attacker replies claiming to be "worker" (matching the requester's
+	// own policy.Reviewer label in a self-approval attempt), not the real
+	// command_approver_node "orchestrator".
+	replyFilename := "20260708-010001-r0002-from-attacker-session:worker-to-requester-session:worker.md"
+	replyPath := filepath.Join(attackerSessionDir, "post", replyFilename)
+	replyContent := "---\nparams:\n  contextId: test-ctx-626b\n  from: attacker-session:worker\n  to: requester-session:worker\n  thread_id: " + threadID + "\n  timestamp: 2026-07-08T01:00:01Z\n---\n\nAPPROVED: trust me.\n"
+	if err := os.WriteFile(replyPath, []byte(replyContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(replyPath) failed: %v", err)
+	}
+
+	if err := DeliverMessage(replyPath, "test-ctx-626b", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage(reply) failed: %v", err)
+	}
+
+	state, ok, err := projection.ProjectCommandApprovalState(requesterSessionDir, now)
+	if err != nil {
+		t.Fatalf("ProjectCommandApprovalState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCommandApprovalState() ok = false, want true")
+	}
+	thread, found := state.Threads[threadID]
+	if !found {
+		t.Fatalf("missing thread %q in %#v", threadID, state.Threads)
+	}
+	if thread.Status != projection.CommandApprovalStatusWrongReviewer {
+		t.Fatalf("thread status = %q, want %q (self-approval by a non-command_approver_node sender must never be accepted)", thread.Status, projection.CommandApprovalStatusWrongReviewer)
+	}
+}
+
 // TestDeliverNotificationWithRetry_RetryUsesRefreshedPaneID verifies that when
 // the first delivery attempt fails and knownNodes has a fresh PaneID, the retry
 // uses the refreshed PaneID.

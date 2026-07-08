@@ -164,24 +164,38 @@ type WorkspaceTreeStatus struct {
 	Diagnostics []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
 }
 
+// CommandApprovalUnresolvedApprover surfaces a configured-but-unresolvable
+// command_approver_node so a typo that silently disables blocking mode (#626's fail
+// open rule) is loud and auditable rather than a silent no-op.
+type CommandApprovalUnresolvedApprover struct {
+	Field   string `json:"field"`
+	Value   string `json:"value"`
+	Message string `json:"message"`
+}
+
+type CommandApprovalStatus struct {
+	UnresolvedCommandApprovers []CommandApprovalUnresolvedApprover `json:"unresolved_command_approvers,omitempty"`
+}
+
 type SessionStatus struct {
-	SchemaVersion      int                  `json:"schema_version"`
-	ContextID          string               `json:"context_id"`
-	SessionName        string               `json:"session_name"`
-	NodeCount          int                  `json:"node_count"`
-	VisibleState       string               `json:"visible_state"`
-	Severity           string               `json:"severity,omitempty"`
-	SeveritySource     string               `json:"severity_source,omitempty"`
-	SeverityReason     string               `json:"severity_reason,omitempty"`
-	Compact            string               `json:"compact"`
-	CompactSeverity    string               `json:"compact_severity,omitempty"`
-	Queues             SessionQueues        `json:"queues"`
-	Delivery           *DeliveryStatus      `json:"delivery,omitempty"`
-	RuntimeDiagnostics *RuntimeDiagnostics  `json:"runtime_diagnostics,omitempty"`
-	Tasks              []TaskRunProjection  `json:"tasks,omitempty"`
-	WorkspaceTree      *WorkspaceTreeStatus `json:"workspace_tree,omitempty"`
-	Nodes              []NodeStatus         `json:"nodes"`
-	Windows            []SessionWindow      `json:"windows"`
+	SchemaVersion      int                    `json:"schema_version"`
+	ContextID          string                 `json:"context_id"`
+	SessionName        string                 `json:"session_name"`
+	NodeCount          int                    `json:"node_count"`
+	VisibleState       string                 `json:"visible_state"`
+	Severity           string                 `json:"severity,omitempty"`
+	SeveritySource     string                 `json:"severity_source,omitempty"`
+	SeverityReason     string                 `json:"severity_reason,omitempty"`
+	Compact            string                 `json:"compact"`
+	CompactSeverity    string                 `json:"compact_severity,omitempty"`
+	Queues             SessionQueues          `json:"queues"`
+	Delivery           *DeliveryStatus        `json:"delivery,omitempty"`
+	RuntimeDiagnostics *RuntimeDiagnostics    `json:"runtime_diagnostics,omitempty"`
+	Tasks              []TaskRunProjection    `json:"tasks,omitempty"`
+	WorkspaceTree      *WorkspaceTreeStatus   `json:"workspace_tree,omitempty"`
+	CommandApproval    *CommandApprovalStatus `json:"command_approval,omitempty"`
+	Nodes              []NodeStatus           `json:"nodes"`
+	Windows            []SessionWindow        `json:"windows"`
 }
 
 type TaskRunProjection struct {

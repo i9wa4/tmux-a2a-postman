@@ -18,18 +18,20 @@ import (
 )
 
 type executeBashFixture struct {
-	baseDir     string
-	contextID   string
-	sessionName string
-	sessionDir  string
-	now         time.Time
-	policies    []config.CommandApprovalPolicy
-	stdout      bytes.Buffer
-	stderr      bytes.Buffer
-	runCount    int
-	commands    []string
-	runStatus   int
-	runErr      error
+	baseDir             string
+	contextID           string
+	sessionName         string
+	sessionDir          string
+	now                 time.Time
+	policies            []config.CommandApprovalPolicy
+	commandApproverNode string
+	nodes               map[string]config.NodeConfig
+	stdout              bytes.Buffer
+	stderr              bytes.Buffer
+	runCount            int
+	commands            []string
+	runStatus           int
+	runErr              error
 }
 
 func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
@@ -45,20 +47,41 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 		sessionDir:  filepath.Join(baseDir, contextID, sessionName),
 		now:         time.Date(2026, time.June, 1, 10, 0, 0, 0, time.UTC),
 		policies:    policies,
+		// #626: every existing fixture test uses "orchestrator" as the
+		// approval Reviewer label; defaulting it here as a valid
+		// command_approver_node too keeps these tests exercising the real
+		// advisory/warn-only/blocking evaluation path instead of the
+		// unified fail-open rule (which only applies when no VALID
+		// command_approver_node is configured). Tests exercising the fail-open rule
+		// itself override commandApproverNode/nodes before calling context().
+		commandApproverNode: "orchestrator",
+		nodes:               map[string]config.NodeConfig{"orchestrator": {}},
 	}
 }
 
 func (f *executeBashFixture) context() commandContext {
+	return f.contextAsPane("worker")
+}
+
+// contextAsPane returns a commandContext whose tmux pane title (the
+// authenticated caller identity --record-decision relies on, #626
+// B1-residual) is paneName instead of the default "worker" requester
+// identity — used to simulate a --record-decision call actually coming
+// from the command_approver_node's own pane, structurally distinct from the
+// requester's.
+func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 	return commandContext{
 		stdout: &f.stdout,
 		stderr: &f.stderr,
 		loadConfig: func(string) (*config.Config, error) {
 			return &config.Config{
-				BaseDir:         f.baseDir,
-				CommandApproval: f.policies,
+				BaseDir:             f.baseDir,
+				CommandApproval:     f.policies,
+				CommandApproverNode: f.commandApproverNode,
+				Nodes:               f.nodes,
 			}, nil
 		},
-		getTmuxPaneName:    func() string { return "worker" },
+		getTmuxPaneName:    func() string { return paneName },
 		getTmuxSessionName: func() string { return f.sessionName },
 		now:                func() time.Time { return f.now },
 		runBash: func(command string, stdout, stderr io.Writer) (int, error) {
@@ -295,6 +318,215 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 	}
 }
 
+// TestRunExecuteBashBlockingRejectsSelfDeclaredReviewer guards #626
+// B1-residual: a requester calling --record-decision from their OWN tmux
+// pane, self-declaring via --reviewer as the configured command_approver_node's
+// name (trivially readable from postman.toml or get-status), must be
+// refused at the decision-recording step itself — --reviewer must have no
+// bearing on acceptance. Only a call whose AUTHENTICATED caller identity
+// (tmux pane title) matches the trusted command_approver_node is ever honored; see
+// TestRunExecuteBashBlockingAcceptsRealCommandApproverNodeDespiteUnassignedLabel
+// for that positive case, exercised from a structurally different caller
+// identity via contextAsPane.
+func TestRunExecuteBashBlockingRejectsSelfDeclaredReviewer(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "worker", // requester-controlled label naming itself as reviewer
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.commandApproverNode = "orchestrator" // the actual, admin-configured command_approver_node
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}, "worker": {}}
+	commandText := "printf self-approve"
+
+	// First invocation, from the requester's own pane ("worker"): creates
+	// the approval request and blocks.
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "worker",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "worker",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	// The requester, still calling from their own "worker" pane, attempts
+	// to self-declare as the reviewer via --reviewer=orchestrator (the
+	// exploit: this name is public, readable from config/get-status). This
+	// must be refused at the decision-recording step itself, because the
+	// AUTHENTICATED caller ("worker") does not match command_approver_node
+	// ("orchestrator") — regardless of what --reviewer claims.
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--thread-id", threadID,
+		"--reviewer", "orchestrator",
+		"--record-decision", "approved",
+	))
+	if err == nil {
+		t.Fatal("record-decision error = nil, want refusal (self-declared --reviewer must not authenticate the caller)")
+	}
+	if !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("error = %v, want a --record-decision refusal", err)
+	}
+
+	// The command must still refuse: no valid decision was ever recorded.
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "worker",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("second invocation error = nil, want blocking refusal (self-approval must not succeed)")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (self-approved command must never run)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingRecordDecisionRefusedFromNonReviewerCaller is
+// the CLI refusal test guardian asked for explicitly: --record-decision
+// --reviewer <command_approver_node_name> issued from a caller whose own pane
+// identity is NOT the command_approver_node must be refused, independent of the
+// self-approval framing above.
+func TestRunExecuteBashBlockingRecordDecisionRefusedFromNonReviewerCaller(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "orchestrator"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}, "bystander": {}}
+	commandText := "printf non-reviewer-caller"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "unassigned",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	// A third-party pane ("bystander"), neither the requester nor the real
+	// command_approver_node, tries to record a decision naming the real
+	// command_approver_node via --reviewer.
+	err = runExecuteBashWithContext(fixture.contextAsPane("bystander"), fixture.args(
+		"--thread-id", threadID,
+		"--reviewer", "orchestrator",
+		"--record-decision", "approved",
+	))
+	if err == nil {
+		t.Fatal("record-decision error = nil, want refusal from a non-reviewer caller")
+	}
+	if !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("error = %v, want a --record-decision refusal", err)
+	}
+}
+
+// TestRunExecuteBashBlockingAcceptsRealCommandApproverNodeDespiteUnassignedLabel
+// guards the honest-admin side of #626 B1: when policy.Reviewer is left at
+// its "unassigned" default (no matching command_approval policy sets a
+// Reviewer label) but a valid command_approver_node is configured, a decision from
+// that real command_approver_node must be accepted — it must not get stuck as
+// wrong_reviewer just because the audit label never matched anything.
+func TestRunExecuteBashBlockingAcceptsRealCommandApproverNodeDespiteUnassignedLabel(t *testing.T) {
+	fixture := newExecuteBashFixture(t) // no policies: Reviewer stays "unassigned"
+	fixture.commandApproverNode = "orchestrator"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	commandText := "printf honest-reviewer"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "unassigned",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	// The decision is recorded from the real command_approver_node's own pane
+	// ("orchestrator"), not the requester's — this is the authenticated
+	// caller identity the fix now requires; --reviewer is no longer what
+	// makes this call legitimate.
+	err = runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+	))
+	if err != nil {
+		t.Fatalf("record-decision error = %v", err)
+	}
+
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err != nil {
+		t.Fatalf("second invocation error = %v, want the real command_approver_node's approval honored", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashRejectsThreadIDInjection guards #626 M1: --thread-id is
+// interpolated directly into hand-built YAML frontmatter for delivery to
+// the command_approver_node, so a newline (with or without a fake params key) must
+// be rejected before it ever reaches that interpolation, both on the
+// request path and the --record-decision path.
+func TestRunExecuteBashRejectsThreadIDInjection(t *testing.T) {
+	malicious := "safe-id\n  replyPolicy: none"
+
+	t.Run("request path", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "protected",
+			"--thread-id", malicious,
+			"--command", "printf injected",
+		))
+		if err == nil {
+			t.Fatal("error = nil, want rejection of unsafe --thread-id")
+		}
+		if !strings.Contains(err.Error(), "thread-id") {
+			t.Fatalf("error = %v, want a --thread-id rejection message", err)
+		}
+		if fixture.runCount != 0 {
+			t.Fatalf("runCount = %d, want 0", fixture.runCount)
+		}
+	})
+
+	t.Run("record-decision path", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--thread-id", malicious,
+			"--reviewer", "orchestrator",
+			"--record-decision", "approved",
+		))
+		if err == nil {
+			t.Fatal("error = nil, want rejection of unsafe --thread-id")
+		}
+		if !strings.Contains(err.Error(), "thread-id") {
+			t.Fatalf("error = %v, want a --thread-id rejection message", err)
+		}
+	})
+}
+
 func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	policyConfig := config.CommandApprovalPolicy{
 		Requester: "worker",
@@ -325,6 +557,73 @@ func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	}
 	if fixture.runCount != 1 {
 		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnconfigured guards
+// #626's decided requirement 1 (unified fail-open rule): with no
+// command_approver_node configured at all, even blocking mode must run the command,
+// recorded distinctly as auto_approved_no_reviewer rather than a real
+// approval.
+func TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnconfigured(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.commandApproverNode = ""
+	fixture.nodes = nil
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf unconfigured",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
+		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
+	}
+}
+
+// TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnresolvable guards the
+// second case of #626's decided requirement 1: command_approver_node configured but
+// naming a node that doesn't exist must fail open exactly like an
+// unconfigured command_approver_node, not fail closed.
+func TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnresolvable(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.commandApproverNode = "typo-reviewer"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf unresolvable",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
+		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
 	}
 }
 
@@ -412,9 +711,8 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	commandText := "printf approve-me"
 	threadID := fixture.appendCommandApprovalRequest(t, policy, commandText, time.Now().Add(time.Hour))
 
-	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+	err := runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
 		"--thread-id", threadID,
-		"--reviewer", "orchestrator",
 		"--record-decision", "approved",
 		"--reason", "digest reviewed",
 	))
@@ -463,18 +761,23 @@ func (f *executeBashFixture) appendCommandApprovalRequest(t *testing.T, policy r
 	writer := f.openWriter(t)
 	commandHash := commandDigest(commandText)
 	threadID := commandApprovalThreadID(policy, commandHash)
+	// #626 B1: CommandApproverNode mirrors the fixture's own commandApproverNode, exactly
+	// as recordCommandApprovalRequest always populates it from the
+	// config-resolved node in production — this is the field decisions are
+	// actually validated against now, never the plain Reviewer label.
 	_, err := writer.AppendEventWithOptions(
 		journal.CommandApprovalRequestedEventType,
 		journal.VisibilityOperatorVisible,
 		journal.CommandApprovalRequestPayload{
-			Requester:   policy.Requester,
-			Reviewer:    policy.Reviewer,
-			Mode:        policy.Mode,
-			Label:       policy.Label,
-			Category:    policy.Category,
-			CommandHash: commandHash,
-			Reason:      "review requested",
-			ExpiresAt:   expiresAt.UTC().Format(time.RFC3339Nano),
+			Requester:           policy.Requester,
+			Reviewer:            policy.Reviewer,
+			CommandApproverNode: f.commandApproverNode,
+			Mode:                policy.Mode,
+			Label:               policy.Label,
+			Category:            policy.Category,
+			CommandHash:         commandHash,
+			Reason:              "review requested",
+			ExpiresAt:           expiresAt.UTC().Format(time.RFC3339Nano),
 		},
 		journal.AppendOptions{ThreadID: threadID},
 		f.now,
