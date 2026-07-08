@@ -136,6 +136,21 @@ PING event timing and trigger details.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 
+### 2.1. Node-designation config fields (live vs. planned)
+
+`ui_node` above is the only node-designation field that is a `postman.md`
+frontmatter key. Two related node-designation fields exist elsewhere in
+config, listed here for completeness — do not add them to the frontmatter
+table above, since neither is a `postman.md` key:
+
+- `command_approver_node` — shipped on `main`. A `postman.toml` key (global
+  `[postman]` default, or a per-policy `[[postman.command_approval]]`
+  override), naming the trusted node authorized to decide `execute-bash`
+  command approval requests. See the repo doc `docs/command-approvals.md` for
+  the full behavior; it is not configured through `postman.md`.
+- `diplomat_node` — planned, not yet implemented. Tree-derived cross-session
+  edge authorization, tracked in issue #624 (design stage only).
+
 ## 3. H2 Section Parsing
 
 The main `postman.md` parser only recognizes h2 headings that contain a
