@@ -1032,3 +1032,55 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 		t.Fatalf("ghost compact = %q, want %q", payload.Sessions[1].Compact, "⚫")
 	}
 }
+
+// TestBuildCommandApprovalStatus_UnresolvedCommandApprovers guards #626 decided
+// requirement 2's get-status marker: both an unresolvable global
+// command_approver_node and an unresolvable per-policy override must surface as
+// distinct UnresolvedCommandApprovers entries.
+func TestBuildCommandApprovalStatus_UnresolvedCommandApprovers(t *testing.T) {
+	cfg := &config.Config{
+		CommandApproverNode: "typo-reviewer",
+		Nodes:               map[string]config.NodeConfig{"orchestrator": {}},
+		CommandApproval: []config.CommandApprovalPolicy{
+			{Requester: "worker", Label: "deploy", CommandApproverNode: "another-typo"},
+			{Requester: "worker", Label: "diagnostic"}, // no override: must not duplicate the global warning
+		},
+	}
+
+	got := buildCommandApprovalStatus(cfg)
+	if got == nil {
+		t.Fatal("buildCommandApprovalStatus() = nil, want a populated status")
+	}
+	if len(got.UnresolvedCommandApprovers) != 2 {
+		t.Fatalf("UnresolvedCommandApprovers = %#v, want exactly 2 entries", got.UnresolvedCommandApprovers)
+	}
+	wantFields := map[string]bool{
+		"command_approver_node":                     false,
+		"command_approval[0].command_approver_node": false,
+	}
+	for _, entry := range got.UnresolvedCommandApprovers {
+		if _, ok := wantFields[entry.Field]; ok {
+			wantFields[entry.Field] = true
+		}
+	}
+	for field, found := range wantFields {
+		if !found {
+			t.Fatalf("missing UnresolvedCommandApprovers entry for %s in %#v", field, got.UnresolvedCommandApprovers)
+		}
+	}
+}
+
+// TestBuildCommandApprovalStatus_NoUnresolvedCommandApprovers guards against a
+// false-positive marker when command_approver_node resolves cleanly or isn't
+// configured at all.
+func TestBuildCommandApprovalStatus_NoUnresolvedCommandApprovers(t *testing.T) {
+	for _, cfg := range []*config.Config{
+		nil,
+		{},
+		{CommandApproverNode: "orchestrator", Nodes: map[string]config.NodeConfig{"orchestrator": {}}},
+	} {
+		if got := buildCommandApprovalStatus(cfg); got != nil {
+			t.Fatalf("buildCommandApprovalStatus(%#v) = %#v, want nil", cfg, got)
+		}
+	}
+}

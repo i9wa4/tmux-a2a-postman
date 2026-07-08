@@ -175,6 +175,7 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.Queues = inputs.queues
 	result.Windows = buildSessionWindows(result.Nodes, inputs.panes)
 	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
+	result.CommandApproval = buildCommandApprovalStatus(inputs.cfg)
 	result.Compact = buildSessionCompact(result, inputs.panes)
 	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode)
 	return result
@@ -211,6 +212,37 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 		}
 	}
 	return result
+}
+
+// buildCommandApprovalStatus surfaces any configured-but-unresolvable
+// command_approver_node (global or per-policy) so get-status makes the fail-open
+// condition visible (#626), mirroring config.ValidateConfig's warning rule
+// without depending on its message wording.
+func buildCommandApprovalStatus(cfg *config.Config) *status.CommandApprovalStatus {
+	if cfg == nil {
+		return nil
+	}
+	var unresolved []status.CommandApprovalUnresolvedApprover
+	if name, valid := cfg.ResolveCommandApproverNode(""); name != "" && !valid {
+		unresolved = append(unresolved, status.CommandApprovalUnresolvedApprover{
+			Field:   "command_approver_node",
+			Value:   name,
+			Message: fmt.Sprintf("command_approver_node %q does not match any configured node; command approval is failing open", name),
+		})
+	}
+	for i, policy := range cfg.CommandApproval {
+		if name, valid := cfg.ResolveCommandApproverNode(policy.CommandApproverNode); name != "" && !valid && strings.TrimSpace(policy.CommandApproverNode) != "" {
+			unresolved = append(unresolved, status.CommandApprovalUnresolvedApprover{
+				Field:   fmt.Sprintf("command_approval[%d].command_approver_node", i),
+				Value:   name,
+				Message: fmt.Sprintf("command_approver_node %q does not match any configured node; this policy is failing open", name),
+			})
+		}
+	}
+	if len(unresolved) == 0 {
+		return nil
+	}
+	return &status.CommandApprovalStatus{UnresolvedCommandApprovers: unresolved}
 }
 
 func workspaceTreeRef(node workspacetree.Node) *status.WorkspaceTreeRef {
