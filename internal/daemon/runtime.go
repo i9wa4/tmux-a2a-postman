@@ -319,7 +319,7 @@ func (rt *daemonRuntime) bootstrap() {
 	}
 	rt.dispatchPendingDaemonSubmitRequests()
 	rt.recordPendingAutoPings(startupAutoPingNodeKeys(rt.nodes, rt.cfg), rt.nodes, "startup", now)
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.dispatchPendingAutoPings(rt.nodes, autoEnableSessions, now)
 	rt.dispatchPendingPostMessages()
 }
@@ -935,7 +935,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 		rt.logPaneIDChanges(freshNodes)
 		rt.nodes = freshNodes
 		rt.storeSharedNodes()
-		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), now)
+		rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
 
 		allSessions, _ := discovery.DiscoverAllSessions()
 		if allSessions == nil {
@@ -1320,7 +1320,7 @@ func (rt *daemonRuntime) handleScanTick() {
 		}
 	}
 
-	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, false)
+	autoEnableSessions := config.BoolVal(rt.cfg.AutoEnableNewSessions, true)
 	rt.pruneKnownNodes(freshNodes)
 	newNodes := rt.detectNewNodes(freshNodes)
 	now := rt.now()
@@ -1398,7 +1398,7 @@ func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool 
 	if rt == nil || rt.cfg == nil || rt.daemonState == nil {
 		return false
 	}
-	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, false) {
+	if !config.BoolVal(rt.cfg.AutoEnableNewSessions, true) {
 		return false
 	}
 
@@ -1514,7 +1514,7 @@ func (rt *daemonRuntime) refreshNodesAfterSessionActivation(allSessions []string
 	rt.recordPendingAutoPings(newNodes, freshNodes, "discovered", now)
 	rt.nodes = freshNodes
 	rt.storeSharedNodes()
-	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, false), now)
+	rt.dispatchPendingAutoPings(freshNodes, config.BoolVal(rt.cfg.AutoEnableNewSessions, true), now)
 	rt.emitStatusUpdateIfChanged(allSessions)
 }
 
