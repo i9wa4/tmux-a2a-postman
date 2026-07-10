@@ -100,20 +100,29 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 				return MailboxProjection{}, false, fmt.Errorf("invalid inbox path for %q", payload.MessageID)
 			}
 		case MailboxProjectionReadEventType:
-			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
+			inboxKey := inboxPathFromPayload(payload, state.TmuxSessionName)
 			if payload.Content == "" {
 				// A read event can carry empty content when its shadow
 				// recorder raced a concurrent projection sync writing the
-				// same path (see issue #633). Validate the path but keep
-				// whatever content is already projected rather than
-				// truncating it: the next non-empty read event (if any)
-				// still wins, and an already-corrupted on-disk file
-				// self-heals the moment the journal is replayed again.
+				// same path, or observed the file before a first-ever read
+				// established any content yet (see issue #633). Validate
+				// the path, but only treat this as a completed read -- and
+				// drop the inbox entry -- once a real, non-empty read has
+				// actually set content for this path. Otherwise leave the
+				// inbox entry (if any) untouched: unconditionally deleting
+				// it here would drop the message from both inbox and read
+				// projections at once, and the cleanup pass in
+				// syncDesiredMailboxFiles would then remove its on-disk
+				// file entirely instead of merely truncating it.
 				if !isAllowedProjectionPath(payload.Path) {
 					return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 				}
+				if _, exists := projected.Read[pathKey(payload.Path)]; exists {
+					delete(projected.Inbox, inboxKey)
+				}
 				continue
 			}
+			delete(projected.Inbox, inboxKey)
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}

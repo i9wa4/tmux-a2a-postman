@@ -304,6 +304,87 @@ func TestProjectMailboxProjection_IgnoresEmptyContentReadEvent(t *testing.T) {
 	}
 }
 
+// TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage guards
+// against a regression found in review of the #633 fix: when the FIRST-ever
+// read event for a message carries empty content (no prior non-empty read
+// entry exists yet), the message must not vanish from both the inbox and
+// read projections at once. Doing so left it absent from `desired`
+// entirely, so the cleanup pass in syncDesiredMailboxFiles deleted its
+// on-disk file outright -- worse than the original #633 bug, which at
+// least left a visible (if 0-byte) file. A subsequent genuine, non-empty
+// read event must still complete the transition normally.
+func TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.July, 10, 15, 40, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	filename := "20260710-154000-s7c1c-rfirst-from-orchestrator-to-guardian.md"
+	inboxRel := filepath.Join("inbox", "guardian", filename)
+	readRel := filepath.Join("read", filename)
+	appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "guardian",
+		Path:      inboxRel,
+		Content:   "delivered body",
+	}, now.Add(time.Second))
+
+	// First-ever read event for this message: content is empty (e.g. a
+	// racy shadow-recorder observation), with no prior non-empty read.
+	appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "guardian",
+		Path:      readRel,
+		Content:   "",
+	}, now.Add(2*time.Second))
+
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectMailboxProjection() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMailboxProjection() ok = false, want true")
+	}
+	if got := projected.Inbox[pathKey(inboxRel)]; got.Content != "delivered body" {
+		t.Fatalf("inbox projection after first empty read = %#v, want delivered body preserved (message must not disappear)", got)
+	}
+	if _, exists := projected.Read[pathKey(readRel)]; exists {
+		t.Fatalf("read projection created from empty first read event: %#v", projected.Read[pathKey(readRel)])
+	}
+
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(after first empty read) error = %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(sessionDir, inboxRel)); err != nil || string(got) != "delivered body" {
+		t.Fatalf("inbox file after first empty read = %q, %v; message was dropped instead of staying visible", string(got), err)
+	}
+
+	// A genuine, non-empty read event now arrives and must complete the
+	// transition normally: inbox entry removed, read entry populated.
+	appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "guardian",
+		Path:      readRel,
+		Content:   "delivered body",
+	}, now.Add(3*time.Second))
+
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(after real read) error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, inboxRel)); !os.IsNotExist(err) {
+		t.Fatalf("inbox file still present after genuine read completed: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(sessionDir, readRel)); err != nil || string(got) != "delivered body" {
+		t.Fatalf("read file after genuine read = %q, %v; want delivered body", string(got), err)
+	}
+}
+
 // TestWriteFileAtomic_NeverLeavesTruncatedFileVisible guards against
 // regressing to a truncate-in-place write for projected mailbox files: a
 // concurrent reader must always see either the full old content or the
