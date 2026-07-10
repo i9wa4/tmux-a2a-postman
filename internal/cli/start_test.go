@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -437,6 +438,61 @@ func TestRecordDirectPingDeliveredClearsPendingStartupAutoPing(t *testing.T) {
 	if got.Reason != "startup" || got.ResolutionReason != "operator_tui" || got.DeliveredAt == "" {
 		t.Fatalf("resolved startup state = %#v", got)
 	}
+}
+
+func TestReserveDirectPingAutoWakeSkipsWhenPendingWakeReserved(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.July, 10, 8, 25, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-direct", "review", now)
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "%11",
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}
+	pending := projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       nodeInfo.PaneID,
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-30 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, pending, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	identity, ok, err := autoping.CurrentPendingIdentity(sessionDir, pending.NodeKey, nodeInfo.PaneID)
+	if err != nil {
+		t.Fatalf("CurrentPendingIdentity: %v", err)
+	}
+	if !ok {
+		t.Fatal("CurrentPendingIdentity ok = false, want true")
+	}
+	held, reserved := autoping.TryReserve(identity)
+	if !reserved {
+		t.Fatal("TryReserve() = false, want true for first reservation")
+	}
+	defer held.Release()
+
+	reservation, shouldSend := reserveDirectPingAutoWake(pending.NodeKey, nodeInfo)
+	if shouldSend {
+		if reservation != nil {
+			reservation.Release()
+		}
+		t.Fatal("reserveDirectPingAutoWake shouldSend = true, want false while auto wake is reserved")
+	}
+
+	held.Release()
+	reservation, shouldSend = reserveDirectPingAutoWake(pending.NodeKey, nodeInfo)
+	if !shouldSend {
+		t.Fatal("reserveDirectPingAutoWake shouldSend = false, want true after reservation release")
+	}
+	reservation.Release()
 }
 
 func TestRecordDirectPingDeliveredAllowsIntentionalOperatorRetry(t *testing.T) {
