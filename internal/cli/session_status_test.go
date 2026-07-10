@@ -1033,30 +1033,24 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 	}
 }
 
-// TestBuildCommandApprovalStatus_UnresolvedCommandApprovers guards #626 decided
-// requirement 2's get-status marker: both an unresolvable global
-// command_approver_node and an unresolvable per-policy override must surface as
-// distinct UnresolvedCommandApprovers entries.
+// TestBuildCommandApprovalStatus_UnresolvedCommandApprovers guards #626/#629
+// decided requirement 2's get-status marker: an unresolvable global
+// command_approver_node must surface as an UnresolvedCommandApprovers entry.
 func TestBuildCommandApprovalStatus_UnresolvedCommandApprovers(t *testing.T) {
 	cfg := &config.Config{
 		CommandApproverNode: "typo-reviewer",
 		Nodes:               map[string]config.NodeConfig{"orchestrator": {}},
-		CommandApproval: []config.CommandApprovalPolicy{
-			{Requester: "worker", Label: "deploy", CommandApproverNode: "another-typo"},
-			{Requester: "worker", Label: "diagnostic"}, // no override: must not duplicate the global warning
-		},
 	}
 
 	got := buildCommandApprovalStatus(cfg)
 	if got == nil {
 		t.Fatal("buildCommandApprovalStatus() = nil, want a populated status")
 	}
-	if len(got.UnresolvedCommandApprovers) != 2 {
-		t.Fatalf("UnresolvedCommandApprovers = %#v, want exactly 2 entries", got.UnresolvedCommandApprovers)
+	if len(got.UnresolvedCommandApprovers) != 1 {
+		t.Fatalf("UnresolvedCommandApprovers = %#v, want exactly 1 entry", got.UnresolvedCommandApprovers)
 	}
 	wantFields := map[string]bool{
-		"command_approver_node":                     false,
-		"command_approval[0].command_approver_node": false,
+		"command_approver_node": false,
 	}
 	for _, entry := range got.UnresolvedCommandApprovers {
 		if _, ok := wantFields[entry.Field]; ok {
@@ -1081,6 +1075,29 @@ func TestBuildCommandApprovalStatus_NoUnresolvedCommandApprovers(t *testing.T) {
 	} {
 		if got := buildCommandApprovalStatus(cfg); got != nil {
 			t.Fatalf("buildCommandApprovalStatus(%#v) = %#v, want nil", cfg, got)
+		}
+	}
+}
+
+func TestBuildCommandApprovalStatus_DeprecatedCommandApprovers(t *testing.T) {
+	cfg := &config.Config{
+		Nodes: map[string]config.NodeConfig{"orchestrator": {}},
+		DeprecatedCommandApproverNodes: []config.DeprecatedCommandApproverNode{
+			{Field: "command_approver_node", Value: "orchestrator"},
+			{Field: "command_approval[0].command_approver_node", Value: "reviewer"},
+		},
+	}
+
+	got := buildCommandApprovalStatus(cfg)
+	if got == nil {
+		t.Fatal("buildCommandApprovalStatus() = nil, want deprecated command approver markers")
+	}
+	if len(got.DeprecatedCommandApprovers) != 2 {
+		t.Fatalf("DeprecatedCommandApprovers = %#v, want 2 entries", got.DeprecatedCommandApprovers)
+	}
+	for _, entry := range got.DeprecatedCommandApprovers {
+		if !strings.Contains(entry.Message, "ignored") || !strings.Contains(entry.Message, "fail open") {
+			t.Fatalf("deprecated command approver message = %q, want ignored/fail-open guidance", entry.Message)
 		}
 	}
 }

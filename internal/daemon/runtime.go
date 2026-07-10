@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fswatcher/fswatcher"
+	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -1930,6 +1931,22 @@ func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo disco
 		defer budget.finish(nonDaemonDeliveryPathAutoPing)
 		defer rt.finishAutoPing(nodeKey)
 
+		identity := autoping.IdentityFromPending(nodeInfo.SessionDir, nodeKey, pending)
+		reservation, reserved := autoping.TryReserve(identity)
+		if !reserved {
+			log.Printf("postman: component=daemon_runtime event=auto_ping_reservation_contended node=%s\n", nodeKey)
+			return
+		}
+		defer reservation.Release()
+
+		stillPending, err := autoPingDispatchStillPending(nodeKey, nodeInfo, identity)
+		if err != nil {
+			log.Printf("postman: WARNING: auto-PING projection refresh failed for %s: %v\n", nodeKey, err)
+		} else if !stillPending {
+			log.Printf("postman: component=daemon_runtime event=stale_auto_ping_suppressed node=%s\n", nodeKey)
+			return
+		}
+
 		result, err := sendAutoPing(nodeInfo, rt.contextID, nodeKey, tmpl, rt.cfg, activeNodes, livenessMap, adjacency, nodes)
 		if err != nil {
 			log.Printf("postman: WARNING: auto-PING send failed for %s: %v\n", nodeKey, err)
@@ -1941,6 +1958,25 @@ func (rt *daemonRuntime) dispatchAutoPingDelivery(nodeKey string, nodeInfo disco
 
 		rt.recordDeliveredAutoPing(nodeKey, nodeInfo, pending, rt.now())
 	}()
+}
+
+func autoPingDispatchStillPending(nodeKey string, nodeInfo discovery.NodeInfo, identity autoping.WakeIdentity) (bool, error) {
+	state, ok, err := projection.ProjectAutoPingState(nodeInfo.SessionDir)
+	if err != nil {
+		return true, err
+	}
+	if !ok {
+		return true, nil
+	}
+
+	current, exists := state.Nodes[nodeKey]
+	if !exists {
+		return false, nil
+	}
+	if !current.Pending {
+		return false, nil
+	}
+	return identity.MatchesPending(current), nil
 }
 
 func newAutoPingDispatchSnapshot(freshNodes map[string]discovery.NodeInfo, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string) *autoPingDispatchSnapshot {

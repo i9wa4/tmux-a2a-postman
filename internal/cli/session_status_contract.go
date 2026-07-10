@@ -215,34 +215,36 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 }
 
 // buildCommandApprovalStatus surfaces any configured-but-unresolvable
-// command_approver_node (global or per-policy) so get-status makes the fail-open
-// condition visible (#626), mirroring config.ValidateConfig's warning rule
-// without depending on its message wording.
+// command_approver_node so get-status makes the fail-open condition visible
+// (#626/#629), mirroring config.ValidateConfig's warning rule without depending
+// on its message wording.
 func buildCommandApprovalStatus(cfg *config.Config) *status.CommandApprovalStatus {
 	if cfg == nil {
 		return nil
 	}
 	var unresolved []status.CommandApprovalUnresolvedApprover
-	if name, valid := cfg.ResolveCommandApproverNode(""); name != "" && !valid {
+	if name, valid := cfg.ResolveCommandApproverNode(); name != "" && !valid {
 		unresolved = append(unresolved, status.CommandApprovalUnresolvedApprover{
 			Field:   "command_approver_node",
 			Value:   name,
 			Message: fmt.Sprintf("command_approver_node %q does not match any configured node; command approval is failing open", name),
 		})
 	}
-	for i, policy := range cfg.CommandApproval {
-		if name, valid := cfg.ResolveCommandApproverNode(policy.CommandApproverNode); name != "" && !valid && strings.TrimSpace(policy.CommandApproverNode) != "" {
-			unresolved = append(unresolved, status.CommandApprovalUnresolvedApprover{
-				Field:   fmt.Sprintf("command_approval[%d].command_approver_node", i),
-				Value:   name,
-				Message: fmt.Sprintf("command_approver_node %q does not match any configured node; this policy is failing open", name),
-			})
-		}
+	deprecated := make([]status.CommandApprovalDeprecatedApprover, 0, len(cfg.DeprecatedCommandApproverNodes))
+	for _, legacy := range cfg.DeprecatedCommandApproverNodes {
+		deprecated = append(deprecated, status.CommandApprovalDeprecatedApprover{
+			Field:   legacy.Field,
+			Value:   legacy.Value,
+			Message: fmt.Sprintf("legacy TOML %s %q is ignored; move command_approver_node to postman.md Mermaid class or command approval will fail open", legacy.Field, legacy.Value),
+		})
 	}
-	if len(unresolved) == 0 {
+	if len(unresolved) == 0 && len(deprecated) == 0 {
 		return nil
 	}
-	return &status.CommandApprovalStatus{UnresolvedCommandApprovers: unresolved}
+	return &status.CommandApprovalStatus{
+		UnresolvedCommandApprovers: unresolved,
+		DeprecatedCommandApprovers: deprecated,
+	}
 }
 
 func workspaceTreeRef(node workspacetree.Node) *status.WorkspaceTreeRef {

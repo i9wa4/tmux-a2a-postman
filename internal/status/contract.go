@@ -173,8 +173,18 @@ type CommandApprovalUnresolvedApprover struct {
 	Message string `json:"message"`
 }
 
+// CommandApprovalDeprecatedApprover surfaces ignored legacy TOML
+// command_approver_node keys so an upgrade cannot silently downgrade blocking
+// command approval to fail-open without a runtime-visible marker.
+type CommandApprovalDeprecatedApprover struct {
+	Field   string `json:"field"`
+	Value   string `json:"value"`
+	Message string `json:"message"`
+}
+
 type CommandApprovalStatus struct {
 	UnresolvedCommandApprovers []CommandApprovalUnresolvedApprover `json:"unresolved_command_approvers,omitempty"`
+	DeprecatedCommandApprovers []CommandApprovalDeprecatedApprover `json:"deprecated_command_approvers,omitempty"`
 }
 
 type SessionStatus struct {

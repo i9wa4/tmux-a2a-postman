@@ -318,6 +318,62 @@ graph LR
 			wantSet: true,
 		},
 		{
+			name: "inline class after label",
+			input: `
+graph LR
+    messenger["Human"]:::ui_node --- orchestrator
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after shape",
+			input: `
+graph LR
+    messenger --- orchestrator
+    messenger{Human?}:::ui_node
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after label with spaces",
+			input: `
+graph LR
+    messenger --- orchestrator
+    messenger["Human reviewer"]:::ui_node
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after shape with spaces",
+			input: `
+graph LR
+    messenger --- orchestrator
+    messenger{Human reviewer?}:::ui_node
+`,
+			want:    "messenger",
+			wantSet: true,
+		},
+		{
+			name: "label text containing class marker ignored",
+			input: `
+graph LR
+    messenger["note :::ui_node pending"] --- orchestrator
+`,
+			wantSet: false,
+		},
+		{
+			name: "standalone label text containing class marker ignored",
+			input: `
+graph LR
+    messenger --- orchestrator
+    messenger["note :::ui_node pending"]
+`,
+			wantSet: false,
+		},
+		{
 			name: "class statement",
 			input: `
 graph LR
@@ -371,6 +427,249 @@ graph LR
 			}
 			if got != tt.want || gotSet != tt.wantSet {
 				t.Fatalf("parseMermaidUINode() = %q, %v; want %q, %v", got, gotSet, tt.want, tt.wantSet)
+			}
+		})
+	}
+}
+
+func TestParseMermaidCommandApproverNode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantSet bool
+		wantErr bool
+	}{
+		{
+			name: "inline class",
+			input: `
+graph LR
+    worker --- orchestrator:::command_approver_node
+    classDef command_approver_node fill:#fff3bf
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class with hyphenated node",
+			input: `
+graph LR
+    worker --- worker-alt
+    worker-alt:::command_approver_node
+`,
+			want:    "worker-alt",
+			wantSet: true,
+		},
+		{
+			name: "label text containing class marker ignored",
+			input: `
+graph LR
+    worker --- orchestrator["note :::command_approver_node pending"]
+`,
+			wantSet: false,
+		},
+		{
+			name: "inline class after label",
+			input: `
+graph LR
+    worker --- orchestrator["Reviewer"]:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "inline class after classic shape",
+			input: `
+graph LR
+    worker --- orchestrator{Review?}:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after label",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator["Reviewer"]:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after label with spaces",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator["Senior Reviewer"]:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after classic shape",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator{Review?}:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class after classic shape with spaces",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator{Senior reviewer?}:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone label text containing class marker ignored",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator["note :::command_approver_node pending"]
+`,
+			wantSet: false,
+		},
+		{
+			name: "inline class before shape decorator",
+			input: `
+graph LR
+    worker --- orchestrator:::command_approver_node@{shape: rect}
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "standalone inline class before shape decorator",
+			input: `
+graph LR
+    worker --- orchestrator
+    orchestrator:::command_approver_node@{shape:rect}
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "chained inline classes",
+			input: `
+graph LR
+    worker --- orchestrator:::reviewer:::command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "inline class before classic shape",
+			input: `
+graph LR
+    worker --- orchestrator:::command_approver_node{Review?}
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "unsupported arrow with inline class ignored",
+			input: `
+graph LR
+    worker --> orchestrator:::command_approver_node
+`,
+			wantSet: false,
+		},
+		{
+			name: "unsupported thick arrow with inline class ignored",
+			input: `
+graph LR
+    worker ==> orchestrator:::command_approver_node
+`,
+			wantSet: false,
+		},
+		{
+			name: "unsupported dotted arrow with inline class ignored",
+			input: `
+graph LR
+    worker -.-> orchestrator:::command_approver_node
+`,
+			wantSet: false,
+		},
+		{
+			name: "class statement",
+			input: `
+graph LR
+    worker --- orchestrator
+    class orchestrator command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "class statement with spaced comma node list rejects distinct nodes",
+			input: `
+graph LR
+    worker --- orchestrator
+    worker --- reviewer
+    class orchestrator, reviewer command_approver_node
+`,
+			wantErr: true,
+		},
+		{
+			name: "class statement with spaced comma same node allowed",
+			input: `
+graph LR
+    worker --- orchestrator
+    class orchestrator, orchestrator command_approver_node
+`,
+			want:    "orchestrator",
+			wantSet: true,
+		},
+		{
+			name: "non command approver class ignored",
+			input: `
+graph LR
+    worker --- orchestrator
+    class orchestrator ui_node
+`,
+			wantSet: false,
+		},
+		{
+			name: "conflicting command approver nodes rejected",
+			input: `
+graph LR
+    worker --- orchestrator:::command_approver_node
+    class reviewer command_approver_node
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotSet, err := parseMermaidCommandApproverNode(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("parseMermaidCommandApproverNode() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMermaidCommandApproverNode() error = %v", err)
+			}
+			if got != tt.want || gotSet != tt.wantSet {
+				t.Fatalf("parseMermaidCommandApproverNode() = %q, %v; want %q, %v", got, gotSet, tt.want, tt.wantSet)
 			}
 		})
 	}
@@ -661,6 +960,32 @@ graph LR
 	}
 	if len(cfg.Edges) != 2 {
 		t.Fatalf("Edges: got %v, want 2 edges", cfg.Edges)
+	}
+}
+
+func TestLoadMarkdownConfig_MermaidCommandApproverNode(t *testing.T) {
+	content := `## ` + "`edges`" + `
+
+` + "```mermaid" + `
+graph LR
+    worker --- orchestrator
+    class orchestrator command_approver_node
+    classDef command_approver_node fill:#fff3bf
+` + "```" + `
+`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "postman.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	if cfg.CommandApproverNode != "orchestrator" {
+		t.Fatalf("CommandApproverNode: got %q, want %q", cfg.CommandApproverNode, "orchestrator")
 	}
 }
 
