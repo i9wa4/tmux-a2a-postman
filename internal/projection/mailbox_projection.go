@@ -18,11 +18,12 @@ type ProjectedFile struct {
 }
 
 type MailboxProjection struct {
-	Post        map[string]ProjectedFile
-	Inbox       map[string]ProjectedFile
-	Read        map[string]ProjectedFile
-	DeadLetter  map[string]ProjectedFile
-	managedPost map[string]bool
+	Post           map[string]ProjectedFile
+	Inbox          map[string]ProjectedFile
+	Read           map[string]ProjectedFile
+	DeadLetter     map[string]ProjectedFile
+	managedPost    map[string]bool
+	tombstonedRead map[string]bool
 }
 
 type mailboxProjectionMarker struct {
@@ -56,11 +57,12 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 	}
 
 	projected := MailboxProjection{
-		Post:        make(map[string]ProjectedFile),
-		Inbox:       make(map[string]ProjectedFile),
-		Read:        make(map[string]ProjectedFile),
-		DeadLetter:  make(map[string]ProjectedFile),
-		managedPost: make(map[string]bool),
+		Post:           make(map[string]ProjectedFile),
+		Inbox:          make(map[string]ProjectedFile),
+		Read:           make(map[string]ProjectedFile),
+		DeadLetter:     make(map[string]ProjectedFile),
+		managedPost:    make(map[string]bool),
+		tombstonedRead: make(map[string]bool),
 	}
 	sawLease := false
 	sawResolution := false
@@ -106,23 +108,45 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 				// recorder raced a concurrent projection sync writing the
 				// same path, or observed the file before a first-ever read
 				// established any content yet (see issue #633). Validate
-				// the path, but only treat this as a completed read -- and
-				// drop the inbox entry -- once a real, non-empty read has
-				// actually set content for this path. Otherwise leave the
-				// inbox entry (if any) untouched: unconditionally deleting
-				// it here would drop the message from both inbox and read
-				// projections at once, and the cleanup pass in
-				// syncDesiredMailboxFiles would then remove its on-disk
-				// file entirely instead of merely truncating it.
+				// the path first.
 				if !isAllowedProjectionPath(payload.Path) {
 					return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 				}
-				if _, exists := projected.Read[pathKey(payload.Path)]; exists {
+				readKey := pathKey(payload.Path)
+				if _, exists := projected.Read[readKey]; exists {
+					// A genuine, non-empty read already completed this
+					// transition earlier; this is a later racy re-render.
+					// Keep the good content (untouched) and finish
+					// removing the inbox entry as normal.
 					delete(projected.Inbox, inboxKey)
+					continue
 				}
+				// First-ever read for this message carries no usable
+				// content. The message has still left inbox -- for the
+				// non-owner direct-pop path in particular,
+				// ArchiveInboxMessage already moved it to read/ via a raw
+				// rename before any journal event exists for it -- so the
+				// inbox entry no longer reflects reality and must be
+				// removed. Leaving it in place would make
+				// syncDesiredMailboxFiles write the message back into
+				// inbox/, resurrecting an already-archived message as
+				// unread and re-consumable (found in review of the prior
+				// fix). But we must not fabricate an empty Read entry
+				// either (the original #633 truncation bug), and we must
+				// not let the cleanup pass delete whatever real file is
+				// already sitting at this read path just because this
+				// replay has no content for it. Tombstone the path
+				// instead: syncDesiredMailboxFiles preserves an existing
+				// on-disk file there (like the managedPost exception for
+				// post/) rather than deleting or resurrecting it. A
+				// subsequent genuine, non-empty read event still
+				// completes the transition normally.
+				delete(projected.Inbox, inboxKey)
+				projected.tombstonedRead[readKey] = true
 				continue
 			}
 			delete(projected.Inbox, inboxKey)
+			delete(projected.tombstonedRead, pathKey(payload.Path))
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
@@ -178,7 +202,7 @@ func SyncMailboxProjection(sessionDir string) error {
 			return fmt.Errorf("ensuring %s dir: %w", root, err)
 		}
 	}
-	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost); err != nil {
+	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost, projected.tombstonedRead); err != nil {
 		return err
 	}
 	return writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
@@ -259,7 +283,7 @@ func isAllowedProjectionPath(relativePath string) bool {
 	return false
 }
 
-func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, managedPost map[string]bool) error {
+func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, managedPost map[string]bool, tombstonedRead map[string]bool) error {
 	for relativePath, content := range desired {
 		if !isAllowedProjectionPath(relativePath) {
 			return fmt.Errorf("invalid desired projection path %q", relativePath)
@@ -299,6 +323,16 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, manag
 			}
 			if strings.HasPrefix(rel, "post"+string(filepath.Separator)) {
 				if !managedPost[rel] {
+					return nil
+				}
+			}
+			if strings.HasPrefix(rel, "read"+string(filepath.Separator)) {
+				// A tombstoned path had its only read event recorded with
+				// empty content (see issue #633 follow-up): preserve
+				// whatever is already on disk here instead of deleting it
+				// -- the file may be a legitimately archived message
+				// whose content this replay simply doesn't have.
+				if tombstonedRead[rel] {
 					return nil
 				}
 			}

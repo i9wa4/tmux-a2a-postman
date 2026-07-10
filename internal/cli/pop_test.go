@@ -115,14 +115,18 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 
 // TestRunPop_ForeignContextDirectPopSurvivesRacyEmptyShadowRead exercises
 // the non-owner (contextOwnsSession=false, SubmitPathPost) direct-pop
-// branch end to end against the #633 regression found in review: this
-// branch archives the message via a raw filesystem rename with no
-// known-good content journaled at pop time (unlike the daemon-submit
-// path's recordDaemonSubmitPopRead). Its only content-recording path is
-// the filesystem-watcher-driven shadow recorder, which can race and
-// record an empty first read event. Simulating exactly that here must
-// leave the archived message visible after a projection sync, not delete
-// it outright.
+// branch end to end against the #633 regressions found across two rounds
+// of review: this branch archives the message via a raw filesystem rename
+// with no known-good content journaled at pop time (unlike the
+// daemon-submit path's recordDaemonSubmitPopRead). Its only
+// content-recording path is the filesystem-watcher-driven shadow
+// recorder, which can race and record an empty first read event.
+// Simulating exactly that here must enforce the actual invariant: the
+// archived message survives specifically at read/ with its correct body
+// content (not merely "some path exists"), and it must NOT be resurrected
+// back into inbox/ where it would become re-consumable -- a
+// duplicate-processing hazard found in review of the first attempt at
+// this fix.
 func TestRunPop_ForeignContextDirectPopSurvivesRacyEmptyShadowRead(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "ctx-pop-foreign"
@@ -197,14 +201,20 @@ func TestRunPop_ForeignContextDirectPopSurvivesRacyEmptyShadowRead(t *testing.T)
 		t.Fatalf("SyncMailboxProjection: %v", err)
 	}
 
-	// The archived message must still be reachable through the derived
-	// projection: either the read file survives, or -- since no genuine
-	// read has completed yet -- the message stays visible via inbox
-	// instead of vanishing from both projections and being deleted.
-	_, readErr := os.Stat(readPath)
-	_, inboxErr := os.Stat(filepath.Join(sessionDir, "inbox", "guardian", filename))
-	if os.IsNotExist(readErr) && os.IsNotExist(inboxErr) {
-		t.Fatal("message disappeared from both read and inbox after racy empty shadow read: data loss regression")
+	// The archived message must survive specifically at read/ with its
+	// correct, original body content -- not merely "some path exists".
+	got, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("read file missing after racy empty shadow read: %v (data loss regression)", err)
+	}
+	if !strings.Contains(string(got), body) {
+		t.Fatalf("read file content = %q, want it to contain %q (content lost or corrupted)", string(got), body)
+	}
+
+	// It must NOT be resurrected back into inbox/, where it would become
+	// re-consumable (duplicate-processing hazard found in review).
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "guardian", filename)); !os.IsNotExist(err) {
+		t.Fatalf("message resurrected into inbox/ after racy empty shadow read: err=%v (duplicate-processing hazard)", err)
 	}
 }
 

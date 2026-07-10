@@ -305,14 +305,27 @@ func TestProjectMailboxProjection_IgnoresEmptyContentReadEvent(t *testing.T) {
 }
 
 // TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage guards
-// against a regression found in review of the #633 fix: when the FIRST-ever
-// read event for a message carries empty content (no prior non-empty read
-// entry exists yet), the message must not vanish from both the inbox and
-// read projections at once. Doing so left it absent from `desired`
-// entirely, so the cleanup pass in syncDesiredMailboxFiles deleted its
-// on-disk file outright -- worse than the original #633 bug, which at
-// least left a visible (if 0-byte) file. A subsequent genuine, non-empty
-// read event must still complete the transition normally.
+// against two regressions found across two rounds of review of the #633
+// fix:
+//  1. (round 2) When the FIRST-ever read event for a message carries empty
+//     content, unconditionally deleting the inbox entry dropped the message
+//     from both inbox and read projections at once, so the cleanup pass in
+//     syncDesiredMailboxFiles deleted its on-disk file outright -- worse
+//     than the original #633 bug, which at least left a visible (if
+//     0-byte) file.
+//  2. (round 3) Fixing #1 by simply leaving the inbox entry untouched
+//     instead introduced a NEW hazard: on the non-owner direct-pop path,
+//     ArchiveInboxMessage already moves the message to read/ via a raw
+//     rename before any journal event exists for it. Leaving the stale
+//     inbox entry in `desired` made syncDesiredMailboxFiles write the
+//     message back into inbox/, resurrecting an already-archived message
+//     as unread and re-consumable -- a duplicate-processing hazard.
+//
+// The correct behavior (tombstoning): the inbox entry is removed (no
+// resurrection), no bogus empty Read entry is fabricated, and whatever
+// real file already exists at the read path is left untouched by the
+// cleanup pass rather than deleted. A subsequent genuine, non-empty read
+// event must still complete the transition normally.
 func TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.July, 10, 15, 40, 0, 0, time.UTC)
@@ -332,6 +345,23 @@ func TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage(t *testi
 		Path:      inboxRel,
 		Content:   "delivered body",
 	}, now.Add(time.Second))
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection(after delivered) error = %v", err)
+	}
+
+	// Simulate the non-owner direct-pop path: the message has already been
+	// archived via a raw filesystem rename (ArchiveInboxMessage) before any
+	// journal read event exists for it. The physical inbox file is gone;
+	// the physical read file holds the real, correct content.
+	if err := os.Remove(filepath.Join(sessionDir, inboxRel)); err != nil {
+		t.Fatalf("simulate raw archive rename (remove inbox file): %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sessionDir, "read"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(read): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, readRel), []byte("delivered body"), 0o600); err != nil {
+		t.Fatalf("simulate raw archive rename (write read file): %v", err)
+	}
 
 	// First-ever read event for this message: content is empty (e.g. a
 	// racy shadow-recorder observation), with no prior non-empty read.
@@ -350,22 +380,25 @@ func TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage(t *testi
 	if !ok {
 		t.Fatal("ProjectMailboxProjection() ok = false, want true")
 	}
-	if got := projected.Inbox[pathKey(inboxRel)]; got.Content != "delivered body" {
-		t.Fatalf("inbox projection after first empty read = %#v, want delivered body preserved (message must not disappear)", got)
+	if _, exists := projected.Inbox[pathKey(inboxRel)]; exists {
+		t.Fatalf("inbox projection resurrected after first empty read: %#v", projected.Inbox[pathKey(inboxRel)])
 	}
 	if _, exists := projected.Read[pathKey(readRel)]; exists {
-		t.Fatalf("read projection created from empty first read event: %#v", projected.Read[pathKey(readRel)])
+		t.Fatalf("read projection fabricated from empty first read event: %#v", projected.Read[pathKey(readRel)])
 	}
 
 	if err := SyncMailboxProjection(sessionDir); err != nil {
 		t.Fatalf("SyncMailboxProjection(after first empty read) error = %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(sessionDir, inboxRel)); err != nil || string(got) != "delivered body" {
-		t.Fatalf("inbox file after first empty read = %q, %v; message was dropped instead of staying visible", string(got), err)
+	if _, err := os.Stat(filepath.Join(sessionDir, inboxRel)); !os.IsNotExist(err) {
+		t.Fatalf("inbox file resurrected after first empty read: err=%v (message re-consumable, duplicate-processing hazard)", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(sessionDir, readRel)); err != nil || string(got) != "delivered body" {
+		t.Fatalf("read file after first empty read = %q, %v; want delivered body preserved (tombstoned, not deleted)", string(got), err)
 	}
 
 	// A genuine, non-empty read event now arrives and must complete the
-	// transition normally: inbox entry removed, read entry populated.
+	// transition normally: read entry populated from the journal as usual.
 	appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID: filename,
 		From:      "orchestrator",
@@ -378,7 +411,7 @@ func TestProjectMailboxProjection_FirstEmptyReadEventDoesNotDropMessage(t *testi
 		t.Fatalf("SyncMailboxProjection(after real read) error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, inboxRel)); !os.IsNotExist(err) {
-		t.Fatalf("inbox file still present after genuine read completed: %v", err)
+		t.Fatalf("inbox file present after genuine read completed: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(sessionDir, readRel)); err != nil || string(got) != "delivered body" {
 		t.Fatalf("read file after genuine read = %q, %v; want delivered body", string(got), err)
