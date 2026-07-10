@@ -69,7 +69,7 @@ type Config struct {
 	Edges                          []string                        `toml:"edges"`
 	ReplyCommand                   string                          `toml:"reply_command"`
 	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
+	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
 	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
