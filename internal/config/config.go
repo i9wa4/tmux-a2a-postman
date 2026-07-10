@@ -66,13 +66,14 @@ type Config struct {
 	MessageFooter                string            `toml:"message_footer"`                  // Footer appended to outgoing messages by `send` after message content
 
 	// Global settings
-	Edges                 []string                  `toml:"edges"`
-	ReplyCommand          string                    `toml:"reply_command"`
-	UINode                string                    `toml:"ui_node"`                  // Optional target filter for startup auto-PING
-	AutoEnableNewSessions *bool                     `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
-	WorkspaceTree         []WorkspaceTreeNodeConfig `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
-	CommandApproval       []CommandApprovalPolicy   `toml:"command_approval"`
-	CommandApproverNode   string                    `toml:"command_approver_node"` // Optional default reviewer node for command approval (#626); unset/unresolvable = fail-open
+	Edges                          []string                        `toml:"edges"`
+	ReplyCommand                   string                          `toml:"reply_command"`
+	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = use default (false); opt-in per #135
+	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
+	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
+	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
+	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -90,13 +91,17 @@ type Config struct {
 }
 
 type CommandApprovalPolicy struct {
-	Requester           string  `toml:"requester"`
-	Label               string  `toml:"label"`
-	Category            string  `toml:"category"`
-	Reviewer            string  `toml:"reviewer"`
-	Mode                string  `toml:"mode"`
-	ApprovalTTLSeconds  float64 `toml:"approval_ttl_seconds"`
-	CommandApproverNode string  `toml:"command_approver_node"` // Optional per-policy override of the global command_approver_node (#626)
+	Requester          string  `toml:"requester"`
+	Label              string  `toml:"label"`
+	Category           string  `toml:"category"`
+	Reviewer           string  `toml:"reviewer"`
+	Mode               string  `toml:"mode"`
+	ApprovalTTLSeconds float64 `toml:"approval_ttl_seconds"`
+}
+
+type DeprecatedCommandApproverNode struct {
+	Field string
+	Value string
 }
 
 // NodeConfig holds per-node configuration.
@@ -117,21 +122,17 @@ type WorkspaceTreeNodeConfig struct {
 	Order             int    `toml:"order"`
 }
 
-// ResolveCommandApproverNode resolves the effective command_approver_node for a command
-// approval policy, preferring a per-policy override over the global default
-// (#626). valid reports whether the resolved name matches a node known to
-// this config (the same set edges/workspace_tree validate against). An
-// empty or unresolvable name is never valid — callers MUST fail open in
-// that case rather than treat an invalid name as if it were configured, per
-// the decided unified fail-open rule.
-func (cfg *Config) ResolveCommandApproverNode(policyOverride string) (name string, valid bool) {
+// ResolveCommandApproverNode resolves the globally designated command_approver_node
+// (#626/#629). valid reports whether the resolved name matches a node known to
+// this config (the same set edges/workspace_tree validate against). An empty or
+// unresolvable name is never valid — callers MUST fail open in that case rather
+// than treat an invalid name as if it were configured, per the decided unified
+// fail-open rule.
+func (cfg *Config) ResolveCommandApproverNode() (name string, valid bool) {
 	if cfg == nil {
 		return "", false
 	}
-	name = strings.TrimSpace(policyOverride)
-	if name == "" {
-		name = strings.TrimSpace(cfg.CommandApproverNode)
-	}
+	name = strings.TrimSpace(cfg.CommandApproverNode)
 	if name == "" {
 		return "", false
 	}
@@ -215,6 +216,36 @@ func tomlHasField(md toml.MetaData, section, field string) bool {
 		}
 	}
 	return false
+}
+
+func deprecatedCommandApproverNodes(postmanPrim toml.Primitive, md toml.MetaData) []DeprecatedCommandApproverNode {
+	type deprecatedPolicy struct {
+		CommandApproverNode string `toml:"command_approver_node"`
+	}
+	var decoded struct {
+		CommandApproverNode string             `toml:"command_approver_node"`
+		CommandApproval     []deprecatedPolicy `toml:"command_approval"`
+	}
+	if err := md.PrimitiveDecode(postmanPrim, &decoded); err != nil {
+		return nil
+	}
+	var deprecated []DeprecatedCommandApproverNode
+	if strings.TrimSpace(decoded.CommandApproverNode) != "" {
+		deprecated = append(deprecated, DeprecatedCommandApproverNode{
+			Field: "command_approver_node",
+			Value: strings.TrimSpace(decoded.CommandApproverNode),
+		})
+	}
+	for i, policy := range decoded.CommandApproval {
+		if strings.TrimSpace(policy.CommandApproverNode) == "" {
+			continue
+		}
+		deprecated = append(deprecated, DeprecatedCommandApproverNode{
+			Field: fmt.Sprintf("command_approval[%d].command_approver_node", i),
+			Value: strings.TrimSpace(policy.CommandApproverNode),
+		})
+	}
+	return deprecated
 }
 
 func (cfg *Config) recordNodeNames(names ...string) {
@@ -342,6 +373,7 @@ func warnDeprecatedKeys(rawBytes []byte, path string) {
 	deprecated := []string{
 		"startup_delay_seconds",
 		"auto_enable_new_agents",
+		"command_approver_node",
 	}
 	raw := string(rawBytes)
 	for _, key := range deprecated {
@@ -730,6 +762,7 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
 		}
 
 		// Decode [nodename] sections (everything except reserved sections)

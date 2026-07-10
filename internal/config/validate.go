@@ -167,20 +167,6 @@ func ValidateConfig(cfg *Config) []ValidationError {
 			})
 		}
 	}
-	for i, policy := range cfg.CommandApproval {
-		name := strings.TrimSpace(policy.CommandApproverNode)
-		if name == "" {
-			continue
-		}
-		if _, exists := cfg.Nodes[name]; !exists {
-			errors = append(errors, ValidationError{
-				Field:    fmt.Sprintf("command_approval[%d].command_approver_node", i),
-				Message:  fmt.Sprintf("command_approver_node %q does not match any configured node; this policy will fail open until this is fixed", name),
-				Severity: "warning",
-			})
-		}
-	}
-
 	return errors
 }
 

@@ -287,7 +287,7 @@ func TestValidateConfig_WorkspaceTree(t *testing.T) {
 	}
 }
 
-// TestValidateConfig_CommandApproverNodeUnresolvable guards #626's decided
+// TestValidateConfig_CommandApproverNodeUnresolvable guards #626/#629's decided
 // requirement 2 (foot-gun mitigation): a configured-but-unresolvable
 // command_approver_node must produce a load-time WARNING, never an error — the
 // unified fail-open rule means command approval still runs, but the
@@ -300,15 +300,11 @@ func TestValidateConfig_CommandApproverNodeUnresolvable(t *testing.T) {
 			"orchestrator": {},
 		},
 		CommandApproverNode: "typo-reviewer",
-		CommandApproval: []CommandApprovalPolicy{
-			{Requester: "worker", Label: "deploy", CommandApproverNode: "another-typo"},
-		},
 	}
 
 	errors := ValidateConfig(cfg)
 	wantFields := map[string]bool{
-		"command_approver_node":                     false,
-		"command_approval[0].command_approver_node": false,
+		"command_approver_node": false,
 	}
 	for _, err := range errors {
 		if _, ok := wantFields[err.Field]; ok {
@@ -352,16 +348,13 @@ func TestResolveCommandApproverNode(t *testing.T) {
 		},
 	}
 
-	if name, valid := cfg.ResolveCommandApproverNode(""); name != "orchestrator" || !valid {
-		t.Fatalf("ResolveCommandApproverNode(\"\") = (%q, %v), want (orchestrator, true)", name, valid)
+	if name, valid := cfg.ResolveCommandApproverNode(); name != "orchestrator" || !valid {
+		t.Fatalf("ResolveCommandApproverNode() = (%q, %v), want (orchestrator, true)", name, valid)
 	}
-	if name, valid := cfg.ResolveCommandApproverNode("worker"); name != "worker" || valid {
-		t.Fatalf("ResolveCommandApproverNode(\"worker\") = (%q, %v), want (worker, false) — override names an unconfigured node", name, valid)
-	}
-	if name, valid := (&Config{}).ResolveCommandApproverNode(""); name != "" || valid {
+	if name, valid := (&Config{}).ResolveCommandApproverNode(); name != "" || valid {
 		t.Fatalf("ResolveCommandApproverNode on an unconfigured Config = (%q, %v), want (\"\", false)", name, valid)
 	}
-	if name, valid := (*Config)(nil).ResolveCommandApproverNode("orchestrator"); name != "" || valid {
+	if name, valid := (*Config)(nil).ResolveCommandApproverNode(); name != "" || valid {
 		t.Fatalf("ResolveCommandApproverNode on a nil Config = (%q, %v), want (\"\", false)", name, valid)
 	}
 }

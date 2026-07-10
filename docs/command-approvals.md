@@ -14,7 +14,6 @@ requester = "worker"
 label = "nix-build"
 category = "verification"
 reviewer = "orchestrator"
-command_approver_node = "orchestrator"
 mode = "blocking"
 approval_ttl_seconds = 900
 ```
@@ -24,15 +23,38 @@ match any value. CLI flags may override `reviewer`, `mode`, and expiry for a
 single command.
 
 `reviewer` is a plain audit label with no topology meaning.
-`command_approver_node` is different: it names a real, configured node (same
-family as `ui_node`), either globally under `[postman]` or per policy here,
-overriding the global default. It is what makes a mode restrictive at all — see
-the fail-open rule below.
+`command_approver_node` is different: it names one real, configured node (same
+family as `ui_node`) by marking that node in the `postman.md` Mermaid graph:
+
+````markdown
+## `edges`
+
+```mermaid
+graph LR
+    worker --- orchestrator
+    class orchestrator command_approver_node
+```
+````
+
+It is global for the whole configuration and is what makes a mode restrictive
+at all — see the fail-open rule below. Per-policy approver routing is not
+supported; every execute-bash policy shares the single class-designated
+approver.
+
+Migration note: legacy `[postman] command_approver_node` and
+`[[postman.command_approval]] command_approver_node` keys in `postman.toml` are
+ignored with a deprecation warning. Move the approver marker to `postman.md`
+before relying on `blocking`; until the Mermaid class resolves to a configured
+node, command approval intentionally fails open and records
+`auto_approved_no_reviewer`. `get-status` also reports ignored legacy TOML
+approver keys under `command_approval.deprecated_command_approvers`; a migration
+is complete only when both `command_approval.unresolved_command_approvers` and
+`command_approval.deprecated_command_approvers` are absent.
 
 ### 1.1. Fail-open rule (#626)
 
-Unless a VALID `command_approver_node` is configured — the field set AND
-resolving to a node that actually exists in this config — every command is
+Unless a VALID `command_approver_node` is configured — the Mermaid class is set
+AND resolves to a node that actually exists in this config — every command is
 treated as approved, in every mode, including `blocking`. This covers both an
 unconfigured `command_approver_node` and one that names a node that doesn't
 exist (a typo). Approval only becomes restrictive once a valid
@@ -44,6 +66,12 @@ two. A configured-but-unresolvable `command_approver_node` also produces a
 load-time warning and a visible `command_approval.unresolved_command_approvers`
 marker in `get-status`, so a typo that silently disables blocking mode is loud
 rather than a silent no-op.
+
+Ignored legacy TOML `command_approver_node` values produce
+`command_approval.deprecated_command_approvers` markers in `get-status`. Treat
+that status field as a migration failure: the TOML key is ignored, and approval
+remains fail-open unless the Mermaid `command_approver_node` resolves to a
+configured node.
 
 ## 2. Running Commands
 

@@ -55,13 +55,12 @@ func (e commandExitError) ExitCode() int {
 }
 
 type resolvedCommandApprovalPolicy struct {
-	Requester                   string
-	Reviewer                    string
-	Mode                        string
-	Label                       string
-	Category                    string
-	TTL                         time.Duration
-	CommandApproverNodeOverride string // per-policy command_approver_node override, if any (#626)
+	Requester string
+	Reviewer  string
+	Mode      string
+	Label     string
+	Category  string
+	TTL       time.Duration
 }
 
 type commandApprovalEvaluation struct {
@@ -158,7 +157,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		resolvedThreadID = commandApprovalThreadID(policy, commandHash)
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
-	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode(policy.CommandApproverNodeOverride)
+	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode()
 
 	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
 	if err != nil {
@@ -372,7 +371,6 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 		if candidate.ApprovalTTLSeconds > 0 {
 			policy.TTL = time.Duration(candidate.ApprovalTTLSeconds * float64(time.Second))
 		}
-		policy.CommandApproverNodeOverride = strings.TrimSpace(candidate.CommandApproverNode)
 		break
 	}
 	if strings.TrimSpace(reviewerFlag) != "" {
