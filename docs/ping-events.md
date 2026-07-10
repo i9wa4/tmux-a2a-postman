@@ -81,11 +81,22 @@ because the target inbox queue is full, the pending auto-PING remains in the
 journal and the daemon tries again on later scans. One in-flight auto-PING per
 node is allowed at a time.
 
-The dedupe key is the discovered node key plus pane ID. A successful direct
-operator or compaction PING records a delivered auto-PING journal event with a
-`resolution_reason` such as `operator_tui` or `compaction`. Later automatic
-discovery for the same node and pane does not queue another PING. A replacement
-pane is a new wake event and can still queue `pane_restart`.
+The pending-wake duplicate-control key includes the discovered node key, pane
+ID, wake reason, trigger time, and due time. Before sending mail for a pending
+wake, the automatic and direct PING paths share an in-process reservation for
+that exact wake identity. A successful direct operator or compaction PING
+records a delivered auto-PING journal event with a `resolution_reason` such as
+`operator_tui` or `compaction`. Later automatic discovery for the same node and
+pane does not queue another PING. A replacement pane is a new wake event and can
+still queue `pane_restart`.
+
+If the operator/manual path tries to send while the matching automatic wake is
+already in flight, the direct send is skipped and the TUI reports
+`PING skipped for <node>: matching auto-PING already in flight`. The automatic
+path likewise suppresses a stale send when the matching direct path has already
+reserved or resolved the pending wake. This reservation is process-local to the
+owning daemon; abnormal two-daemon states are outside this duplicate-control
+guarantee and must be repaired with the documented daemon restart procedure.
 
 ## 2. Contact Hints
 

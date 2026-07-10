@@ -19,6 +19,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fswatcher/fswatcher"
+	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
@@ -104,17 +105,42 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 		if !ok {
 			continue
 		}
-		options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
-		result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
-		if err != nil {
-			log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
-			continue
-		}
-		if result.Delivered {
-			recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
-		}
-		log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
+		func() {
+			reservation, shouldSend := reserveDirectPingAutoWake(target.NodeKey, nodeInfo)
+			if !shouldSend {
+				log.Printf("postman: compaction-triggered PING skipped for %s: matching auto-PING already in flight\n", target.NodeKey)
+				return
+			}
+			defer reservation.Release()
+
+			options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
+			result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
+			if err != nil {
+				log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
+				return
+			}
+			if result.Delivered {
+				recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
+			}
+			log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
+		}()
 	}
+}
+
+func reserveDirectPingAutoWake(nodeKey string, nodeInfo discovery.NodeInfo) (*autoping.Reservation, bool) {
+	identity, pending, err := autoping.CurrentPendingIdentity(nodeInfo.SessionDir, nodeKey, nodeInfo.PaneID)
+	if err != nil {
+		log.Printf("postman: WARNING: direct PING auto-PING replay failed for %s: %v\n", nodeKey, err)
+		return nil, true
+	}
+	if !pending {
+		return nil, true
+	}
+	reservation, reserved := autoping.TryReserve(identity)
+	if !reserved {
+		return nil, false
+	}
+	return reservation, true
 }
 
 func recordDirectPingDelivered(nodeKey string, nodeInfo discovery.NodeInfo, resolutionReason string, now time.Time) {
@@ -666,6 +692,17 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 									}
 									func() {
 										defer daemonState.FinishManualPingDelivery()
+										reservation, shouldSend := reserveDirectPingAutoWake(target.name, target.info)
+										if !shouldSend {
+											log.Printf("postman: PING skipped for %s: matching auto-PING already in flight\n", target.name)
+											tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
+												Type:    "message_received",
+												Message: fmt.Sprintf("PING skipped for %s: matching auto-PING already in flight", target.name),
+											})
+											return
+										}
+										defer reservation.Release()
+
 										result, err := ping.SendPingToNodeWithResult(target.info, contextID, target.name,
 											cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
 											pingAdjacency, freshNodes)

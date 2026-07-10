@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fswatcher/fswatcher"
+	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
@@ -2848,6 +2849,174 @@ func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T
 	}
 	if got, want := state.Nodes["review:worker"].DeliveredAt, deliveredAt.Format(time.RFC3339Nano); got != want {
 		t.Fatalf("DeliveredAt = %q, want %q", got, want)
+	}
+}
+
+func TestDispatchAutoPingDeliverySkipsStalePendingResolvedByOperatorTUI(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.July, 10, 7, 52, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	pendingPayload := projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-30 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, pendingPayload, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingDeliveredEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:          pendingPayload.NodeKey,
+		SessionName:      pendingPayload.SessionName,
+		NodeName:         pendingPayload.NodeName,
+		PaneID:           pendingPayload.PaneID,
+		Reason:           pendingPayload.Reason,
+		ResolutionReason: "operator_tui",
+		TriggeredAt:      pendingPayload.TriggeredAt,
+		DelaySeconds:     pendingPayload.DelaySeconds,
+		NotBeforeAt:      pendingPayload.NotBeforeAt,
+		DeliveredAt:      now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+	}, now.Add(-5*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(operator delivered): %v", err)
+	}
+
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg: &config.Config{
+			DaemonMessageTemplate: "PING {node} in {context_id}",
+		},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+	}
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      pendingPayload.PaneID,
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}
+	pending := projection.AutoPingNodeState{
+		NodeKey:      pendingPayload.NodeKey,
+		SessionName:  pendingPayload.SessionName,
+		NodeName:     pendingPayload.NodeName,
+		PaneID:       pendingPayload.PaneID,
+		Reason:       pendingPayload.Reason,
+		TriggeredAt:  pendingPayload.TriggeredAt,
+		DelaySeconds: pendingPayload.DelaySeconds,
+		NotBeforeAt:  pendingPayload.NotBeforeAt,
+		Pending:      true,
+	}
+	if !rt.beginAutoPing(pendingPayload.NodeKey) {
+		t.Fatal("beginAutoPing: want true for first call")
+	}
+
+	rt.dispatchAutoPingDelivery(pendingPayload.NodeKey, nodeInfo, pending, "PING {node}", nil, nil, nil, nil, 0)
+	waitForAutoPingEventIdle(t, rt, pendingPayload.NodeKey, 2*time.Second)
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0", got)
+	}
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if state.Nodes[pendingPayload.NodeKey].Pending {
+		t.Fatal("operator TUI resolution was overwritten by stale auto-PING delivery")
+	}
+}
+
+func TestDispatchAutoPingDeliverySkipsWhenPendingWakeReserved(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(): %v", err)
+	}
+
+	now := time.Date(2026, time.July, 10, 8, 20, 0, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-self", "review", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	pending := projection.AutoPingNodeState{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%61",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-30 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+		Pending:      true,
+	}
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      pending.NodeKey,
+		SessionName:  pending.SessionName,
+		NodeName:     pending.NodeName,
+		PaneID:       pending.PaneID,
+		Reason:       pending.Reason,
+		TriggeredAt:  pending.TriggeredAt,
+		DelaySeconds: pending.DelaySeconds,
+		NotBeforeAt:  pending.NotBeforeAt,
+	}, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+
+	identity := autoping.IdentityFromPending(sessionDir, pending.NodeKey, pending)
+	reservation, reserved := autoping.TryReserve(identity)
+	if !reserved {
+		t.Fatal("TryReserve() = false, want true for first reservation")
+	}
+	defer reservation.Release()
+
+	var calls atomic.Int32
+	rt := &daemonRuntime{
+		baseDir:   baseDir,
+		contextID: "ctx-self",
+		cfg:       &config.Config{DaemonMessageTemplate: "PING {node} in {context_id}"},
+		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
+			calls.Add(1)
+			return controlplane.SystemMessageResult{Delivered: true}, nil
+		},
+	}
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      pending.PaneID,
+		SessionName: "review",
+		SessionDir:  sessionDir,
+	}
+	if !rt.beginAutoPing(pending.NodeKey) {
+		t.Fatal("beginAutoPing: want true for first call")
+	}
+
+	rt.dispatchAutoPingDelivery(pending.NodeKey, nodeInfo, pending, "PING {node}", nil, nil, nil, nil, 0)
+	waitForAutoPingEventIdle(t, rt, pending.NodeKey, 2*time.Second)
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("auto-PING sender calls = %d, want 0", got)
+	}
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectAutoPingState() ok = false, want true")
+	}
+	if !state.Nodes[pending.NodeKey].Pending {
+		t.Fatal("pending auto-PING was cleared by a skipped reserved dispatch")
 	}
 }
 

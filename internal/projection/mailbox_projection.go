@@ -18,11 +18,12 @@ type ProjectedFile struct {
 }
 
 type MailboxProjection struct {
-	Post        map[string]ProjectedFile
-	Inbox       map[string]ProjectedFile
-	Read        map[string]ProjectedFile
-	DeadLetter  map[string]ProjectedFile
-	managedPost map[string]bool
+	Post           map[string]ProjectedFile
+	Inbox          map[string]ProjectedFile
+	Read           map[string]ProjectedFile
+	DeadLetter     map[string]ProjectedFile
+	managedPost    map[string]bool
+	tombstonedRead map[string]bool
 }
 
 type mailboxProjectionMarker struct {
@@ -56,11 +57,12 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 	}
 
 	projected := MailboxProjection{
-		Post:        make(map[string]ProjectedFile),
-		Inbox:       make(map[string]ProjectedFile),
-		Read:        make(map[string]ProjectedFile),
-		DeadLetter:  make(map[string]ProjectedFile),
-		managedPost: make(map[string]bool),
+		Post:           make(map[string]ProjectedFile),
+		Inbox:          make(map[string]ProjectedFile),
+		Read:           make(map[string]ProjectedFile),
+		DeadLetter:     make(map[string]ProjectedFile),
+		managedPost:    make(map[string]bool),
+		tombstonedRead: make(map[string]bool),
 	}
 	sawLease := false
 	sawResolution := false
@@ -100,7 +102,51 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 				return MailboxProjection{}, false, fmt.Errorf("invalid inbox path for %q", payload.MessageID)
 			}
 		case MailboxProjectionReadEventType:
-			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
+			inboxKey := inboxPathFromPayload(payload, state.TmuxSessionName)
+			if payload.Content == "" {
+				// A read event can carry empty content when its shadow
+				// recorder raced a concurrent projection sync writing the
+				// same path, or observed the file before a first-ever read
+				// established any content yet (see issue #633). Validate
+				// the path first.
+				if !isAllowedProjectionPath(payload.Path) {
+					return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
+				}
+				readKey := pathKey(payload.Path)
+				if _, exists := projected.Read[readKey]; exists {
+					// A genuine, non-empty read already completed this
+					// transition earlier; this is a later racy re-render.
+					// Keep the good content (untouched) and finish
+					// removing the inbox entry as normal.
+					delete(projected.Inbox, inboxKey)
+					continue
+				}
+				// First-ever read for this message carries no usable
+				// content. The message has still left inbox -- for the
+				// non-owner direct-pop path in particular,
+				// ArchiveInboxMessage already moved it to read/ via a raw
+				// rename before any journal event exists for it -- so the
+				// inbox entry no longer reflects reality and must be
+				// removed. Leaving it in place would make
+				// syncDesiredMailboxFiles write the message back into
+				// inbox/, resurrecting an already-archived message as
+				// unread and re-consumable (found in review of the prior
+				// fix). But we must not fabricate an empty Read entry
+				// either (the original #633 truncation bug), and we must
+				// not let the cleanup pass delete whatever real file is
+				// already sitting at this read path just because this
+				// replay has no content for it. Tombstone the path
+				// instead: syncDesiredMailboxFiles preserves an existing
+				// on-disk file there (like the managedPost exception for
+				// post/) rather than deleting or resurrecting it. A
+				// subsequent genuine, non-empty read event still
+				// completes the transition normally.
+				delete(projected.Inbox, inboxKey)
+				projected.tombstonedRead[readKey] = true
+				continue
+			}
+			delete(projected.Inbox, inboxKey)
+			delete(projected.tombstonedRead, pathKey(payload.Path))
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
@@ -156,7 +202,7 @@ func SyncMailboxProjection(sessionDir string) error {
 			return fmt.Errorf("ensuring %s dir: %w", root, err)
 		}
 	}
-	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost); err != nil {
+	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost, projected.tombstonedRead); err != nil {
 		return err
 	}
 	return writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
@@ -237,7 +283,7 @@ func isAllowedProjectionPath(relativePath string) bool {
 	return false
 }
 
-func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, managedPost map[string]bool) error {
+func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, managedPost map[string]bool, tombstonedRead map[string]bool) error {
 	for relativePath, content := range desired {
 		if !isAllowedProjectionPath(relativePath) {
 			return fmt.Errorf("invalid desired projection path %q", relativePath)
@@ -253,7 +299,7 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, manag
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("reading existing projection file %s: %w", relativePath, err)
 		}
-		if err := os.WriteFile(absPath, []byte(content), 0o600); err != nil {
+		if err := writeFileAtomic(absPath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing projection file %s: %w", relativePath, err)
 		}
 	}
@@ -277,6 +323,16 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, manag
 			}
 			if strings.HasPrefix(rel, "post"+string(filepath.Separator)) {
 				if !managedPost[rel] {
+					return nil
+				}
+			}
+			if strings.HasPrefix(rel, "read"+string(filepath.Separator)) {
+				// A tombstoned path had its only read event recorded with
+				// empty content (see issue #633 follow-up): preserve
+				// whatever is already on disk here instead of deleting it
+				// -- the file may be a legitimately archived message
+				// whose content this replay simply doesn't have.
+				if tombstonedRead[rel] {
 					return nil
 				}
 			}
@@ -398,4 +454,31 @@ func ensureMailboxDir(path string) error {
 		return err
 	}
 	return os.Chmod(path, 0o700)
+}
+
+// writeFileAtomic writes content to a temp file in path's directory, then
+// renames it into place. A concurrent reader of path (for example the
+// daemon's read-event shadow recorder) can then never observe a partially
+// written or truncated file: os.Rename atomically swaps the previous
+// complete content for the new complete content. See issue #633.
+func writeFileAtomic(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".mailbox-projection-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
