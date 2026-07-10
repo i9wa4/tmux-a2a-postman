@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -635,5 +636,49 @@ func TestProcessDaemonSubmitRequest_RuntimeProfileFileForceOverwrites(t *testing
 	}
 	if len(written) == 0 {
 		t.Fatal("overwritten profile is empty")
+	}
+}
+
+// TestRecordDaemonSubmitPopRead_PrefersFallbackOverTruncatedReadPath
+// reproduces the #633 race: readPath is caught mid-truncation (0 bytes) by
+// a concurrent projection sync at the exact moment the pop path records its
+// read event. The known-good content read from the inbox message before
+// archiving (fallbackContent) must win instead of the torn on-disk read.
+func TestRecordDaemonSubmitPopRead_PrefersFallbackOverTruncatedReadPath(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.July, 10, 15, 2, 6, 0, time.UTC)
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", now)
+	t.Cleanup(journal.ClearProcessManager)
+
+	filename := "20260710-000149-s7c1c-ra364-from-orchestrator-to-guardian.md"
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(read): %v", err)
+	}
+	// Simulate the torn/truncated file a racing projection sync can leave
+	// visible mid-rewrite: present on disk, but 0 bytes.
+	if err := os.WriteFile(readPath, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(truncated readPath): %v", err)
+	}
+
+	recordDaemonSubmitPopRead(sessionDir, readPath, filename, "full correct body")
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay() error = %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Type != projection.MailboxProjectionReadEventType {
+		t.Fatalf("last event type = %q, want %s", last.Type, projection.MailboxProjectionReadEventType)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(last.Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(payload): %v", err)
+	}
+	if payload["content"] != "full correct body" {
+		t.Fatalf("recorded read content = %q, want full correct body (torn read must not win)", payload["content"])
 	}
 }
