@@ -34,10 +34,10 @@ Modes:
 
 Fail-open rule (command_approver_node):
   Every mode above, including blocking, only becomes restrictive once a VALID
-  command_approver_node is configured (postman.toml [postman] command_approver_node, or a
-  per-policy command_approver_node override under [[postman.command_approval]] —
-  naming a real, configured node, same family as ui_node). Unset, or set to a
-  node name that does not resolve, means every command runs, recorded
+  command_approver_node is configured by marking one real node in postman.md
+  Mermaid edges with class <node> command_approver_node, same family as ui_node.
+  The approver is global; per-policy approver routing is not supported. Unset,
+  or set to a node name that does not resolve, means every command runs, recorded
   distinctly as auto_approved_no_reviewer rather than a real approval. An
   unresolvable command_approver_node also produces a load-time warning and a visible
   marker in get-status, so a typo never silently disables blocking mode.

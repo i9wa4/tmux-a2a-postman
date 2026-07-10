@@ -17,6 +17,11 @@ defaults.
 - The explicit human-facing startup PING target should normally be marked in
   Mermaid with the `ui_node` class, keeping topology-facing settings in one
   diagram.
+- The execute-bash command approver should be marked in Mermaid with the
+  `command_approver_node` class. This is a singleton topology-facing
+  designation like `ui_node`; `[postman] command_approver_node` and per-policy
+  `command_approver_node` keys in `postman.toml` are no longer user-facing
+  config surfaces.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
   catalog from selected `SKILL.md` frontmatter without inlining skill bodies.
   Entries with omitted `inject` are appended to normal role context and remain
@@ -82,11 +87,37 @@ graph LR
     orchestrator --- worker
     orchestrator --- critic
     class messenger ui_node
+    class orchestrator command_approver_node
     classDef ui_node fill:#e0f2fe
+    classDef command_approver_node fill:#fef3c7
 ```
 ````
 
 This creates `messenger`, `orchestrator`, `worker`, and `critic` nodes even
 when no `[messenger]`, `[orchestrator]`, `[worker]`, or `[critic]` TOML sections
 exist. The `ui_node` class explicitly marks `messenger` as the startup
-auto-PING target.
+auto-PING target. The `command_approver_node` class marks `orchestrator` as the
+single execute-bash approver for all command approval policies.
+
+## 5. Command Approver Migration
+
+Legacy TOML-only command approver configs intentionally downgrade to fail-open
+until migrated. During load, `command_approver_node` in `postman.toml` emits a
+deprecation warning and is ignored. Because execute-bash only becomes
+restrictive when a valid Mermaid `command_approver_node` resolves to a
+configured node, blocking policies without the new class record
+`auto_approved_no_reviewer` and run.
+
+To migrate, move the approver designation into the `postman.md` Mermaid graph:
+
+```mermaid
+graph LR
+    worker --- orchestrator
+    class orchestrator command_approver_node
+```
+
+Restart the daemon after editing `postman.md`, then confirm `get-status` has no
+`command_approval.unresolved_command_approvers` marker and no
+`command_approval.deprecated_command_approvers` marker. The deprecated marker
+lists ignored legacy TOML approver keys; its presence means stale TOML remains
+in the effective config and the migration is not complete.

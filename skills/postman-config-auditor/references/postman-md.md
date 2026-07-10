@@ -43,6 +43,14 @@ Rules:
 - Prefer marking the UI node in the Mermaid graph with `class <node> ui_node`.
   Inline `:::ui_node` also works. Frontmatter `ui_node` is still supported as an
   explicit override.
+- Mark the execute-bash command approver in the Mermaid graph with
+  `class <node> command_approver_node`. Inline
+  `<node>:::command_approver_node` also works. Exactly one distinct
+  `command_approver_node` may be marked in the document.
+- Migration checks must confirm `get-status` has neither
+  `command_approval.unresolved_command_approvers` nor
+  `command_approval.deprecated_command_approvers`. The deprecated marker means
+  ignored legacy TOML approver keys are still present.
 - Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
 - `skill_path` may be a scalar path or a YAML list of path entries.
 - `skill_path` list items may be scalar paths or mappings with `path`,
@@ -183,7 +191,9 @@ graph LR
     orchestrator --- worker
     orchestrator --- critic
     class messenger ui_node
+    class orchestrator command_approver_node
     classDef ui_node fill:#e0f2fe
+    classDef command_approver_node fill:#fef3c7
 ```
 ````
 
@@ -192,6 +202,10 @@ Edge rules:
 - Only `---` is parsed as an edge operator.
 - The UI node may be marked with a `class messenger ui_node` statement, or with
   inline class syntax such as `messenger:::ui_node`.
+- The command approver node may be marked with a
+  `class orchestrator command_approver_node` statement, or with inline class
+  syntax such as `orchestrator:::command_approver_node`. It is global for all
+  execute-bash policies.
 - `graph`, `flowchart`, `subgraph`, `end`, `direction`, `classDef`, `class`,
   `style`, `click`, `linkStyle`, `accTitle`, and `accDescr` statements are
   skipped.
@@ -292,6 +306,9 @@ Important rules:
 - A Mermaid `ui_node` class in the `edges` graph sets `ui_node` when
   frontmatter does not set it. Frontmatter `ui_node` wins within the same
   Markdown file.
+- A Mermaid `command_approver_node` class in the `edges` graph sets the global
+  execute-bash command approver. There is no TOML or per-policy override for
+  this field.
 - XDG `postman.md` `message_footer` replaces the lower-layer footer.
 - `skill_path` is applied within the Markdown layer that declares it. Entries
   with omitted `inject` append generated catalogs to that layer's

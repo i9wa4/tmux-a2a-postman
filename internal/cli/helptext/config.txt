@@ -8,7 +8,8 @@ Primary files:
 postman.toml is optional. Embedded defaults from postman.default.toml are used
 when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
 nodes referenced by those edges are materialized automatically. Mark the
-human-facing startup PING target with the Mermaid ui_node class.
+human-facing startup PING target with the Mermaid ui_node class. Mark the
+execute-bash approver with the Mermaid command_approver_node class.
 Public defaults are owned by postman.default.toml; DefaultConfig only
 initializes structural containers.
 Global config is read once at daemon startup. Restart the daemon after editing
@@ -28,6 +29,7 @@ Quick reading guide:
 Core config:
   edges                            Bidirectional routes between nodes
   ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node
+  command_approver_node            Mermaid-only singleton: class <node> command_approver_node in postman.md
   auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)
   message_footer                   Header guidance before the sender body separator
   draft_template                   Structured envelope for stored send-heredoc Markdown
@@ -54,6 +56,21 @@ Edge syntax:
     "node-a --- node-b",   # bidirectional: a<->b
     "node-b --- node-c",   # bidirectional: b<->c
   ]
+
+Mermaid node designation:
+  class messenger ui_node
+  class orchestrator command_approver_node
+
+Migration note:
+  [postman] command_approver_node and per-policy command_approver_node keys in
+  postman.toml are ignored with a deprecation warning. Move the approver to
+  postman.md. Until a valid Mermaid command_approver_node resolves to a
+  configured node, every execute-bash mode, including blocking, fails open and
+  records auto_approved_no_reviewer.
+  get-status reports stale ignored TOML approver keys under
+  command_approval.deprecated_command_approvers. Migration is complete only
+  when command_approval.unresolved_command_approvers and
+  command_approval.deprecated_command_approvers are both absent.
 
 Command approval policy:
   [[postman.command_approval]]

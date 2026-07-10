@@ -325,6 +325,52 @@ approval_ttl_seconds = 900
 	}
 }
 
+func TestLoadConfig_TOMLCommandApproverNodeIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+
+	content := `
+[postman]
+edges = ["worker --- orchestrator"]
+command_approver_node = "orchestrator"
+
+[[postman.command_approval]]
+requester = "worker"
+label = "deploy"
+command_approver_node = "orchestrator"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.CommandApproverNode != "" {
+		t.Fatalf("CommandApproverNode = %q, want TOML command_approver_node ignored", cfg.CommandApproverNode)
+	}
+	if len(cfg.DeprecatedCommandApproverNodes) != 2 {
+		t.Fatalf("DeprecatedCommandApproverNodes = %#v, want global and per-policy entries", cfg.DeprecatedCommandApproverNodes)
+	}
+	want := map[string]string{
+		"command_approver_node":                     "orchestrator",
+		"command_approval[0].command_approver_node": "orchestrator",
+	}
+	for _, got := range cfg.DeprecatedCommandApproverNodes {
+		if want[got.Field] != got.Value {
+			t.Fatalf("deprecated command approver entry = %#v, want one of %#v", got, want)
+		}
+		delete(want, got.Field)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing deprecated command approver entries: %#v", want)
+	}
+}
+
 func TestLoadConfig_XDGMarkdownEdgesOnlyMaterializesNodes(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -1973,6 +2019,11 @@ func TestWarnDeprecatedKeys(t *testing.T) {
 			name:    "auto_enable_new_agents triggers warning",
 			raw:     "auto_enable_new_agents = true\n",
 			wantKey: "auto_enable_new_agents",
+		},
+		{
+			name:    "command_approver_node triggers warning",
+			raw:     "command_approver_node = \"orchestrator\"\n",
+			wantKey: "command_approver_node",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

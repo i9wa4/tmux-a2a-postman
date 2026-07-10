@@ -125,16 +125,27 @@ func parseMermaidEdges(mermaidBlock string) []string {
 	return edges
 }
 
-const mermaidUINodeClass = "ui_node"
+const (
+	mermaidUINodeClass              = "ui_node"
+	mermaidCommandApproverNodeClass = "command_approver_node"
+)
 
 func parseMermaidUINode(mermaidBlock string) (string, bool, error) {
+	return parseMermaidDesignatedNode(mermaidBlock, mermaidUINodeClass)
+}
+
+func parseMermaidCommandApproverNode(mermaidBlock string) (string, bool, error) {
+	return parseMermaidDesignatedNode(mermaidBlock, mermaidCommandApproverNodeClass)
+}
+
+func parseMermaidDesignatedNode(mermaidBlock, className string) (string, bool, error) {
 	var found string
 	for _, statement := range mermaidStatements(mermaidBlock) {
 		statement = strings.TrimSpace(statement)
 		if statement == "" {
 			continue
 		}
-		for _, node := range parseMermaidUINodeStatement(statement) {
+		for _, node := range parseMermaidDesignatedNodeStatement(statement, className) {
 			if node == "" {
 				continue
 			}
@@ -143,7 +154,7 @@ func parseMermaidUINode(mermaidBlock string) (string, bool, error) {
 				continue
 			}
 			if found != node {
-				return "", false, fmt.Errorf("multiple Mermaid ui_node declarations: %q and %q", found, node)
+				return "", false, fmt.Errorf("multiple Mermaid %s declarations: %q and %q", className, found, node)
 			}
 		}
 	}
@@ -153,26 +164,33 @@ func parseMermaidUINode(mermaidBlock string) (string, bool, error) {
 	return found, true, nil
 }
 
-func parseMermaidUINodeStatement(statement string) []string {
-	if nodes := parseMermaidClassUINodeStatement(statement); len(nodes) > 0 {
+func parseMermaidDesignatedNodeStatement(statement, className string) []string {
+	if nodes := parseMermaidClassDesignatedNodeStatement(statement, className); len(nodes) > 0 {
 		return nodes
 	}
 	if shouldSkipMermaidStatement(statement) {
 		return nil
 	}
-	return parseMermaidInlineUINodeStatement(statement)
+	return parseMermaidInlineDesignatedNodeStatement(statement, className)
 }
 
-func parseMermaidClassUINodeStatement(statement string) []string {
+func parseMermaidClassDesignatedNodeStatement(statement, className string) []string {
 	fields := strings.Fields(strings.TrimSpace(strings.TrimSuffix(statement, ";")))
 	if len(fields) < 3 || strings.ToLower(fields[0]) != "class" {
 		return nil
 	}
-	if !mermaidClassTokensContain(fields[2:], mermaidUINodeClass) {
+	classStart := -1
+	for i := 2; i < len(fields); i++ {
+		if mermaidClassTokensContain([]string{fields[i]}, className) {
+			classStart = i
+			break
+		}
+	}
+	if classStart == -1 {
 		return nil
 	}
 	nodes := make([]string, 0, 1)
-	for _, rawNode := range strings.Split(fields[1], ",") {
+	for _, rawNode := range strings.Split(strings.Join(fields[1:classStart], " "), ",") {
 		node := normalizeMermaidNodeID(rawNode)
 		if node != "" {
 			nodes = append(nodes, node)
@@ -181,13 +199,19 @@ func parseMermaidClassUINodeStatement(statement string) []string {
 	return nodes
 }
 
-func parseMermaidInlineUINodeStatement(statement string) []string {
-	if !strings.Contains(statement, "---") {
+func parseMermaidInlineDesignatedNodeStatement(statement, className string) []string {
+	parts := []string{statement}
+	switch {
+	case strings.Contains(statement, "---"):
+		parts = strings.Split(statement, "---")
+	case containsUnsupportedMermaidEdgeOperator(statement):
+		return nil
+	case !isMermaidStandaloneNodeStatement(statement):
 		return nil
 	}
 	nodes := make([]string, 0, 1)
-	for _, rawNode := range strings.Split(statement, "---") {
-		if !mermaidNodeHasClass(rawNode, mermaidUINodeClass) {
+	for _, rawNode := range parts {
+		if !mermaidNodeHasClass(rawNode, className) {
 			continue
 		}
 		node := normalizeMermaidNodeID(rawNode)
@@ -196,6 +220,60 @@ func parseMermaidInlineUINodeStatement(statement string) []string {
 		}
 	}
 	return nodes
+}
+
+func isMermaidStandaloneNodeStatement(statement string) bool {
+	statement = strings.TrimSpace(strings.TrimSuffix(statement, ";"))
+	if statement == "" {
+		return false
+	}
+	squareDepth := 0
+	parenDepth := 0
+	braceDepth := 0
+	for i := 0; i < len(statement); i++ {
+		switch statement[i] {
+		case '[':
+			squareDepth++
+		case ']':
+			if squareDepth > 0 {
+				squareDepth--
+			}
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		case ' ', '\t':
+			if squareDepth == 0 && parenDepth == 0 && braceDepth == 0 {
+				return false
+			}
+		}
+	}
+	return squareDepth == 0 && parenDepth == 0 && braceDepth == 0
+}
+
+func containsUnsupportedMermaidEdgeOperator(statement string) bool {
+	operators := []string{
+		"-->",
+		"<--",
+		"==>",
+		"<==",
+		"-.->",
+		"<-.-",
+	}
+	for _, operator := range operators {
+		if strings.Contains(statement, operator) {
+			return true
+		}
+	}
+	return false
 }
 
 func mermaidClassTokensContain(tokens []string, want string) bool {
@@ -211,15 +289,63 @@ func mermaidClassTokensContain(tokens []string, want string) bool {
 }
 
 func mermaidNodeHasClass(rawNode string, want string) bool {
-	idx := strings.Index(rawNode, ":::")
-	if idx < 0 {
+	node := strings.TrimSpace(strings.TrimSuffix(rawNode, ";"))
+	classStart := mermaidInlineClassStart(node)
+	if classStart < 0 {
 		return false
 	}
-	classes := strings.TrimSpace(rawNode[idx+3:])
-	if cut := strings.IndexAny(classes, " \t;"); cut >= 0 {
+	classes := strings.TrimSpace(node[classStart+3:])
+	if cut := mermaidInlineClassSuffixEnd(classes); cut >= 0 {
 		classes = classes[:cut]
 	}
-	return mermaidClassTokensContain([]string{classes}, want)
+	return mermaidClassTokensContain(strings.Split(classes, ":::"), want)
+}
+
+func mermaidInlineClassStart(node string) int {
+	squareDepth := 0
+	parenDepth := 0
+	braceDepth := 0
+	for i := 0; i < len(node); i++ {
+		if squareDepth == 0 && parenDepth == 0 && braceDepth == 0 &&
+			i+3 <= len(node) && node[i:i+3] == ":::" {
+			return i
+		}
+		switch node[i] {
+		case '[':
+			squareDepth++
+		case ']':
+			if squareDepth > 0 {
+				squareDepth--
+			}
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth > 0 {
+				braceDepth--
+			}
+		}
+	}
+	return -1
+}
+
+func mermaidInlineClassSuffixEnd(classes string) int {
+	for i := 0; i < len(classes); i++ {
+		switch classes[i] {
+		case ' ', '\t', ';', '[', '(', '{':
+			return i
+		case '@':
+			if i+1 < len(classes) && classes[i+1] == '{' {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func mermaidStatements(block string) []string {
@@ -447,7 +573,8 @@ func stripFrontmatter(content string) string {
 // skill_path → generated skill catalog appended to Config.CommonTemplate, or
 // to daemon PING role content when an entry uses inject: ping or inject: compaction_ping.
 // Mermaid edges may mark the UI node with the ui_node class when frontmatter
-// does not override it.
+// does not override it. Mermaid edges may also mark the command approval
+// reviewer with the command_approver_node class.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
 // Node h2 sections: "## `name`" → node template with ### `role` h3 field.
@@ -490,6 +617,13 @@ func loadMarkdownConfig(path string) (*Config, error) {
 				cfg.UINode = uiNode
 				cfg.uiNodeSet = true
 			}
+		}
+		commandApproverNode, ok, err := parseMermaidCommandApproverNode(mermaidBlock)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if ok {
+			cfg.CommandApproverNode = commandApproverNode
 		}
 	}
 
