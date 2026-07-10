@@ -375,9 +375,17 @@ func writeRuntimeProfileFile(outputPath, requestID string, data []byte, force bo
 }
 
 func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) {
+	// fallbackContent was read directly from the inbox message before it was
+	// archived to readPath, so it is already known-good. Re-reading readPath
+	// here served no purpose and could observe a torn/truncated file if a
+	// concurrent projection sync was rewriting the same path (issue #633);
+	// only fall back to a disk read if fallbackContent is unexpectedly
+	// empty, and never let an empty disk read clobber known-good content.
 	content := fallbackContent
-	if readContent, err := os.ReadFile(readPath); err == nil {
-		content = string(readContent)
+	if content == "" {
+		if readContent, err := os.ReadFile(readPath); err == nil && len(readContent) > 0 {
+			content = string(readContent)
+		}
 	}
 	recordMailboxProjectionPayload(sessionDir, filepath.Base(sessionDir), projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, mailboxProjectionPayloadForFile(
 		filename,

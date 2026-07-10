@@ -101,6 +101,19 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 			}
 		case MailboxProjectionReadEventType:
 			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
+			if payload.Content == "" {
+				// A read event can carry empty content when its shadow
+				// recorder raced a concurrent projection sync writing the
+				// same path (see issue #633). Validate the path but keep
+				// whatever content is already projected rather than
+				// truncating it: the next non-empty read event (if any)
+				// still wins, and an already-corrupted on-disk file
+				// self-heals the moment the journal is replayed again.
+				if !isAllowedProjectionPath(payload.Path) {
+					return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
+				}
+				continue
+			}
 			if !setProjectedFile(projected.Read, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
@@ -253,7 +266,7 @@ func syncDesiredMailboxFiles(sessionDir string, desired map[string]string, manag
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("reading existing projection file %s: %w", relativePath, err)
 		}
-		if err := os.WriteFile(absPath, []byte(content), 0o600); err != nil {
+		if err := writeFileAtomic(absPath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("writing projection file %s: %w", relativePath, err)
 		}
 	}
@@ -398,4 +411,31 @@ func ensureMailboxDir(path string) error {
 		return err
 	}
 	return os.Chmod(path, 0o700)
+}
+
+// writeFileAtomic writes content to a temp file in path's directory, then
+// renames it into place. A concurrent reader of path (for example the
+// daemon's read-event shadow recorder) can then never observe a partially
+// written or truncated file: os.Rename atomically swaps the previous
+// complete content for the new complete content. See issue #633.
+func writeFileAtomic(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".mailbox-projection-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }

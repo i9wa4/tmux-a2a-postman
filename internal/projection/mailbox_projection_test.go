@@ -246,6 +246,117 @@ func TestSyncMailboxProjection_RemovesConsumedProjectedPostFiles(t *testing.T) {
 	}
 }
 
+// TestProjectMailboxProjection_IgnoresEmptyContentReadEvent reproduces the
+// #633 root cause: a burst of racy mailbox_projection_read events for the
+// same message_id, where a later event's payload carries empty content
+// (e.g. its shadow recorder observed a torn/truncated file mid rewrite).
+// Replaying such a journal must not let the empty read permanently zero
+// out the projected body.
+func TestProjectMailboxProjection_IgnoresEmptyContentReadEvent(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.July, 10, 15, 1, 50, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	filename := "20260710-000149-s7c1c-ra364-from-orchestrator-to-guardian.md"
+	readRel := filepath.Join("read", filename)
+	appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "guardian",
+		Path:      readRel,
+		Content:   "full correct body",
+	}, now.Add(16*time.Second))
+
+	for i := 0; i < 4; i++ {
+		appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+			MessageID: filename,
+			From:      "orchestrator",
+			To:        "guardian",
+			Path:      readRel,
+			Content:   "",
+		}, now.Add(time.Duration(20+i)*time.Second))
+	}
+
+	projected, ok, err := ProjectMailboxProjection(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectMailboxProjection() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMailboxProjection() ok = false, want true")
+	}
+	if got := projected.Read[pathKey(readRel)]; got.Content != "full correct body" {
+		t.Fatalf("read projection content = %q, want full correct body (empty read events must not clobber it)", got.Content)
+	}
+
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(sessionDir, readRel))
+	if err != nil {
+		t.Fatalf("ReadFile(projected read file): %v", err)
+	}
+	if string(got) != "full correct body" {
+		t.Fatalf("projected read file content = %q, want full correct body", string(got))
+	}
+}
+
+// TestWriteFileAtomic_NeverLeavesTruncatedFileVisible guards against
+// regressing to a truncate-in-place write for projected mailbox files: a
+// concurrent reader must always see either the full old content or the
+// full new content on the target path, never an empty/partial write.
+func TestWriteFileAtomic_NeverLeavesTruncatedFileVisible(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "read", "20260710-000149-s7c1c-ra364-from-orchestrator-to-guardian.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := writeFileAtomic(path, []byte("first version"), 0o600); err != nil {
+		t.Fatalf("writeFileAtomic(first): %v", err)
+	}
+
+	stop := make(chan struct{})
+	sawTruncated := make(chan bool, 1)
+	go func() {
+		defer close(sawTruncated)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				content, err := os.ReadFile(path)
+				if err == nil && len(content) == 0 {
+					sawTruncated <- true
+					return
+				}
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		if err := writeFileAtomic(path, []byte("rewritten version"), 0o600); err != nil {
+			t.Fatalf("writeFileAtomic(rewrite %d): %v", i, err)
+		}
+	}
+	close(stop)
+	if truncated, ok := <-sawTruncated; ok && truncated {
+		t.Fatal("concurrent reader observed a 0-byte file during atomic rewrite")
+	}
+
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != filepath.Base(path) {
+			t.Fatalf("leftover temp file after atomic write: %s", entry.Name())
+		}
+	}
+}
+
 func appendMailboxEventForTest(t *testing.T, writer *journal.Writer, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload, now time.Time) {
 	t.Helper()
 	if _, err := writer.AppendEvent(eventType, visibility, payload, now); err != nil {
