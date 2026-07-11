@@ -75,8 +75,8 @@ func collectLiveSessionStatus(baseDir, contextID, sessionName string, cfg *confi
 	return collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName, cfg, nil, false)
 }
 
-func projectedInputRequestCounts(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {
-	projected, ok, err := projection.ProjectMessageInputRequestState(sessionDir, sessionName)
+func projectedInputRequestCounts(sessionDir, sessionName string, now time.Time, staleAfterSeconds int) (projection.MessageInputRequestState, bool) {
+	projected, ok, err := projection.ProjectMessageInputRequestStateAt(sessionDir, sessionName, now, staleAfterSeconds)
 	if err != nil || !ok {
 		return projection.MessageInputRequestState{}, false
 	}
@@ -150,6 +150,9 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 			node.InfoUnreadCount = inputs.inputRequests.InfoUnreadCounts[simpleName]
 			node.InputRequired = statusInputRequestDetails(inputs.inputRequests.InputRequired, simpleName, "inbound")
 			node.WaitingOnInput = statusInputRequestDetails(inputs.inputRequests.WaitingOnInput, simpleName, "outbound")
+			if requestSatisfaction, ok := inputs.inputRequests.RequestSatisfaction[simpleName]; ok {
+				node.RequestSatisfaction = statusRequestSatisfaction(requestSatisfaction)
+			}
 			inputRequiredCount = node.InputRequiredCount
 			if node.InboxCount > inputs.inputRequests.UnreadCounts[simpleName] {
 				inputRequiredCount = -1
@@ -303,7 +306,8 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	sessionDir := filepath.Join(baseDir, contextID, sessionName)
 	paneActivity := loadPaneActivityEvidence(filepath.Join(baseDir, contextID, "pane-activity.json"))
 	queues := collectSessionQueues(sessionDir)
-	inputRequests, useInputRequests := projectedInputRequestCounts(sessionDir, sessionName)
+	now := time.Now()
+	inputRequests, useInputRequests := projectedInputRequestCounts(sessionDir, sessionName, now, inputRequestStaleAfterSeconds(cfg))
 	panes, err := discoverSessionPanes(sessionName)
 	if err != nil {
 		return status.SessionStatus{}, err
@@ -325,7 +329,6 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		}
 	}
 
-	now := time.Now()
 	blockedByNode := map[string][]projection.BlockedReport{}
 	if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, sessionName); err == nil && ok {
 		blockedByNode = blocked.ReportsByNode
@@ -379,6 +382,32 @@ func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, no
 		})
 	}
 	return result
+}
+
+func statusRequestSatisfaction(satisfaction projection.RequestSatisfaction) *status.RequestSatisfactionSummary {
+	fillRate := 0.0
+	if satisfaction.OpenedCount > 0 {
+		fillRate = float64(satisfaction.FilledCount) / float64(satisfaction.OpenedCount)
+	}
+	return &status.RequestSatisfactionSummary{
+		OpenedCount:              satisfaction.OpenedCount,
+		FilledCount:              satisfaction.FilledCount,
+		OpenCount:                satisfaction.OpenCount,
+		StaleOpenCount:           satisfaction.StaleOpenCount,
+		StaleAfterSeconds:        satisfaction.StaleAfterSeconds,
+		FillRate:                 fillRate,
+		AverageTimeToFillSeconds: satisfaction.AverageTimeToFillSeconds,
+		LongestOpenAgeSeconds:    satisfaction.LongestOpenAgeSeconds,
+		Signal:                   "responsiveness",
+		Interpretation:           "weak signal only; measures whether required input requests were filled, not whether responses were correct",
+	}
+}
+
+func inputRequestStaleAfterSeconds(cfg *config.Config) int {
+	if cfg != nil && cfg.InputRequestStaleSeconds > 0 {
+		return int(cfg.InputRequestStaleSeconds)
+	}
+	return projection.DefaultInputRequestStaleAfterSeconds
 }
 
 func ownsCanonicalSessionStatus(baseDir, contextID, sessionName string) bool {

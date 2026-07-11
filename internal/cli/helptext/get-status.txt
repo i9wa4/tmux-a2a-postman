@@ -16,6 +16,11 @@ Output:
   and waiting_on_input detail arrays for open input requests. Details
   include direction, message_id, input_request_id, sender, recipient,
   reply_policy, opened_at, opened_at_source, and read_at when available.
+  nodes[*].flow.input_requests.request_satisfaction aggregates opened_count,
+  filled_count, fill_rate, average_time_to_fill_seconds, open_count, and
+  stale_open_count. This is a weak responsiveness signal only: it measures
+  whether required input requests were filled, not whether replies were
+  correct.
   Use inspect-input --id <message_id-or-input_request_id> to inspect a specific
   open input request without reading inbox mail.
   Contextual severity fields include severity, severity_source,
