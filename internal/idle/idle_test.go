@@ -1234,6 +1234,98 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenRecentMarkerReplacedBySing
 	}
 }
 
+func TestCheckPaneCapture_CompactionTriggerRetainsBoundedSuffixIdentityForLargeHistory(t *testing.T) {
+	scriptDir := t.TempDir()
+	visiblePath := filepath.Join(scriptDir, "visible.txt")
+	recentPath := filepath.Join(scriptDir, "recent.txt")
+	historyPath := filepath.Join(scriptDir, "history.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tcodex'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-3' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_RECENT\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_HISTORY\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_VISIBLE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
+	t.Setenv("TMUX_A2A_TEST_RECENT", recentPath)
+	t.Setenv("TMUX_A2A_TEST_HISTORY", historyPath)
+
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+		PaneCaptureTailLines:  3,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	largeSuffix := strings.Repeat("large-history-line\n", 4096)
+	if err := os.WriteFile(visiblePath, []byte("visible tail"), 0o644); err != nil {
+		t.Fatalf("WriteFile(visible): %v", err)
+	}
+	if err := os.WriteFile(recentPath, []byte("ordinary recent tail\nvisible tail"), 0o644); err != nil {
+		t.Fatalf("WriteFile(recent): %v", err)
+	}
+	if err := os.WriteFile(historyPath, []byte("retained prefix\n• Context compacted\n"+largeSuffix), 0o644); err != nil {
+		t.Fatalf("WriteFile(history): %v", err)
+	}
+
+	targets := tracker.checkPaneCapture(cfg, nodes)
+	if len(targets) != 1 {
+		t.Fatalf("checkPaneCapture() returned %d targets, want 1 for full-history marker", len(targets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	memory := tracker.nodeCompactionMemory["review:worker"]
+	tracker.mu.Unlock()
+
+	wantSuffixLength := len("\n" + largeSuffix)
+	for name, suffix := range map[string]compactionSuffixIdentity{
+		"pane state":  state.LastCompactionSuffix,
+		"node memory": memory.LastCompactionSuffix,
+	} {
+		if suffix.Length != wantSuffixLength {
+			t.Fatalf("%s suffix length = %d, want %d", name, suffix.Length, wantSuffixLength)
+		}
+		if len(suffix.Head) > maxCompactionSuffixWindowBytes {
+			t.Fatalf("%s suffix head retained %d bytes, want <= %d", name, len(suffix.Head), maxCompactionSuffixWindowBytes)
+		}
+		if len(suffix.Tail) > maxCompactionSuffixWindowBytes {
+			t.Fatalf("%s suffix tail retained %d bytes, want <= %d", name, len(suffix.Tail), maxCompactionSuffixWindowBytes)
+		}
+		if retained := len(suffix.Head) + len(suffix.Tail); retained > 2*maxCompactionSuffixWindowBytes {
+			t.Fatalf("%s retained %d suffix bytes, want <= %d", name, retained, 2*maxCompactionSuffixWindowBytes)
+		}
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerRepeatsWhenSingleMarkerFullHistoryFallbackReplacesOldMarker(t *testing.T) {
 	scriptDir := t.TempDir()
 	visiblePath := filepath.Join(scriptDir, "visible.txt")

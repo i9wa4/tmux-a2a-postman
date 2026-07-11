@@ -2,6 +2,7 @@ package idle
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	compactionPingCooldown       = 30 * time.Second
-	compactionMemoryRetention    = 24 * time.Hour
-	maxCompactionPrefixTailBytes = 256
+	compactionPingCooldown         = 30 * time.Second
+	compactionMemoryRetention      = 24 * time.Hour
+	maxCompactionPrefixTailBytes   = 256
+	maxCompactionSuffixWindowBytes = 256
 )
 
 type compactionCaptureScope string
@@ -58,6 +60,13 @@ type CompactionPingTarget struct {
 	Trigger string
 }
 
+type compactionSuffixIdentity struct {
+	Length int
+	Hash   [sha256.Size]byte
+	Head   string
+	Tail   string
+}
+
 // PaneCaptureState holds pane capture state for hybrid idle detection.
 type PaneCaptureState struct {
 	LastHash                  uint32    // CRC32 hash of pane content
@@ -70,7 +79,7 @@ type PaneCaptureState struct {
 	LastCompactionMarkers     int       // Marker occurrences in scanned content for the most recent compaction state
 	LastCompactionMarkerHash  uint32    // Hash of the normalized latest marker line, independent of capture scope
 	LastCompactionScope       compactionCaptureScope
-	LastCompactionSuffix      string
+	LastCompactionSuffix      compactionSuffixIdentity
 	LastCompactionPrefixHash  uint32 // Hash of scanned content through the latest marker occurrence
 	LastCompactionPrefixLines int    // Line count through the latest marker occurrence
 }
@@ -227,13 +236,14 @@ func containsCompactionTrigger(runtime, content string) bool {
 }
 
 type compactionMarkerScan struct {
-	Trigger            string
-	MarkerCount        int
-	MarkerLineHash     uint32
-	LatestMarkerPrefix string
-	LatestMarkerSuffix string
-	MarkerPrefixHash   uint32
-	MarkerPrefixLines  int
+	Trigger              string
+	MarkerCount          int
+	MarkerLineHash       uint32
+	LatestMarkerPrefix   string
+	LatestMarkerSuffix   string
+	LatestMarkerSuffixID compactionSuffixIdentity
+	MarkerPrefixHash     uint32
+	MarkerPrefixLines    int
 }
 
 func compactionTrigger(runtime, content string) string {
@@ -295,14 +305,16 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 	if markers == 0 {
 		return compactionMarkerScan{}
 	}
+	suffix := compactionSuffix(content, latestMarkerEnd)
 	return compactionMarkerScan{
-		Trigger:            trigger,
-		MarkerCount:        markers,
-		MarkerLineHash:     latestMarkerHash,
-		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
-		LatestMarkerSuffix: compactionSuffix(content, latestMarkerEnd),
-		MarkerPrefixHash:   hashContentCRC32(content[:latestMarkerEnd]),
-		MarkerPrefixLines:  latestMarkerLine + 1,
+		Trigger:              trigger,
+		MarkerCount:          markers,
+		MarkerLineHash:       latestMarkerHash,
+		LatestMarkerPrefix:   compactionPrefixTail(content, latestMarkerEnd),
+		LatestMarkerSuffix:   suffix,
+		LatestMarkerSuffixID: compactionSuffixID(suffix),
+		MarkerPrefixHash:     hashContentCRC32(content[:latestMarkerEnd]),
+		MarkerPrefixLines:    latestMarkerLine + 1,
 	}
 }
 
@@ -321,11 +333,47 @@ func compactionSuffix(content string, start int) string {
 	if start >= len(content) {
 		return ""
 	}
-	return strings.Clone(content[start:])
+	return content[start:]
 }
 
-func compactionSuffixContinues(previous, current string) bool {
-	return previous != "" && strings.HasPrefix(current, previous)
+func compactionSuffixID(suffix string) compactionSuffixIdentity {
+	id := compactionSuffixIdentity{
+		Length: len(suffix),
+		Hash:   sha256.Sum256([]byte(suffix)),
+	}
+	if suffix == "" {
+		return id
+	}
+	headEnd := len(suffix)
+	if headEnd > maxCompactionSuffixWindowBytes {
+		headEnd = maxCompactionSuffixWindowBytes
+	}
+	tailStart := 0
+	if len(suffix) > maxCompactionSuffixWindowBytes {
+		tailStart = len(suffix) - maxCompactionSuffixWindowBytes
+	}
+	id.Head = strings.Clone(suffix[:headEnd])
+	id.Tail = strings.Clone(suffix[tailStart:])
+	return id
+}
+
+func compactionSuffixIDMatches(id compactionSuffixIdentity, suffix string) bool {
+	if id.Length == 0 || len(suffix) != id.Length {
+		return false
+	}
+	if id.Hash != sha256.Sum256([]byte(suffix)) {
+		return false
+	}
+	if id.Head != "" && !strings.HasPrefix(suffix, id.Head) {
+		return false
+	}
+	return id.Tail == "" || strings.HasSuffix(suffix, id.Tail)
+}
+
+func compactionSuffixContinues(previous compactionSuffixIdentity, current string) bool {
+	return previous.Length > 0 &&
+		len(current) >= previous.Length &&
+		compactionSuffixIDMatches(previous, current[:previous.Length])
 }
 
 func isCodexCompactionLine(line string) bool {
@@ -426,7 +474,7 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionMarkers = scan.MarkerCount
 	state.LastCompactionMarkerHash = scan.MarkerLineHash
 	state.LastCompactionScope = scope
-	state.LastCompactionSuffix = scan.LatestMarkerSuffix
+	state.LastCompactionSuffix = scan.LatestMarkerSuffixID
 	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 }
@@ -436,7 +484,7 @@ func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerS
 		state.LastCompactionMarkers = scan.MarkerCount
 		state.LastCompactionMarkerHash = scan.MarkerLineHash
 		state.LastCompactionScope = scope
-		state.LastCompactionSuffix = scan.LatestMarkerSuffix
+		state.LastCompactionSuffix = scan.LatestMarkerSuffixID
 		state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 		state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 	}
@@ -609,7 +657,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				state.LastCompactionMarkers = 0
 				state.LastCompactionMarkerHash = 0
 				state.LastCompactionScope = ""
-				state.LastCompactionSuffix = ""
+				state.LastCompactionSuffix = compactionSuffixIdentity{}
 				state.LastCompactionPrefixHash = 0
 				state.LastCompactionPrefixLines = 0
 				t.clearNodeCompactionMemory(nodeKey)
