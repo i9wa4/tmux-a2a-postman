@@ -18,6 +18,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -198,6 +199,20 @@ func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics, s
 }
 
 func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions) error {
+	return writePopMessageOutputWithOps(stdout, content, filename, markdownPath, unreadBefore, remaining, runtimeContextMode, diagnostics, submitPath, receiverOptions, osPopReceiptFileOps)
+}
+
+type popReceiptFileOps struct {
+	mkdirAll  func(string, os.FileMode) error
+	writeFile func(string, []byte, os.FileMode) error
+}
+
+var osPopReceiptFileOps = popReceiptFileOps{
+	mkdirAll:  os.MkdirAll,
+	writeFile: os.WriteFile,
+}
+
+func writePopMessageOutputWithOps(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions, receiptOps popReceiptFileOps) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
@@ -213,10 +228,8 @@ func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath str
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
 	output.SubmitPath = submitPath
-	receiptPath, err := popReceiptPath(markdownPath)
-	if err != nil {
-		return err
-	}
+	receiptPlan := store.PlanPopReceipt(markdownPath)
+	receiptPath := receiptPlan.ReceiptPath
 	if receiptPath != "" {
 		output.PopReceiptPath = displayMarkdownPath(receiptPath)
 		if output.PopReceiptPath != receiptPath {
@@ -229,12 +242,22 @@ func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath str
 	}
 	payload = append(payload, '\n')
 	if receiptPath != "" {
-		if err := os.WriteFile(receiptPath, payload, 0o600); err != nil {
+		if err := writePopReceipt(receiptPlan, payload, receiptOps); err != nil {
 			return fmt.Errorf("writing pop receipt: %w", err)
 		}
 	}
 	_, err = stdout.Write(payload)
 	return err
+}
+
+func writePopReceipt(plan store.PopReceiptPlan, payload []byte, ops popReceiptFileOps) error {
+	if plan.ReceiptPath == "" {
+		return nil
+	}
+	if err := ops.mkdirAll(plan.ReadDir, 0o700); err != nil {
+		return fmt.Errorf("creating pop receipt directory: %w", err)
+	}
+	return ops.writeFile(plan.ReceiptPath, payload, 0o600)
 }
 
 func popSessionDiagnosticsForSession(sessionDir string) *popSessionDiagnostics {
@@ -378,26 +401,6 @@ func sessionDirFromArchivedMarkdownPath(markdownPath string) string {
 		return ""
 	}
 	return filepath.Dir(filepath.Dir(markdownPath))
-}
-
-func popReceiptPath(markdownPath string) (string, error) {
-	if markdownPath == "" {
-		return "", nil
-	}
-	dir := filepath.Dir(markdownPath)
-	if filepath.Base(dir) != "read" {
-		return "", nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("creating pop receipt directory: %w", err)
-	}
-	filename := filepath.Base(markdownPath)
-	ext := filepath.Ext(filename)
-	stem := strings.TrimSuffix(filename, ext)
-	if stem == "" {
-		stem = filename
-	}
-	return filepath.Join(dir, stem+".pop.json"), nil
 }
 
 func displayMarkdownPath(markdownPath string) string {
