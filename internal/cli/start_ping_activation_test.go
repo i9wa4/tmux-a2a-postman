@@ -122,7 +122,7 @@ func TestActivateStartupSessions_ExplicitFalseDoesNotClaimForeignSessions(t *tes
 	}
 }
 
-func TestActivateStartupSessions_ExplicitTrueMakesForeignSessionDiscoverableAndOwned(t *testing.T) {
+func TestActivateStartupSessions_DefaultMakesForeignSessionDiscoverableAndOwned(t *testing.T) {
 	root := t.TempDir()
 	baseDir := filepath.Join(root, "state")
 	contextID := "ctx-self"
@@ -137,8 +137,6 @@ func TestActivateStartupSessions_ExplicitTrueMakesForeignSessionDiscoverableAndO
 	}
 
 	cfg := config.DefaultConfig()
-	autoEnable := true
-	cfg.AutoEnableNewSessions = &autoEnable
 	cfg.Edges = []string{"messenger --- orchestrator"}
 
 	scriptDir := t.TempDir()
@@ -216,7 +214,7 @@ func TestActivateStartupSessions_ExplicitTrueMakesForeignSessionDiscoverableAndO
 	}
 }
 
-func TestActivateStartupSessions_ExplicitTrueUsesConfiguredNodeNamesWhenEdgesAreEmpty(t *testing.T) {
+func TestActivateStartupSessions_DefaultUsesConfiguredNodeNamesWhenEdgesAreEmpty(t *testing.T) {
 	root := t.TempDir()
 	baseDir := filepath.Join(root, "state")
 	contextID := "ctx-self"
@@ -228,8 +226,6 @@ func TestActivateStartupSessions_ExplicitTrueUsesConfiguredNodeNamesWhenEdgesAre
 	}
 
 	cfg := config.DefaultConfig()
-	autoEnable := true
-	cfg.AutoEnableNewSessions = &autoEnable
 	cfg.Nodes["messenger"] = config.NodeConfig{}
 	cfg.Nodes["orchestrator"] = config.NodeConfig{}
 
@@ -280,40 +276,6 @@ func TestActivateStartupSessions_ExplicitTrueUsesConfiguredNodeNamesWhenEdgesAre
 	}
 	if strings.Contains(logText, "set-option -p -t %134 @a2a_context_id ctx-self") {
 		t.Fatalf("unexpected non-node pane was pre-claimed: %q", logText)
-	}
-}
-
-func TestActivateStartupSessions_NilDefaultDoesNotActivate(t *testing.T) {
-	root := t.TempDir()
-	baseDir := filepath.Join(root, "state")
-	contextID := "ctx-self"
-	selfSession := "0"
-	contextDir := filepath.Join(baseDir, contextID)
-	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
-		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
-	}
-
-	cfg := config.DefaultConfig()
-	// AutoEnableNewSessions is nil (unset); default is false per #135
-	cfg.Edges = []string{"messenger --- orchestrator"}
-
-	scriptDir := t.TempDir()
-	logPath := filepath.Join(root, "tmux.log")
-	scriptPath := filepath.Join(scriptDir, "tmux")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> '" + logPath + "'\n" +
-		"exit 1\n"
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("WriteFile(fake tmux): %v", err)
-	}
-	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	activated := activateStartupSessions(baseDir, contextDir, contextID, selfSession, cfg)
-	if len(activated) != 0 {
-		t.Fatalf("activateStartupSessions() = %v, want no activation when auto_enable_new_sessions is unset (nil defaults to false)", activated)
-	}
-	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("activateStartupSessions() invoked tmux unexpectedly when disabled: %v", err)
 	}
 }
 
