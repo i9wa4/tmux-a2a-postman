@@ -67,11 +67,12 @@ type RequestSatisfactionSummary struct {
 	OpenedCount              int     `json:"opened_count"`
 	FilledCount              int     `json:"filled_count"`
 	OpenCount                int     `json:"open_count"`
+	DeadLetteredCount        int     `json:"dead_lettered_count"`
 	StaleOpenCount           int     `json:"stale_open_count"`
 	StaleAfterSeconds        int     `json:"stale_after_seconds"`
 	FillRate                 float64 `json:"fill_rate"`
-	AverageTimeToFillSeconds int     `json:"average_time_to_fill_seconds,omitempty"`
-	LongestOpenAgeSeconds    int     `json:"longest_open_age_seconds,omitempty"`
+	AverageTimeToFillSeconds int     `json:"average_time_to_fill_seconds"`
+	LongestOpenAgeSeconds    int     `json:"longest_open_age_seconds"`
 	Signal                   string  `json:"signal"`
 	Interpretation           string  `json:"interpretation"`
 }

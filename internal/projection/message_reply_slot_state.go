@@ -39,6 +39,7 @@ type RequestSatisfaction struct {
 	OpenedCount              int
 	FilledCount              int
 	OpenCount                int
+	DeadLetteredCount        int
 	StaleOpenCount           int
 	StaleAfterSeconds        int
 	TotalTimeToFillSeconds   int
@@ -91,7 +92,7 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 		case "session_resolved":
 			sawResolution = true
 			continue
-		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType:
+		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeadLetteredEventType:
 		default:
 			continue
 		}
@@ -139,6 +140,8 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
 			}
+		case MailboxProjectionDeadLetteredEventType:
+			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 		}
 	}
 
@@ -249,6 +252,34 @@ func fillRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openEx
 		stats.TotalTimeToFillSeconds += seconds
 	}
 	satisfaction[inputRequest.Recipient] = stats
+}
+
+func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, deadLetteredAt, openedAtSource, openedEventID string) {
+	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
+		return
+	}
+	inputRequest, ok := findOpenRequestSatisfaction(openExact, openFallback, meta)
+	if !ok {
+		openRequestSatisfaction(satisfaction, openExact, openFallback, meta, deadLetteredAt, openedAtSource, openedEventID)
+		inputRequest, ok = findOpenRequestSatisfaction(openExact, openFallback, meta)
+		if !ok {
+			return
+		}
+	}
+	stats := satisfaction[inputRequest.Recipient]
+	stats.DeadLetteredCount++
+	satisfaction[inputRequest.Recipient] = stats
+}
+
+func findOpenRequestSatisfaction(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {
+	if meta.InputRequestID != "" {
+		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
+			return inputRequest, true
+		}
+	}
+	key := inputRequestKey(meta.MessageID, meta.To)
+	inputRequest, ok := openFallback[key]
+	return inputRequest, ok
 }
 
 func resolveRequestSatisfactionOpen(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {

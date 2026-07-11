@@ -397,7 +397,8 @@ tmux-a2a-postman get-status-oneline
 `get-status` includes `nodes[*].flow.input_requests.request_satisfaction`,
 a per-node responsiveness projection over reply-required request lifecycles.
 It reports opened and filled counts, fill rate, time to fill, open backlog, and
-stale open backlog using `input_request_stale_seconds`. This measures whether
+stale open backlog using `input_request_stale_seconds`. Dead-lettered required
+requests are counted separately while remaining unfilled. This measures whether
 required input requests were filled; it does not judge whether replies were
 correct.
 

@@ -393,6 +393,7 @@ func statusRequestSatisfaction(satisfaction projection.RequestSatisfaction) *sta
 		OpenedCount:              satisfaction.OpenedCount,
 		FilledCount:              satisfaction.FilledCount,
 		OpenCount:                satisfaction.OpenCount,
+		DeadLetteredCount:        satisfaction.DeadLetteredCount,
 		StaleOpenCount:           satisfaction.StaleOpenCount,
 		StaleAfterSeconds:        satisfaction.StaleAfterSeconds,
 		FillRate:                 fillRate,
