@@ -24,6 +24,7 @@ const (
 	compactionPingCooldown       = 30 * time.Second
 	compactionMemoryRetention    = 24 * time.Hour
 	maxCompactionPrefixTailBytes = 256
+	maxCompactionSuffixHeadBytes = 256
 )
 
 type compactionCaptureScope string
@@ -70,6 +71,7 @@ type PaneCaptureState struct {
 	LastCompactionMarkers     int       // Marker occurrences in scanned content for the most recent compaction state
 	LastCompactionMarkerHash  uint32    // Hash of the normalized latest marker line, independent of capture scope
 	LastCompactionScope       compactionCaptureScope
+	LastCompactionSuffix      string
 	LastCompactionPrefixHash  uint32 // Hash of scanned content through the latest marker occurrence
 	LastCompactionPrefixLines int    // Line count through the latest marker occurrence
 }
@@ -230,6 +232,7 @@ type compactionMarkerScan struct {
 	MarkerCount        int
 	MarkerLineHash     uint32
 	LatestMarkerPrefix string
+	LatestMarkerSuffix string
 	MarkerPrefixHash   uint32
 	MarkerPrefixLines  int
 }
@@ -298,6 +301,7 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 		MarkerCount:        markers,
 		MarkerLineHash:     latestMarkerHash,
 		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
+		LatestMarkerSuffix: compactionSuffixHead(content, latestMarkerEnd),
 		MarkerPrefixHash:   hashContentCRC32(content[:latestMarkerEnd]),
 		MarkerPrefixLines:  latestMarkerLine + 1,
 	}
@@ -312,6 +316,21 @@ func compactionPrefixTail(content string, end int) string {
 		start = end - maxCompactionPrefixTailBytes
 	}
 	return strings.Clone(content[start:end])
+}
+
+func compactionSuffixHead(content string, start int) string {
+	if start >= len(content) {
+		return ""
+	}
+	end := len(content)
+	if end-start > maxCompactionSuffixHeadBytes {
+		end = start + maxCompactionSuffixHeadBytes
+	}
+	return strings.Clone(content[start:end])
+}
+
+func compactionSuffixContinues(previous, current string) bool {
+	return previous != "" && strings.HasPrefix(current, previous)
 }
 
 func isCodexCompactionLine(line string) bool {
@@ -378,7 +397,8 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 		state.LastCompactionScope != compactionScopeHistory &&
 		state.LastCompactionMarkerHash != 0 &&
 		state.LastCompactionMarkerHash == scan.MarkerLineHash &&
-		scan.MarkerCount == state.LastCompactionMarkers {
+		scan.MarkerCount == state.LastCompactionMarkers &&
+		compactionSuffixContinues(state.LastCompactionSuffix, scan.LatestMarkerSuffix) {
 		return true
 	}
 	if state.LastCompactionPrefixLines <= 0 {
@@ -411,6 +431,7 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionMarkers = scan.MarkerCount
 	state.LastCompactionMarkerHash = scan.MarkerLineHash
 	state.LastCompactionScope = scope
+	state.LastCompactionSuffix = scan.LatestMarkerSuffix
 	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 }
@@ -420,6 +441,7 @@ func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerS
 		state.LastCompactionMarkers = scan.MarkerCount
 		state.LastCompactionMarkerHash = scan.MarkerLineHash
 		state.LastCompactionScope = scope
+		state.LastCompactionSuffix = scan.LatestMarkerSuffix
 		state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 		state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 	}
@@ -432,6 +454,7 @@ func applyCompactionMemory(state *PaneCaptureState, memory PaneCaptureState) {
 	state.LastCompactionMarkers = memory.LastCompactionMarkers
 	state.LastCompactionMarkerHash = memory.LastCompactionMarkerHash
 	state.LastCompactionScope = memory.LastCompactionScope
+	state.LastCompactionSuffix = memory.LastCompactionSuffix
 	state.LastCompactionPrefixHash = memory.LastCompactionPrefixHash
 	state.LastCompactionPrefixLines = memory.LastCompactionPrefixLines
 }
@@ -447,6 +470,7 @@ func (t *IdleTracker) rememberNodeCompaction(nodeKey string, state PaneCaptureSt
 		LastCompactionMarkers:     state.LastCompactionMarkers,
 		LastCompactionMarkerHash:  state.LastCompactionMarkerHash,
 		LastCompactionScope:       state.LastCompactionScope,
+		LastCompactionSuffix:      state.LastCompactionSuffix,
 		LastCompactionPrefixHash:  state.LastCompactionPrefixHash,
 		LastCompactionPrefixLines: state.LastCompactionPrefixLines,
 	}
@@ -590,6 +614,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				state.LastCompactionMarkers = 0
 				state.LastCompactionMarkerHash = 0
 				state.LastCompactionScope = ""
+				state.LastCompactionSuffix = ""
 				state.LastCompactionPrefixHash = 0
 				state.LastCompactionPrefixLines = 0
 				t.clearNodeCompactionMemory(nodeKey)
