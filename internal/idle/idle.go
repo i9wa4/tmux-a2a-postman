@@ -24,7 +24,6 @@ const (
 	compactionPingCooldown       = 30 * time.Second
 	compactionMemoryRetention    = 24 * time.Hour
 	maxCompactionPrefixTailBytes = 256
-	maxCompactionSuffixHeadBytes = 256
 )
 
 type compactionCaptureScope string
@@ -301,7 +300,7 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 		MarkerCount:        markers,
 		MarkerLineHash:     latestMarkerHash,
 		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
-		LatestMarkerSuffix: compactionSuffixHead(content, latestMarkerEnd),
+		LatestMarkerSuffix: compactionSuffix(content, latestMarkerEnd),
 		MarkerPrefixHash:   hashContentCRC32(content[:latestMarkerEnd]),
 		MarkerPrefixLines:  latestMarkerLine + 1,
 	}
@@ -318,15 +317,11 @@ func compactionPrefixTail(content string, end int) string {
 	return strings.Clone(content[start:end])
 }
 
-func compactionSuffixHead(content string, start int) string {
+func compactionSuffix(content string, start int) string {
 	if start >= len(content) {
 		return ""
 	}
-	end := len(content)
-	if end-start > maxCompactionSuffixHeadBytes {
-		end = start + maxCompactionSuffixHeadBytes
-	}
-	return strings.Clone(content[start:end])
+	return strings.Clone(content[start:])
 }
 
 func compactionSuffixContinues(previous, current string) bool {
