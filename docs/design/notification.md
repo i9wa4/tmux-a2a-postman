@@ -89,7 +89,10 @@ See [Schema and Event Terminology](schema-event-terminology.md).
 | `delivery_stuck`   | Pending post delivery is at least 180 seconds old |
 | `delivery_failure` | Dead-letter delivery failure exists               |
 
-`get-status-oneline` keeps compact visible-state marks by default. Use its
+`get-status-oneline` keeps compact operator marks by default. Pending, waiting,
+stale, and initial visible states keep their legacy marks; ready nodes also
+consult contextual node severity so active local work renders as `🔵` and
+blocked or stale attention renders as `🔴` instead of plain green. Use the
 `--severity` flag when the operator needs an ASCII severity token. Tokens with
 `?` are inferred, for example a `BLOCKED:` first line without structured
 blocked-report metadata.

@@ -252,9 +252,13 @@ Open input-request details include `opened_event_id` and `read_event_id` when
 the corresponding journal events are known. These IDs are traceability
 pointers for replay and inspection. They do not change completion semantics.
 
-`get-status-oneline` prints compact visible-state marks by default. The opt-in
-`--severity` flag prints `compact_severity` instead. A `?` suffix marks
-inferred evidence, such as `blocked?:node=worker`.
+`get-status-oneline` prints compact operator marks by default. For
+compatibility, pending, waiting, stale, and initial visible states still keep
+their legacy marks. When a node would otherwise render as ready, the compact
+mark consults the node contextual severity so pane-local work or blocked flow
+cannot remain a definitive green idle signal. The opt-in `--severity` flag
+prints `compact_severity` instead. A `?` suffix marks inferred evidence, such as
+`blocked?:node=worker`.
 
 ## 9. Severity Examples
 
@@ -269,3 +273,15 @@ inferred evidence, such as `blocked?:node=worker`.
 | Stale pane          | Stale pane evidence                        | `attention_stale`  |
 | Delivery stuck      | Oldest pending post is at least 180s old   | `delivery_stuck`   |
 | Dead letter         | One or more dead-letter files exist        | `delivery_failure` |
+
+Default compact marks are therefore a projection of the separated layers, not a
+raw alias for `visible_state`:
+
+| Mark | Meaning                                                       |
+| ---- | ------------------------------------------------------------- |
+| `⚫`  | Initial, unavailable, unowned, or missing local state         |
+| `🟢`  | Ready with no worse contextual node severity                  |
+| `🔵`  | Ready but pane-local evidence indicates active work           |
+| `🟡`  | Waiting or expected wait                                      |
+| `🔷`  | Pending or needs action                                       |
+| `🔴`  | Stale, blocked, delivery failure, or other attention severity |

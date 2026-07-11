@@ -107,6 +107,62 @@ func TestCompactSessionStatusMark(t *testing.T) {
 	}
 }
 
+func TestCompactNodeStatusMarkUsesContextualNodeSeverityWhenVisibleReady(t *testing.T) {
+	tests := []struct {
+		name string
+		node status.NodeStatus
+		want string
+	}{
+		{
+			name: "working pane is not definitive green",
+			node: status.NodeStatus{
+				VisibleState: "ready",
+				Severity:     "working",
+				NodeLocal: &status.NodeLocalStatus{
+					State:         "working",
+					Severity:      "working",
+					EvidenceLevel: "inferred",
+				},
+			},
+			want: "🔵",
+		},
+		{
+			name: "blocked flow is not hidden behind ready pane",
+			node: status.NodeStatus{
+				VisibleState: "ready",
+				Severity:     "blocked",
+				Flow: &status.NodeFlowStatus{
+					State:         "blocked",
+					Severity:      "blocked",
+					EvidenceLevel: "proven",
+				},
+			},
+			want: "🔴",
+		},
+		{
+			name: "pending obligation keeps pending mark",
+			node: status.NodeStatus{
+				VisibleState: "pending",
+				Severity:     "working",
+				NodeLocal: &status.NodeLocalStatus{
+					State:         "working",
+					Severity:      "working",
+					EvidenceLevel: "inferred",
+				},
+			},
+			want: "🔷",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := compactNodeStatusMark(tt.node); got != tt.want {
+				t.Fatalf("compactNodeStatusMark(...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatSessionStatusOneline(t *testing.T) {
 	health := status.SessionStatus{
 		Compact: "🔷🟢",

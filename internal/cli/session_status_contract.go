@@ -52,6 +52,26 @@ func compactSessionStatusMark(visibleState string) string {
 	}
 }
 
+func compactNodeStatusMark(node status.NodeStatus) string {
+	switch status.NormalizeState(node.VisibleState) {
+	case "waiting", "pending", "stale", "initial":
+		return compactStatusMark(node.VisibleState)
+	}
+
+	switch node.Severity {
+	case "working":
+		return "🔵"
+	case "expected_wait":
+		return "🟡"
+	case "needs_action":
+		return "🔷"
+	case "blocked", "attention_stale", "delivery_stuck", "delivery_failure":
+		return "🔴"
+	default:
+		return compactStatusMark(node.VisibleState)
+	}
+}
+
 func orderedEdgeNodeNames(edges []string) []string {
 	return config.OrderedEdgeNodeNames(edges)
 }
@@ -647,7 +667,7 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 			if isShellCommand(node.CurrentCommand) {
 				continue
 			}
-			marks.WriteString(compactStatusMark(node.VisibleState))
+			marks.WriteString(compactNodeStatusMark(node))
 		}
 		if marks.Len() == 0 {
 			continue
