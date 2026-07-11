@@ -148,7 +148,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"notification_template            Pane hint rendered when mail arrives",
 		"min_delivery_gap_seconds         Same-route delivery gap for duplicate control",
 		"retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)",
-		"pane_capture_tail_lines          Recent lines scanned for compaction markers",
+		"pane_capture_tail_lines          Recent-line fast path for compaction markers",
 		"Skill catalogs:",
 		"default skill_path relative paths resolve from the declaring postman.md directory",
 		"inject: ping, inject: compaction_ping, and lists containing them must use ~/... or absolute paths",

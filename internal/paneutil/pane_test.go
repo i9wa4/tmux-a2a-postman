@@ -47,6 +47,26 @@ func TestCaptureRecentContentWithRunner(t *testing.T) {
 	}
 }
 
+func TestCaptureHistoryContentWithRunner(t *testing.T) {
+	var gotArgs []string
+	run := func(args ...string) ([]byte, error) {
+		gotArgs = append(gotArgs, args...)
+		return []byte("history content"), nil
+	}
+
+	got, err := captureHistoryContent("%11", run)
+	if err != nil {
+		t.Fatalf("captureHistoryContent: %v", err)
+	}
+	if got != "history content" {
+		t.Fatalf("captureHistoryContent() = %q, want %q", got, "history content")
+	}
+	wantArgs := []string{"capture-pane", "-p", "-t", "%11", "-S", "-"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestCaptureContentWithRunner_PropagatesFailure(t *testing.T) {
 	run := func(args ...string) ([]byte, error) {
 		return nil, errors.New("tmux failed")
@@ -60,6 +80,23 @@ func TestCaptureContentWithRunner_PropagatesFailure(t *testing.T) {
 		t.Fatalf("captureContent() = %q, want empty string on failure", got)
 	}
 	if !strings.Contains(err.Error(), "capturing pane %11") || !strings.Contains(err.Error(), "tmux failed") {
+		t.Fatalf("error = %q, want capture context and source error", err.Error())
+	}
+}
+
+func TestCaptureHistoryContentWithRunner_PropagatesFailure(t *testing.T) {
+	run := func(args ...string) ([]byte, error) {
+		return nil, errors.New("tmux failed")
+	}
+
+	got, err := captureHistoryContent("%11", run)
+	if err == nil {
+		t.Fatal("captureHistoryContent() error = nil, want error")
+	}
+	if got != "" {
+		t.Fatalf("captureHistoryContent() = %q, want empty string on failure", got)
+	}
+	if !strings.Contains(err.Error(), "capturing pane %11 history") || !strings.Contains(err.Error(), "tmux failed") {
 		t.Fatalf("error = %q, want capture context and source error", err.Error())
 	}
 }

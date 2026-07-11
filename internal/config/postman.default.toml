@@ -83,7 +83,7 @@ daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in
 pane_capture_enabled = true
 pane_capture_interval_seconds = 5.0
 pane_capture_max_panes = 0          # 0 = unlimited, >0 = limit pane count
-pane_capture_tail_lines = 100        # Recent lines scanned for compaction markers (0 = visible pane only)
+pane_capture_tail_lines = 100        # Recent-line fast path for compaction markers; falls back to full retained history when enabled (0 = visible pane only)
 activity_window_seconds = 300.0
 
 # Paths
