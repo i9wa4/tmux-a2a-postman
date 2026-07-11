@@ -449,13 +449,15 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				ChangeCount:   0,
 				LastCaptureAt: now,
 			}
-			if _, hasNode := paneToNode[paneID]; hasNode {
+			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 				if scan := compactionTriggerScan(paneRuntimes[paneID], compactionContent); scan.Trigger != "" {
+					recordCompactionPing(&state, scan, compactionHash, now)
 					state.LastCompactionTrigger = scan.Trigger
-					state.LastCompactionHash = compactionHash
-					state.LastCompactionMarkers = scan.MarkerCount
-					state.LastCompactionPrefixHash = scan.MarkerPrefixHash
-					state.LastCompactionPrefixLines = scan.MarkerPrefixLines
+					compactionTargets[nodeKey] = CompactionPingTarget{
+						NodeKey: nodeKey,
+						Runtime: paneRuntimes[paneID],
+						Trigger: scan.Trigger,
+					}
 				}
 			}
 			t.paneCaptureState[paneID] = state

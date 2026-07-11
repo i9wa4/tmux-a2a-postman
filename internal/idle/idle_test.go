@@ -488,7 +488,7 @@ func TestCheckPaneCaptureUsesInjectedClockForPaneTimestamps(t *testing.T) {
 	}
 }
 
-func TestCheckPaneCapture_CompactionTriggerRecordsInitialMarkerWithoutPing(t *testing.T) {
+func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeForInitialMarker(t *testing.T) {
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
@@ -524,8 +524,17 @@ func TestCheckPaneCapture_CompactionTriggerRecordsInitialMarkerWithoutPing(t *te
 	}
 
 	targets := tracker.checkPaneCapture(cfg, nodes)
-	if len(targets) != 0 {
-		t.Fatalf("checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(targets))
+	if len(targets) != 1 {
+		t.Fatalf("checkPaneCapture() returned %d targets, want 1 for an already-visible initial marker", len(targets))
+	}
+	if targets[0].NodeKey != "review:worker" {
+		t.Fatalf("checkPaneCapture() target = %q, want %q", targets[0].NodeKey, "review:worker")
+	}
+	if targets[0].Runtime != "claude" {
+		t.Fatalf("checkPaneCapture() runtime = %q, want %q", targets[0].Runtime, "claude")
+	}
+	if targets[0].Trigger != "claude:conversation-compaction" {
+		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "claude:conversation-compaction")
 	}
 
 	tracker.mu.Lock()
@@ -534,8 +543,8 @@ func TestCheckPaneCapture_CompactionTriggerRecordsInitialMarkerWithoutPing(t *te
 	if state.LastCompactionTrigger == "" {
 		t.Fatal("checkPaneCapture() did not record the initial compaction trigger")
 	}
-	if !state.LastCompactionPingAt.IsZero() {
-		t.Fatal("checkPaneCapture() recorded a ping timestamp for an initial marker")
+	if state.LastCompactionPingAt.IsZero() {
+		t.Fatal("checkPaneCapture() did not record a ping timestamp for an initial marker")
 	}
 	if state.LastCompactionHash != state.LastHash {
 		t.Fatal("checkPaneCapture() did not record the initial compaction pane hash")
@@ -1229,8 +1238,8 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhileMarkerRemainsVisibl
 	}
 
 	firstTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(firstTargets) != 0 {
-		t.Fatalf("first checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(firstTargets))
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for an already-visible initial marker", len(firstTargets))
 	}
 
 	tracker.mu.Lock()
@@ -1287,8 +1296,8 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameCaptureAfterMarkerCl
 		t.Fatalf("WriteFile(capture marker): %v", err)
 	}
 	firstTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(firstTargets) != 0 {
-		t.Fatalf("first checkPaneCapture() returned %d targets, want 0 for an already-visible initial marker", len(firstTargets))
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for an already-visible initial marker", len(firstTargets))
 	}
 
 	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {
