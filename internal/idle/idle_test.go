@@ -816,6 +816,248 @@ func TestCheckPaneCapture_CompactionTriggerFallsBackToFullHistoryWhenMarkerOutru
 	}
 }
 
+func TestCheckPaneCapture_CompactionTriggerSkipsFullHistoryForUnsupportedRuntime(t *testing.T) {
+	scriptDir := t.TempDir()
+	visiblePath := filepath.Join(scriptDir, "visible.txt")
+	recentPath := filepath.Join(scriptDir, "recent.txt")
+	historyCalledPath := filepath.Join(scriptDir, "history-called")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tzsh'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-3' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_RECENT\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-' ]; then\n" +
+		"  : > \"$TMUX_A2A_TEST_HISTORY_CALLED\"\n" +
+		"  printf '%s\\n' '✻ Conversation compacted (ctrl+o for history)'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_VISIBLE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
+	t.Setenv("TMUX_A2A_TEST_RECENT", recentPath)
+	t.Setenv("TMUX_A2A_TEST_HISTORY_CALLED", historyCalledPath)
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+		PaneCaptureTailLines:  3,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	if err := os.WriteFile(visiblePath, []byte("latest prompt"), 0o644); err != nil {
+		t.Fatalf("WriteFile(visible): %v", err)
+	}
+	if err := os.WriteFile(recentPath, []byte("recent output without marker"), 0o644); err != nil {
+		t.Fatalf("WriteFile(recent): %v", err)
+	}
+
+	targets := tracker.checkPaneCapture(cfg, nodes)
+	if len(targets) != 0 {
+		t.Fatalf("checkPaneCapture() returned %d targets for unsupported runtime, want 0", len(targets))
+	}
+	if _, err := os.Stat(historyCalledPath); !os.IsNotExist(err) {
+		t.Fatalf("full-history capture was invoked for unsupported runtime; stat err=%v", err)
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerSkipsFullHistoryForUnchangedSupportedRuntime(t *testing.T) {
+	scriptDir := t.TempDir()
+	visiblePath := filepath.Join(scriptDir, "visible.txt")
+	recentPath := filepath.Join(scriptDir, "recent.txt")
+	historyCalledPath := filepath.Join(scriptDir, "history-called")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-3' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_RECENT\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-' ]; then\n" +
+		"  : >> \"$TMUX_A2A_TEST_HISTORY_CALLED\"\n" +
+		"  printf '%s\\n' 'history without compaction marker'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_VISIBLE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
+	t.Setenv("TMUX_A2A_TEST_RECENT", recentPath)
+	t.Setenv("TMUX_A2A_TEST_HISTORY_CALLED", historyCalledPath)
+
+	tracker := NewIdleTracker()
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+		PaneCaptureTailLines:  3,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	if err := os.WriteFile(visiblePath, []byte("latest prompt"), 0o644); err != nil {
+		t.Fatalf("WriteFile(visible): %v", err)
+	}
+	if err := os.WriteFile(recentPath, []byte("recent output without marker"), 0o644); err != nil {
+		t.Fatalf("WriteFile(recent): %v", err)
+	}
+
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 0 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 0", len(firstTargets))
+	}
+	if _, err := os.Stat(historyCalledPath); err != nil {
+		t.Fatalf("first checkPaneCapture() did not invoke initial full-history scan; stat err=%v", err)
+	}
+	if err := os.Remove(historyCalledPath); err != nil {
+		t.Fatalf("Remove(history-called): %v", err)
+	}
+
+	secondTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(secondTargets) != 0 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 0", len(secondTargets))
+	}
+	if _, err := os.Stat(historyCalledPath); !os.IsNotExist(err) {
+		t.Fatalf("full-history capture was invoked for unchanged supported runtime; stat err=%v", err)
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhenTailMarkerLaterSeenInFullHistory(t *testing.T) {
+	scriptDir := t.TempDir()
+	visiblePath := filepath.Join(scriptDir, "visible.txt")
+	recentPath := filepath.Join(scriptDir, "recent.txt")
+	historyPath := filepath.Join(scriptDir, "history.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tclaude'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-3' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_RECENT\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '-S' ] && [ \"$6\" = '-' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_HISTORY\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_VISIBLE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_VISIBLE", visiblePath)
+	t.Setenv("TMUX_A2A_TEST_RECENT", recentPath)
+	t.Setenv("TMUX_A2A_TEST_HISTORY", historyPath)
+
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+		PaneCaptureTailLines:  3,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	firstVisible := "post output 1"
+	firstRecent := "✻ Conversation compacted (ctrl+o for history)\n" + firstVisible
+	if err := os.WriteFile(visiblePath, []byte(firstVisible), 0o644); err != nil {
+		t.Fatalf("WriteFile(visible first): %v", err)
+	}
+	if err := os.WriteFile(recentPath, []byte(firstRecent), 0o644); err != nil {
+		t.Fatalf("WriteFile(recent first): %v", err)
+	}
+	if err := os.WriteFile(historyPath, []byte("unused history"), 0o644); err != nil {
+		t.Fatalf("WriteFile(history first): %v", err)
+	}
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for recent-tail marker", len(firstTargets))
+	}
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	secondVisible := "post output 2"
+	secondRecent := "post output 1\n" + secondVisible
+	secondHistory := "older prefix outside tail\n✻ Conversation compacted (ctrl+o for history)\n" + secondRecent
+	if err := os.WriteFile(visiblePath, []byte(secondVisible), 0o644); err != nil {
+		t.Fatalf("WriteFile(visible second): %v", err)
+	}
+	if err := os.WriteFile(recentPath, []byte(secondRecent), 0o644); err != nil {
+		t.Fatalf("WriteFile(recent second): %v", err)
+	}
+	if err := os.WriteFile(historyPath, []byte(secondHistory), 0o644); err != nil {
+		t.Fatalf("WriteFile(history second): %v", err)
+	}
+
+	secondTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(secondTargets) != 0 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 0 when the same marker moves from recent tail to full-history fallback", len(secondTargets))
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if state.LastHash != hashContentCRC32(secondVisible) {
+		t.Fatal("checkPaneCapture() changed idle hash away from visible pane content")
+	}
+	if state.LastCompactionMarkers != 1 {
+		t.Fatalf("checkPaneCapture() recorded %d compaction markers, want 1", state.LastCompactionMarkers)
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameMarkerAfterStalePrune(t *testing.T) {
 	scriptDir := t.TempDir()
 	listPath := filepath.Join(scriptDir, "list.txt")
@@ -890,6 +1132,116 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameMarkerAfterStalePrun
 	reobservedTargets := tracker.checkPaneCapture(cfg, nodes)
 	if len(reobservedTargets) != 0 {
 		t.Fatalf("reobserved checkPaneCapture() returned %d targets, want 0 for already-handled marker", len(reobservedTargets))
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerClearedMarkerAllowsFreshInitialMarkerAfterStalePrune(t *testing.T) {
+	scriptDir := t.TempDir()
+	listPath := filepath.Join(scriptDir, "list.txt")
+	capturePath := filepath.Join(scriptDir, "capture.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_LIST\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_CAPTURE\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_LIST", listPath)
+	t.Setenv("TMUX_A2A_TEST_CAPTURE", capturePath)
+
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      1,
+		PaneCaptureTailLines:  0,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	marker := "✻ Conversation compacted (ctrl+o for history)"
+	if err := os.WriteFile(listPath, []byte("%11\tclaude\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(list visible): %v", err)
+	}
+	if err := os.WriteFile(capturePath, []byte(marker), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture marker): %v", err)
+	}
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+
+	if err := os.WriteFile(capturePath, []byte("ready after compaction"), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture cleared): %v", err)
+	}
+	clearedTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(clearedTargets) != 0 {
+		t.Fatalf("cleared checkPaneCapture() returned %d targets, want 0", len(clearedTargets))
+	}
+	tracker.mu.Lock()
+	_, memoryExists := tracker.nodeCompactionMemory["review:worker"]
+	tracker.mu.Unlock()
+	if memoryExists {
+		t.Fatal("checkPaneCapture() kept node compaction memory after marker cleared")
+	}
+
+	now = now.Add(2 * time.Second)
+	if err := os.WriteFile(listPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile(list empty): %v", err)
+	}
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("stale-prune checkPaneCapture() returned %d targets, want 0", len(targets))
+	}
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	if err := os.WriteFile(listPath, []byte("%11\tclaude\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(list visible again): %v", err)
+	}
+	if err := os.WriteFile(capturePath, []byte(marker), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture fresh marker): %v", err)
+	}
+	freshTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(freshTargets) != 1 {
+		t.Fatalf("fresh checkPaneCapture() returned %d targets, want 1", len(freshTargets))
+	}
+}
+
+func TestPruneNodeCompactionMemoryDropsExpiredEntries(t *testing.T) {
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	tracker.nodeCompactionMemory["review:old"] = PaneCaptureState{
+		LastCompactionPingAt:  now.Add(-compactionMemoryRetention - time.Second),
+		LastCompactionTrigger: "claude:conversation-compaction",
+	}
+	tracker.nodeCompactionMemory["review:recent"] = PaneCaptureState{
+		LastCompactionPingAt:  now.Add(-compactionMemoryRetention + time.Second),
+		LastCompactionTrigger: "claude:conversation-compaction",
+	}
+
+	tracker.pruneNodeCompactionMemory(now)
+
+	if _, ok := tracker.nodeCompactionMemory["review:old"]; ok {
+		t.Fatal("pruneNodeCompactionMemory kept expired node compaction memory")
+	}
+	if _, ok := tracker.nodeCompactionMemory["review:recent"]; !ok {
+		t.Fatal("pruneNodeCompactionMemory deleted recent node compaction memory")
 	}
 }
 

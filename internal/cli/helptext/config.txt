@@ -43,7 +43,7 @@ Core config:
   min_delivery_gap_seconds         Same-route delivery gap for duplicate control
   retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
   daemon_submit_queue_warn_threshold_ms  Queue wait WARNING threshold in ms (default: 30000); emits event=queue_ms_threshold_exceeded when queue_ms >= threshold
-  pane_capture_tail_lines          Recent-line fast path for compaction markers (default: 100; 0 = visible pane only)
+  pane_capture_tail_lines          Recent-line compaction scan; Claude/Codex first/change captures may fall back to full history (default: 100; 0 = visible pane only)
 
 Skill catalogs:
   default skill_path relative paths resolve from the declaring postman.md directory

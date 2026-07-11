@@ -22,6 +22,7 @@ import (
 
 const (
 	compactionPingCooldown       = 30 * time.Second
+	compactionMemoryRetention    = 24 * time.Hour
 	maxCompactionPrefixTailBytes = 256
 )
 
@@ -59,6 +60,7 @@ type PaneCaptureState struct {
 	LastCompactionTrigger     string    // Non-empty while a compaction marker remains in scanned content
 	LastCompactionHash        uint32    // Scanned compaction content hash for the most recent compaction marker state
 	LastCompactionMarkers     int       // Marker occurrences in scanned content for the most recent compaction state
+	LastCompactionMarkerHash  uint32    // Hash of the normalized latest marker line, independent of capture scope
 	LastCompactionPrefixHash  uint32    // Hash of scanned content through the latest marker occurrence
 	LastCompactionPrefixLines int       // Line count through the latest marker occurrence
 }
@@ -217,6 +219,7 @@ func containsCompactionTrigger(runtime, content string) bool {
 type compactionMarkerScan struct {
 	Trigger            string
 	MarkerCount        int
+	MarkerLineHash     uint32
 	LatestMarkerPrefix string
 	MarkerPrefixHash   uint32
 	MarkerPrefixLines  int
@@ -255,6 +258,7 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 	markers := 0
 	latestMarkerEnd := -1
 	latestMarkerLine := 0
+	latestMarkerHash := uint32(0)
 	lineNumber := 0
 	for lineStart := 0; lineStart <= len(content); {
 		lineEnd := strings.IndexByte(content[lineStart:], '\n')
@@ -271,6 +275,7 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 			markers++
 			latestMarkerEnd = lineEnd
 			latestMarkerLine = lineNumber
+			latestMarkerHash = hashContentCRC32(normalizeStatusLine(line))
 		}
 
 		lineNumber++
@@ -282,6 +287,7 @@ func scanCompactionMarkers(content, trigger string, isMarker func(string) bool) 
 	return compactionMarkerScan{
 		Trigger:            trigger,
 		MarkerCount:        markers,
+		MarkerLineHash:     latestMarkerHash,
 		LatestMarkerPrefix: compactionPrefixTail(content, latestMarkerEnd),
 		MarkerPrefixHash:   hashContentCRC32(content[:latestMarkerEnd]),
 		MarkerPrefixLines:  latestMarkerLine + 1,
@@ -322,30 +328,48 @@ func filterPaneCaptureNodes(nodes map[string]discovery.NodeInfo, edgeNodes map[s
 	return filtered
 }
 
-func captureCompactionContent(paneID, runtime, visibleContent string, visibleHash uint32, tailLines int) (string, uint32) {
+func supportsCompactionRuntime(runtime string) bool {
+	switch agentruntime.Normalize(runtime) {
+	case agentruntime.Claude, agentruntime.Codex:
+		return true
+	default:
+		return false
+	}
+}
+
+func captureCompactionContent(paneID, runtime, visibleContent string, visibleHash uint32, tailLines int, allowFullHistory bool) (string, uint32, bool) {
 	if tailLines <= 0 {
-		return visibleContent, visibleHash
+		return visibleContent, visibleHash, false
 	}
 	content, err := paneutil.CaptureRecentContent(paneID, tailLines)
 	if err != nil {
-		return visibleContent, visibleHash
+		return visibleContent, visibleHash, false
 	}
 	if compactionTrigger(runtime, content) != "" {
-		return content, hashContentCRC32(content)
+		return content, hashContentCRC32(content), false
+	}
+	if !allowFullHistory || !supportsCompactionRuntime(runtime) {
+		return content, hashContentCRC32(content), false
 	}
 	historyContent, err := paneutil.CaptureHistoryContent(paneID)
 	if err != nil {
-		return content, hashContentCRC32(content)
+		return content, hashContentCRC32(content), false
 	}
 	if compactionTrigger(runtime, historyContent) != "" {
-		return historyContent, hashContentCRC32(historyContent)
+		return historyContent, hashContentCRC32(historyContent), true
 	}
-	return content, hashContentCRC32(content)
+	return content, hashContentCRC32(content), false
 }
 
-func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32) bool {
+func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, fullHistoryFallback bool) bool {
 	if state.LastCompactionTrigger == "" || scan.Trigger != state.LastCompactionTrigger {
 		return false
+	}
+	if fullHistoryFallback &&
+		state.LastCompactionMarkerHash != 0 &&
+		state.LastCompactionMarkerHash == scan.MarkerLineHash &&
+		scan.MarkerCount <= state.LastCompactionMarkers {
+		return true
 	}
 	if state.LastCompactionPrefixLines <= 0 {
 		return scan.MarkerCount <= state.LastCompactionMarkers
@@ -359,14 +383,14 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 	return false
 }
 
-func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, now time.Time) bool {
+func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, fullHistoryFallback bool, now time.Time) bool {
 	if !state.LastCompactionPingAt.IsZero() && now.Sub(state.LastCompactionPingAt) < compactionPingCooldown {
 		return false
 	}
 	if state.LastCompactionTrigger != "" {
 		return scan.Trigger != state.LastCompactionTrigger ||
 			scan.MarkerCount > state.LastCompactionMarkers ||
-			!sameCompactionMarker(state, scan, compactionHash)
+			!sameCompactionMarker(state, scan, compactionHash, fullHistoryFallback)
 	}
 	return state.LastCompactionHash != compactionHash
 }
@@ -375,13 +399,15 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionPingAt = now
 	state.LastCompactionHash = compactionHash
 	state.LastCompactionMarkers = scan.MarkerCount
+	state.LastCompactionMarkerHash = scan.MarkerLineHash
 	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 }
 
-func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32) {
-	if sameCompactionMarker(*state, scan, compactionHash) {
+func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, fullHistoryFallback bool) {
+	if sameCompactionMarker(*state, scan, compactionHash, fullHistoryFallback) {
 		state.LastCompactionMarkers = scan.MarkerCount
+		state.LastCompactionMarkerHash = scan.MarkerLineHash
 		state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 		state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 	}
@@ -392,6 +418,7 @@ func applyCompactionMemory(state *PaneCaptureState, memory PaneCaptureState) {
 	state.LastCompactionTrigger = memory.LastCompactionTrigger
 	state.LastCompactionHash = memory.LastCompactionHash
 	state.LastCompactionMarkers = memory.LastCompactionMarkers
+	state.LastCompactionMarkerHash = memory.LastCompactionMarkerHash
 	state.LastCompactionPrefixHash = memory.LastCompactionPrefixHash
 	state.LastCompactionPrefixLines = memory.LastCompactionPrefixLines
 }
@@ -405,8 +432,21 @@ func (t *IdleTracker) rememberNodeCompaction(nodeKey string, state PaneCaptureSt
 		LastCompactionTrigger:     state.LastCompactionTrigger,
 		LastCompactionHash:        state.LastCompactionHash,
 		LastCompactionMarkers:     state.LastCompactionMarkers,
+		LastCompactionMarkerHash:  state.LastCompactionMarkerHash,
 		LastCompactionPrefixHash:  state.LastCompactionPrefixHash,
 		LastCompactionPrefixLines: state.LastCompactionPrefixLines,
+	}
+}
+
+func (t *IdleTracker) clearNodeCompactionMemory(nodeKey string) {
+	delete(t.nodeCompactionMemory, nodeKey)
+}
+
+func (t *IdleTracker) pruneNodeCompactionMemory(now time.Time) {
+	for nodeKey, memory := range t.nodeCompactionMemory {
+		if memory.LastCompactionPingAt.IsZero() || now.Sub(memory.LastCompactionPingAt) > compactionMemoryRetention {
+			delete(t.nodeCompactionMemory, nodeKey)
+		}
 	}
 }
 
@@ -473,10 +513,11 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Compute CRC32 hash
 		currentHash := hashContentCRC32(content)
 		runtime := paneRuntimes[paneID]
-		compactionContent, compactionHash := captureCompactionContent(paneID, runtime, content, currentHash, cfg.PaneCaptureTailLines)
 
 		// Get previous state
 		state, exists := t.paneCaptureState[paneID]
+		allowFullHistory := supportsCompactionRuntime(runtime) && (!exists || currentHash != state.LastHash)
+		compactionContent, compactionHash, fullHistoryFallback := captureCompactionContent(paneID, runtime, content, currentHash, cfg.PaneCaptureTailLines, allowFullHistory)
 		if !exists {
 			// First time seeing this pane - initialize state
 			state = PaneCaptureState{
@@ -490,7 +531,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 					if memory, ok := t.nodeCompactionMemory[nodeKey]; ok {
 						applyCompactionMemory(&state, memory)
 					}
-					if shouldPingCompaction(state, scan, compactionHash, now) {
+					if shouldPingCompaction(state, scan, compactionHash, fullHistoryFallback, now) {
 						recordCompactionPing(&state, scan, compactionHash, now)
 						compactionTargets[nodeKey] = CompactionPingTarget{
 							NodeKey: nodeKey,
@@ -498,7 +539,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 							Trigger: scan.Trigger,
 						}
 					} else {
-						refreshSameCompactionMarker(&state, scan, compactionHash)
+						refreshSameCompactionMarker(&state, scan, compactionHash, fullHistoryFallback)
 					}
 					state.LastCompactionTrigger = scan.Trigger
 					t.rememberNodeCompaction(nodeKey, state)
@@ -512,7 +553,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 			if scan := compactionTriggerScan(runtime, compactionContent); scan.Trigger != "" {
-				if shouldPingCompaction(state, scan, compactionHash, now) {
+				if shouldPingCompaction(state, scan, compactionHash, fullHistoryFallback, now) {
 					recordCompactionPing(&state, scan, compactionHash, now)
 					compactionTargets[nodeKey] = CompactionPingTarget{
 						NodeKey: nodeKey,
@@ -520,15 +561,17 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 						Trigger: scan.Trigger,
 					}
 				} else {
-					refreshSameCompactionMarker(&state, scan, compactionHash)
+					refreshSameCompactionMarker(&state, scan, compactionHash, fullHistoryFallback)
 				}
 				state.LastCompactionTrigger = scan.Trigger
 				t.rememberNodeCompaction(nodeKey, state)
 			} else {
 				state.LastCompactionTrigger = ""
 				state.LastCompactionMarkers = 0
+				state.LastCompactionMarkerHash = 0
 				state.LastCompactionPrefixHash = 0
 				state.LastCompactionPrefixLines = 0
+				t.clearNodeCompactionMemory(nodeKey)
 			}
 		}
 
@@ -579,6 +622,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			delete(t.paneCaptureState, paneID)
 		}
 	}
+	t.pruneNodeCompactionMemory(now)
 
 	targetNodeKeys := make([]string, 0, len(compactionTargets))
 	for nodeKey := range compactionTargets {
