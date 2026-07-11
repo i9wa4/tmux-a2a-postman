@@ -21,6 +21,8 @@ type Metadata struct {
 	InputRequestID           string
 	FillsInputRequestID      string
 	InputRequestSetID        string
+	Verdict                  string
+	VerdictOf                string
 	BranchID                 string
 	CompletionRule           string
 	RuntimeContextID         string
@@ -187,6 +189,10 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.FillsInputRequestID = value
 			case "input_request_set_id":
 				metadata.InputRequestSetID = value
+			case "verdict":
+				metadata.Verdict = value
+			case "verdictOf", "verdict_of":
+				metadata.VerdictOf = value
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
