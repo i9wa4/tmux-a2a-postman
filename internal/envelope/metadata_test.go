@@ -152,6 +152,24 @@ func TestParseMetadataAcceptsVerdictFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsEvidenceFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  evidence_command: go test ./...\n  evidence_artifact: reports/test.json\n  evidence_hash: sha256:abc123\n---\n\nDONE\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.EvidenceCommand != "go test ./..." {
+		t.Fatalf("EvidenceCommand = %q, want command", got.EvidenceCommand)
+	}
+	if got.EvidenceArtifact != "reports/test.json" {
+		t.Fatalf("EvidenceArtifact = %q, want artifact path", got.EvidenceArtifact)
+	}
+	if got.EvidenceHash != "sha256:abc123" {
+		t.Fatalf("EvidenceHash = %q, want hash", got.EvidenceHash)
+	}
+}
+
 func TestParseMetadataAcceptsSnakeCaseVerdictOf(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  verdict: fail\n  verdict_of: ireq_456\n---\n\nnot yet\n"
 

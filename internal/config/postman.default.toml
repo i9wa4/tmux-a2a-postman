@@ -154,6 +154,14 @@ common_template = ""
 # Shell templates are disabled unless explicitly enabled in trusted XDG config.
 allow_shell_templates = false
 
+# Evidence presence gate (Issue #620). Disabled by default so legacy workflows
+# are not dead-lettered when evidence fields are first introduced. Enable only
+# after measured adoption exists from the D4 convention meter or an archive-count
+# proxy, and set evidence_presence_gate_after to the activation timestamp so
+# older messages are not affected retroactively.
+evidence_presence_gate_enabled = false
+# evidence_presence_gate_after = "2026-01-01T00:00:00Z"
+
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}! You've got mail: {filename}. Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
 

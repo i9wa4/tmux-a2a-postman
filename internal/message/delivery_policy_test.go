@@ -101,6 +101,36 @@ func TestPlanDeliveryPolicy(t *testing.T) {
 			},
 		},
 		{
+			name: "evidence presence gate disabled allows missing evidence",
+			in: deliveryPolicyInput{
+				Info:                        baseInfo,
+				EnvelopeChecked:             true,
+				EvidencePresenceGateChecked: true,
+				EvidencePresenceGateActive:  false,
+				CompletionClaim:             true,
+				EvidencePresent:             false,
+			},
+			want: deliveryDecision{},
+		},
+		{
+			name: "evidence presence gate dead-letters completion missing evidence",
+			in: deliveryPolicyInput{
+				Info:                        baseInfo,
+				EnvelopeChecked:             true,
+				EvidencePresenceGateChecked: true,
+				EvidencePresenceGateActive:  true,
+				CompletionClaim:             true,
+				EvidencePresent:             false,
+			},
+			want: deliveryDecision{
+				Action:                     deliveryActionDeadLetter,
+				DeadLetterSuffix:           dlSuffixMissingEvidence,
+				DeadLetterReason:           deadLetterReasonMissingEvidence,
+				EventReason:                deadLetterReasonMissingEvidence,
+				SendDeadLetterNotification: true,
+			},
+		},
+		{
 			name: "unknown recipient session",
 			in: deliveryPolicyInput{
 				Info:              baseInfo,

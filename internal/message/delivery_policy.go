@@ -48,6 +48,11 @@ type deliveryPolicyInput struct {
 	QueueChecked bool
 	QueueCount   int
 	QueueCap     int
+
+	EvidencePresenceGateChecked bool
+	EvidencePresenceGateActive  bool
+	CompletionClaim             bool
+	EvidencePresent             bool
 }
 
 func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
@@ -72,6 +77,19 @@ func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
 			DeadLetterSuffix:           dlSuffixEnvelopeMismatch,
 			DeadLetterReason:           deadLetterReasonEnvelopeMismatch,
 			EventReason:                deadLetterReasonEnvelopeMismatch,
+			SendDeadLetterNotification: true,
+		}
+	}
+
+	if input.EvidencePresenceGateChecked &&
+		input.EvidencePresenceGateActive &&
+		input.CompletionClaim &&
+		!input.EvidencePresent {
+		return deliveryDecision{
+			Action:                     deliveryActionDeadLetter,
+			DeadLetterSuffix:           dlSuffixMissingEvidence,
+			DeadLetterReason:           deadLetterReasonMissingEvidence,
+			EventReason:                deadLetterReasonMissingEvidence,
 			SendDeadLetterNotification: true,
 		}
 	}

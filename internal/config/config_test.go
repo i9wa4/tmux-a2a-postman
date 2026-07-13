@@ -178,6 +178,9 @@ role = "observer"
 	if cfg.BaseDir != "/custom/base" {
 		t.Errorf("BaseDir: got %q, want %q", cfg.BaseDir, "/custom/base")
 	}
+	if cfg.EvidencePresenceGateEnabled {
+		t.Fatal("EvidencePresenceGateEnabled = true, want default false")
+	}
 	if cfg.NotificationTemplate != "Custom notification: {{.From}}" {
 		t.Errorf("NotificationTemplate: got %q, want %q", cfg.NotificationTemplate, "Custom notification: {{.From}}")
 	}
