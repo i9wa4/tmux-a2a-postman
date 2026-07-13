@@ -477,6 +477,9 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.AutoPingDelaySeconds != 20.0 {
 		t.Errorf("default AutoPingDelaySeconds: got %v, want 20.0", cfg.AutoPingDelaySeconds)
 	}
+	if cfg.InputRequestStaleSeconds != 3600.0 {
+		t.Errorf("default InputRequestStaleSeconds: got %v, want 3600.0", cfg.InputRequestStaleSeconds)
+	}
 	if cfg.DaemonSubmitWorkerLimit != DefaultDaemonSubmitWorkerLimit {
 		t.Errorf("default DaemonSubmitWorkerLimit: got %d, want %d", cfg.DaemonSubmitWorkerLimit, DefaultDaemonSubmitWorkerLimit)
 	}
