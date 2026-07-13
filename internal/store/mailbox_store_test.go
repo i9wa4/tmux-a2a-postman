@@ -243,3 +243,34 @@ func TestArchiveInboxMessageFailedRenamePreservesOriginalContent(t *testing.T) {
 		t.Fatalf("source content changed: %q", got)
 	}
 }
+
+func TestPlanPopReceipt(t *testing.T) {
+	tmpDir := t.TempDir()
+	readDir := filepath.Join(tmpDir, "ctx", "review", "read")
+	markdownPath := filepath.Join(readDir, "20260502-120000-r1111-from-a-to-b.md")
+
+	plan := PlanPopReceipt(markdownPath)
+	if plan.MarkdownPath != markdownPath {
+		t.Fatalf("MarkdownPath = %q, want %q", plan.MarkdownPath, markdownPath)
+	}
+	if plan.ReadDir != readDir {
+		t.Fatalf("ReadDir = %q, want %q", plan.ReadDir, readDir)
+	}
+	if plan.ReceiptPath != filepath.Join(readDir, "20260502-120000-r1111-from-a-to-b.pop.json") {
+		t.Fatalf("ReceiptPath = %q", plan.ReceiptPath)
+	}
+	if _, err := os.Stat(readDir); !os.IsNotExist(err) {
+		t.Fatalf("plan created read dir or wrong error: %v", err)
+	}
+}
+
+func TestPlanPopReceiptIgnoresNonReadArchivePath(t *testing.T) {
+	markdownPath := filepath.Join(t.TempDir(), "ctx", "review", "inbox", "worker", "message.md")
+	plan := PlanPopReceipt(markdownPath)
+	if plan.MarkdownPath != markdownPath {
+		t.Fatalf("MarkdownPath = %q, want %q", plan.MarkdownPath, markdownPath)
+	}
+	if plan.ReadDir != "" || plan.ReceiptPath != "" {
+		t.Fatalf("plan = %#v, want no receipt for non-read path", plan)
+	}
+}

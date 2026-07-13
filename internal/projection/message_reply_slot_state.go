@@ -2,11 +2,14 @@ package projection
 
 import (
 	"sort"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 )
+
+const DefaultInputRequestStaleAfterSeconds = 3600
 
 type MessageInputRequestState struct {
 	UnreadCounts         map[string]int
@@ -15,6 +18,7 @@ type MessageInputRequestState struct {
 	InfoUnreadCounts     map[string]int
 	InputRequired        []InputRequestDetail
 	WaitingOnInput       []InputRequestDetail
+	RequestSatisfaction  map[string]RequestSatisfaction
 }
 
 type InputRequestDetail struct {
@@ -31,7 +35,23 @@ type InputRequestDetail struct {
 	ReadEventID    string
 }
 
+type RequestSatisfaction struct {
+	OpenedCount              int
+	FilledCount              int
+	OpenCount                int
+	DeadLetteredCount        int
+	StaleOpenCount           int
+	StaleAfterSeconds        int
+	TotalTimeToFillSeconds   int
+	AverageTimeToFillSeconds int
+	LongestOpenAgeSeconds    int
+}
+
 func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInputRequestState, bool, error) {
+	return ProjectMessageInputRequestStateAt(sessionDir, sessionName, time.Now(), DefaultInputRequestStaleAfterSeconds)
+}
+
+func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.Time, staleAfterSeconds int) (MessageInputRequestState, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
 		return MessageInputRequestState{}, false, nil
@@ -47,11 +67,14 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 		InputRequiredCounts:  make(map[string]int),
 		WaitingOnInputCounts: make(map[string]int),
 		InfoUnreadCounts:     make(map[string]int),
+		RequestSatisfaction:  make(map[string]RequestSatisfaction),
 	}
 	openInboundExact := make(map[string]InputRequestDetail)
 	openInboundFallback := make(map[string]InputRequestDetail)
 	openOutboundExact := make(map[string]InputRequestDetail)
 	openOutboundFallback := make(map[string]InputRequestDetail)
+	satisfactionExact := make(map[string]InputRequestDetail)
+	satisfactionFallback := make(map[string]InputRequestDetail)
 	infoUnread := make(map[string]InputRequestDetail)
 	sawLease := false
 	sawResolution := false
@@ -69,7 +92,7 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 		case "session_resolved":
 			sawResolution = true
 			continue
-		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType:
+		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeadLetteredEventType:
 		default:
 			continue
 		}
@@ -91,6 +114,7 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
+			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
 				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID)
@@ -98,9 +122,11 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 			}
 		case MailboxProjectionDeliveredEventType:
 			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
+			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
 				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID)
+				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 				projected.InputRequiredCounts[meta.To]++
 			} else {
 				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
@@ -114,6 +140,8 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
 			}
+		case MailboxProjectionDeadLetteredEventType:
+			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 		}
 	}
 
@@ -122,6 +150,7 @@ func ProjectMessageInputRequestState(sessionDir, sessionName string) (MessageInp
 	}
 	projected.InputRequired = sortedInputRequestDetails(openInboundExact, openInboundFallback)
 	projected.WaitingOnInput = sortedInputRequestDetails(openOutboundExact, openOutboundFallback)
+	finalizeRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, now, staleAfterSeconds)
 	return projected, true, nil
 }
 
@@ -189,6 +218,145 @@ func openInputRequest(openExact, openFallback map[string]InputRequestDetail, met
 		return
 	}
 	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
+}
+
+func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, openedAt, openedAtSource, openedEventID string) {
+	inputRequest := InputRequestDetail{
+		MessageID:      meta.MessageID,
+		InputRequestID: meta.InputRequestID,
+		Sender:         meta.From,
+		Recipient:      meta.To,
+		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
+		OpenedAt:       openedAt,
+		OpenedAtSource: openedAtSource,
+		OpenedEventID:  openedEventID,
+	}
+	stats := satisfaction[meta.To]
+	stats.OpenedCount++
+	satisfaction[meta.To] = stats
+	if meta.InputRequestID != "" {
+		openExact[meta.InputRequestID] = inputRequest
+		return
+	}
+	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
+}
+
+func fillRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, filledAt string) {
+	inputRequest, ok := resolveRequestSatisfactionOpen(openExact, openFallback, meta)
+	if !ok {
+		return
+	}
+	stats := satisfaction[inputRequest.Recipient]
+	stats.FilledCount++
+	if seconds, ok := requestSatisfactionElapsedSeconds(inputRequest.OpenedAt, filledAt); ok {
+		stats.TotalTimeToFillSeconds += seconds
+	}
+	satisfaction[inputRequest.Recipient] = stats
+}
+
+func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, deadLetteredAt, openedAtSource, openedEventID string) {
+	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
+		return
+	}
+	inputRequest, ok := findOpenRequestSatisfaction(openExact, openFallback, meta)
+	if !ok {
+		openRequestSatisfaction(satisfaction, openExact, openFallback, meta, deadLetteredAt, openedAtSource, openedEventID)
+		inputRequest, ok = findOpenRequestSatisfaction(openExact, openFallback, meta)
+		if !ok {
+			return
+		}
+	}
+	stats := satisfaction[inputRequest.Recipient]
+	stats.DeadLetteredCount++
+	satisfaction[inputRequest.Recipient] = stats
+}
+
+func findOpenRequestSatisfaction(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {
+	if meta.InputRequestID != "" {
+		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
+			return inputRequest, true
+		}
+	}
+	key := inputRequestKey(meta.MessageID, meta.To)
+	inputRequest, ok := openFallback[key]
+	return inputRequest, ok
+}
+
+func resolveRequestSatisfactionOpen(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {
+	if meta.FillsInputRequestID != "" {
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
+		if !ok {
+			return InputRequestDetail{}, false
+		}
+		delete(openExact, key)
+		return inputRequest, true
+	}
+	if meta.ReplyTo == "" {
+		return InputRequestDetail{}, false
+	}
+	key, inputRequest, ok := findFallbackInputRequest(openFallback, meta.ReplyTo, meta.From)
+	if !ok {
+		return InputRequestDetail{}, false
+	}
+	delete(openFallback, key)
+	return inputRequest, true
+}
+
+func finalizeRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, now time.Time, staleAfterSeconds int) {
+	if staleAfterSeconds <= 0 {
+		staleAfterSeconds = DefaultInputRequestStaleAfterSeconds
+	}
+	for node, stats := range satisfaction {
+		stats.StaleAfterSeconds = staleAfterSeconds
+		if stats.FilledCount > 0 {
+			stats.AverageTimeToFillSeconds = stats.TotalTimeToFillSeconds / stats.FilledCount
+		}
+		satisfaction[node] = stats
+	}
+	for _, inputRequest := range openExact {
+		addOpenRequestSatisfaction(satisfaction, inputRequest, now, staleAfterSeconds)
+	}
+	for _, inputRequest := range openFallback {
+		addOpenRequestSatisfaction(satisfaction, inputRequest, now, staleAfterSeconds)
+	}
+}
+
+func addOpenRequestSatisfaction(satisfaction map[string]RequestSatisfaction, inputRequest InputRequestDetail, now time.Time, staleAfterSeconds int) {
+	stats := satisfaction[inputRequest.Recipient]
+	stats.StaleAfterSeconds = staleAfterSeconds
+	stats.OpenCount++
+	if age, ok := requestSatisfactionAgeSeconds(inputRequest.OpenedAt, now); ok {
+		if age > stats.LongestOpenAgeSeconds {
+			stats.LongestOpenAgeSeconds = age
+		}
+		if age >= staleAfterSeconds {
+			stats.StaleOpenCount++
+		}
+	}
+	satisfaction[inputRequest.Recipient] = stats
+}
+
+func requestSatisfactionElapsedSeconds(openedAt, filledAt string) (int, bool) {
+	opened, err := time.Parse(time.RFC3339Nano, openedAt)
+	if err != nil {
+		return 0, false
+	}
+	filled, err := time.Parse(time.RFC3339Nano, filledAt)
+	if err != nil {
+		return 0, false
+	}
+	if filled.Before(opened) {
+		return 0, false
+	}
+	return int(filled.Sub(opened).Seconds()), true
+}
+
+func requestSatisfactionAgeSeconds(openedAt string, now time.Time) (int, bool) {
+	opened, err := time.Parse(time.RFC3339Nano, openedAt)
+	if err != nil || now.Before(opened) {
+		return 0, false
+	}
+	return int(now.Sub(opened).Seconds()), true
 }
 
 func resolveInboundInputRequest(state MessageInputRequestState, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {

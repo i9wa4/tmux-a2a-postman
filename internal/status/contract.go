@@ -5,24 +5,25 @@ const SchemaVersion = 4
 const DeliveryStuckAfterSeconds = 180
 
 type NodeStatus struct {
-	Name                string                  `json:"name"`
-	PaneID              string                  `json:"pane_id,omitempty"`
-	PaneState           string                  `json:"pane_state,omitempty"`
-	VisibleState        string                  `json:"visible_state"`
-	Severity            string                  `json:"severity,omitempty"`
-	SeveritySource      string                  `json:"severity_source,omitempty"`
-	SeverityReason      string                  `json:"severity_reason,omitempty"`
-	InboxCount          int                     `json:"inbox_count"`
-	InputRequiredCount  int                     `json:"input_required_count,omitempty"`
-	WaitingOnInputCount int                     `json:"waiting_on_input_count,omitempty"`
-	InfoUnreadCount     int                     `json:"info_unread_count,omitempty"`
-	InputRequired       []InputRequestDetail    `json:"-"`
-	WaitingOnInput      []InputRequestDetail    `json:"-"`
-	CurrentCommand      string                  `json:"current_command,omitempty"`
-	ScreenProgress      *ScreenProgressEvidence `json:"screen_progress,omitempty"`
-	NodeLocal           *NodeLocalStatus        `json:"node_local,omitempty"`
-	Flow                *NodeFlowStatus         `json:"flow,omitempty"`
-	Queues              *NodeQueues             `json:"queues,omitempty"`
+	Name                string                      `json:"name"`
+	PaneID              string                      `json:"pane_id,omitempty"`
+	PaneState           string                      `json:"pane_state,omitempty"`
+	VisibleState        string                      `json:"visible_state"`
+	Severity            string                      `json:"severity,omitempty"`
+	SeveritySource      string                      `json:"severity_source,omitempty"`
+	SeverityReason      string                      `json:"severity_reason,omitempty"`
+	InboxCount          int                         `json:"inbox_count"`
+	InputRequiredCount  int                         `json:"input_required_count,omitempty"`
+	WaitingOnInputCount int                         `json:"waiting_on_input_count,omitempty"`
+	InfoUnreadCount     int                         `json:"info_unread_count,omitempty"`
+	InputRequired       []InputRequestDetail        `json:"-"`
+	WaitingOnInput      []InputRequestDetail        `json:"-"`
+	RequestSatisfaction *RequestSatisfactionSummary `json:"-"`
+	CurrentCommand      string                      `json:"current_command,omitempty"`
+	ScreenProgress      *ScreenProgressEvidence     `json:"screen_progress,omitempty"`
+	NodeLocal           *NodeLocalStatus            `json:"node_local,omitempty"`
+	Flow                *NodeFlowStatus             `json:"flow,omitempty"`
+	Queues              *NodeQueues                 `json:"queues,omitempty"`
 }
 
 type ScreenProgressEvidence struct {
@@ -54,11 +55,26 @@ type NodeQueues struct {
 }
 
 type InputRequestSummary struct {
-	InputRequiredCount  int                  `json:"input_required_count"`
-	WaitingOnInputCount int                  `json:"waiting_on_input_count"`
-	InfoUnreadCount     int                  `json:"info_unread_count"`
-	InputRequired       []InputRequestDetail `json:"input_required,omitempty"`
-	WaitingOnInput      []InputRequestDetail `json:"waiting_on_input,omitempty"`
+	InputRequiredCount  int                         `json:"input_required_count"`
+	WaitingOnInputCount int                         `json:"waiting_on_input_count"`
+	InfoUnreadCount     int                         `json:"info_unread_count"`
+	InputRequired       []InputRequestDetail        `json:"input_required,omitempty"`
+	WaitingOnInput      []InputRequestDetail        `json:"waiting_on_input,omitempty"`
+	RequestSatisfaction *RequestSatisfactionSummary `json:"request_satisfaction,omitempty"`
+}
+
+type RequestSatisfactionSummary struct {
+	OpenedCount              int     `json:"opened_count"`
+	FilledCount              int     `json:"filled_count"`
+	OpenCount                int     `json:"open_count"`
+	DeadLetteredCount        int     `json:"dead_lettered_count"`
+	StaleOpenCount           int     `json:"stale_open_count"`
+	StaleAfterSeconds        int     `json:"stale_after_seconds"`
+	FillRate                 float64 `json:"fill_rate"`
+	AverageTimeToFillSeconds int     `json:"average_time_to_fill_seconds"`
+	LongestOpenAgeSeconds    int     `json:"longest_open_age_seconds"`
+	Signal                   string  `json:"signal"`
+	Interpretation           string  `json:"interpretation"`
 }
 
 type InputRequestDetail struct {
