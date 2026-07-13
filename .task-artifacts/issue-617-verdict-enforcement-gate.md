@@ -77,7 +77,7 @@ fills must issue a verdict before sending more reply-required work.
 
 ## 8. Completion Verdict
 
-- PASS before commit. The guardian rework blockers are addressed in the issue
+- PASS. The guardian rework blockers are addressed in a clean committed issue
   worktree: source identity is authoritative and fail-closed, debt lookup is
   normalized, timeout append failures propagate, lazy timeout materialization is
   documented and tested, and the issue-specific artifact exists.
