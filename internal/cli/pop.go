@@ -270,7 +270,7 @@ func popSessionDiagnosticsForSession(sessionDir string) *popSessionDiagnostics {
 	}
 
 	sessionName := filepath.Base(sessionDir)
-	inputRequests, ok := projectedInputRequestCounts(sessionDir, sessionName)
+	inputRequests, ok := projectedInputRequestCounts(sessionDir, sessionName, time.Now(), projection.DefaultInputRequestStaleAfterSeconds)
 	if !ok {
 		return diagnostics
 	}
