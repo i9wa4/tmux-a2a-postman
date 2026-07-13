@@ -8,6 +8,7 @@ configured replay path decides to run them.
 
 The replay contract records:
 
+- `command`: command line that produced or can replay the evidence.
 - `cwd`: working directory for replay.
 - `env_allowlist`: environment variable names that may be inherited.
 - `timeout`: positive timeout for replay.
@@ -28,7 +29,7 @@ check verifies artifact content only after containment passes.
 ## 3. Presence Gate
 
 The evidence presence gate dead-letters completion claims that lack evidence
-fields with reason `missing-evidence`, but it ships disabled by default:
+contracts with reason `missing-evidence`, but it ships disabled by default:
 
 ```toml
 [postman]
@@ -39,4 +40,10 @@ evidence_presence_gate_enabled = false
 Activation must be data-driven. Use the D4 convention meter, or an interim
 archive-count proxy, to confirm that reviewers reliably stamp evidence before
 turning the gate on. Set `evidence_presence_gate_after` to the activation
-timestamp; messages before that timestamp are not affected retroactively.
+timestamp. Delivery compares that timestamp with the trusted local file
+observation time for the queued message, not with sender-controlled envelope
+metadata, so messages observed before activation are not affected
+retroactively.
+
+The gate requires a complete replay contract shape. Partial metadata such as
+only a command, artifact path, or hash does not satisfy the gate.

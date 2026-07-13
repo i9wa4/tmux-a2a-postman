@@ -30,6 +30,19 @@ type ReplayContract struct {
 }
 
 func (c ReplayContract) Validate(root string) error {
+	if err := c.ValidateShape(); err != nil {
+		return err
+	}
+	if _, err := ContainedArtifactPath(root, c.ArtifactPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c ReplayContract) ValidateShape() error {
+	if strings.TrimSpace(c.Command) == "" {
+		return fmt.Errorf("command is required")
+	}
 	if strings.TrimSpace(c.CWD) == "" {
 		return fmt.Errorf("cwd is required")
 	}
@@ -44,12 +57,21 @@ func (c ReplayContract) Validate(root string) error {
 			return fmt.Errorf("env allowlist contains invalid name %q", name)
 		}
 	}
-	if c.ArtifactPath != "" {
-		if _, err := ContainedArtifactPath(root, c.ArtifactPath); err != nil {
-			return err
-		}
+	if strings.TrimSpace(c.ArtifactPath) == "" {
+		return fmt.Errorf("artifact_path is required")
 	}
-	if c.ExpectedArtifactHash != "" && !strings.HasPrefix(c.ExpectedArtifactHash, "sha256:") {
+	if err := validateSHA256Hash(c.ExpectedArtifactHash, "expected_artifact_hash"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSHA256Hash(value, field string) error {
+	if !strings.HasPrefix(value, "sha256:") {
+		return fmt.Errorf("%s must use sha256:<hex>", field)
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	if err != nil || len(decoded) != sha256.Size {
 		return fmt.Errorf("expected_artifact_hash must use sha256:<hex>")
 	}
 	return nil
@@ -67,8 +89,8 @@ func VerifyArtifactHash(path, expected string) error {
 	if expected == "" {
 		return nil
 	}
-	if !strings.HasPrefix(expected, "sha256:") {
-		return fmt.Errorf("expected artifact hash must use sha256:<hex>")
+	if err := validateSHA256Hash(expected, "expected artifact hash"); err != nil {
+		return err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

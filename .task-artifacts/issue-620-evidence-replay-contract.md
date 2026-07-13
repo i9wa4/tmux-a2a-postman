@@ -26,12 +26,14 @@ default and does not affect pre-activation messages.
 - Added `internal/evidence` with `ReplayContract`, side-effect class handling,
   artifact path containment, and artifact hash verification.
 - Added evidence metadata fields to envelope parsing:
-  `evidence_command`, `evidence_artifact`, and `evidence_hash`.
+  `evidence_command`, `evidence_cwd`, `evidence_env_allowlist`,
+  `evidence_timeout_seconds`, `evidence_side_effect_class`,
+  `evidence_artifact`, and `evidence_hash`.
 - Added `evidence_presence_gate_enabled` and `evidence_presence_gate_after`.
-  The gate is effective only when both are configured and the message timestamp
-  is at or after the activation timestamp.
+  The gate is effective only when both are configured and the trusted local
+  message observation time is at or after the activation timestamp.
 - Delivery policy now has a `missing-evidence` dead-letter decision for active
-  gate checks on completion claims missing structured evidence fields.
+  gate checks on completion claims missing a complete replay contract.
 - Added `docs/design/evidence-replay-contract.md` and linked it from the
   README design references.
 
@@ -51,14 +53,15 @@ default and does not affect pre-activation messages.
 - `internal/message/delivery_policy.go`
 - `internal/message/delivery_policy_test.go`
 - `internal/message/evidence_gate.go`
+- `internal/message/evidence_gate_test.go`
 - `internal/message/message.go`
+- `internal/message/message_test.go`
 - `.task-artifacts/issue-620-evidence-replay-contract.md`
 
 ## 5. Evidence Log
 
-- PASS: `go test ./internal/evidence -count=1`
-- PASS:
-  `go test ./internal/config ./internal/envelope ./internal/message -count=1`
+- PASS: focused package tests:
+  `go test ./internal/{evidence,envelope,config,message} -count=1`
 - PASS: `go test ./... -count=1`
 - PASS: README and `skills/*/SKILL.md` deprecated-reference scan found no stale
   command, flag, or package references.

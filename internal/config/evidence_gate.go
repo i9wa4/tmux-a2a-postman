@@ -2,7 +2,7 @@ package config
 
 import "time"
 
-func (cfg *Config) EvidencePresenceGateActiveFor(messageTimestamp string) bool {
+func (cfg *Config) EvidencePresenceGateActiveAt(observedAt time.Time) bool {
 	if cfg == nil || !cfg.EvidencePresenceGateEnabled || cfg.EvidencePresenceGateAfter == "" {
 		return false
 	}
@@ -10,9 +10,5 @@ func (cfg *Config) EvidencePresenceGateActiveFor(messageTimestamp string) bool {
 	if err != nil {
 		return false
 	}
-	messageAt, err := time.Parse(time.RFC3339, messageTimestamp)
-	if err != nil {
-		return false
-	}
-	return !messageAt.Before(activatedAt)
+	return !observedAt.Before(activatedAt)
 }

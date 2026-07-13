@@ -695,9 +695,9 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 			}
 			policyInput.EvidencePresenceGateChecked = true
-			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveFor(metadata.Timestamp)
+			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveAt(evidenceGateObservedAt(postPath))
 			policyInput.CompletionClaim = isCompletionClaim(metadata.Body)
-			policyInput.EvidencePresent = hasEvidenceFields(metadata)
+			policyInput.EvidencePresent = hasEvidenceReplayContract(metadata)
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 				if decision.SendDeadLetterNotification {

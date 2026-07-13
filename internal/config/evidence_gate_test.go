@@ -1,11 +1,14 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestEvidencePresenceGateDisabledByDefault(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.EvidencePresenceGateActiveFor("2026-07-13T10:00:00Z") {
-		t.Fatal("EvidencePresenceGateActiveFor() = true, want false by default")
+	if cfg.EvidencePresenceGateActiveAt(time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)) {
+		t.Fatal("EvidencePresenceGateActiveAt() = true, want false by default")
 	}
 }
 
@@ -14,10 +17,10 @@ func TestEvidencePresenceGateDoesNotAffectMessagesBeforeActivation(t *testing.T)
 		EvidencePresenceGateEnabled: true,
 		EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
 	}
-	if cfg.EvidencePresenceGateActiveFor("2026-07-13T09:59:59Z") {
-		t.Fatal("EvidencePresenceGateActiveFor(before activation) = true, want false")
+	if cfg.EvidencePresenceGateActiveAt(time.Date(2026, 7, 13, 9, 59, 59, 0, time.UTC)) {
+		t.Fatal("EvidencePresenceGateActiveAt(before activation) = true, want false")
 	}
-	if !cfg.EvidencePresenceGateActiveFor("2026-07-13T10:00:00Z") {
-		t.Fatal("EvidencePresenceGateActiveFor(at activation) = false, want true")
+	if !cfg.EvidencePresenceGateActiveAt(time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)) {
+		t.Fatal("EvidencePresenceGateActiveAt(at activation) = false, want true")
 	}
 }
