@@ -277,6 +277,51 @@ func TestProcessDaemonSubmitRequest_AllowsReplyRequiredWithPiggybackVerdict(t *t
 	}
 }
 
+func TestProcessDaemonSubmitRequest_RejectsWrongRecipientPiggybackVerdict(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "orchestrator", "worker", "ireq_wrong_to", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	verdictGraceSeconds = 60
+	verdictDebtCap = 0
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+	})
+
+	filename := "20260713-120014-from-orchestrator-to-critic.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-piggyback-wrong-to",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "orchestrator",
+		Content:   verdictGateSendContentWithVerdict("orchestrator", "critic", filename, "required", "ireq_new", "pass", "ireq_wrong_to"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-piggyback-wrong-to"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "past verdict_grace_seconds=60") {
+		t.Fatalf("response.Error = %q, want wrong-recipient piggyback verdict to leave expired debt", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file written despite wrong-recipient piggyback rejection: %v", err)
+	}
+}
+
 func TestProcessDaemonSubmitRequest_SendExemptsMessengerFromVerdictGate(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -626,8 +671,8 @@ func TestEnforceVerdictGate_DedupesConcurrentSameRequesterTimeout(t *testing.T) 
 	wg.Wait()
 	close(errCh)
 	for err := range errCh {
-		if err == nil || !strings.Contains(err.Error(), "past verdict_grace_seconds=60") {
-			t.Fatalf("enforceVerdictGate error = %v, want verdict gate rejection", err)
+		if err != nil && !strings.Contains(err.Error(), "past verdict_grace_seconds=60") {
+			t.Fatalf("enforceVerdictGate error = %v, want only verdict gate rejection or already-materialized timeout", err)
 		}
 	}
 
@@ -789,21 +834,68 @@ func TestProcessDaemonSubmitRequest_ReturnsErrorWhenVerdictNoneTimeoutAppendFail
 }
 
 func TestConfigureVerdictGateFromConfig_AllowsZeroVerdictDebtCap(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
 	originalCap := verdictDebtCap
 	verdictDebtCap = defaultVerdictDebtCap
 	t.Cleanup(func() {
 		verdictDebtCap = originalCap
 	})
 
-	cfg := config.DefaultConfig()
-	cfg.ScanInterval = 3600
-	cfg.SessionScanInterval = 3600
-	cfg.VerdictDebtCap = 0
-
 	configureVerdictGateFromConfig(cfg)
 
 	if verdictDebtCap != 0 {
 		t.Fatalf("verdictDebtCap = %d, want config value 0", verdictDebtCap)
+	}
+}
+
+func TestConfigureVerdictGateFromConfig_NegativeVerdictDebtCapDisablesCap(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = -1
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	originalCap := verdictDebtCap
+	verdictDebtCap = defaultVerdictDebtCap
+	t.Cleanup(func() {
+		verdictDebtCap = originalCap
+	})
+
+	configureVerdictGateFromConfig(cfg)
+
+	if verdictDebtCap != -1 {
+		t.Fatalf("verdictDebtCap = %d, want explicit negative config to disable cap", verdictDebtCap)
 	}
 }
 

@@ -111,7 +111,7 @@ func ProjectVerdictDebtState(sessionDir, sessionName string, now time.Time, grac
 			}
 		}
 		if meta.Verdict != "" && meta.VerdictOf != "" {
-			if request, ok := requests[meta.VerdictOf]; ok && request.requester == meta.From {
+			if request, ok := requests[meta.VerdictOf]; ok && request.requester == meta.From && request.filler == meta.To {
 				delete(debts, meta.VerdictOf)
 			}
 		}

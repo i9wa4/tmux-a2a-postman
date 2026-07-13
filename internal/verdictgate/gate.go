@@ -17,8 +17,10 @@ type Options struct {
 	GraceSeconds  int
 	DebtCap       int
 	ExemptUINode  string
-	RecordTimeout func(sessionDir, sessionName string, payload journal.MailboxEventPayload) error
+	RecordTimeout TimeoutRecorder
 }
+
+type TimeoutRecorder func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error)
 
 const (
 	DefaultGraceSeconds = 3600
@@ -47,7 +49,7 @@ func Enforce(sessionDir, sender, filename, content string, opts Options) error {
 	if err != nil || !ok {
 		return err
 	}
-	debt := applyOutgoingVerdict(state.Requesters[sender], sender, meta)
+	debt := applyOutgoingVerdict(sessionName, state.Requesters[sender], sender, meta)
 	if debt.ExpiredCount > 0 {
 		if err := recordVerdictNoneTimeouts(sessionDir, sessionName, sender, opts.GraceSeconds, debt.Items, opts.RecordTimeout); err != nil {
 			return fmt.Errorf("reply gate: recording verdict:none timeout for requester %q: %w", sender, err)
@@ -81,14 +83,15 @@ func IsExemptSender(sender, exemptUINode string) bool {
 	return sender == "messenger" || sender == exemptUINode
 }
 
-func applyOutgoingVerdict(debt projection.VerdictRequesterDebt, sender string, meta envelope.Metadata) projection.VerdictRequesterDebt {
+func applyOutgoingVerdict(sessionName string, debt projection.VerdictRequesterDebt, sender string, meta envelope.Metadata) projection.VerdictRequesterDebt {
 	if strings.TrimSpace(meta.Verdict) == "" || strings.TrimSpace(meta.VerdictOf) == "" {
 		return debt
 	}
 	verdictOf := strings.TrimSpace(meta.VerdictOf)
+	verdictTo := projection.SimpleNameForSession(meta.To, sessionName)
 	filtered := debt.Items[:0]
 	for _, item := range debt.Items {
-		if item.Requester == sender && item.InputRequestID == verdictOf {
+		if item.Requester == sender && item.Filler == verdictTo && item.InputRequestID == verdictOf {
 			continue
 		}
 		filtered = append(filtered, item)
@@ -105,7 +108,7 @@ func applyOutgoingVerdict(debt projection.VerdictRequesterDebt, sender string, m
 	return debt
 }
 
-func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, graceSeconds int, items []projection.VerdictDebtItem, recorder func(string, string, journal.MailboxEventPayload) error) error {
+func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, graceSeconds int, items []projection.VerdictDebtItem, recorder TimeoutRecorder) error {
 	timeoutMu.Lock()
 	defer timeoutMu.Unlock()
 
@@ -117,7 +120,7 @@ func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, graceS
 		if !item.Expired || item.Requester != requester {
 			continue
 		}
-		key := timeoutKey(item.Requester, item.InputRequestID)
+		key := timeoutKey(item.Requester, item.Filler, item.InputRequestID)
 		if recorded[key] {
 			continue
 		}
@@ -134,7 +137,7 @@ func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, graceS
 		if recorder == nil {
 			recorder = RecordTimeoutWithCurrentLease
 		}
-		if err := recorder(sessionDir, sessionName, payload); err != nil {
+		if _, err := recorder(sessionDir, sessionName, payload, equivalentTimeoutEvent(sessionName, item.Requester, item.Filler, item.InputRequestID)); err != nil {
 			return err
 		}
 		recorded[key] = true
@@ -142,13 +145,15 @@ func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, graceS
 	return nil
 }
 
-func RecordTimeoutWithCurrentLease(sessionDir, sessionName string, payload journal.MailboxEventPayload) error {
+func RecordTimeoutWithCurrentLease(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
 	writer, err := journal.OpenCurrentWriter(sessionDir)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = writer.AppendEvent(projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, time.Now())
-	return err
+	_, appended, err := writer.AppendCurrentSessionEventIfAbsent(projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, journal.AppendOptions{
+		ThreadID: payload.ThreadID,
+	}, time.Now(), equivalent)
+	return appended, err
 }
 
 func recordedVerdictNoneTimeouts(sessionDir, sessionName string) (map[string]bool, error) {
@@ -177,7 +182,8 @@ func recordedVerdictNoneTimeouts(sessionDir, sessionName string) (map[string]boo
 		if requester == "" || verdictOf == "" {
 			return nil
 		}
-		recorded[timeoutKey(requester, verdictOf)] = true
+		filler := projection.SimpleNameForSession(payload.To, sessionName)
+		recorded[timeoutKey(requester, filler, verdictOf)] = true
 		return nil
 	}); err != nil {
 		return nil, err
@@ -185,8 +191,29 @@ func recordedVerdictNoneTimeouts(sessionDir, sessionName string) (map[string]boo
 	return recorded, nil
 }
 
-func timeoutKey(requester, inputRequestID string) string {
-	return requester + "\x00" + inputRequestID
+func timeoutKey(requester, filler, inputRequestID string) string {
+	return requester + "\x00" + filler + "\x00" + inputRequestID
+}
+
+func equivalentTimeoutEvent(sessionName, requester, filler, inputRequestID string) journal.EventEquivalenceFunc {
+	return func(event journal.Event) (bool, error) {
+		if event.Type != projection.VerdictNoneTimeoutEventType || event.TmuxSessionName != sessionName {
+			return false, nil
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return false, err
+		}
+		meta, err := envelope.ParseMetadata(payload.Content)
+		if err != nil {
+			return false, nil
+		}
+		gotRequester := projection.SimpleNameForSession(payload.From, sessionName)
+		gotFiller := projection.SimpleNameForSession(payload.To, sessionName)
+		return gotRequester == requester &&
+			gotFiller == filler &&
+			strings.TrimSpace(meta.VerdictOf) == inputRequestID, nil
+	}
 }
 
 func verdictNoneTimeoutContent(item projection.VerdictDebtItem) string {

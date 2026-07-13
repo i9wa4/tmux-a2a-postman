@@ -246,8 +246,8 @@ func enforceVerdictGate(sessionDir, sender, filename, content string) error {
 		GraceSeconds: verdictGraceSeconds,
 		DebtCap:      verdictDebtCap,
 		ExemptUINode: verdictExemptUINode,
-		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload) error {
-			return recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload)
+		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
+			return journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, equivalent, time.Now())
 		},
 	})
 }
@@ -257,9 +257,7 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 		return
 	}
 	verdictGraceSeconds = cfg.EffectiveVerdictGraceSeconds(verdictGraceSeconds)
-	if cfg.VerdictDebtCap >= 0 {
-		verdictDebtCap = cfg.VerdictDebtCap
-	}
+	verdictDebtCap = cfg.EffectiveVerdictDebtCap(verdictDebtCap)
 	if cfg.UINode != "" {
 		verdictExemptUINode = cfg.UINode
 	}

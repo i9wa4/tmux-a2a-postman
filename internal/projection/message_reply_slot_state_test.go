@@ -257,6 +257,34 @@ func TestProjectVerdictDebtState_OutgoingVerdictStampClearsDebt(t *testing.T) {
 	}
 }
 
+func TestProjectVerdictDebtState_WrongRecipientVerdictDoesNotClearDebt(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	request := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_verdict_wrong_to", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", request, now.Add(time.Second))
+	fill := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "", "", "ireq_verdict_wrong_to", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", fill, now.Add(2*time.Second))
+	verdict := verdictContent("orchestrator", "critic", "m3.md", "pass", "ireq_verdict_wrong_to", "accepted by wrong recipient")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m3.md", "orchestrator", "critic", verdict, now.Add(3*time.Second))
+
+	after, ok, err := ProjectVerdictDebtState(sessionDir, "review", now.Add(10*time.Second), 3600)
+	if err != nil {
+		t.Fatalf("ProjectVerdictDebtState(after) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectVerdictDebtState(after) ok = false, want true")
+	}
+	if after.Requesters["orchestrator"].UnstampedCount != 1 {
+		t.Fatalf("after debt = %#v, want wrong-recipient verdict to leave debt", after.Requesters["orchestrator"])
+	}
+}
+
 func TestInputRequestMetadataFromPayloadUsesDurableMetadataFallbacks(t *testing.T) {
 	meta := inputRequestMetadataFromPayload(journal.MailboxEventPayload{
 		ContextID:           "ctx-replay",
