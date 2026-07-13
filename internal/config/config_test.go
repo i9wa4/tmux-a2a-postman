@@ -459,6 +459,12 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.UINode != "messenger" {
 		t.Errorf("default UINode: got %q, want %q", cfg.UINode, "messenger")
 	}
+	if cfg.VerdictGraceSeconds != 3600 {
+		t.Errorf("default VerdictGraceSeconds: got %v, want 3600", cfg.VerdictGraceSeconds)
+	}
+	if cfg.VerdictDebtCap != 3 {
+		t.Errorf("default VerdictDebtCap: got %d, want 3", cfg.VerdictDebtCap)
+	}
 	if cfg.HasExplicitUINodeSetting() {
 		t.Error("default UINode should not be treated as an explicit operator setting")
 	}

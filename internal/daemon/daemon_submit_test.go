@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,68 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 )
+
+func verdictGateSendContent(from, to, messageID, replyPolicy, inputRequestID string) string {
+	return "---\nparams:\n" +
+		"  from: " + from + "\n" +
+		"  to: " + to + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  replyPolicy: " + replyPolicy + "\n" +
+		"  input_request_id: " + inputRequestID + "\n" +
+		"---\n\nplease work\n"
+}
+
+func verdictGateFillContent(from, to, messageID, replyPolicy, inputRequestID, fillsInputRequestID string) string {
+	inputLine := ""
+	if inputRequestID != "" {
+		inputLine = "  input_request_id: " + inputRequestID + "\n"
+	}
+	fillLine := ""
+	if fillsInputRequestID != "" {
+		fillLine = "  fills_input_request_id: " + fillsInputRequestID + "\n"
+	}
+	return "---\nparams:\n" +
+		"  from: " + from + "\n" +
+		"  to: " + to + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  replyPolicy: " + replyPolicy + "\n" +
+		inputLine +
+		fillLine +
+		"---\n\nbody\n"
+}
+
+func appendVerdictGateFill(t *testing.T, sessionDir, sessionName, requester, filler, inputRequestID string, now time.Time) {
+	t.Helper()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", sessionName, 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	appendVerdictGateFillEvent(t, writer, requester, filler, inputRequestID, now)
+}
+
+func appendVerdictGateFillEvent(t *testing.T, writer *journal.Writer, requester, filler, inputRequestID string, now time.Time) {
+	t.Helper()
+	requestMessageID := inputRequestID + "-request.md"
+	requestContent := verdictGateFillContent(requester, filler, requestMessageID, "required", inputRequestID, "")
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: requestMessageID,
+		From:      requester,
+		To:        filler,
+		Content:   requestContent,
+	}, now); err != nil {
+		t.Fatalf("AppendEvent request: %v", err)
+	}
+	fillMessageID := inputRequestID + "-fill.md"
+	fillContent := verdictGateFillContent(filler, requester, fillMessageID, "none", "", inputRequestID)
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: fillMessageID,
+		From:      filler,
+		To:        requester,
+		Content:   fillContent,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent fill: %v", err)
+	}
+}
 
 func TestProcessDaemonSubmitRequest_SendWritesPostFile(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
@@ -54,6 +117,139 @@ func TestProcessDaemonSubmitRequest_SendWritesPostFile(t *testing.T) {
 	}
 	if response.Filename != "20260414-033100-from-orchestrator-to-worker.md" {
 		t.Fatalf("response.Filename = %q", response.Filename)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_SendRefusesReplyRequiredWhenVerdictGraceExpired(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "orchestrator", "worker", "ireq_expired", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	verdictGraceSeconds = 60
+	verdictDebtCap = 3
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+	})
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-expired",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260713-120000-from-orchestrator-to-worker.md",
+		Content:   verdictGateSendContent("orchestrator", "worker", "20260713-120000-from-orchestrator-to-worker.md", "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-expired"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "past verdict_grace_seconds=60") {
+		t.Fatalf("response.Error = %q, want grace-window verdict gate rejection", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", "20260713-120000-from-orchestrator-to-worker.md")); !os.IsNotExist(err) {
+		t.Fatalf("post file written despite verdict gate rejection: %v", err)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_SendRefusesReplyRequiredWhenVerdictDebtExceedsCap(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-10 * time.Second).UTC()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review-session", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		appendVerdictGateFillEvent(t, writer, "orchestrator", "worker", "ireq_debt_"+strconv.Itoa(i), now.Add(time.Duration(i)*time.Second))
+	}
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	verdictGraceSeconds = 3600
+	verdictDebtCap = 3
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+	})
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-debt",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260713-120001-from-orchestrator-to-worker.md",
+		Content:   verdictGateSendContent("orchestrator", "worker", "20260713-120001-from-orchestrator-to-worker.md", "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-debt"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "verdict debt 4 above verdict_debt_cap=3") {
+		t.Fatalf("response.Error = %q, want debt-cap verdict gate rejection", response.Error)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_SendExemptsMessengerFromVerdictGate(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "messenger", "worker", "ireq_messenger", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	verdictGraceSeconds = 60
+	verdictDebtCap = 0
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+	})
+
+	filename := "20260713-120002-from-messenger-to-worker.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-messenger",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Content:   verdictGateSendContent("messenger", "worker", filename, "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-messenger"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("response.Error = %q, want messenger exemption", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); err != nil {
+		t.Fatalf("post file missing for exempt messenger send: %v", err)
 	}
 }
 

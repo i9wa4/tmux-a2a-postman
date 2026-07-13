@@ -34,12 +34,19 @@ const (
 	inboxCheckInterval                            = 30 * time.Second
 	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
 	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
+	defaultVerdictGraceSeconds                    = 3600
+	defaultVerdictDebtCap                         = 3
 )
 
 // daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
 // in milliseconds. Initialized from config at daemon startup; tests may
 // override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
-var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+var (
+	daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+	verdictGraceSeconds                    = defaultVerdictGraceSeconds
+	verdictDebtCap                         = defaultVerdictDebtCap
+	verdictExemptUINode                    = "messenger"
+)
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -195,6 +202,9 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	if request.Content == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
 	}
+	if err := enforceVerdictGate(sessionDir, request.Content); err != nil {
+		return projection.DaemonSubmitResponse{}, err
+	}
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("creating post directory: %w", err)
@@ -218,6 +228,37 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 		HandledAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  request.Filename,
 	}, nil
+}
+
+func enforceVerdictGate(sessionDir, content string) error {
+	meta, err := envelope.ParseMetadata(content)
+	if err != nil {
+		return nil
+	}
+	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
+		return nil
+	}
+	sender := strings.TrimSpace(meta.From)
+	if sender == "" || isVerdictGateExemptSender(sender) {
+		return nil
+	}
+	sessionName := filepath.Base(sessionDir)
+	state, ok, err := projection.ProjectVerdictDebtState(sessionDir, sessionName, time.Now(), verdictGraceSeconds)
+	if err != nil || !ok {
+		return err
+	}
+	debt := state.Requesters[sender]
+	if debt.ExpiredCount > 0 {
+		return fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has %d unstamped fill(s) past verdict_grace_seconds=%d", sender, debt.ExpiredCount, verdictGraceSeconds)
+	}
+	if verdictDebtCap >= 0 && debt.UnstampedCount > verdictDebtCap {
+		return fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has verdict debt %d above verdict_debt_cap=%d", sender, debt.UnstampedCount, verdictDebtCap)
+	}
+	return nil
+}
+
+func isVerdictGateExemptSender(sender string) bool {
+	return sender == "messenger" || sender == verdictExemptUINode
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -476,6 +517,15 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		}
 	}
 	if err != nil {
+		if response.RequestID == "" {
+			response.RequestID = request.RequestID
+		}
+		if response.Command == "" {
+			response.Command = request.Command
+		}
+		if response.HandledAt == "" {
+			response.HandledAt = time.Now().UTC().Format(time.RFC3339)
+		}
 		response.Error = err.Error()
 	}
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
@@ -740,6 +790,17 @@ func runDaemonLoopWithWatcherEvents(
 	// Apply configurable queue warning threshold before any workers start.
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
 		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+	if cfg != nil {
+		if cfg.VerdictGraceSeconds > 0 {
+			verdictGraceSeconds = int(cfg.VerdictGraceSeconds)
+		}
+		if cfg.VerdictDebtCap > 0 {
+			verdictDebtCap = cfg.VerdictDebtCap
+		}
+		if cfg.UINode != "" {
+			verdictExemptUINode = cfg.UINode
+		}
 	}
 
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines

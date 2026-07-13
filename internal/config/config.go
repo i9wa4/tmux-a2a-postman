@@ -38,6 +38,8 @@ type Config struct {
 	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
 	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
 	InputRequestStaleSeconds         float64 `toml:"input_request_stale_seconds"`           // Status projection threshold for stale unfilled input requests
+	VerdictGraceSeconds              float64 `toml:"verdict_grace_seconds"`                 // Grace period for requester verdict stamps after filled reply-required input requests
+	VerdictDebtCap                   int     `toml:"verdict_debt_cap"`                      // Maximum unstamped fills a requester may carry before new reply-required sends are refused
 	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
 	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
