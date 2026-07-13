@@ -68,11 +68,14 @@ sends the normal pane notification when inbox delivery succeeds.
   limited by a `30s` per-pane cooldown.
 - Source: daemon pane capture.
 - Recipients: the node whose pane showed the newer compaction marker.
-- Notes: the first observed marker is treated as baseline. Later newer markers
-  can send compaction-triggered PINGs. A successful compaction-triggered PING
-  resolves any pending automatic wake for the same node and pane instead of
-  allowing a later scan to deliver duplicate startup, discovery, or
-  pane-restart PING mail.
+- Notes: a first observed marker can send a compaction-triggered PING, including
+  when the marker has already moved outside the configured recent-tail scan but
+  remains in retained tmux history. Handled markers are remembered per node so
+  stale-pruned or recreated pane state does not repeat the same compaction PING.
+  Later newer markers can send compaction-triggered PINGs. A successful
+  compaction-triggered PING resolves any pending automatic wake for the same
+  node and pane instead of allowing a later scan to deliver duplicate startup,
+  discovery, or pane-restart PING mail.
 
 `auto_ping_delay_seconds = 0` makes queued auto-PINGs due immediately. With the
 default full-scan interval of `scan_interval_seconds = 1`, a due auto-PING is
