@@ -22,6 +22,11 @@ func CaptureRecentContent(paneID string, tailLines int) (string, error) {
 	return captureContent(paneID, tailLines, runTmuxCombinedOutput)
 }
 
+// CaptureHistoryContent captures visible content plus all retained scrollback.
+func CaptureHistoryContent(paneID string) (string, error) {
+	return captureHistoryContent(paneID, runTmuxCombinedOutput)
+}
+
 func captureContent(paneID string, tailLines int, run tmuxCombinedOutputFunc) (string, error) {
 	args := []string{"capture-pane", "-p", "-t", paneID}
 	if tailLines > 0 {
@@ -30,6 +35,14 @@ func captureContent(paneID string, tailLines int, run tmuxCombinedOutputFunc) (s
 	output, err := run(args...)
 	if err != nil {
 		return "", fmt.Errorf("capturing pane %s: %w", paneID, err)
+	}
+	return string(output), nil
+}
+
+func captureHistoryContent(paneID string, run tmuxCombinedOutputFunc) (string, error) {
+	output, err := run("capture-pane", "-p", "-t", paneID, "-S", "-")
+	if err != nil {
+		return "", fmt.Errorf("capturing pane %s history: %w", paneID, err)
 	}
 	return string(output), nil
 }

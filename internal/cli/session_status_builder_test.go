@@ -111,6 +111,46 @@ func TestBuildSessionStatusSnapshotSeverityMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("request_satisfaction_is_exposed_without_changing_flow_state", func(t *testing.T) {
+		inputs := makeBuilderInputs([]string{"alpha"})
+		inputs.useInputRequests = true
+		inputs.inputRequests = projection.MessageInputRequestState{
+			InputRequiredCounts:  map[string]int{},
+			WaitingOnInputCounts: map[string]int{},
+			InfoUnreadCounts:     map[string]int{},
+			UnreadCounts:         map[string]int{},
+			RequestSatisfaction: map[string]projection.RequestSatisfaction{
+				"alpha": {
+					OpenedCount:              4,
+					FilledCount:              3,
+					OpenCount:                1,
+					StaleOpenCount:           1,
+					StaleAfterSeconds:        3600,
+					AverageTimeToFillSeconds: 12,
+					LongestOpenAgeSeconds:    4000,
+				},
+			},
+		}
+		result := buildSessionStatusSnapshot(inputs)
+
+		if result.Severity != "ok" {
+			t.Fatalf("severity = %q, want ok", result.Severity)
+		}
+		got := result.Nodes[0].Flow.InputRequests.RequestSatisfaction
+		if got == nil {
+			t.Fatal("request_satisfaction is nil, want aggregate")
+		}
+		if got.OpenedCount != 4 || got.FilledCount != 3 || got.OpenCount != 1 || got.StaleOpenCount != 1 {
+			t.Fatalf("request_satisfaction = %#v, want lifecycle counts", got)
+		}
+		if got.FillRate != 0.75 || got.AverageTimeToFillSeconds != 12 || got.LongestOpenAgeSeconds != 4000 {
+			t.Fatalf("request_satisfaction rates = %#v, want fill rate and timing", got)
+		}
+		if got.Signal != "responsiveness" || got.Interpretation == "" {
+			t.Fatalf("request_satisfaction interpretation = %#v, want weak signal metadata", got)
+		}
+	})
+
 	t.Run("delivery_stuck_propagates_to_session", func(t *testing.T) {
 		inputs := makeBuilderInputs([]string{"alpha"})
 		inputs.delivery = &status.DeliveryStatus{

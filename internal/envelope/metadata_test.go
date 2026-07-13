@@ -137,6 +137,36 @@ func TestParseMetadataAcceptsExactInputRequestFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsVerdictFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  verdict: pass\n  verdictOf: ireq_123\n---\n\nlgtm\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.Verdict != "pass" {
+		t.Fatalf("Verdict = %q, want pass", got.Verdict)
+	}
+	if got.VerdictOf != "ireq_123" {
+		t.Fatalf("VerdictOf = %q, want ireq_123", got.VerdictOf)
+	}
+}
+
+func TestParseMetadataAcceptsSnakeCaseVerdictOf(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  verdict: fail\n  verdict_of: ireq_456\n---\n\nnot yet\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.Verdict != "fail" {
+		t.Fatalf("Verdict = %q, want fail", got.Verdict)
+	}
+	if got.VerdictOf != "ireq_456" {
+		t.Fatalf("VerdictOf = %q, want ireq_456", got.VerdictOf)
+	}
+}
+
 func TestParseMetadataAcceptsExternalTaskRunFields(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  task_id: TASK-123\n  run_id: run-20260617-01\n---\n\nplease work\n"
 

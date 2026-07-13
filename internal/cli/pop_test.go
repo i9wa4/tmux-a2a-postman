@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +111,51 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 	if !strings.Contains(readPopArchiveForTest(t, payload), "context stdout payload") {
 		t.Fatalf("archived body missing expected payload")
+	}
+}
+
+func TestWritePopMessageOutputReturnsReceiptWriteError(t *testing.T) {
+	tmpDir := t.TempDir()
+	readDir := filepath.Join(tmpDir, "ctx", "review", "read")
+	markdownPath := filepath.Join(readDir, "20260414-032800-from-orchestrator-to-worker.md")
+	writeErr := errors.New("write receipt failed")
+
+	var stdout bytes.Buffer
+	err := writePopMessageOutputWithOps(&stdout,
+		messageFixture("orchestrator", "worker", "payload"),
+		filepath.Base(markdownPath),
+		markdownPath,
+		intPtr(1),
+		intPtr(0),
+		"none",
+		nil,
+		projection.SubmitPathPost,
+		popReceiverContextOptions{},
+		popReceiptFileOps{
+			mkdirAll: func(path string, perm os.FileMode) error {
+				if path != readDir {
+					t.Fatalf("mkdirAll path = %q, want %q", path, readDir)
+				}
+				return nil
+			},
+			writeFile: func(path string, data []byte, perm os.FileMode) error {
+				if path != filepath.Join(readDir, "20260414-032800-from-orchestrator-to-worker.pop.json") {
+					t.Fatalf("writeFile path = %q", path)
+				}
+				if perm != 0o600 {
+					t.Fatalf("writeFile perm = %o, want 600", perm)
+				}
+				if !bytes.Contains(data, []byte(`"pop_receipt_path"`)) {
+					t.Fatalf("receipt payload missing pop_receipt_path: %s", data)
+				}
+				return writeErr
+			},
+		})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writePopMessageOutputWithOps() error = %v, want %v", err, writeErr)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty when receipt write fails", stdout.String())
 	}
 }
 

@@ -134,6 +134,78 @@ func TestProjectMessageInputRequestState_ReplayFixturesRebuildOpenFilledAndUncer
 	}
 }
 
+func TestProjectMessageInputRequestState_ProjectRequestSatisfaction(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	filledRequest := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_filled", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m1.md", "orchestrator", "worker", filledRequest, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m1.md", "orchestrator", "worker", filledRequest, now.Add(2*time.Second))
+	filledReply := inputRequestContentWithExact("worker", "orchestrator", "m2.md", "none", "m1.md", "", "ireq_filled", "DONE")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m2.md", "worker", "orchestrator", filledReply, now.Add(10*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m2.md", "worker", "orchestrator", filledReply, now.Add(11*time.Second))
+
+	openRequest := inputRequestContentWithExact("orchestrator", "worker", "m3.md", "required", "", "ireq_open", "", "please also do this")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "m3.md", "orchestrator", "worker", openRequest, now.Add(20*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "m3.md", "orchestrator", "worker", openRequest, now.Add(30*time.Second))
+
+	got, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+	if err != nil {
+		t.Fatalf("ProjectMessageInputRequestStateAt() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageInputRequestStateAt() ok = false, want true")
+	}
+
+	worker := got.RequestSatisfaction["worker"]
+	if worker.OpenedCount != 2 || worker.FilledCount != 1 || worker.OpenCount != 1 || worker.StaleOpenCount != 1 {
+		t.Fatalf("worker request satisfaction = %#v, want opened=2 filled=1 open=1 stale=1", worker)
+	}
+	if worker.AverageTimeToFillSeconds != 8 {
+		t.Fatalf("worker average time to fill = %d, want 8", worker.AverageTimeToFillSeconds)
+	}
+	if worker.LongestOpenAgeSeconds != 3670 {
+		t.Fatalf("worker longest open age = %d, want 3670", worker.LongestOpenAgeSeconds)
+	}
+	if worker.StaleAfterSeconds != 3600 {
+		t.Fatalf("worker stale threshold = %d, want 3600", worker.StaleAfterSeconds)
+	}
+}
+
+func TestProjectMessageInputRequestState_ProjectDeadLetteredRequestSatisfaction(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	deadLetteredRequest := inputRequestContentWithExact("orchestrator", "worker", "m1.md", "required", "", "ireq_deadlettered", "", "please work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeadLetteredEventType, "m1.md", "orchestrator", "worker", deadLetteredRequest, now.Add(time.Second))
+
+	got, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+	if err != nil {
+		t.Fatalf("ProjectMessageInputRequestStateAt() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageInputRequestStateAt() ok = false, want true")
+	}
+
+	worker := got.RequestSatisfaction["worker"]
+	if worker.OpenedCount != 1 || worker.FilledCount != 0 || worker.OpenCount != 1 || worker.DeadLetteredCount != 1 || worker.StaleOpenCount != 1 {
+		t.Fatalf("worker request satisfaction = %#v, want opened=1 filled=0 open=1 dead_lettered=1 stale=1", worker)
+	}
+	if worker.LongestOpenAgeSeconds != 3699 {
+		t.Fatalf("worker longest open age = %d, want 3699", worker.LongestOpenAgeSeconds)
+	}
+}
+
 func TestInputRequestMetadataFromPayloadUsesDurableMetadataFallbacks(t *testing.T) {
 	meta := inputRequestMetadataFromPayload(journal.MailboxEventPayload{
 		ContextID:           "ctx-replay",
