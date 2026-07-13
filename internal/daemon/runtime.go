@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/reconciler"
@@ -82,6 +83,9 @@ type daemonRuntime struct {
 	activeMailboxProjectionSyncs  map[string]bool
 	pendingMailboxProjectionSyncs map[string]bool
 	mailboxProjectionSyncWG       sync.WaitGroup
+	sendPaneNotification          paneNotificationSender
+	lastEscalationCheck           time.Time
+	lastEscalationPushKey         string
 }
 
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
@@ -93,6 +97,8 @@ type daemonSubmitWorkerLauncher func(worker func())
 // runtimeTimerScheduler owns callback scheduling while callbacks keep runtime
 // ownership of their state transitions.
 type runtimeTimerScheduler func(delay time.Duration, name string, events chan<- tui.DaemonEvent, callback func())
+
+type paneNotificationSender func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
 
 type daemonSubmitRuntimeResult struct {
 	requestPath string
@@ -173,6 +179,7 @@ func newDaemonRuntime(
 		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
+		sendPaneNotification:          notification.SendToPane,
 	}
 }
 
@@ -1369,6 +1376,7 @@ func (rt *daemonRuntime) handleScanTick() {
 	rt.dispatchPendingAutoPings(freshNodes, autoEnableSessions, now)
 	rt.dispatchPendingDaemonSubmitRequests()
 	rt.dispatchPendingPostMessages()
+	rt.maybePushEscalation(now)
 
 	nodeStates := rt.idleTracker.GetNodeStates()
 	rt.events <- tui.DaemonEvent{

@@ -79,9 +79,9 @@ reading raw pane text. It does not affect visible-state ranking.
 daemon cannot provide canonical status for that tmux session. It is displayed
 with the same neutral compact mark as `initial`.
 
-`schema_version: 4` reports contextual severity alongside `visible_state` and
-`compact`. Consumers that only need the compact operator view can read those
-fields.
+`schema_version: 5` reports contextual severity and per-node convention-meter
+figures alongside `visible_state` and `compact`. Consumers that only need the
+compact operator view can read those fields.
 
 The canonical machine contract uses status terminology. See
 [Schema and Event Terminology](schema-event-terminology.md) for the narrow

@@ -119,6 +119,7 @@ type sessionStatusInputs struct {
 	inboxCounts      map[string]int
 	delivery         *status.DeliveryStatus
 	blockedByNode    map[string][]projection.BlockedReport
+	conventionByNode map[string]projection.ConventionMeterNode
 	now              time.Time
 }
 
@@ -162,6 +163,9 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 		}
 		if node.ScreenProgress == nil {
 			node.ScreenProgress = missingScreenProgressEvidence()
+		}
+		if convention, ok := inputs.conventionByNode[simpleName]; ok {
+			node.ConventionMeter = statusConventionMeter(convention)
 		}
 		inputRequiredCount := -1
 		if inputs.useInputRequests {
@@ -353,6 +357,10 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, sessionName); err == nil && ok {
 		blockedByNode = blocked.ReportsByNode
 	}
+	conventionByNode := map[string]projection.ConventionMeterNode{}
+	if convention, ok, err := projection.ProjectConventionMeterState(sessionDir, sessionName); err == nil && ok {
+		conventionByNode = convention.Nodes
+	}
 	delivery := collectSessionDelivery(sessionDir, queues, now)
 
 	return buildSessionStatusSnapshot(sessionStatusInputs{
@@ -371,6 +379,7 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		inboxCounts:      nodeInboxCounts,
 		delivery:         delivery,
 		blockedByNode:    blockedByNode,
+		conventionByNode: conventionByNode,
 		now:              now,
 	}), nil
 }
@@ -421,6 +430,19 @@ func statusRequestSatisfaction(satisfaction projection.RequestSatisfaction) *sta
 		LongestOpenAgeSeconds:    satisfaction.LongestOpenAgeSeconds,
 		Signal:                   "responsiveness",
 		Interpretation:           "weak signal only; measures whether required input requests were filled, not whether responses were correct",
+	}
+}
+
+func statusConventionMeter(node projection.ConventionMeterNode) *status.ConventionMeterStatus {
+	return &status.ConventionMeterStatus{
+		CheckedMessages:            node.CheckedMessages,
+		ViolationCount:             node.ViolationCount,
+		ViolationRate:              node.ViolationRate,
+		MissingVerdictOfCount:      node.MissingVerdictOfCount,
+		MissingEvidenceCount:       node.MissingEvidenceCount,
+		MissingReplyReferenceCount: node.MissingReplyReferenceCount,
+		Signal:                     "convention_adherence",
+		Interpretation:             "weak signal only; measures message metadata/body convention presence, not task correctness",
 	}
 }
 

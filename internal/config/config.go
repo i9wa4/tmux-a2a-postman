@@ -45,6 +45,11 @@ type Config struct {
 	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING
 	DaemonSubmitWorkerLimit          int     `toml:"daemon_submit_worker_limit"`            // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
+	EscalationCheckIntervalSeconds   float64 `toml:"escalation_check_interval_seconds"`     // Threshold-push cadence; 0 = disabled
+	EscalationOldestOpenSeconds      float64 `toml:"escalation_oldest_open_seconds"`        // Oldest open input request threshold; 0 = disabled
+	EscalationDeadLetterCount        int     `toml:"escalation_dead_letter_count"`          // Dead-letter threshold; 0 = disabled
+	EscalationUnreadBacklogCount     int     `toml:"escalation_unread_backlog_count"`       // Per-node unread backlog threshold; 0 = disabled
+	EscalationStaleNodeSeconds       float64 `toml:"escalation_stale_node_seconds"`         // Stale node threshold; 0 = disabled
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -639,6 +644,15 @@ func mergeConfig(base, override *Config) {
 	if override.AutoPingDelaySeconds != 0 {
 		base.AutoPingDelaySeconds = override.AutoPingDelaySeconds
 	}
+	if override.EscalationCheckIntervalSeconds != 0 {
+		base.EscalationCheckIntervalSeconds = override.EscalationCheckIntervalSeconds
+	}
+	if override.EscalationOldestOpenSeconds != 0 {
+		base.EscalationOldestOpenSeconds = override.EscalationOldestOpenSeconds
+	}
+	if override.EscalationStaleNodeSeconds != 0 {
+		base.EscalationStaleNodeSeconds = override.EscalationStaleNodeSeconds
+	}
 	if override.PaneCaptureIntervalSeconds != 0 {
 		base.PaneCaptureIntervalSeconds = override.PaneCaptureIntervalSeconds
 	}
@@ -661,6 +675,12 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.DaemonSubmitWorkerLimit != 0 {
 		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
+	}
+	if override.EscalationDeadLetterCount != 0 {
+		base.EscalationDeadLetterCount = override.EscalationDeadLetterCount
+	}
+	if override.EscalationUnreadBacklogCount != 0 {
+		base.EscalationUnreadBacklogCount = override.EscalationUnreadBacklogCount
 	}
 	if len(override.WorkspaceTree) > 0 {
 		base.WorkspaceTree = override.WorkspaceTree

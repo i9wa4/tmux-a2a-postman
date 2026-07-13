@@ -44,6 +44,11 @@ Core config:
   retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
   input_request_stale_seconds      Stale unfilled input-request threshold for request_satisfaction status (default: 3600)
   daemon_submit_queue_warn_threshold_ms  Queue wait WARNING threshold in ms (default: 30000); emits event=queue_ms_threshold_exceeded when queue_ms >= threshold
+  escalation_check_interval_seconds Threshold-push cadence for runtime escalation (default: 0; disabled)
+  escalation_oldest_open_seconds   Oldest open input request threshold for escalation push (default: 0; disabled)
+  escalation_dead_letter_count     Dead-letter threshold for escalation push (default: 0; disabled)
+  escalation_unread_backlog_count  Per-node unread backlog threshold for escalation push (default: 0; disabled)
+  escalation_stale_node_seconds    Stale-node threshold for escalation push (default: 0; disabled)
   pane_capture_tail_lines          Recent-line compaction scan; Claude/Codex first/change captures may fall back to full history (default: 100; 0 = visible pane only)
 
 Skill catalogs:
