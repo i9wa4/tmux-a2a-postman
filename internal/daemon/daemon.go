@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -29,6 +28,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
+	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
 )
 
 const (
@@ -47,7 +47,6 @@ var (
 	verdictGraceSeconds                    = defaultVerdictGraceSeconds
 	verdictDebtCap                         = defaultVerdictDebtCap
 	verdictExemptUINode                    = "messenger"
-	verdictNoneTimeoutMu             sync.Mutex
 )
 
 type filesystemWatcher interface {
@@ -243,151 +242,27 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 }
 
 func enforceVerdictGate(sessionDir, sender, filename, content string) error {
-	meta, err := envelope.ParseMetadata(content)
-	if err != nil {
-		return nil
-	}
-	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
-		return nil
-	}
-	sessionName := filepath.Base(sessionDir)
-	sender, err = normalizeVerdictGateSender(sessionName, sender, meta.From)
-	if err != nil {
-		return err
-	}
-	if isVerdictGateExemptSender(sender) {
-		return nil
-	}
-	state, ok, err := projection.ProjectVerdictDebtState(sessionDir, sessionName, time.Now(), verdictGraceSeconds)
-	if err != nil || !ok {
-		return err
-	}
-	debt := state.Requesters[sender]
-	if debt.ExpiredCount > 0 {
-		// Expired debt is materialized lazily when the requester next attempts a
-		// reply-required send. Projection stays read-only; this gate writes the
-		// durable verdict:none stamps before refusing the new request.
-		if err := recordVerdictNoneTimeouts(sessionDir, sessionName, sender, debt.Items); err != nil {
-			return fmt.Errorf("reply gate: recording verdict:none timeout for requester %q: %w", sender, err)
-		}
-		return fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has %d unstamped fill(s) past verdict_grace_seconds=%d", sender, debt.ExpiredCount, verdictGraceSeconds)
-	}
-	if verdictDebtCap >= 0 && debt.UnstampedCount > verdictDebtCap {
-		return fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has verdict debt %d above verdict_debt_cap=%d", sender, debt.UnstampedCount, verdictDebtCap)
-	}
-	return nil
-}
-
-func normalizeVerdictGateSender(sessionName, sender, envelopeSender string) (string, error) {
-	sender = strings.TrimSpace(sender)
-	envelopeSender = strings.TrimSpace(envelopeSender)
-	if sender == "" {
-		return "", fmt.Errorf("reply gate: refusing reply-required send without authoritative daemon-submit sender")
-	}
-	if envelopeSender == "" {
-		return "", fmt.Errorf("reply gate: refusing reply-required send without envelope sender")
-	}
-	normalizedSender := projection.SimpleNameForSession(sender, sessionName)
-	normalizedEnvelopeSender := projection.SimpleNameForSession(envelopeSender, sessionName)
-	if normalizedSender != normalizedEnvelopeSender {
-		return "", fmt.Errorf("reply gate: daemon-submit sender %q does not match envelope sender %q", sender, envelopeSender)
-	}
-	return normalizedSender, nil
-}
-
-func isVerdictGateExemptSender(sender string) bool {
-	return sender == "messenger" || sender == verdictExemptUINode
+	return verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+		GraceSeconds: verdictGraceSeconds,
+		DebtCap:      verdictDebtCap,
+		ExemptUINode: verdictExemptUINode,
+		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload) error {
+			return recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload)
+		},
+	})
 }
 
 func configureVerdictGateFromConfig(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
-	if cfg.VerdictGraceSeconds > 0 {
-		verdictGraceSeconds = int(cfg.VerdictGraceSeconds)
-	}
+	verdictGraceSeconds = cfg.EffectiveVerdictGraceSeconds(verdictGraceSeconds)
 	if cfg.VerdictDebtCap >= 0 {
 		verdictDebtCap = cfg.VerdictDebtCap
 	}
 	if cfg.UINode != "" {
 		verdictExemptUINode = cfg.UINode
 	}
-}
-
-func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, items []projection.VerdictDebtItem) error {
-	verdictNoneTimeoutMu.Lock()
-	defer verdictNoneTimeoutMu.Unlock()
-
-	recorded, err := recordedVerdictNoneTimeouts(sessionDir, sessionName)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if !item.Expired || item.Requester != requester {
-			continue
-		}
-		key := verdictNoneTimeoutKey(item.Requester, item.InputRequestID)
-		if recorded[key] {
-			continue
-		}
-		payload := journal.MailboxEventPayload{
-			MessageID: item.FillMessage + ".verdict-none",
-			From:      item.Requester,
-			To:        item.Filler,
-			Content:   verdictNoneTimeoutContent(item),
-			FailureReason: fmt.Sprintf(
-				"verdict timeout after verdict_grace_seconds=%d",
-				verdictGraceSeconds,
-			),
-		}
-		if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload); err != nil {
-			return err
-		}
-		recorded[key] = true
-	}
-	return nil
-}
-
-func recordedVerdictNoneTimeouts(sessionDir, sessionName string) (map[string]bool, error) {
-	recorded := make(map[string]bool)
-	if err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
-		if event.Type != projection.VerdictNoneTimeoutEventType || event.TmuxSessionName != sessionName {
-			return nil
-		}
-		var payload journal.MailboxEventPayload
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			return err
-		}
-		meta, err := envelope.ParseMetadata(payload.Content)
-		if err != nil {
-			return nil
-		}
-		requester := projection.SimpleNameForSession(payload.From, sessionName)
-		verdictOf := strings.TrimSpace(meta.VerdictOf)
-		if requester == "" || verdictOf == "" {
-			return nil
-		}
-		recorded[verdictNoneTimeoutKey(requester, verdictOf)] = true
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return recorded, nil
-}
-
-func verdictNoneTimeoutKey(requester, inputRequestID string) string {
-	return requester + "\x00" + inputRequestID
-}
-
-func verdictNoneTimeoutContent(item projection.VerdictDebtItem) string {
-	messageID := item.FillMessage + ".verdict-none"
-	return "---\nparams:\n" +
-		"  from: " + item.Requester + "\n" +
-		"  to: " + item.Filler + "\n" +
-		"  messageId: " + messageID + "\n" +
-		"  verdict: none\n" +
-		"  verdictOf: " + item.InputRequestID + "\n" +
-		"---\n\nverdict timeout recorded\n"
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {

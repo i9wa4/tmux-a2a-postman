@@ -57,6 +57,36 @@ fills must issue a verdict before sending more reply-required work.
   ./internal/cli ./internal/config` passed after guardian rework.
 - 2026-07-13: `nix flake check` passed after guardian rework.
 - 2026-07-13: `nix build` passed after guardian rework.
+- 2026-07-14: Guardian plus critic rejected commit `a676c6e` because
+  piggyback verdicts were not applied to the same gated send, direct
+  `post/` sends bypassed the daemon-only gate, explicit
+  `verdict_grace_seconds = 0` had inconsistent runtime/projection semantics,
+  timeout dedupe was not scoped to the current journal generation, the file
+  inventory was incomplete, and non-default `ui_node` exemption lacked direct
+  daemon-gate coverage.
+- 2026-07-14: Moved verdict gate enforcement into `internal/verdictgate` and
+  reused it from daemon-submit and direct CLI send paths.
+- 2026-07-14: Applied outgoing `verdict`/`verdictOf` metadata to the current
+  requester debt before rejecting a reply-required send, so a same-message
+  piggyback verdict can satisfy the gate.
+- 2026-07-14: Added direct-send enforcement before draft/post writes, using the
+  current journal lease for durable timeout materialization.
+- 2026-07-14: Preserved explicit `verdict_grace_seconds = 0` from loaded config
+  and made projection treat `0` as immediate expiry; only negative grace values
+  fall back to the default stale window.
+- 2026-07-14: Scoped timeout dedupe to the current session key and generation
+  so a prior-generation `verdict:none` fact cannot suppress the current
+  generation's timeout append.
+- 2026-07-14: Focused daemon tests passed:
+  `go test ./internal/daemon -run 'Test(ProcessDaemonSubmitRequest_(SendRefusesReplyRequiredWhenVerdictGraceExpired|SendRefusesReplyRequiredWhenVerdictDebtExceedsCap|AllowsReplyRequiredWithPiggybackVerdict|SendExemptsMessengerFromVerdictGate|SendExemptsConfiguredUINodeFromVerdictGate|VerdictGateRejectsEnvelopeSenderSpoof|VerdictGateFailsClosedWithoutAuthoritativeSender|VerdictGateNormalizesSameSessionSender|RecordsVerdictNoneTimeout|ReturnsErrorWhenVerdictNoneTimeoutAppendFails)|EnforceVerdictGate_(DedupesConcurrentSameRequesterTimeout|TimeoutDedupeIgnoresPriorGeneration)|ConfigureVerdictGateFromConfig_(AllowsZeroVerdictDebtCap|ExplicitZeroGraceExpiresImmediately))'`.
+- 2026-07-14: Focused CLI tests passed:
+  `go test ./internal/cli -run 'TestRunSendHeredoc_DirectPathEnforcesVerdictGate|TestRunSendMessage_UsesDaemonSubmitForOwnedSessionInLegacyMode'`.
+- 2026-07-14: `git diff --check` passed.
+- 2026-07-14: `go test -timeout 60s ./internal/daemon ./internal/projection
+  ./internal/cli ./internal/config` passed.
+- 2026-07-14: `nix flake check` passed.
+- 2026-07-14: `nix build` passed after staging the new
+  `internal/verdictgate/gate.go` package so Nix included it in the source.
 
 ## 4. Decisions
 
@@ -73,7 +103,17 @@ fills must issue a verdict before sending more reply-required work.
 - Timeout idempotence: timeout materialization replays existing timeout facts
   and appends missing facts under one process-local mutex, which prevents
   duplicate durable timeout records for concurrent sends from the same
-  requester in the daemon process.
+  requester in one process.
+- Gate placement: daemon-submit and direct `send-heredoc` writes share the same
+  verdict gate package; direct sends gate after message rendering and before
+  draft/post persistence.
+- Piggyback verdicts: an outgoing reply-required message's own verdict metadata
+  is applied to the current projected debt before enforcement.
+- Zero grace: explicit `verdict_grace_seconds = 0` means immediate expiry.
+  Negative internal grace values retain the default fallback for projection
+  callers that do not provide a configured value.
+- Timeout dedupe scope: existing timeout facts only dedupe when they belong to
+  the current session key and generation.
 
 ## 5. Changed Files
 
@@ -84,8 +124,10 @@ fills must issue a verdict before sending more reply-required work.
 - `internal/daemon/daemon.go`
 - `internal/daemon/daemon_submit_test.go`
 - `internal/projection/daemon_submit.go`
+- `internal/projection/mailbox_state.go`
 - `internal/projection/message_reply_slot_state.go`
 - `internal/projection/verdict_debt_state.go`
+- `internal/verdictgate/gate.go`
 - `.task-artifacts/issue-617-verdict-enforcement-gate.md`
 
 ## 6. Verification
@@ -94,6 +136,8 @@ fills must issue a verdict before sending more reply-required work.
 - `go test ./internal/config ./internal/daemon`
 - `go test -timeout 60s ./internal/daemon ./internal/projection
   ./internal/cli ./internal/config`
+- `go test ./internal/daemon -run 'Test(ProcessDaemonSubmitRequest_(SendRefusesReplyRequiredWhenVerdictGraceExpired|SendRefusesReplyRequiredWhenVerdictDebtExceedsCap|AllowsReplyRequiredWithPiggybackVerdict|SendExemptsMessengerFromVerdictGate|SendExemptsConfiguredUINodeFromVerdictGate|VerdictGateRejectsEnvelopeSenderSpoof|VerdictGateFailsClosedWithoutAuthoritativeSender|VerdictGateNormalizesSameSessionSender|RecordsVerdictNoneTimeout|ReturnsErrorWhenVerdictNoneTimeoutAppendFails)|EnforceVerdictGate_(DedupesConcurrentSameRequesterTimeout|TimeoutDedupeIgnoresPriorGeneration)|ConfigureVerdictGateFromConfig_(AllowsZeroVerdictDebtCap|ExplicitZeroGraceExpiresImmediately))'`
+- `go test ./internal/cli -run 'TestRunSendHeredoc_DirectPathEnforcesVerdictGate|TestRunSendMessage_UsesDaemonSubmitForOwnedSessionInLegacyMode'`
 - `nix flake check`
 - `nix build`
 
@@ -103,9 +147,13 @@ fills must issue a verdict before sending more reply-required work.
 
 ## 8. Completion Verdict
 
-- PASS. The guardian rework blockers are addressed in the issue
-  worktree: source identity is authoritative and fail-closed, debt lookup is
-  normalized, verdict config overrides are merged, malformed daemon-submit
-  filenames fail closed before persistence, timeout append failures propagate,
-  lazy timeout materialization is documented and idempotent under concurrent
-  same-requester sends, and the issue-specific artifact exists.
+- PASS. The original checklist and follow-up review blockers are addressed in
+  the issue worktree: source identity is authoritative and fail-closed, debt
+  lookup is normalized, verdict config overrides are merged, malformed
+  daemon-submit filenames fail closed before persistence, timeout append
+  failures propagate, lazy timeout materialization is documented and
+  idempotent under concurrent same-requester sends, piggyback verdicts satisfy
+  the same gated send, direct `post/` sends use the gate, explicit zero grace
+  expires immediately, timeout dedupe is generation-scoped, the configured
+  `ui_node` exemption has daemon coverage, and the artifact file inventory is
+  complete.

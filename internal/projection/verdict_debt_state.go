@@ -43,7 +43,7 @@ func ProjectVerdictDebtState(sessionDir, sessionName string, now time.Time, grac
 	if !ok {
 		return VerdictDebtState{}, false, nil
 	}
-	if graceSeconds <= 0 {
+	if graceSeconds < 0 {
 		graceSeconds = DefaultInputRequestStaleAfterSeconds
 	}
 

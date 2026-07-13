@@ -350,6 +350,26 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 	return cfg.uiNodeSet
 }
 
+func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictGraceSeconds > 0 || cfg.verdictGraceSecondsSet {
+		return int(cfg.VerdictGraceSeconds)
+	}
+	return fallback
+}
+
+func (cfg *Config) EffectiveVerdictDebtCap(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictDebtCap != 0 || cfg.verdictDebtCapSet {
+		return cfg.VerdictDebtCap
+	}
+	return fallback
+}
+
 func (cfg *Config) CompactionSkillCatalogForRuntime(runtime string) string {
 	if cfg == nil {
 		return ""
