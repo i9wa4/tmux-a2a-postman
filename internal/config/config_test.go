@@ -1333,12 +1333,18 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base.SessionScanInterval = 1.0
 	base.EnterDelay = 0.5
 	base.BaseDir = ""
+	base.VerdictGraceSeconds = 3600
+	base.VerdictDebtCap = 3
 
 	override := &Config{
-		Nodes:               make(map[string]NodeConfig),
-		ScanInterval:        5.0,
-		SessionScanInterval: 0.5,
-		BaseDir:             "/project/base",
+		Nodes:                  make(map[string]NodeConfig),
+		ScanInterval:           5.0,
+		SessionScanInterval:    0.5,
+		BaseDir:                "/project/base",
+		VerdictGraceSeconds:    120,
+		VerdictDebtCap:         1,
+		verdictGraceSecondsSet: true,
+		verdictDebtCapSet:      true,
 	}
 
 	mergeConfig(base, override)
@@ -1352,9 +1358,32 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	if base.BaseDir != "/project/base" {
 		t.Errorf("BaseDir: got %q, want %q", base.BaseDir, "/project/base")
 	}
+	if base.VerdictGraceSeconds != 120 {
+		t.Errorf("VerdictGraceSeconds: got %v, want 120", base.VerdictGraceSeconds)
+	}
+	if base.VerdictDebtCap != 1 {
+		t.Errorf("VerdictDebtCap: got %d, want 1", base.VerdictDebtCap)
+	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {
 		t.Errorf("EnterDelay: got %v, want 0.5 (unset override should not change base)", base.EnterDelay)
+	}
+}
+
+func TestMergeConfig_VerdictDebtCapExplicitZeroOverride(t *testing.T) {
+	base := DefaultConfig()
+	base.VerdictDebtCap = 3
+
+	override := &Config{
+		Nodes:             make(map[string]NodeConfig),
+		VerdictDebtCap:    0,
+		verdictDebtCapSet: true,
+	}
+
+	mergeConfig(base, override)
+
+	if base.VerdictDebtCap != 0 {
+		t.Errorf("VerdictDebtCap: got %d, want explicit zero override", base.VerdictDebtCap)
 	}
 }
 

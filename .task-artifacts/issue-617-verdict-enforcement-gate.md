@@ -38,6 +38,25 @@ fills must issue a verdict before sending more reply-required work.
 - 2026-07-13: `nix flake check` passed.
 - 2026-07-13: `nix build` passed.
 - 2026-07-13: Worktree prepared for a clean commit.
+- 2026-07-13: Guardian rejected the second completion because `mergeConfig`
+  omitted `verdict_grace_seconds` and `verdict_debt_cap`, malformed
+  daemon-submit filenames could still be persisted when a valid sender was
+  present, and lazy `verdict:none` timeout materialization was not idempotent
+  under concurrent same-requester sends.
+- 2026-07-13: Added explicit TOML presence tracking for the verdict config
+  fields so merge overlays preserve non-zero values and intentional
+  `verdict_debt_cap = 0`.
+- 2026-07-13: Added daemon-submit filename parsing before content, verdict gate,
+  or `post/` persistence.
+- 2026-07-13: Added mutex-guarded replay dedupe around durable
+  `verdict:none` timeout append, with a concurrent same-requester regression
+  test proving only one timeout fact is recorded.
+- 2026-07-13: Focused config and daemon tests passed after guardian rework.
+- 2026-07-13: `git diff --check` passed after guardian rework.
+- 2026-07-13: `go test -timeout 60s ./internal/daemon ./internal/projection
+  ./internal/cli ./internal/config` passed after guardian rework.
+- 2026-07-13: `nix flake check` passed after guardian rework.
+- 2026-07-13: `nix build` passed after guardian rework.
 
 ## 4. Decisions
 
@@ -51,11 +70,17 @@ fills must issue a verdict before sending more reply-required work.
   requester next attempts a reply-required daemon send. Projection remains
   read-only; the gate writes durable `verdict:none` events before refusing that
   send.
+- Timeout idempotence: timeout materialization replays existing timeout facts
+  and appends missing facts under one process-local mutex, which prevents
+  duplicate durable timeout records for concurrent sends from the same
+  requester in the daemon process.
 
 ## 5. Changed Files
 
 - `internal/cli/send_message.go`
 - `internal/cli/send_message_test.go`
+- `internal/config/config.go`
+- `internal/config/config_test.go`
 - `internal/daemon/daemon.go`
 - `internal/daemon/daemon_submit_test.go`
 - `internal/projection/daemon_submit.go`
@@ -66,6 +91,7 @@ fills must issue a verdict before sending more reply-required work.
 ## 6. Verification
 
 - `git diff --check`
+- `go test ./internal/config ./internal/daemon`
 - `go test -timeout 60s ./internal/daemon ./internal/projection
   ./internal/cli ./internal/config`
 - `nix flake check`
@@ -77,7 +103,9 @@ fills must issue a verdict before sending more reply-required work.
 
 ## 8. Completion Verdict
 
-- PASS. The guardian rework blockers are addressed in a clean committed issue
+- PASS. The guardian rework blockers are addressed in the issue
   worktree: source identity is authoritative and fail-closed, debt lookup is
-  normalized, timeout append failures propagate, lazy timeout materialization is
-  documented and tested, and the issue-specific artifact exists.
+  normalized, verdict config overrides are merged, malformed daemon-submit
+  filenames fail closed before persistence, timeout append failures propagate,
+  lazy timeout materialization is documented and idempotent under concurrent
+  same-requester sends, and the issue-specific artifact exists.

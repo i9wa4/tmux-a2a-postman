@@ -91,6 +91,8 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+	verdictGraceSecondsSet  bool
+	verdictDebtCapSet       bool
 }
 
 type CommandApprovalPolicy struct {
@@ -403,6 +405,8 @@ func loadEmbeddedConfig() (*Config, error) {
 		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
 			return nil, fmt.Errorf("decoding embedded [postman] section: %w", err)
 		}
+		cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+		cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 	}
 
 	// Decode [nodename] sections (everything except reserved sections)
@@ -629,6 +633,10 @@ func mergeConfig(base, override *Config) {
 	if override.InputRequestStaleSeconds != 0 {
 		base.InputRequestStaleSeconds = override.InputRequestStaleSeconds
 	}
+	if override.VerdictGraceSeconds != 0 || override.verdictGraceSecondsSet {
+		base.VerdictGraceSeconds = override.VerdictGraceSeconds
+		base.verdictGraceSecondsSet = base.verdictGraceSecondsSet || override.verdictGraceSecondsSet
+	}
 	if override.MessageTTLSeconds != 0 {
 		base.MessageTTLSeconds = override.MessageTTLSeconds
 	}
@@ -657,6 +665,10 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.VerdictDebtCap != 0 || override.verdictDebtCapSet {
+		base.VerdictDebtCap = override.VerdictDebtCap
+		base.verdictDebtCapSet = base.verdictDebtCapSet || override.verdictDebtCapSet
 	}
 	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
 		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
@@ -768,6 +780,8 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
 		}
 

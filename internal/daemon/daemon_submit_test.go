@@ -316,12 +316,13 @@ func TestProcessDaemonSubmitRequest_VerdictGateFailsClosedWithoutAuthoritativeSe
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
 
+	filename := "20260713-120007-from-orchestrator-to-worker.md"
 	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-verdict-no-sender",
 		Command:   projection.DaemonSubmitSend,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Filename:  "not-a-message-name.md",
-		Content:   verdictGateSendContent("orchestrator", "worker", "not-a-message-name.md", "required", "ireq_new"),
+		Filename:  filename,
+		Content:   verdictGateSendContent("orchestrator", "worker", filename, "required", "ireq_new"),
 	})
 	if err != nil {
 		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
@@ -337,8 +338,42 @@ func TestProcessDaemonSubmitRequest_VerdictGateFailsClosedWithoutAuthoritativeSe
 	if !strings.Contains(response.Error, "without authoritative daemon-submit sender") {
 		t.Fatalf("response.Error = %q, want fail-closed sender rejection", response.Error)
 	}
-	if _, err := os.Stat(filepath.Join(sessionDir, "post", "not-a-message-name.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
 		t.Fatalf("post file written despite missing sender gate rejection: %v", err)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_SendRejectsMalformedFilenameWithSender(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	filename := "not-a-message-name.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-malformed-filename",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "orchestrator",
+		Content:   verdictGateSendContent("orchestrator", "worker", filename, "none", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-malformed-filename"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "daemon submit send invalid filename") {
+		t.Fatalf("response.Error = %q, want malformed filename rejection", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file written despite malformed filename rejection: %v", err)
 	}
 }
 
@@ -359,7 +394,7 @@ func TestProcessDaemonSubmitRequest_VerdictGateNormalizesSameSessionSender(t *te
 		verdictDebtCap = originalCap
 	})
 
-	filename := "20260713-120003-same-from-review-session%3Aorchestrator-to-worker.md"
+	filename := "20260713-120003-from-orchestrator-to-worker.md"
 	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-verdict-same-session",
 		Command:   projection.DaemonSubmitSend,
@@ -450,6 +485,67 @@ func TestProcessDaemonSubmitRequest_RecordsVerdictNoneTimeout(t *testing.T) {
 	}
 	if got := state.Requesters["orchestrator"].UnstampedCount; got != 0 {
 		t.Fatalf("unstamped count after durable verdict:none = %d, want 0", got)
+	}
+}
+
+func TestRecordVerdictNoneTimeouts_DedupesConcurrentSameRequester(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	originalGrace := verdictGraceSeconds
+	verdictGraceSeconds = 60
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+	})
+
+	items := []projection.VerdictDebtItem{{
+		InputRequestID: "ireq_timeout_concurrent",
+		Requester:      "orchestrator",
+		Filler:         "worker",
+		FillMessage:    "20260713-120006-from-worker-to-orchestrator.md",
+		Expired:        true,
+	}}
+
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- recordVerdictNoneTimeouts(sessionDir, "review-session", "orchestrator", items)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("recordVerdictNoneTimeouts: %v", err)
+		}
+	}
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.Type != projection.VerdictNoneTimeoutEventType {
+			continue
+		}
+		payload, ok := decodeMailboxEventPayloadForTest(t, event.Payload)
+		if !ok {
+			t.Fatal("verdict none timeout payload did not decode")
+		}
+		if strings.Contains(payload.Content, "verdictOf: ireq_timeout_concurrent") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("timeout event count = %d, want 1", count)
 	}
 }
 

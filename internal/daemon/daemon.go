@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -46,6 +47,7 @@ var (
 	verdictGraceSeconds                    = defaultVerdictGraceSeconds
 	verdictDebtCap                         = defaultVerdictDebtCap
 	verdictExemptUINode                    = "messenger"
+	verdictNoneTimeoutMu             sync.Mutex
 )
 
 type filesystemWatcher interface {
@@ -206,6 +208,9 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	if strings.ContainsAny(request.Filename, "/\\") {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
 	}
+	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send invalid filename: %w", err)
+	}
 	if request.Content == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
 	}
@@ -310,8 +315,19 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 }
 
 func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, items []projection.VerdictDebtItem) error {
+	verdictNoneTimeoutMu.Lock()
+	defer verdictNoneTimeoutMu.Unlock()
+
+	recorded, err := recordedVerdictNoneTimeouts(sessionDir, sessionName)
+	if err != nil {
+		return err
+	}
 	for _, item := range items {
 		if !item.Expired || item.Requester != requester {
+			continue
+		}
+		key := verdictNoneTimeoutKey(item.Requester, item.InputRequestID)
+		if recorded[key] {
 			continue
 		}
 		payload := journal.MailboxEventPayload{
@@ -327,8 +343,40 @@ func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, items 
 		if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload); err != nil {
 			return err
 		}
+		recorded[key] = true
 	}
 	return nil
+}
+
+func recordedVerdictNoneTimeouts(sessionDir, sessionName string) (map[string]bool, error) {
+	recorded := make(map[string]bool)
+	if err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
+		if event.Type != projection.VerdictNoneTimeoutEventType || event.TmuxSessionName != sessionName {
+			return nil
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		meta, err := envelope.ParseMetadata(payload.Content)
+		if err != nil {
+			return nil
+		}
+		requester := projection.SimpleNameForSession(payload.From, sessionName)
+		verdictOf := strings.TrimSpace(meta.VerdictOf)
+		if requester == "" || verdictOf == "" {
+			return nil
+		}
+		recorded[verdictNoneTimeoutKey(requester, verdictOf)] = true
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return recorded, nil
+}
+
+func verdictNoneTimeoutKey(requester, inputRequestID string) string {
+	return requester + "\x00" + inputRequestID
 }
 
 func verdictNoneTimeoutContent(item projection.VerdictDebtItem) string {
