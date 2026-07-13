@@ -73,6 +73,7 @@ func main() {
 			InspectMessage:          cli.RunInspectMessage,
 			InspectCommandApprovals: cli.RunInspectCommandApprovals,
 			InspectDaemonSubmit:     cli.RunInspectDaemonSubmit,
+			BackfillVerdictEvents:   cli.RunBackfillVerdictEvents,
 			ExecuteBash:             cli.RunExecuteBash,
 			SendMessage:             cli.RunSendMessage,
 			SendHeredoc:             cli.RunSendHeredoc,
