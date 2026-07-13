@@ -77,13 +77,14 @@ daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16;
 # Node state thresholds
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
+input_request_stale_seconds = 3600 # Status projection threshold for stale unfilled input requests
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true
 pane_capture_interval_seconds = 5.0
 pane_capture_max_panes = 0          # 0 = unlimited, >0 = limit pane count
-pane_capture_tail_lines = 100        # Recent lines scanned for compaction markers (0 = visible pane only)
+pane_capture_tail_lines = 100        # Recent-line compaction scan; Claude/Codex first/change captures may fall back to full retained history (0 = visible pane only)
 activity_window_seconds = 300.0
 
 # Paths

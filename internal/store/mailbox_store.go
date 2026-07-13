@@ -224,3 +224,32 @@ func archiveInboxMessageWithOps(plan InboxArchivePlan, ops archiveFileOps) (stri
 	}
 	return plan.ReadPath, nil
 }
+
+// PopReceiptPlan is the pure path plan for writing a pop receipt next to a read/ archive.
+type PopReceiptPlan struct {
+	MarkdownPath string
+	ReadDir      string
+	ReceiptPath  string
+}
+
+// PlanPopReceipt derives the pop receipt path without touching the filesystem.
+func PlanPopReceipt(markdownPath string) PopReceiptPlan {
+	if markdownPath == "" {
+		return PopReceiptPlan{}
+	}
+	readDir := filepath.Dir(markdownPath)
+	if filepath.Base(readDir) != "read" {
+		return PopReceiptPlan{MarkdownPath: markdownPath}
+	}
+	filename := filepath.Base(markdownPath)
+	ext := filepath.Ext(filename)
+	stem := strings.TrimSuffix(filename, ext)
+	if stem == "" {
+		stem = filename
+	}
+	return PopReceiptPlan{
+		MarkdownPath: markdownPath,
+		ReadDir:      readDir,
+		ReceiptPath:  filepath.Join(readDir, stem+".pop.json"),
+	}
+}

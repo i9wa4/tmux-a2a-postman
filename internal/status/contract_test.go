@@ -22,6 +22,32 @@ func TestSchemaVersionIsV4StatusContract(t *testing.T) {
 	}
 }
 
+func TestRequestSatisfactionSummarySerializesZeroTimingMetrics(t *testing.T) {
+	payload, err := json.Marshal(RequestSatisfactionSummary{
+		OpenedCount:              1,
+		FilledCount:              1,
+		StaleAfterSeconds:        3600,
+		AverageTimeToFillSeconds: 0,
+		LongestOpenAgeSeconds:    0,
+		Signal:                   "responsiveness",
+		Interpretation:           "same-second fill",
+	})
+	if err != nil {
+		t.Fatalf("Marshal RequestSatisfactionSummary: %v", err)
+	}
+
+	got := string(payload)
+	for _, want := range []string{
+		`"average_time_to_fill_seconds":0`,
+		`"longest_open_age_seconds":0`,
+		`"dead_lettered_count":0`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("RequestSatisfactionSummary JSON = %s, want %s", got, want)
+		}
+	}
+}
+
 func TestNewRuntimeDiagnosticsIsScalarAndPointInTime(t *testing.T) {
 	observedAt := time.Date(2026, 5, 24, 12, 30, 0, 123, time.UTC)
 	diagnostics := NewRuntimeDiagnostics("daemon_runtime", DaemonRuntimeCardinality{

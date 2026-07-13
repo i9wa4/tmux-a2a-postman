@@ -226,6 +226,7 @@ func deriveNodeFlowStatus(node status.NodeStatus, blockedReports []projection.Bl
 			InfoUnreadCount:     node.InfoUnreadCount,
 			InputRequired:       node.InputRequired,
 			WaitingOnInput:      node.WaitingOnInput,
+			RequestSatisfaction: node.RequestSatisfaction,
 		},
 		Blocked: status.BlockedState{
 			State:     "clear",
