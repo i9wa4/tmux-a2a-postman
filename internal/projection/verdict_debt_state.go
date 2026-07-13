@@ -8,6 +8,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
+const VerdictNoneTimeoutEventType = "verdict_none_timeout"
+
 type VerdictDebtState struct {
 	Requesters map[string]VerdictRequesterDebt
 }
@@ -67,7 +69,7 @@ func ProjectVerdictDebtState(sessionDir, sessionName string, now time.Time, grac
 		case "session_resolved":
 			sawResolution = true
 			continue
-		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType:
+		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, VerdictNoneTimeoutEventType:
 		default:
 			continue
 		}

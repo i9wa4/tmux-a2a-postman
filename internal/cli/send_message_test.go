@@ -3061,6 +3061,9 @@ role = "worker"
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
 	}
+	if request.Sender != "messenger" {
+		t.Fatalf("request.Sender = %q, want messenger", request.Sender)
+	}
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}

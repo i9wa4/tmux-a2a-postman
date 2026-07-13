@@ -441,6 +441,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command:  projection.DaemonSubmitSend,
 			Filename: filename,
+			Sender:   sender,
 			Content:  content,
 		}, daemonSubmitTimeout(cfg.TmuxTimeout))
 		if err != nil {

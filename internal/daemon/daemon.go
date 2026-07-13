@@ -105,9 +105,16 @@ func frontmatterValue(content, key string) string {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
+}
+
+func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func syncMailboxProjection(sessionDir string) {
@@ -202,7 +209,7 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	if request.Content == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
 	}
-	if err := enforceVerdictGate(sessionDir, request.Content); err != nil {
+	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
 	postDir := filepath.Join(sessionDir, "post")
@@ -230,7 +237,7 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	}, nil
 }
 
-func enforceVerdictGate(sessionDir, content string) error {
+func enforceVerdictGate(sessionDir, sender, filename, content string) error {
 	meta, err := envelope.ParseMetadata(content)
 	if err != nil {
 		return nil
@@ -238,17 +245,26 @@ func enforceVerdictGate(sessionDir, content string) error {
 	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
 		return nil
 	}
-	sender := strings.TrimSpace(meta.From)
-	if sender == "" || isVerdictGateExemptSender(sender) {
+	sessionName := filepath.Base(sessionDir)
+	sender, err = normalizeVerdictGateSender(sessionName, sender, meta.From)
+	if err != nil {
+		return err
+	}
+	if isVerdictGateExemptSender(sender) {
 		return nil
 	}
-	sessionName := filepath.Base(sessionDir)
 	state, ok, err := projection.ProjectVerdictDebtState(sessionDir, sessionName, time.Now(), verdictGraceSeconds)
 	if err != nil || !ok {
 		return err
 	}
 	debt := state.Requesters[sender]
 	if debt.ExpiredCount > 0 {
+		// Expired debt is materialized lazily when the requester next attempts a
+		// reply-required send. Projection stays read-only; this gate writes the
+		// durable verdict:none stamps before refusing the new request.
+		if err := recordVerdictNoneTimeouts(sessionDir, sessionName, sender, debt.Items); err != nil {
+			return fmt.Errorf("reply gate: recording verdict:none timeout for requester %q: %w", sender, err)
+		}
 		return fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has %d unstamped fill(s) past verdict_grace_seconds=%d", sender, debt.ExpiredCount, verdictGraceSeconds)
 	}
 	if verdictDebtCap >= 0 && debt.UnstampedCount > verdictDebtCap {
@@ -257,8 +273,73 @@ func enforceVerdictGate(sessionDir, content string) error {
 	return nil
 }
 
+func normalizeVerdictGateSender(sessionName, sender, envelopeSender string) (string, error) {
+	sender = strings.TrimSpace(sender)
+	envelopeSender = strings.TrimSpace(envelopeSender)
+	if sender == "" {
+		return "", fmt.Errorf("reply gate: refusing reply-required send without authoritative daemon-submit sender")
+	}
+	if envelopeSender == "" {
+		return "", fmt.Errorf("reply gate: refusing reply-required send without envelope sender")
+	}
+	normalizedSender := projection.SimpleNameForSession(sender, sessionName)
+	normalizedEnvelopeSender := projection.SimpleNameForSession(envelopeSender, sessionName)
+	if normalizedSender != normalizedEnvelopeSender {
+		return "", fmt.Errorf("reply gate: daemon-submit sender %q does not match envelope sender %q", sender, envelopeSender)
+	}
+	return normalizedSender, nil
+}
+
 func isVerdictGateExemptSender(sender string) bool {
 	return sender == "messenger" || sender == verdictExemptUINode
+}
+
+func configureVerdictGateFromConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	if cfg.VerdictGraceSeconds > 0 {
+		verdictGraceSeconds = int(cfg.VerdictGraceSeconds)
+	}
+	if cfg.VerdictDebtCap >= 0 {
+		verdictDebtCap = cfg.VerdictDebtCap
+	}
+	if cfg.UINode != "" {
+		verdictExemptUINode = cfg.UINode
+	}
+}
+
+func recordVerdictNoneTimeouts(sessionDir, sessionName, requester string, items []projection.VerdictDebtItem) error {
+	for _, item := range items {
+		if !item.Expired || item.Requester != requester {
+			continue
+		}
+		payload := journal.MailboxEventPayload{
+			MessageID: item.FillMessage + ".verdict-none",
+			From:      item.Requester,
+			To:        item.Filler,
+			Content:   verdictNoneTimeoutContent(item),
+			FailureReason: fmt.Sprintf(
+				"verdict timeout after verdict_grace_seconds=%d",
+				verdictGraceSeconds,
+			),
+		}
+		if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verdictNoneTimeoutContent(item projection.VerdictDebtItem) string {
+	messageID := item.FillMessage + ".verdict-none"
+	return "---\nparams:\n" +
+		"  from: " + item.Requester + "\n" +
+		"  to: " + item.Filler + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  verdict: none\n" +
+		"  verdictOf: " + item.InputRequestID + "\n" +
+		"---\n\nverdict timeout recorded\n"
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -791,17 +872,7 @@ func runDaemonLoopWithWatcherEvents(
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
 		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
 	}
-	if cfg != nil {
-		if cfg.VerdictGraceSeconds > 0 {
-			verdictGraceSeconds = int(cfg.VerdictGraceSeconds)
-		}
-		if cfg.VerdictDebtCap > 0 {
-			verdictDebtCap = cfg.VerdictDebtCap
-		}
-		if cfg.UINode != "" {
-			verdictExemptUINode = cfg.UINode
-		}
-	}
+	configureVerdictGateFromConfig(cfg)
 
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
