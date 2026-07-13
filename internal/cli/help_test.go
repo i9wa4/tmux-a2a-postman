@@ -143,6 +143,8 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"message_footer                   Header guidance before the sender body separator",
 		"draft_template                   Structured envelope for stored send-heredoc Markdown",
 		"daemon_message_template          Structured envelope for daemon-originated PING mail",
+		"audit_review_probability_floor   Nonzero minimum audit draw probability for accepted fills",
+		"audit_target                     Optional sampled audit target; defaults to a valid command_approver_node when available",
 		"skill_path                       postman.md skill catalogs; use inject: ping, inject: compaction_ping, or list syntax for PINGs",
 		"auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes",
 		"notification_template            Pane hint rendered when mail arrives",

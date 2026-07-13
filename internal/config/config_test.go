@@ -459,6 +459,12 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.UINode != "messenger" {
 		t.Errorf("default UINode: got %q, want %q", cfg.UINode, "messenger")
 	}
+	if cfg.AuditReviewProbabilityFloor != 0.05 {
+		t.Errorf("default AuditReviewProbabilityFloor: got %v, want 0.05", cfg.AuditReviewProbabilityFloor)
+	}
+	if cfg.AuditTarget != "" {
+		t.Errorf("default AuditTarget: got %q, want empty", cfg.AuditTarget)
+	}
 	if cfg.HasExplicitUINodeSetting() {
 		t.Error("default UINode should not be treated as an explicit operator setting")
 	}
