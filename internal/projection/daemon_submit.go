@@ -35,6 +35,7 @@ type DaemonSubmitRequest struct {
 	Command            DaemonSubmitCommand `json:"command"`
 	CreatedAt          string              `json:"created_at"`
 	Filename           string              `json:"filename,omitempty"`
+	Sender             string              `json:"sender,omitempty"`
 	Node               string              `json:"node,omitempty"`
 	Content            string              `json:"content,omitempty"`
 	ProfileKind        string              `json:"profile_kind,omitempty"`

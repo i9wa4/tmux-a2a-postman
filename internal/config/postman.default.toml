@@ -78,6 +78,8 @@ daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16;
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
 input_request_stale_seconds = 3600 # Status projection threshold for stale unfilled input requests
+verdict_grace_seconds = 3600       # Grace period for requester verdict stamps after filled reply-required input requests
+verdict_debt_cap = 3               # Maximum unstamped fills before new reply-required sends are refused (<0 = disabled)
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
 
 # Pane capture settings (hybrid idle detection)

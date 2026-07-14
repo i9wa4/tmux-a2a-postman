@@ -28,18 +28,26 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
+	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
 )
 
 const (
 	inboxCheckInterval                            = 30 * time.Second
 	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
 	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
+	defaultVerdictGraceSeconds                    = 3600
+	defaultVerdictDebtCap                         = 3
 )
 
 // daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
 // in milliseconds. Initialized from config at daemon startup; tests may
 // override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
-var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+var (
+	daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+	verdictGraceSeconds                    = defaultVerdictGraceSeconds
+	verdictDebtCap                         = defaultVerdictDebtCap
+	verdictExemptUINode                    = "messenger"
+)
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -98,9 +106,16 @@ func frontmatterValue(content, key string) string {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
+}
+
+func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func syncMailboxProjection(sessionDir string) {
@@ -192,8 +207,14 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	if strings.ContainsAny(request.Filename, "/\\") {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
 	}
+	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send invalid filename: %w", err)
+	}
 	if request.Content == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
+	}
+	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+		return projection.DaemonSubmitResponse{}, err
 	}
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
@@ -218,6 +239,28 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 		HandledAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  request.Filename,
 	}, nil
+}
+
+func enforceVerdictGate(sessionDir, sender, filename, content string) error {
+	return verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+		GraceSeconds: verdictGraceSeconds,
+		DebtCap:      verdictDebtCap,
+		ExemptUINode: verdictExemptUINode,
+		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
+			return journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, equivalent, time.Now())
+		},
+	})
+}
+
+func configureVerdictGateFromConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	verdictGraceSeconds = cfg.EffectiveVerdictGraceSeconds(verdictGraceSeconds)
+	verdictDebtCap = cfg.EffectiveVerdictDebtCap(verdictDebtCap)
+	if cfg.UINode != "" {
+		verdictExemptUINode = cfg.UINode
+	}
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -476,6 +519,15 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		}
 	}
 	if err != nil {
+		if response.RequestID == "" {
+			response.RequestID = request.RequestID
+		}
+		if response.Command == "" {
+			response.Command = request.Command
+		}
+		if response.HandledAt == "" {
+			response.HandledAt = time.Now().UTC().Format(time.RFC3339)
+		}
 		response.Error = err.Error()
 	}
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
@@ -741,6 +793,7 @@ func runDaemonLoopWithWatcherEvents(
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
 		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
 	}
+	configureVerdictGateFromConfig(cfg)
 
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause

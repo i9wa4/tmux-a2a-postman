@@ -54,6 +54,46 @@ func runSendHeredocWithBody(t *testing.T, body string, args []string) error {
 	})
 }
 
+func appendSendVerdictDebt(t *testing.T, sessionDir, sessionName, requester, filler, inputRequestID string, now time.Time) {
+	t.Helper()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", sessionName, 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	requestMessageID := inputRequestID + "-request.md"
+	requestContent := "---\nparams:\n" +
+		"  from: " + requester + "\n" +
+		"  to: " + filler + "\n" +
+		"  messageId: " + requestMessageID + "\n" +
+		"  replyPolicy: required\n" +
+		"  input_request_id: " + inputRequestID + "\n" +
+		"---\n\nrequest\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: requestMessageID,
+		From:      requester,
+		To:        filler,
+		Content:   requestContent,
+	}, now); err != nil {
+		t.Fatalf("AppendEvent request: %v", err)
+	}
+	fillMessageID := inputRequestID + "-fill.md"
+	fillContent := "---\nparams:\n" +
+		"  from: " + filler + "\n" +
+		"  to: " + requester + "\n" +
+		"  messageId: " + fillMessageID + "\n" +
+		"  replyPolicy: none\n" +
+		"  fills_input_request_id: " + inputRequestID + "\n" +
+		"---\n\nfill\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: fillMessageID,
+		From:      filler,
+		To:        requester,
+		Content:   fillContent,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent fill: %v", err)
+	}
+}
+
 func captureSendHeredocWithBody(t *testing.T, body string, args []string) (string, string, error) {
 	t.Helper()
 	return captureCommandOutput(t, func() error {
@@ -3061,6 +3101,9 @@ role = "worker"
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
 	}
+	if request.Sender != "messenger" {
+		t.Fatalf("request.Sender = %q, want messenger", request.Sender)
+	}
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
@@ -3222,6 +3265,55 @@ role = "worker"
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_DirectPathEnforcesVerdictGate(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
+	if config.ContextOwnsSession(tmpDir, "ctx-direct-verdict-gate", "test-session") {
+		t.Fatal("ContextOwnsSession() = true, want direct post path")
+	}
+
+	err := runSendHeredocWithBody(t, "new direct work", []string{
+		"--config", configPath,
+		"--context-id", "ctx-direct-verdict-gate",
+		"--to", "worker",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("RunSendHeredoc() error = nil, want direct-path verdict gate rejection")
+	}
+	if !strings.Contains(err.Error(), "verdict debt 1 above verdict_debt_cap=0") {
+		t.Fatalf("RunSendHeredoc() error = %v, want debt-cap verdict gate rejection", err)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post file written despite verdict gate rejection: found %d entries", len(postEntries))
 	}
 }
 

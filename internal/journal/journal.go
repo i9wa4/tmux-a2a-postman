@@ -86,6 +86,8 @@ type AppendOptions struct {
 	ThreadID string
 }
 
+type EventEquivalenceFunc func(Event) (bool, error)
+
 type Writer struct {
 	sessionDir string
 	session    SessionState
@@ -443,6 +445,90 @@ func (w *Writer) AppendEventWithOptions(eventType string, visibility Visibility,
 	return event, nil
 }
 
+func (w *Writer) AppendCurrentSessionEventIfAbsent(eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time, equivalent EventEquivalenceFunc) (Event, bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if !isKnownVisibility(visibility) {
+		return Event{}, false, fmt.Errorf("unknown visibility %q", visibility)
+	}
+	threadID := strings.TrimSpace(options.ThreadID)
+	if err := validateThreadBinding(eventType, threadID); err != nil {
+		return Event{}, false, err
+	}
+	var event Event
+	appended := false
+	if err := withAppendAuthorityFence(w.sessionDir, func() error {
+		if err := w.ensureActiveLease(); err != nil {
+			return err
+		}
+
+		if equivalent != nil {
+			if err := replayEachEvent(recordsDir(w.sessionDir), func(existing Event) error {
+				if existing.SessionKey != w.session.SessionKey ||
+					existing.Generation != w.session.Generation ||
+					existing.TmuxSessionName != w.session.TmuxSessionName {
+					return nil
+				}
+				ok, err := equivalent(existing)
+				if err != nil {
+					return err
+				}
+				if ok {
+					event = existing
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if event.EventID != "" {
+				return nil
+			}
+		}
+
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshaling payload: %w", err)
+		}
+
+		sequence, err := nextSequence(recordsDir(w.sessionDir))
+		if err != nil {
+			return err
+		}
+
+		event = Event{
+			SchemaVersion:   schemaVersion,
+			Sequence:        sequence,
+			EventID:         randomHex(10),
+			Type:            eventType,
+			Visibility:      visibility,
+			SessionKey:      w.session.SessionKey,
+			TmuxSessionName: w.session.TmuxSessionName,
+			Generation:      w.session.Generation,
+			ThreadID:        threadID,
+			LeaseID:         w.lease.LeaseID,
+			LeaseEpoch:      w.lease.LeaseEpoch,
+			OccurredAt:      now.UTC().Format(time.RFC3339),
+			Payload:         payloadBytes,
+		}
+		if appendEventBeforeWriteHook != nil {
+			if err := appendEventBeforeWriteHook(); err != nil {
+				return err
+			}
+		}
+
+		filename := fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID)
+		if err := writeJSONAtomically(filepath.Join(recordsDir(w.sessionDir), filename), event); err != nil {
+			return fmt.Errorf("writing event: %w", err)
+		}
+		appended = true
+		return nil
+	}); err != nil {
+		return Event{}, false, err
+	}
+	return event, appended, nil
+}
+
 func (w *Writer) ensureActiveLease() error {
 	var current Lease
 	if err := readJSONFile(currentLeasePath(w.sessionDir), &current); err != nil {
@@ -456,7 +542,7 @@ func (w *Writer) ensureActiveLease() error {
 
 func Replay(sessionDir string) ([]Event, error) {
 	events := make([]Event, 0)
-	if err := ReplayEach(sessionDir, func(event Event) error {
+	if err := replayEachEvent(recordsDir(sessionDir), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -466,7 +552,11 @@ func Replay(sessionDir string) ([]Event, error) {
 }
 
 func ReplayEach(sessionDir string, fn func(Event) error) error {
-	entries, err := os.ReadDir(recordsDir(sessionDir))
+	return replayEachEvent(recordsDir(sessionDir), fn)
+}
+
+func replayEachEvent(dir string, fn func(Event) error) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -508,7 +598,7 @@ func ReplayEach(sessionDir string, fn func(Event) error) error {
 		}
 
 		var event Event
-		if err := readJSONRecord(filepath.Join(recordsDir(sessionDir), record.name), &event); err != nil {
+		if err := readJSONRecord(filepath.Join(dir, record.name), &event); err != nil {
 			return fmt.Errorf("replay: reading %s: %w", record.name, err)
 		}
 		if event.Sequence != record.sequence {

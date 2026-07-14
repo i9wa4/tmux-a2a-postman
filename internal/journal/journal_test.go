@@ -100,6 +100,57 @@ func TestRecordMailboxPayloadPersistsExactInputRequestFields(t *testing.T) {
 	}
 }
 
+func TestAppendCurrentSessionEventIfAbsentDedupesUnderAppendFence(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 2, 30, 0, time.UTC)
+
+	writer, err := OpenShadowWriter(sessionDir, "ctx-main", "main", 4242, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	payload := MailboxEventPayload{
+		MessageID: "m1.verdict-none",
+		From:      "orchestrator",
+		To:        "worker",
+		Content:   "verdictOf: ireq_1",
+	}
+	equivalent := func(event Event) (bool, error) {
+		if event.Type != "verdict_none_timeout" {
+			return false, nil
+		}
+		var got MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			return false, err
+		}
+		return got.MessageID == payload.MessageID, nil
+	}
+
+	if _, appended, err := writer.AppendCurrentSessionEventIfAbsent("verdict_none_timeout", VisibilityOperatorVisible, payload, AppendOptions{}, now.Add(time.Second), equivalent); err != nil {
+		t.Fatalf("AppendCurrentSessionEventIfAbsent(first) error = %v", err)
+	} else if !appended {
+		t.Fatal("AppendCurrentSessionEventIfAbsent(first) appended = false, want true")
+	}
+	if _, appended, err := writer.AppendCurrentSessionEventIfAbsent("verdict_none_timeout", VisibilityOperatorVisible, payload, AppendOptions{}, now.Add(2*time.Second), equivalent); err != nil {
+		t.Fatalf("AppendCurrentSessionEventIfAbsent(second) error = %v", err)
+	} else if appended {
+		t.Fatal("AppendCurrentSessionEventIfAbsent(second) appended = true, want false")
+	}
+
+	events, err := Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.Type == "verdict_none_timeout" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("verdict_none_timeout event count = %d, want 1", count)
+	}
+}
+
 func TestRecordProcessHelpers_NoManagerNoop(t *testing.T) {
 	ClearProcessManager()
 	t.Cleanup(ClearProcessManager)

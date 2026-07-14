@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
+	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
@@ -441,6 +442,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command:  projection.DaemonSubmitSend,
 			Filename: filename,
+			Sender:   sender,
 			Content:  content,
 		}, daemonSubmitTimeout(cfg.TmuxTimeout))
 		if err != nil {
@@ -469,6 +471,15 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		}
 		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, recipient, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
 		return writeSendOutput(ctx.stdout, output)
+	}
+
+	if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+		GraceSeconds:  cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
+		DebtCap:       cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
+		ExemptUINode:  cfg.UINode,
+		RecordTimeout: verdictgate.RecordTimeoutWithCurrentLease,
+	}); err != nil {
+		return err
 	}
 
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {

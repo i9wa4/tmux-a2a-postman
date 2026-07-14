@@ -38,6 +38,8 @@ type Config struct {
 	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
 	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
 	InputRequestStaleSeconds         float64 `toml:"input_request_stale_seconds"`           // Status projection threshold for stale unfilled input requests
+	VerdictGraceSeconds              float64 `toml:"verdict_grace_seconds"`                 // Grace period for requester verdict stamps after filled reply-required input requests
+	VerdictDebtCap                   int     `toml:"verdict_debt_cap"`                      // Maximum unstamped fills a requester may carry before new reply-required sends are refused
 	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
 	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
@@ -89,6 +91,8 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+	verdictGraceSecondsSet  bool
+	verdictDebtCapSet       bool
 }
 
 type CommandApprovalPolicy struct {
@@ -346,6 +350,26 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 	return cfg.uiNodeSet
 }
 
+func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictGraceSeconds > 0 || cfg.verdictGraceSecondsSet {
+		return int(cfg.VerdictGraceSeconds)
+	}
+	return fallback
+}
+
+func (cfg *Config) EffectiveVerdictDebtCap(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictDebtCap != 0 || cfg.verdictDebtCapSet {
+		return cfg.VerdictDebtCap
+	}
+	return fallback
+}
+
 func (cfg *Config) CompactionSkillCatalogForRuntime(runtime string) string {
 	if cfg == nil {
 		return ""
@@ -401,6 +425,8 @@ func loadEmbeddedConfig() (*Config, error) {
 		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
 			return nil, fmt.Errorf("decoding embedded [postman] section: %w", err)
 		}
+		cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+		cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 	}
 
 	// Decode [nodename] sections (everything except reserved sections)
@@ -627,6 +653,10 @@ func mergeConfig(base, override *Config) {
 	if override.InputRequestStaleSeconds != 0 {
 		base.InputRequestStaleSeconds = override.InputRequestStaleSeconds
 	}
+	if override.VerdictGraceSeconds != 0 || override.verdictGraceSecondsSet {
+		base.VerdictGraceSeconds = override.VerdictGraceSeconds
+		base.verdictGraceSecondsSet = base.verdictGraceSecondsSet || override.verdictGraceSecondsSet
+	}
 	if override.MessageTTLSeconds != 0 {
 		base.MessageTTLSeconds = override.MessageTTLSeconds
 	}
@@ -655,6 +685,10 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.VerdictDebtCap != 0 || override.verdictDebtCapSet {
+		base.VerdictDebtCap = override.VerdictDebtCap
+		base.verdictDebtCapSet = base.verdictDebtCapSet || override.verdictDebtCapSet
 	}
 	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
 		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
@@ -766,6 +800,8 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
 		}
 
