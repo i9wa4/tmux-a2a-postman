@@ -18,6 +18,7 @@ type Handlers struct {
 	InspectMessage          func(args []string) error
 	InspectCommandApprovals func(args []string) error
 	InspectDaemonSubmit     func(args []string) error
+	BackfillVerdictEvents   func(args []string) error
 	ExecuteBash             func(args []string) error
 	SendMessage             func(args []string) error
 	SendHeredoc             func(args []string) error
@@ -89,6 +90,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman inspect-daemon-submit",
 			Err:   handlers.InspectDaemonSubmit(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "backfill-verdict-events":
+		return Result{
+			Label: "postman backfill-verdict-events",
+			Err:   handlers.BackfillVerdictEvents(args),
 		}
 	case "execute-bash":
 		return Result{
