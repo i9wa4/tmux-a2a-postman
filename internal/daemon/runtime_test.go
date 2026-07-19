@@ -435,6 +435,7 @@ func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
 				nil,
 				nil,
 				"",
+				nil,
 			)
 			if got := cap(rt.daemonSubmitSem); got != tt.want {
 				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)

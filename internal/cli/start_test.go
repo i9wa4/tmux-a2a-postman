@@ -626,7 +626,7 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName)") {
 		t.Fatal("start.go still clears foreign pane claims from a raw PID check")
 	}
-	markerIndex := strings.Index(source, `config.SetSessionEnabledMarker(contextID, sessionName, true)`)
+	markerIndex := strings.Index(source, `setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true)`)
 	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
 	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
 	if markerIndex == -1 {

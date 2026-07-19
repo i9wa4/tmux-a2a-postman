@@ -24,6 +24,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
@@ -34,6 +35,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+var newHerdrRuntimeClient herdrruntime.ClientFactory = func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+	return nil, fmt.Errorf("%w: herdr socket client is not configured", multiplexer.ErrHerdrBackendUnavailable)
+}
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
 func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
@@ -87,6 +92,22 @@ func activePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	}
 	sort.Strings(activeNodes)
 	return activeNodes
+}
+
+func mergeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) {
+	if dst == nil || len(src) == 0 {
+		return
+	}
+	for nodeKey, nodeInfo := range src {
+		dst[nodeKey] = nodeInfo
+	}
+}
+
+func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
+	if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
+		return herdrRuntime.SetSessionEnabledMarker(ctx, contextID, sessionName, enabled)
+	}
+	return config.SetSessionEnabledMarker(contextID, sessionName, enabled)
 }
 
 func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targets []idle.CompactionPingTarget) {
@@ -282,12 +303,29 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		defer func() { _ = lockObj.Release() }()
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	herdrRuntime, err := herdrruntime.New(cfg, newHerdrRuntimeClient)
+	if err != nil {
+		return fmt.Errorf("configuring herdr runtime: %w", err)
+	}
+	defer herdrRuntime.Close()
+	var herdrStartupNodes map[string]discovery.NodeInfo
+	var herdrStartupCollisions []discovery.CollisionReport
+	if herdrRuntime != nil {
+		herdrStartupNodes, herdrStartupCollisions, err = herdrRuntime.Discover(ctx, baseDir, contextID)
+		if err != nil {
+			return fmt.Errorf("discovering herdr runtime: %w", err)
+		}
+	}
+
 	pidPath := filepath.Join(sessionDir, "postman.pid")
 	if err := config.WriteSessionPIDFile(pidPath, os.Getpid()); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
-	if err := config.SetSessionEnabledMarker(contextID, sessionName, true); err != nil {
+	if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
 		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 	}
 	startupActivatedSessions := activateStartupSessions(baseDir, contextDir, contextID, sessionName, cfg)
@@ -304,9 +342,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	} else if removed > 0 {
 		log.Printf("postman: pruned %d expired runtime path(s) at startup\n", removed)
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	// Issue #57: Signal handling logging
 	sigCh := make(chan os.Signal, 1)
@@ -358,6 +393,8 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		nodes = make(map[string]discovery.NodeInfo)
 		startupCollisions = nil
 	}
+	mergeDiscoveredNodes(nodes, herdrStartupNodes)
+	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	// Claim discovered panes with this daemon's context ID.
@@ -395,6 +432,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		if err != nil {
 			log.Printf("⚠️  postman: startup re-discovery failed: %v\n", err)
 			return
+		}
+		if herdrRuntime != nil {
+			herdrNodes, _, herdrErr := herdrRuntime.Discover(context.Background(), baseDir, contextID)
+			if herdrErr != nil {
+				log.Printf("⚠️  postman: startup herdr re-discovery failed: %v\n", herdrErr)
+			} else {
+				mergeDiscoveredNodes(fresh, herdrNodes)
+			}
 		}
 		activationNodesLocal := activationNodeNames(cfg)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
@@ -506,6 +551,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 
 	// Issue #71: Create state management instances
 	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
+	if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
+		daemonState.SetOwnershipBackend(herdrRuntime.OwnershipBackend())
+	}
 	daemonState.AutoEnableSessionIfNew(sessionName)
 	for _, activatedSession := range startupActivatedSessions {
 		daemonState.AutoEnableSessionIfNew(activatedSession)
@@ -527,7 +575,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
 	})
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, daemonEvents, resolvedConfigPath, nil, nil, daemonState, idleTracker, &sharedNodes, sessionName)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, daemonEvents, resolvedConfigPath, nil, nil, daemonState, idleTracker, &sharedNodes, sessionName, herdrRuntime)
 	})
 
 	// Issue #117: Discover all tmux sessions
@@ -604,6 +652,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						// that set titles after startup or after the last scan).
 						freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 						if discErr == nil && len(freshDiscovered) > 0 {
+							if herdrRuntime != nil {
+								herdrNodes, _, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)
+								if herdrErr != nil {
+									log.Printf("⚠️  postman: manual PING herdr discovery failed: %v\n", herdrErr)
+								} else {
+									mergeDiscoveredNodes(freshDiscovered, herdrNodes)
+								}
+							}
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
 							sharedNodes.Store(&freshNodes)
 							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
