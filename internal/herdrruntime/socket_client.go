@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
@@ -18,6 +19,8 @@ type socketClient struct {
 	socketPath string
 	nextID     atomic.Int64
 }
+
+const defaultSocketCallTimeout = 5 * time.Second
 
 type socketRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
@@ -153,11 +156,33 @@ func (c *socketClient) write(ctx context.Context, method string, params interfac
 }
 
 func (c *socketClient) call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	callCtx := ctx
+	cancel := func() {}
+	if _, hasDeadline := callCtx.Deadline(); !hasDeadline {
+		callCtx, cancel = context.WithTimeout(callCtx, defaultSocketCallTimeout)
+	}
+	defer cancel()
+
+	conn, err := (&net.Dialer{}).DialContext(callCtx, "unix", c.socketPath)
 	if err != nil {
-		return nil, multiplexer.NormalizeHerdrBackendError(err)
+		return nil, normalizeSocketCallError(callCtx, err)
 	}
 	defer func() { _ = conn.Close() }()
+	if deadline, ok := callCtx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-callCtx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 
 	id := c.nextID.Add(1)
 	request := socketRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
@@ -167,12 +192,12 @@ func (c *socketClient) call(ctx context.Context, method string, params interface
 	}
 	payload = append(payload, '\n')
 	if _, err := conn.Write(payload); err != nil {
-		return nil, multiplexer.NormalizeHerdrBackendError(err)
+		return nil, normalizeSocketCallError(callCtx, err)
 	}
 
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
-		return nil, multiplexer.NormalizeHerdrBackendError(err)
+		return nil, normalizeSocketCallError(callCtx, err)
 	}
 	var response socketResponse
 	if err := json.Unmarshal(bytes.TrimSpace(line), &response); err != nil {
@@ -182,6 +207,13 @@ func (c *socketClient) call(ctx context.Context, method string, params interface
 		return nil, fmt.Errorf("herdr socket method %s failed: %s", method, response.Error.Message)
 	}
 	return response.Result, nil
+}
+
+func normalizeSocketCallError(ctx context.Context, err error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return multiplexer.NormalizeHerdrBackendError(err)
 }
 
 func decodeHerdrEnvelope(raw json.RawMessage) (multiplexer.HerdrResponseEnvelope, error) {

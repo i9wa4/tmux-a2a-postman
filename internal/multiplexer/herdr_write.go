@@ -132,7 +132,7 @@ func (b HerdrBackend) SetSessionOwnerMarker(ctx context.Context, contextID, sess
 	if err != nil {
 		return err
 	}
-	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
+	if err := b.validateConfiguredWorkspaceInSnapshot(ctx); err != nil {
 		return err
 	}
 	result, err := client.SetWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, metadataKey, markerValue)
@@ -157,7 +157,7 @@ func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName s
 	if err != nil {
 		return err
 	}
-	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
+	if err := b.validateConfiguredWorkspaceInSnapshot(ctx); err != nil {
 		return err
 	}
 	result, err := client.ClearWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, metadataKey)
@@ -165,6 +165,11 @@ func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName s
 		return NormalizeHerdrBackendError(err)
 	}
 	return b.validateWriteEnvelope(result.Envelope)
+}
+
+func (b HerdrBackend) validateConfiguredWorkspaceInSnapshot(ctx context.Context) error {
+	_, err := b.readValidatedSnapshot(ctx, HerdrReadScopeDiscovery)
+	return err
 }
 
 func herdrSessionOwnerMetadataKey(sessionName string) (string, error) {

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +70,42 @@ func TestMergeDiscoveredNodesReportsCrossBackendCollisionWithoutOverwrite(t *tes
 	}
 	if collisions[0].NodeKey != "work:worker" || collisions[0].WinnerPaneID != "%1" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
 		t.Fatalf("collision = %#v, want tmux winner and Herdr loser", collisions[0])
+	}
+}
+
+func TestLogDiscoveredCollisionsReportsHerdrRediscoveryAndManualPingCollisions(t *testing.T) {
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(originalOutput) })
+
+	collisions := []discovery.CollisionReport{{
+		NodeKey:      "work:worker",
+		WinnerPaneID: "%1",
+		LoserPaneID:  "workspace-1:pane-1",
+	}}
+	activationNodes := map[string]bool{"worker": true}
+
+	logDiscoveredCollisions(collisions, activationNodes)
+	logDiscoveredCollisions(collisions, activationNodes)
+
+	got := buf.String()
+	if strings.Count(got, "pane collision: work:worker: workspace-1:pane-1 displaced by %1") != 2 {
+		t.Fatalf("collision log output = %q, want startup rediscovery and manual PING reports", got)
+	}
+}
+
+func TestRunStartWithFlags_SourceContractReportsHerdrCollisionsAfterStartupRediscoveryAndManualPing(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if !strings.Contains(source, "herdrNodes, herdrCollisions, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)") {
+		t.Fatal("startup re-discovery no longer collects Herdr collision reports with bounded context")
+	}
+	if !strings.Contains(source, "freshCollisions = append(freshCollisions, herdrCollisions...)") {
+		t.Fatal("Herdr collision reports are no longer appended before rediscovery/manual PING logging")
+	}
+	if strings.Contains(source, "herdrRuntime.Discover(context.Background(), baseDir, contextID)") {
+		t.Fatal("start.go still uses an unbounded background context for Herdr discovery")
 	}
 }
 

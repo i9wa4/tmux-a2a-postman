@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
@@ -138,6 +139,126 @@ func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	}
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("stale Herdr pane ownership backend remained routable")
+	}
+}
+
+func TestRuntimeClearSessionOwnerMarkerSurvivesZeroPaneRediscovery(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(initial) error = %v", err)
+	}
+	next := validRuntimeHerdrSnapshot()
+	next.Panes = nil
+	client.snapshot = next
+	if nodes, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(empty) error = %v", err)
+	} else if len(nodes) != 0 {
+		t.Fatalf("Discover(empty) nodes = %#v, want none", nodes)
+	}
+
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.ClearSessionOwnerMarker(context.Background(), sessionName); err != nil {
+		t.Fatalf("ClearSessionOwnerMarker() after zero-pane rediscovery error = %v", err)
+	}
+	if client.clearWorkspaceMetadataWorkspace != "workspace-1" || client.clearWorkspaceMetadataKey == "" {
+		t.Fatalf("clear workspace metadata workspace=%q key=%q, want retained session ownership backend", client.clearWorkspaceMetadataWorkspace, client.clearWorkspaceMetadataKey)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("stale Herdr pane ownership backend remained routable after zero-pane rediscovery")
+	}
+}
+
+func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	client.snapshot.Panes = append(client.snapshot.Panes, multiplexer.HerdrPaneSnapshot{
+		ID:          "workspace-1:pane-2",
+		WorkspaceID: "workspace-1",
+		TabID:       "workspace-1:tab-1",
+		PostmanNode: "worker",
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+	})
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, collisions, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if _, ok := nodes[sessionName+":worker"]; ok {
+		t.Fatalf("duplicate Herdr claim registered in nodes: %#v", nodes)
+	}
+	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
+		t.Fatalf("collisions = %#v, want duplicate Herdr collision", collisions)
+	}
+	for _, paneID := range []string{"workspace-1:pane-1", "workspace-1:pane-2"} {
+		target := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: paneID}}
+		if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+			t.Fatalf("duplicate Herdr pane %q remained registered", paneID)
+		}
+	}
+}
+
+func TestSocketClientHonorsContextDeadlineAfterConnect(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen(unix) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+	})
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		time.Sleep(2 * time.Second)
+	}()
+	client, err := herdrruntime.NewSocketClient(config.HerdrConfig{SocketPath: socketPath})
+	if err != nil {
+		t.Fatalf("NewSocketClient() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = client.Ping(ctx)
+	if err == nil {
+		t.Fatal("Ping() error = nil, want context deadline error")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("Ping() took %v, want bounded by context deadline", time.Since(started))
 	}
 }
 
@@ -297,6 +418,9 @@ type fakeRuntimeHerdrClient struct {
 	setPaneMetadataPane  string
 	setPaneMetadataKey   string
 	setPaneMetadataValue string
+
+	clearWorkspaceMetadataWorkspace string
+	clearWorkspaceMetadataKey       string
 }
 
 func (f *fakeRuntimeHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
@@ -334,7 +458,9 @@ func (f *fakeRuntimeHerdrClient) SetWorkspaceMetadata(context.Context, string, s
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeRuntimeHerdrClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+func (f *fakeRuntimeHerdrClient) ClearWorkspaceMetadata(_ context.Context, workspaceID string, key string) (multiplexer.HerdrWriteResult, error) {
+	f.clearWorkspaceMetadataWorkspace = workspaceID
+	f.clearWorkspaceMetadataKey = key
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 

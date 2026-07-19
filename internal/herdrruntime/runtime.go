@@ -116,6 +116,13 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			})
 		}
 	}
+	collidedNodeKeys := make(map[string]bool, len(result.Collisions))
+	for _, collision := range result.Collisions {
+		if strings.TrimSpace(collision.SessionName) == "" || strings.TrimSpace(collision.NodeName) == "" {
+			continue
+		}
+		collidedNodeKeys[collision.SessionName+":"+collision.NodeName] = true
+	}
 
 	livePanes := make(map[string]bool)
 	for _, group := range result.Layout.Groups {
@@ -125,6 +132,9 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 				continue
 			}
 			nodeKey := rt.cfg.SessionName + ":" + item.LogicalName
+			if collidedNodeKeys[nodeKey] {
+				continue
+			}
 			paneBackend := rt.backendForPane(tabID, item.ID.Native)
 			rt.registerPaneBackend(item.ID.Native, paneBackend)
 			livePanes[item.ID.Native] = true
@@ -206,9 +216,10 @@ func (rt *Runtime) reconcilePaneBackends(livePanes map[string]bool) {
 }
 
 type ownershipMux struct {
-	sessionName string
-	mu          sync.RWMutex
-	byPane      map[string]multiplexer.HerdrBackend
+	sessionName    string
+	mu             sync.RWMutex
+	byPane         map[string]multiplexer.HerdrBackend
+	sessionBackend *multiplexer.HerdrBackend
 }
 
 func newOwnershipMux(sessionName string) *ownershipMux {
@@ -223,6 +234,8 @@ func (m *ownershipMux) setPaneBackend(paneID string, backend multiplexer.HerdrBa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byPane[paneID] = backend
+	sessionBackend := backend
+	m.sessionBackend = &sessionBackend
 }
 
 func (m *ownershipMux) deletePaneBackend(paneID string) {
@@ -235,6 +248,7 @@ func (m *ownershipMux) clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byPane = make(map[string]multiplexer.HerdrBackend)
+	m.sessionBackend = nil
 }
 
 func (m *ownershipMux) backendForSession(sessionName string) (multiplexer.HerdrBackend, error) {
@@ -243,6 +257,9 @@ func (m *ownershipMux) backendForSession(sessionName string) (multiplexer.HerdrB
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.sessionBackend != nil {
+		return *m.sessionBackend, nil
+	}
 	keys := make([]string, 0, len(m.byPane))
 	for paneID := range m.byPane {
 		keys = append(keys, paneID)
