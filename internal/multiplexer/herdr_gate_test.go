@@ -46,6 +46,16 @@ func TestValidateHerdrPaneReadGateRequiresPaneTargetIdentity(t *testing.T) {
 	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "pane_id", HerdrGateFailureMissingRuntime)
 }
 
+func TestValidateHerdrReadGateRejectsUnknownReadScope(t *testing.T) {
+	policy := validHerdrGatePolicy()
+	policy.ReadScope = HerdrReadScope("pane-target")
+	runtime := validHerdrRuntime()
+	runtime.PaneID = ""
+
+	err := ValidateHerdrReadGate(policy, runtime, validHerdrEnvelope())
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_scope", HerdrGateFailureUnsupportedScope)
+}
+
 func TestValidateHerdrReadGateRequiresAllowlistedRuntime(t *testing.T) {
 	runtime := validHerdrRuntime()
 	runtime.WorkspaceID = "workspace-other"
@@ -114,6 +124,16 @@ func TestValidateHerdrWriteGateRequiresReadGate(t *testing.T) {
 
 		err := ValidateHerdrWriteGate(validHerdrGatePolicy(), validHerdrRuntime(), envelope)
 		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "protocol_version", HerdrGateFailureUnsupportedProtocol)
+	})
+
+	t.Run("overrides invalid read scope", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ReadScope = HerdrReadScope("pane-target")
+		runtime := validHerdrRuntime()
+		runtime.PaneID = ""
+
+		err := ValidateHerdrWriteGate(policy, runtime, validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "pane_id", HerdrGateFailureMissingRuntime)
 	})
 }
 
