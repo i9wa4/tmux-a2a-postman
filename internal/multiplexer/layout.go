@@ -2,6 +2,7 @@ package multiplexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,6 +13,8 @@ const (
 	LayoutGroupKindWindow = "window"
 	LayoutItemKindPane    = "pane"
 )
+
+var errTmuxServerUnavailable = errors.New("tmux server unavailable")
 
 type SessionLayout struct {
 	Backend     BackendKind
@@ -71,6 +74,9 @@ func (b TmuxBackend) SessionLayout(_ context.Context, sessionName string) (Sessi
 		}
 		group, ok, err := b.tmuxWindowLayout(sessionName, windowIndex)
 		if err != nil {
+			if errors.Is(err, errTmuxServerUnavailable) {
+				return emptyTmuxSessionLayout(sessionName), nil
+			}
 			return SessionLayout{}, err
 		}
 		if ok {
@@ -102,7 +108,7 @@ func (b TmuxBackend) tmuxWindowLayout(sessionName, windowIndex string) (LayoutGr
 			return LayoutGroup{}, false, nil
 		}
 		if strings.Contains(output, "no server running") {
-			return LayoutGroup{}, false, nil
+			return LayoutGroup{}, false, errTmuxServerUnavailable
 		}
 		return LayoutGroup{}, false, fmt.Errorf("listing panes for session %s window %s: %w", sessionName, windowIndex, err)
 	}
@@ -110,7 +116,7 @@ func (b TmuxBackend) tmuxWindowLayout(sessionName, windowIndex string) (LayoutGr
 	windowOrder, _ := strconv.Atoi(windowIndex)
 	group := LayoutGroup{
 		Kind:  LayoutGroupKindWindow,
-		ID:    ResourceID{Backend: BackendKindTmux, Kind: ResourceKindSession, Native: sessionName + ":" + windowIndex},
+		ID:    ResourceID{Backend: BackendKindTmux, Kind: ResourceKindWindow, Native: sessionName + ":" + windowIndex},
 		Order: windowOrder,
 		NativeIDs: map[string]string{
 			"window_index": windowIndex,
@@ -167,4 +173,14 @@ func parseTmuxLayoutPane(line string) (LayoutItem, bool) {
 
 func tmuxLayoutMissingSession(output string) bool {
 	return strings.Contains(output, "no server running") || strings.Contains(output, "can't find session")
+}
+
+func emptyTmuxSessionLayout(sessionName string) SessionLayout {
+	return SessionLayout{
+		Backend:     BackendKindTmux,
+		SessionName: sessionName,
+		NativeIDs: map[string]string{
+			"session_name": sessionName,
+		},
+	}
 }
