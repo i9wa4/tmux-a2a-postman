@@ -19,6 +19,7 @@ type ResourceKind string
 const (
 	ResourceKindPane    ResourceKind = "pane"
 	ResourceKindSession ResourceKind = "session"
+	ResourceKindWindow  ResourceKind = "window"
 	ResourceKindNode    ResourceKind = "node"
 )
 

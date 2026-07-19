@@ -39,6 +39,9 @@ func TestTmuxBackendSessionLayoutReturnsOrderedWindowGroups(t *testing.T) {
 	if got.Groups[0].NativeIDs["window_index"] != "0" || got.Groups[1].NativeIDs["window_index"] != "1" {
 		t.Fatalf("window order/native ids = %#v", got.Groups)
 	}
+	if got.Groups[1].ID.Kind != ResourceKindWindow || got.Groups[1].ID.Native != "review:1" {
+		t.Fatalf("window group ID = %#v, want tmux window resource", got.Groups[1].ID)
+	}
 	if len(got.Groups[1].Items) != 2 {
 		t.Fatalf("len(Groups[1].Items) = %d, want 2", len(got.Groups[1].Items))
 	}
@@ -69,5 +72,32 @@ func TestTmuxBackendSessionLayoutMissingSessionReturnsEmptyLayout(t *testing.T) 
 	}
 	if got.Backend != BackendKindTmux || got.SessionName != "missing" || len(got.Groups) != 0 {
 		t.Fatalf("SessionLayout() = %#v, want empty tmux layout", got)
+	}
+}
+
+func TestTmuxBackendSessionLayoutServerStopsDuringPaneEnumerationReturnsEmptyLayout(t *testing.T) {
+	tmuxtest.Install(
+		t,
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:   []string{"list-windows", "-t", "review", "-F", "#{window_index}"},
+			Stdout: "0\n1\n",
+		}),
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:   []string{"list-panes", "-t", "review:0", "-F", "#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}"},
+			Stdout: "0\t0\t%11\tworker\tcodex\n",
+		}),
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:     []string{"list-panes", "-t", "review:1", "-F", "#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}"},
+			Stderr:   "no server running on /tmp/tmux-1000/default",
+			ExitCode: 1,
+		}),
+	)
+
+	got, err := (TmuxBackend{}).SessionLayout(context.Background(), "review")
+	if err != nil {
+		t.Fatalf("SessionLayout() error = %v", err)
+	}
+	if got.Backend != BackendKindTmux || got.SessionName != "review" || len(got.Groups) != 0 {
+		t.Fatalf("SessionLayout() = %#v, want empty layout after tmux server disappears", got)
 	}
 }
