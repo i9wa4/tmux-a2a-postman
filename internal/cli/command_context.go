@@ -10,6 +10,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -26,6 +27,7 @@ type commandContext struct {
 	contextOwnsSession    func(baseDir, contextID, sessionName string) bool
 	contextHasLiveDaemon  func(baseDir, contextID string) bool
 	roundTripDaemonSubmit func(sessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error)
+	currentIdentity       func() (multiplexer.CurrentIdentity, error)
 	getTmuxPaneName       func() string
 	getTmuxSessionName    func() string
 	getTmuxPaneID         func() string
@@ -41,6 +43,7 @@ func defaultCommandContext() commandContext {
 }
 
 func (ctx commandContext) withDefaults() commandContext {
+	customTmuxIdentityHooks := ctx.getTmuxPaneName != nil || ctx.getTmuxSessionName != nil || ctx.getTmuxPaneID != nil
 	if ctx.stdin == nil {
 		ctx.stdin = os.Stdin
 	}
@@ -74,6 +77,9 @@ func (ctx commandContext) withDefaults() commandContext {
 	if ctx.roundTripDaemonSubmit == nil {
 		ctx.roundTripDaemonSubmit = roundTripDaemonSubmit
 	}
+	if ctx.currentIdentity == nil && !customTmuxIdentityHooks {
+		ctx.currentIdentity = config.CurrentTmuxIdentity
+	}
 	if ctx.getTmuxPaneName == nil {
 		ctx.getTmuxPaneName = config.GetTmuxPaneName
 	}
@@ -97,6 +103,25 @@ func (ctx commandContext) withDefaults() commandContext {
 	}
 	if ctx.runBash == nil {
 		ctx.runBash = runBashCommand
+	}
+	if ctx.currentIdentity == nil {
+		ctx.currentIdentity = func() (multiplexer.CurrentIdentity, error) {
+			paneID := ctx.getTmuxPaneID()
+			sessionName := ctx.getTmuxSessionName()
+			nodeName := ctx.getTmuxPaneName()
+			identity := multiplexer.CurrentIdentity{
+				Backend:     multiplexer.BackendKindTmux,
+				SessionName: sessionName,
+				NodeName:    nodeName,
+				Pane:        multiplexer.TmuxPaneID(paneID),
+				NativeIDs: map[string]string{
+					"pane_id":      paneID,
+					"session_name": sessionName,
+					"pane_title":   nodeName,
+				},
+			}
+			return identity, nil
+		}
 	}
 	return ctx
 }
