@@ -22,7 +22,7 @@ func TestTmuxBackendCurrentIdentityUsesTargetPane(t *testing.T) {
 		}),
 	)
 
-	identity, err := (TmuxBackend{}).CurrentIdentity(context.Background(), "%9")
+	identity, err := (TmuxBackend{}).CurrentIdentity(context.Background(), IdentityTarget{Pane: TmuxPaneID("%9")})
 	if err != nil {
 		t.Fatalf("CurrentIdentity() error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestTmuxBackendCurrentIdentityUsesUntargetedFallback(t *testing.T) {
 		}),
 	)
 
-	identity, err := (TmuxBackend{}).CurrentIdentity(context.Background(), "")
+	identity, err := (TmuxBackend{}).CurrentIdentity(context.Background(), IdentityTarget{})
 	if err != nil {
 		t.Fatalf("CurrentIdentity() error = %v", err)
 	}
@@ -87,13 +87,16 @@ func TestTmuxBackendCurrentIdentityUsesUntargetedFallback(t *testing.T) {
 }
 
 func TestTmuxBackendCurrentIdentityReportsLookupFailure(t *testing.T) {
-	tmuxtest.Install(t, tmuxtest.WithCommand(tmuxtest.Command{
-		Args:     []string{"display-message", "-t", "%9", "-p", "#{session_name}"},
-		Stderr:   "no pane\n",
-		ExitCode: 1,
-	}))
+	tmuxtest.Install(
+		t,
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:     []string{"display-message", "-t", "%9", "-p", "#{session_name}"},
+			Stderr:   "no pane\n",
+			ExitCode: 1,
+		}),
+	)
 
-	_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), "%9")
+	_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), IdentityTarget{Pane: TmuxPaneID("%9")})
 	if err == nil {
 		t.Fatal("CurrentIdentity() error = nil, want lookup failure")
 	}
@@ -103,5 +106,58 @@ func TestTmuxBackendCurrentIdentityReportsLookupFailure(t *testing.T) {
 	}
 	if identityErr.Backend != BackendKindTmux || identityErr.Failure != IdentityFailureLookupFailed || identityErr.Field != "session_name" {
 		t.Fatalf("identity error = %#v, want tmux lookup_failed session_name", identityErr)
+	}
+}
+
+func TestTmuxBackendCurrentIdentityReportsBlankSessionName(t *testing.T) {
+	tmuxtest.Install(
+		t,
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:   []string{"display-message", "-t", "%9", "-p", "#{session_name}"},
+			Stdout: "\n",
+		}),
+	)
+
+	_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), IdentityTarget{Pane: TmuxPaneID("%9")})
+	assertIdentityLookupFailure(t, err, "session_name")
+}
+
+func TestTmuxBackendCurrentIdentityReportsBlankNodeName(t *testing.T) {
+	tmuxtest.Install(
+		t,
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:   []string{"display-message", "-t", "%9", "-p", "#{session_name}"},
+			Stdout: "postman\n",
+		}),
+		tmuxtest.WithCommand(tmuxtest.Command{
+			Args:   []string{"display-message", "-t", "%9", "-p", "#{pane_title}"},
+			Stdout: "\n",
+		}),
+	)
+
+	_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), IdentityTarget{Pane: TmuxPaneID("%9")})
+	assertIdentityLookupFailure(t, err, "pane_title")
+}
+
+func TestTmuxBackendCurrentIdentityRejectsWrongBackendTarget(t *testing.T) {
+	target := IdentityTarget{
+		Pane: ResourceID{Backend: "herdr", Kind: ResourceKindPane, Native: "pane-1"},
+	}
+
+	_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), target)
+	assertIdentityLookupFailure(t, err, "pane_id")
+}
+
+func assertIdentityLookupFailure(t *testing.T, err error, field string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("identity lookup error = nil")
+	}
+	var identityErr IdentityError
+	if !errors.As(err, &identityErr) {
+		t.Fatalf("error = %T %v, want IdentityError", err, err)
+	}
+	if identityErr.Backend != BackendKindTmux || identityErr.Failure != IdentityFailureLookupFailed || identityErr.Field != field {
+		t.Fatalf("identity error = %#v, want tmux lookup_failed %s", identityErr, field)
 	}
 }
