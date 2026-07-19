@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -98,6 +99,7 @@ func TestLogDiscoveredCollisionsReportsHerdrRediscoveryAndManualPingCollisions(t
 }
 
 func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryEmpty(t *testing.T) {
+	t.Setenv("PATH", "")
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
 	sessionName := "work"
@@ -124,6 +126,38 @@ func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryE
 	}
 	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
 		t.Fatalf("collisions = %#v, want Herdr-only duplicate collision despite empty tmux discovery", collisions)
+	}
+}
+
+func TestDiscoverFreshNodesWithHerdrReturnsErrorWhenTmuxAndHerdrDiscoveryFail(t *testing.T) {
+	t.Setenv("PATH", "")
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	herdrErr := errors.New("herdr unavailable")
+	client := &fakeCLIHerdrClient{
+		snapshot:    validCLIDuplicateHerdrSnapshot(),
+		snapshotErr: herdrErr,
+	}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, collisions, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	if err == nil {
+		t.Fatal("discoverFreshNodesWithHerdr() error = nil, want combined tmux+Herdr discovery error")
+	}
+	if !strings.Contains(err.Error(), "tmux discovery failed") || !strings.Contains(err.Error(), "herdr discovery failed") {
+		t.Fatalf("error = %v, want both discovery failures preserved", err)
+	}
+	if nodes != nil || collisions != nil {
+		t.Fatalf("nodes=%#v collisions=%#v, want nil results on dual discovery failure", nodes, collisions)
 	}
 }
 
@@ -912,7 +946,8 @@ func assertPathMissing(t *testing.T, path string) {
 }
 
 type fakeCLIHerdrClient struct {
-	snapshot multiplexer.HerdrSessionSnapshot
+	snapshot    multiplexer.HerdrSessionSnapshot
+	snapshotErr error
 }
 
 func (f *fakeCLIHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
@@ -920,6 +955,9 @@ func (f *fakeCLIHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnv
 }
 
 func (f *fakeCLIHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	if f.snapshotErr != nil {
+		return multiplexer.HerdrSessionSnapshot{}, f.snapshotErr
+	}
 	return f.snapshot, nil
 }
 
