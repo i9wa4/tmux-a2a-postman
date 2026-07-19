@@ -9,6 +9,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
 
 func TestTargetForNodeSeparatesActorRunBrainAndHand(t *testing.T) {
@@ -124,6 +125,75 @@ func TestTmuxHandAdapterDeliverUsesHandAttachment(t *testing.T) {
 	}
 }
 
+func TestTmuxInteractiveDeliveryAdapterUsesPaneSender(t *testing.T) {
+	var (
+		gotDelivery notification.PaneDelivery
+		probeCalls  int
+	)
+
+	adapter := TmuxInteractiveDeliveryAdapter{
+		ProbeRuntime: func(paneID string) (string, error) {
+			probeCalls++
+			if paneID != "%99" {
+				t.Fatalf("ProbeRuntime paneID = %q, want %q", paneID, "%99")
+			}
+			return "codex", nil
+		},
+		PaneSender: notification.PaneSenderFunc(func(delivery notification.PaneDelivery) error {
+			gotDelivery = delivery
+			return nil
+		}),
+	}
+
+	err := adapter.Deliver(Target{
+		ActorID:     "worker",
+		RunID:       "notify-session:worker",
+		SessionName: "notify-session",
+		SessionDir:  t.TempDir(),
+		Brain:       Brain{Runtime: BrainRuntimeUnknown},
+		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%99"},
+	}, PaneDelivery{
+		Content:        "notice worker",
+		EnterDelay:     5 * time.Millisecond,
+		TmuxTimeout:    1 * time.Second,
+		EnterCount:     0,
+		BypassCooldown: true,
+		VerifyDelay:    7 * time.Millisecond,
+		MaxRetries:     3,
+	})
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	if gotDelivery.PaneID != "%99" {
+		t.Fatalf("PaneDelivery.PaneID = %q, want %q", gotDelivery.PaneID, "%99")
+	}
+	if gotDelivery.Message != "notice worker" {
+		t.Fatalf("PaneDelivery.Message = %q, want %q", gotDelivery.Message, "notice worker")
+	}
+	if gotDelivery.EnterCount != 2 {
+		t.Fatalf("PaneDelivery.EnterCount = %d, want %d", gotDelivery.EnterCount, 2)
+	}
+	if gotDelivery.EnterDelay != 5*time.Millisecond {
+		t.Fatalf("PaneDelivery.EnterDelay = %s, want %s", gotDelivery.EnterDelay, 5*time.Millisecond)
+	}
+	if gotDelivery.TmuxTimeout != 1*time.Second {
+		t.Fatalf("PaneDelivery.TmuxTimeout = %s, want %s", gotDelivery.TmuxTimeout, 1*time.Second)
+	}
+	if !gotDelivery.BypassCooldown {
+		t.Fatal("PaneDelivery.BypassCooldown = false, want true")
+	}
+	if gotDelivery.VerifyDelay != 7*time.Millisecond {
+		t.Fatalf("PaneDelivery.VerifyDelay = %s, want %s", gotDelivery.VerifyDelay, 7*time.Millisecond)
+	}
+	if gotDelivery.MaxRetries != 3 {
+		t.Fatalf("PaneDelivery.MaxRetries = %d, want %d", gotDelivery.MaxRetries, 3)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("ProbeRuntime calls = %d, want %d", probeCalls, 1)
+	}
+}
+
 func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -144,6 +214,41 @@ func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 		Content:         "system delivery",
 		QueueCap:        20,
 		QueueFullSuffix: "-dl-queue-full",
+	})
+	if err != nil {
+		t.Fatalf("DeliverSystemMessage() error = %v", err)
+	}
+	if !result.Delivered {
+		t.Fatal("DeliverSystemMessage() delivered = false, want true")
+	}
+
+	body, err := os.ReadFile(filepath.Join(sessionDir, "inbox", "worker", "20260414-120000-r1234-from-postman-to-worker.md"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(body) != "system delivery" {
+		t.Fatalf("inbox body = %q, want %q", string(body), "system delivery")
+	}
+}
+
+func TestFilesystemSystemMessageAdapterWritesInbox(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	target := Target{
+		ActorID:     "worker",
+		RunID:       "review-session:worker",
+		SessionName: "review-session",
+		SessionDir:  sessionDir,
+	}
+
+	result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(target, SystemMessageDelivery{
+		Filename: "20260414-120000-r1234-from-postman-to-worker.md",
+		Sender:   "postman",
+		Content:  "system delivery",
+		QueueCap: 20,
 	})
 	if err != nil {
 		t.Fatalf("DeliverSystemMessage() error = %v", err)
