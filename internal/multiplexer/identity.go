@@ -79,7 +79,7 @@ func (b TmuxBackend) CurrentIdentity(ctx context.Context, target IdentityTarget)
 
 func (b TmuxBackend) CurrentPaneID(_ context.Context, target IdentityTarget) (ResourceID, error) {
 	if target.Pane != (ResourceID{}) {
-		if target.Pane.Backend != BackendKindTmux || target.Pane.Kind != ResourceKindPane || strings.TrimSpace(target.Pane.Native) == "" {
+		if target.Pane.Backend != BackendKindTmux || target.Pane.Kind != ResourceKindPane || !IsCanonicalTmuxPaneID(target.Pane.Native) {
 			return ResourceID{}, identityLookupError("pane_id", nil)
 		}
 		return target.Pane, nil
@@ -93,6 +93,18 @@ func (b TmuxBackend) CurrentPaneID(_ context.Context, target IdentityTarget) (Re
 		return ResourceID{}, identityLookupError("pane_id", nil)
 	}
 	return TmuxPaneID(value), nil
+}
+
+func IsCanonicalTmuxPaneID(paneID string) bool {
+	if len(paneID) < 2 || paneID[0] != '%' {
+		return false
+	}
+	for _, ch := range paneID[1:] {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (b TmuxBackend) CurrentSessionName(_ context.Context, pane ResourceID) (string, error) {
