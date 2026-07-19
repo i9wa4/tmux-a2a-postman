@@ -11,16 +11,19 @@ import (
 type BackendKind string
 
 const (
-	BackendKindTmux BackendKind = "tmux"
+	BackendKindTmux  BackendKind = "tmux"
+	BackendKindHerdr BackendKind = "herdr"
 )
 
 type ResourceKind string
 
 const (
-	ResourceKindPane    ResourceKind = "pane"
-	ResourceKindSession ResourceKind = "session"
-	ResourceKindWindow  ResourceKind = "window"
-	ResourceKindNode    ResourceKind = "node"
+	ResourceKindPane      ResourceKind = "pane"
+	ResourceKindSession   ResourceKind = "session"
+	ResourceKindWorkspace ResourceKind = "workspace"
+	ResourceKindTab       ResourceKind = "tab"
+	ResourceKindWindow    ResourceKind = "window"
+	ResourceKindNode      ResourceKind = "node"
 )
 
 type ResourceID struct {
