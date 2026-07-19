@@ -149,6 +149,18 @@ configuration still must set `InputSanitizerReady`; otherwise
 `ValidateHerdrWriteGate` returns `sanitizer_missing` before write or mutation
 RPCs are issued.
 
+Production #659 wiring uses Herdr's newline-delimited JSON Unix socket transport
+through a small local client. It calls `session.snapshot`, `pane.read`,
+`pane.process_info`, `pane.send_text`, `pane.send_keys`, and
+`workspace.report_metadata` / `pane.report_metadata`; marker clears report the
+same metadata token with a null value. The client maps Herdr `tokens` into the
+backend metadata view used by ownership marker reads.
+
+Cross-backend duplicate `session:node` keys are reported as collisions and do
+not overwrite the first discovered route. Herdr pane registration is reconciled
+on every snapshot, so panes missing from the latest Herdr discovery are
+unregistered from both direct delivery and ownership mutation routing.
+
 ## 9. Licensing And Compliance
 
 As of the #660 check, Herdr's public repository states a dual license:
@@ -164,9 +176,9 @@ Herdr write/mutation support, record one of:
 - `commercial`: a commercial license covers the integration shape;
 - `review-only`: no distributable/generated/write integration may be shipped.
 
-CLI or socket use alone does not resolve licensing obligations. A future issue
-must record the exact integration shape before changing dependency, vendoring,
-generated code, or distribution behavior.
+CLI or socket use alone does not resolve licensing obligations. Any future
+change that adds dependency, vendoring, generated code, or broader distribution
+behavior must record the exact integration shape before implementation.
 
 ## 10. Out Of Scope
 

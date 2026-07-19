@@ -83,6 +83,31 @@ func TestDaemonStateSetSessionEnabledUsesInjectedOwnershipBackend(t *testing.T) 
 	}
 }
 
+func TestDaemonStateSetSessionEnabledSelectsOwnershipBackendPerSession(t *testing.T) {
+	ds := NewDaemonState(0, "ctx-main")
+	tmuxBackend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindTmux}
+	herdrBackend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+	ds.SetOwnershipBackendSelector(func(sessionName string) multiplexer.OwnershipBackend {
+		if sessionName == "herdr-work" {
+			return herdrBackend
+		}
+		return tmuxBackend
+	})
+
+	ds.SetSessionEnabled("tmux-work", true)
+	if herdrBackend.setSessionCalls != 0 {
+		t.Fatalf("Herdr backend used for tmux session, calls=%d", herdrBackend.setSessionCalls)
+	}
+	if tmuxBackend.setSessionCalls != 1 || tmuxBackend.sessionName != "tmux-work" {
+		t.Fatalf("tmux backend calls=%d session=%q, want one tmux session write", tmuxBackend.setSessionCalls, tmuxBackend.sessionName)
+	}
+
+	ds.SetSessionEnabled("herdr-work", true)
+	if herdrBackend.setSessionCalls != 1 || herdrBackend.sessionName != "herdr-work" {
+		t.Fatalf("Herdr backend calls=%d session=%q, want one Herdr session write", herdrBackend.setSessionCalls, herdrBackend.sessionName)
+	}
+}
+
 func TestDaemonRuntimeClaimNewPanesUsesRegisteredHerdrOwnershipBackend(t *testing.T) {
 	backend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
 	unregister := multiplexer.RegisterOwnershipBackend(backend)

@@ -132,12 +132,29 @@ Issue #657 separates interactive pane input from filesystem mailbox delivery.
   compatibility while call sites are split over later issues.
 
 Issue #659 adds a disabled-by-default Herdr runtime bootstrap. Empty backend
-metadata still resolves to tmux. When `[postman.herdr]` is enabled and a
-write-capable Herdr client is available, startup performs gated Herdr discovery,
-adds Herdr panes to the live `discovery.NodeInfo` map with backend/runtime
-metadata, registers pane-specific Herdr hand adapters, and registers Herdr
-ownership mutation routing before delivery. Herdr targets still fail closed if
-their pane was not discovered and registered by this bootstrap.
+metadata still resolves to tmux. When `[postman.herdr]` is enabled, startup uses
+the configured Unix socket path to create a Herdr socket client, performs gated
+Herdr discovery, adds Herdr panes to the live `discovery.NodeInfo` map with
+backend/runtime metadata, registers pane-specific Herdr hand adapters, and
+registers Herdr ownership mutation routing before delivery. Herdr targets still
+fail closed if their pane was not discovered and registered by this bootstrap.
+Each Herdr rediscovery reconciles the registered pane set and unregisters panes
+missing from the current snapshot, so stale Herdr panes stop receiving delivery
+or ownership mutations before daemon shutdown.
+
+If tmux and Herdr expose the same logical `session:node` key in one discovery
+pass, the already-discovered node wins and the later backend is reported as a
+collision instead of silently overwriting the routing target. Current startup
+and daemon scans discover tmux before Herdr, so this fails closed toward the
+existing tmux route for cross-backend duplicates. Same-backend collision
+selection remains backend-owned: tmux keeps numeric pane winner semantics, and
+Herdr reports duplicate logical node claims from its snapshot.
+
+Session ownership marker reads, writes, and shutdown clears are selected per
+session. Non-Herdr sessions use `TmuxBackend`; only the configured Herdr session
+uses the Herdr ownership mux. Startup activation and preclaim/reclaim paths that
+enumerate tmux panes remain tmux-only in #659 and are not a general Herdr
+session activation lifecycle.
 
 Herdr interactive delivery uses the same runtime-aware submit-count resolution
 as tmux delivery. When the target brain runtime is Codex and `enter_count` is
