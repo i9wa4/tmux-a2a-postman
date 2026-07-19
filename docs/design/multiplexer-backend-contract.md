@@ -55,9 +55,13 @@ Current identity is represented by `multiplexer.CurrentIdentity`:
 
 The tmux backend preserves existing lookup behavior:
 
-- `TMUX_PANE` targets session-name and pane-title lookups when available.
+- `TMUX_PANE` targets session-name and pane-title lookups only when it is a
+  canonical tmux pane ID token, `%[0-9]+`.
 - Untargeted `display-message` remains the fallback when `TMUX_PANE` is absent.
 - `TMUX_PANE` itself remains the current pane ID when present.
+- Invalid `TMUX_PANE` values fail closed with identity lookup errors instead of
+  falling back to focused-pane discovery; this prevents generic tmux `-t` target
+  expressions from forging sender or receiver runtime identity.
 - Lookup failures are explicit `IdentityError` values at the backend boundary.
   Blank `pane_id`, `session_name`, and `pane_title` outputs are lookup failures.
   Compatibility wrappers still return empty strings to preserve existing CLI
