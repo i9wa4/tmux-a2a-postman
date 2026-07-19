@@ -110,7 +110,25 @@ derive compatibility `windows` groups for existing UI consumers. That projection
 must stay clearly marked as compatibility output and must not introduce pane
 state precedence changes before #639 resolves the semantic model.
 
-## 8. Herdr Gates
+## 8. Interactive Delivery Boundary
+
+Issue #657 separates interactive pane input from filesystem mailbox delivery.
+
+- Interactive delivery is represented by
+  `controlplane.InteractiveDeliveryAdapter`. The tmux implementation keeps using
+  tmux pane input through `notification.PaneSender`, which preserves the
+  existing set-buffer, paste-buffer, C-m timing, cooldown, retry, and
+  sanitization behavior.
+- Filesystem inbox writes and mailbox projection sync are represented by
+  `controlplane.SystemMessageDeliveryAdapter` and the backend-neutral
+  `controlplane.FilesystemSystemMessageAdapter`.
+- The legacy `controlplane.HandAdapter` interface embeds both contracts for
+  compatibility while call sites are split over later issues.
+
+Herdr interactive delivery stays out of scope until #660 defines read/write
+security gates and #658 validates read-only Herdr behavior.
+
+## 9. Herdr Gates
 
 Herdr access remains blocked:
 

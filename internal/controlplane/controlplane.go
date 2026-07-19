@@ -102,15 +102,24 @@ type SystemMessageResult struct {
 	Delivered bool
 }
 
-type HandAdapter interface {
+type InteractiveDeliveryAdapter interface {
 	Kind() HandKind
 	Deliver(target Target, delivery PaneDelivery) error
+}
+
+type SystemMessageDeliveryAdapter interface {
 	DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error)
+}
+
+type HandAdapter interface {
+	InteractiveDeliveryAdapter
+	SystemMessageDeliveryAdapter
 }
 
 type TmuxHandAdapter struct {
 	ProbeRuntime func(paneID string) (string, error)
 	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+	PaneSender   notification.PaneSender
 	Backend      multiplexer.PaneBackend
 }
 
@@ -119,6 +128,30 @@ func (TmuxHandAdapter) Kind() HandKind {
 }
 
 func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	return TmuxInteractiveDeliveryAdapter{
+		ProbeRuntime: a.ProbeRuntime,
+		SendToPane:   a.SendToPane,
+		PaneSender:   a.PaneSender,
+		Backend:      a.Backend,
+	}.Deliver(target, delivery)
+}
+
+func (a TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+	return (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(target, delivery)
+}
+
+type TmuxInteractiveDeliveryAdapter struct {
+	ProbeRuntime func(paneID string) (string, error)
+	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+	PaneSender   notification.PaneSender
+	Backend      multiplexer.PaneBackend
+}
+
+func (TmuxInteractiveDeliveryAdapter) Kind() HandKind {
+	return HandKindTmux
+}
+
+func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDelivery) error {
 	if target.Hand.Kind != HandKindTmux {
 		return fmt.Errorf("tmux hand adapter cannot deliver to %q", target.Hand.Kind)
 	}
@@ -145,19 +178,37 @@ func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
 		return probeRuntime(target.Hand.Address)
 	})
 
-	return sendToPane(
-		target.Hand.Address,
-		delivery.Content,
-		delivery.EnterDelay,
-		delivery.TmuxTimeout,
-		enterCount,
-		delivery.BypassCooldown,
-		delivery.VerifyDelay,
-		delivery.MaxRetries,
-	)
+	paneSender := a.PaneSender
+	if paneSender == nil {
+		paneSender = notification.PaneSenderFunc(func(paneDelivery notification.PaneDelivery) error {
+			return sendToPane(
+				paneDelivery.PaneID,
+				paneDelivery.Message,
+				paneDelivery.EnterDelay,
+				paneDelivery.TmuxTimeout,
+				paneDelivery.EnterCount,
+				paneDelivery.BypassCooldown,
+				paneDelivery.VerifyDelay,
+				paneDelivery.MaxRetries,
+			)
+		})
+	}
+
+	return paneSender.DeliverPane(notification.PaneDelivery{
+		PaneID:         target.Hand.Address,
+		Message:        delivery.Content,
+		EnterDelay:     delivery.EnterDelay,
+		TmuxTimeout:    delivery.TmuxTimeout,
+		EnterCount:     enterCount,
+		BypassCooldown: delivery.BypassCooldown,
+		VerifyDelay:    delivery.VerifyDelay,
+		MaxRetries:     delivery.MaxRetries,
+	})
 }
 
-func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+type FilesystemSystemMessageAdapter struct{}
+
+func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
 	recipientInbox := target.InboxDir()
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
 		return SystemMessageResult{}, fmt.Errorf("creating recipient inbox: %w", err)
