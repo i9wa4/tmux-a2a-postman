@@ -31,6 +31,7 @@ const (
 	HerdrGateFailureNotAllowlisted       HerdrGateFailure = "not_allowlisted"
 	HerdrGateFailureUnsupportedProtocol  HerdrGateFailure = "unsupported_protocol"
 	HerdrGateFailureUnsupportedSchema    HerdrGateFailure = "unsupported_schema"
+	HerdrGateFailureUnsupportedScope     HerdrGateFailure = "unsupported_scope"
 	HerdrGateFailureSanitizerMissing     HerdrGateFailure = "sanitizer_missing"
 	HerdrGateFailureComplianceUnresolved HerdrGateFailure = "compliance_unresolved"
 )
@@ -120,10 +121,22 @@ func validateHerdrReadGateForPhase(phase HerdrAccessPhase, policy HerdrGatePolic
 	if !policy.ReadEnabled {
 		return herdrGateError(phase, "read_enabled", HerdrGateFailureClosed)
 	}
+	if err := validateHerdrReadScope(phase, policy.ReadScope); err != nil {
+		return err
+	}
 	if err := validateHerdrRuntime(phase, policy, runtime); err != nil {
 		return err
 	}
 	return validateHerdrEnvelope(phase, policy, envelope)
+}
+
+func validateHerdrReadScope(phase HerdrAccessPhase, scope HerdrReadScope) error {
+	switch scope {
+	case HerdrReadScopeDiscovery, HerdrReadScopePane:
+		return nil
+	default:
+		return herdrGateError(phase, "read_scope", HerdrGateFailureUnsupportedScope)
+	}
 }
 
 func validateHerdrRuntime(phase HerdrAccessPhase, policy HerdrGatePolicy, runtime HerdrRuntimeIdentity) error {
