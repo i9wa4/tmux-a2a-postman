@@ -40,6 +40,48 @@ type PaneNotifier struct {
 	stderr  io.Writer
 }
 
+type PaneDelivery struct {
+	PaneID         string
+	Message        string
+	EnterDelay     time.Duration
+	TmuxTimeout    time.Duration
+	EnterCount     int
+	BypassCooldown bool
+	VerifyDelay    time.Duration
+	MaxRetries     int
+}
+
+type PaneSender interface {
+	DeliverPane(delivery PaneDelivery) error
+}
+
+type PaneSenderFunc func(delivery PaneDelivery) error
+
+func (f PaneSenderFunc) DeliverPane(delivery PaneDelivery) error {
+	return f(delivery)
+}
+
+type TmuxPaneSender struct {
+	Notifier *PaneNotifier
+}
+
+func (s TmuxPaneSender) DeliverPane(delivery PaneDelivery) error {
+	notifier := s.Notifier
+	if notifier == nil {
+		notifier = defaultPaneNotifier
+	}
+	return notifier.SendToPane(
+		delivery.PaneID,
+		delivery.Message,
+		delivery.EnterDelay,
+		delivery.TmuxTimeout,
+		delivery.EnterCount,
+		delivery.BypassCooldown,
+		delivery.VerifyDelay,
+		delivery.MaxRetries,
+	)
+}
+
 // NewPaneNotifier creates a pane notifier with the given per-pane cooldown.
 func NewPaneNotifier(cooldown time.Duration) *PaneNotifier {
 	return &PaneNotifier{
@@ -78,7 +120,16 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
 // captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
-	return defaultPaneNotifier.SendToPane(paneID, message, enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries)
+	return TmuxPaneSender{}.DeliverPane(PaneDelivery{
+		PaneID:         paneID,
+		Message:        message,
+		EnterDelay:     enterDelay,
+		TmuxTimeout:    tmuxTimeout,
+		EnterCount:     enterCount,
+		BypassCooldown: bypassCooldown,
+		VerifyDelay:    verifyDelay,
+		MaxRetries:     maxRetries,
+	})
 }
 
 // SendToPane sends a message to a tmux pane using this notifier's dependencies and cooldown state.
