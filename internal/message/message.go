@@ -282,8 +282,9 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 		return approvalDeliveryEvent{
 			EventType: journal.CommandApprovalDecidedEventType,
 			Payload: journal.CommandApprovalDecisionPayload{
-				Reviewer: sender,
-				Decision: decision,
+				Reviewer:  sender,
+				Decision:  decision,
+				MessageID: messageID,
 			},
 			ThreadID: threadID,
 		}, true
@@ -303,6 +304,12 @@ func recordApprovalEvent(sessionDir, sessionName string, event approvalDeliveryE
 		now,
 	); err != nil {
 		log.Printf("postman: WARNING: journal approval append failed for %s: %v\n", event.EventType, err)
+		return
+	}
+	if event.EventType == journal.CommandApprovalDecidedEventType {
+		if err := journal.SyncCommandApprovalDecisionHistory(sessionDir); err != nil {
+			log.Printf("postman: WARNING: command approval decision history sync failed: %v\n", err)
+		}
 	}
 }
 

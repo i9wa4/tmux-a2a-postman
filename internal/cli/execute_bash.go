@@ -306,6 +306,9 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if err := appendCommandEvent(opts.sessionDir, opts.contextID, opts.sessionName, journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, opts.threadID, ctx.now()); err != nil {
 		return err
 	}
+	if err := journal.SyncCommandApprovalDecisionHistory(opts.sessionDir); err != nil {
+		return err
+	}
 	result := executeBashResult{
 		Status:         "decision_recorded",
 		Reviewer:       authenticatedCaller,

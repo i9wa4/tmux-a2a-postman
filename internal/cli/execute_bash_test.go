@@ -745,6 +745,68 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	if thread.DecidedAt == "" {
 		t.Fatalf("thread missing decided_at: %#v", thread)
 	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("decision history entries = %d, want 1", len(history))
+	}
+	entry := history[0]
+	if entry.ThreadID != threadID || entry.Decision != journal.ApprovalDecisionApproved || entry.EffectiveStatus != "approved" {
+		t.Fatalf("decision history = %#v, want approved entry for thread %q", entry, threadID)
+	}
+	if entry.Requester != "worker" || entry.DecisionReviewer != "orchestrator" || entry.CommandApproverNode != "orchestrator" {
+		t.Fatalf("decision history identities = %#v", entry)
+	}
+	if entry.Label != "protected" || entry.CommandHash == "" || entry.DecisionReason != "digest reviewed" {
+		t.Fatalf("decision history command metadata = %#v", entry)
+	}
+	if entry.CommandText != "" {
+		t.Fatalf("decision history stored command text by default: %#v", entry)
+	}
+}
+
+func TestRunExecuteBashRecordRejectedDecisionWritesDecisionHistory(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	threadID := fixture.appendCommandApprovalRequest(t, policy, "printf reject-me", time.Now().Add(time.Hour))
+
+	err := runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "rejected",
+		"--reason", "too broad for allowlist",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext(record rejected decision) error = %v", err)
+	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("decision history entries = %d, want 1", len(history))
+	}
+	if history[0].Decision != journal.ApprovalDecisionRejected || history[0].EffectiveStatus != "rejected" {
+		t.Fatalf("decision history = %#v, want rejected entry", history[0])
+	}
+	if history[0].DecisionReason != "too broad for allowlist" {
+		t.Fatalf("decision reason = %q, want allowlist review reason", history[0].DecisionReason)
+	}
 }
 
 func (f *executeBashFixture) appendCommandApproval(t *testing.T, policy resolvedCommandApprovalPolicy, commandText string, decision journal.ApprovalDecision, decisionReviewer string, expiresAt time.Time) string {

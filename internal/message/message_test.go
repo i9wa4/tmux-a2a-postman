@@ -1687,6 +1687,20 @@ func TestDeliverMessage_CommandApprovalReplyFromRealCommandApproverNodeRecordsAp
 	if thread.Status != projection.CommandApprovalStatusApproved {
 		t.Fatalf("thread status = %q, want %q", thread.Status, projection.CommandApprovalStatusApproved)
 	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(requesterSessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory(requester) error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("requester decision history entries = %d, want 1", len(history))
+	}
+	if history[0].ThreadID != threadID || history[0].Decision != journal.ApprovalDecisionApproved || history[0].EffectiveStatus != "approved" {
+		t.Fatalf("requester decision history = %#v, want approved entry for thread %q", history[0], threadID)
+	}
+	if history[0].DecisionMessageID != replyFilename {
+		t.Fatalf("decision message id = %q, want %q", history[0].DecisionMessageID, replyFilename)
+	}
 }
 
 // TestDeliverMessage_CommandApprovalReplyFromWrongSenderIsRejected is the

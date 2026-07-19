@@ -165,7 +165,44 @@ tmux-a2a-postman inspect-command-approvals
 The output shows each approval thread with requester, reviewer, label,
 category, digest, reason, expiry, timestamps, and status.
 
-## 6. Boundary
+## 6. Decision History
+
+Approver approval and rejection decisions are also accumulated as individual
+JSON files under:
+
+```text
+<session-dir>/command-approval-decisions/
+```
+
+Each file is named from the underlying journal event sequence and id. The
+layout is intentionally file-oriented instead of JSONL so maintainers can
+inspect, copy, remove, or archive one decision record at a time with ordinary
+filesystem tools.
+
+The schema includes:
+
+- `thread_id`, `decision`, and `effective_status`
+- requester, reviewer audit label, and trusted `command_approver_node`
+- label, category, mode, command digest, and request/decision reasons
+- requested, expiry, and decided timestamps
+- `decision_message_id` when the decision came from a reply
+
+Raw command text is omitted by default. It appears only when the original
+request opted into existing `--store-command-text` audit behavior, so the
+decision history keeps the same privacy boundary as the durable journal.
+
+Allowlist maintainers can search the accumulated history directly, for example:
+
+```sh
+find "$SESSION_DIR/command-approval-decisions" -name '*.json' -print
+rg '"decision":"approved"|"decision":"rejected"' "$SESSION_DIR/command-approval-decisions"
+```
+
+No automatic retention policy deletes these records. Treat them as local,
+owner-only audit data and rotate or archive the directory according to the
+operator's local retention policy.
+
+## 7. Boundary
 
 This is coordination, not enforcement. `execute-bash` does not sandbox bash,
 prevent direct shell execution, prevent another process from running the same
