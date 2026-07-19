@@ -809,6 +809,80 @@ func TestRunExecuteBashRecordRejectedDecisionWritesDecisionHistory(t *testing.T)
 	}
 }
 
+func TestRunExecuteBashFailsOpenDoesNotWriteDecisionHistory(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.commandApproverNode = ""
+	fixture.nodes = nil
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--command", "printf fail-open",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("decision history entries = %d, want 0 for auto_approved_no_reviewer: %#v", len(history), history)
+	}
+}
+
+func TestRunExecuteBashDecisionHistoryCommandTextOptIn(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf store-me"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--store-command-text",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("initial blocking command error = nil, want pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	err = runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+		"--reason", "safe exact command",
+	))
+	if err != nil {
+		t.Fatalf("record decision error = %v", err)
+	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("decision history entries = %d, want 1", len(history))
+	}
+	if history[0].CommandText != commandText {
+		t.Fatalf("command_text = %q, want opt-in command text %q", history[0].CommandText, commandText)
+	}
+}
+
 func (f *executeBashFixture) appendCommandApproval(t *testing.T, policy resolvedCommandApprovalPolicy, commandText string, decision journal.ApprovalDecision, decisionReviewer string, expiresAt time.Time) string {
 	t.Helper()
 

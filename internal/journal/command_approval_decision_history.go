@@ -61,7 +61,11 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
 				return fmt.Errorf("command approval decision %d decode: %w", event.Sequence, err)
 			}
-			entry := commandApprovalDecisionHistoryEntry(event, requests[event.ThreadID], requestedAt[event.ThreadID], payload)
+			request, ok := requests[event.ThreadID]
+			if !ok {
+				continue
+			}
+			entry := commandApprovalDecisionHistoryEntry(event, request, requestedAt[event.ThreadID], payload)
 			if err := writeJSONAtomically(commandApprovalDecisionHistoryPath(sessionDir, event), entry); err != nil {
 				return fmt.Errorf("writing command approval decision history: %w", err)
 			}

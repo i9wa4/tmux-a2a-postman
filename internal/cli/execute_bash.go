@@ -307,7 +307,7 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 		return err
 	}
 	if err := journal.SyncCommandApprovalDecisionHistory(opts.sessionDir); err != nil {
-		return err
+		_, _ = fmt.Fprintf(ctx.stderr, "postman: warning: command approval decision history sync failed after recording decision: %v\n", err)
 	}
 	result := executeBashResult{
 		Status:         "decision_recorded",
