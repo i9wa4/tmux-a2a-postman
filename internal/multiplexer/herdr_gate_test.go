@@ -17,14 +17,32 @@ func TestValidateHerdrReadGateFailsClosed(t *testing.T) {
 	policy.ReadEnabled = false
 
 	err := ValidateHerdrReadGate(policy, validHerdrRuntime(), validHerdrEnvelope())
-	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "", HerdrGateFailureClosed)
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_enabled", HerdrGateFailureClosed)
 }
 
-func TestValidateHerdrReadGateRequiresRuntimeIdentity(t *testing.T) {
+func TestValidateHerdrReadGateAllowsDiscoveryWithoutPaneTarget(t *testing.T) {
 	runtime := validHerdrRuntime()
+	runtime.TabID = ""
 	runtime.PaneID = ""
 
 	err := ValidateHerdrReadGate(validHerdrGatePolicy(), runtime, validHerdrEnvelope())
+	if err != nil {
+		t.Fatalf("ValidateHerdrReadGate() error = %v", err)
+	}
+}
+
+func TestValidateHerdrReadGateRequiresOrderedDiscoveryRuntimeIdentity(t *testing.T) {
+	err := ValidateHerdrReadGate(validHerdrGatePolicy(), HerdrRuntimeIdentity{}, validHerdrEnvelope())
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "socket_path", HerdrGateFailureMissingRuntime)
+}
+
+func TestValidateHerdrPaneReadGateRequiresPaneTargetIdentity(t *testing.T) {
+	policy := validHerdrGatePolicy()
+	policy.ReadScope = HerdrReadScopePane
+	runtime := validHerdrRuntime()
+	runtime.PaneID = ""
+
+	err := ValidateHerdrReadGate(policy, runtime, validHerdrEnvelope())
 	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "pane_id", HerdrGateFailureMissingRuntime)
 }
 
@@ -51,6 +69,51 @@ func TestValidateHerdrReadGateRequiresSupportedProtocolAndSchema(t *testing.T) {
 
 		err := ValidateHerdrReadGate(validHerdrGatePolicy(), validHerdrRuntime(), envelope)
 		assertHerdrGateError(t, err, HerdrAccessPhaseRead, "schema_version", HerdrGateFailureUnsupportedSchema)
+	})
+
+	for _, protocol := range []string{"", "0", "abc"} {
+		t.Run("invalid protocol "+protocol, func(t *testing.T) {
+			envelope := validHerdrEnvelope()
+			envelope.ProtocolVersion = protocol
+
+			err := ValidateHerdrReadGate(validHerdrGatePolicy(), validHerdrRuntime(), envelope)
+			assertHerdrGateError(t, err, HerdrAccessPhaseRead, "protocol_version", HerdrGateFailureUnsupportedProtocol)
+		})
+	}
+}
+
+func TestValidateHerdrWriteGateRequiresReadGate(t *testing.T) {
+	t.Run("read disabled", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ReadEnabled = false
+		policy.WriteEnabled = true
+
+		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "read_enabled", HerdrGateFailureClosed)
+	})
+
+	t.Run("pane target", func(t *testing.T) {
+		runtime := validHerdrRuntime()
+		runtime.PaneID = ""
+
+		err := ValidateHerdrWriteGate(validHerdrGatePolicy(), runtime, validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "pane_id", HerdrGateFailureMissingRuntime)
+	})
+
+	t.Run("workspace allowlist", func(t *testing.T) {
+		runtime := validHerdrRuntime()
+		runtime.WorkspaceID = "workspace-other"
+
+		err := ValidateHerdrWriteGate(validHerdrGatePolicy(), runtime, validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "workspace_id", HerdrGateFailureNotAllowlisted)
+	})
+
+	t.Run("protocol", func(t *testing.T) {
+		envelope := validHerdrEnvelope()
+		envelope.ProtocolVersion = "99"
+
+		err := ValidateHerdrWriteGate(validHerdrGatePolicy(), validHerdrRuntime(), envelope)
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "protocol_version", HerdrGateFailureUnsupportedProtocol)
 	})
 }
 
@@ -133,6 +196,22 @@ func TestHerdrSchemaVersion(t *testing.T) {
 
 	if _, err := HerdrSchemaVersion("0"); err == nil {
 		t.Fatal("HerdrSchemaVersion(0) error = nil, want error")
+	}
+}
+
+func TestHerdrProtocolVersion(t *testing.T) {
+	got, err := HerdrProtocolVersion("1")
+	if err != nil {
+		t.Fatalf("HerdrProtocolVersion() error = %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("HerdrProtocolVersion() = %d, want 1", got)
+	}
+
+	for _, version := range []string{"", "0", "abc"} {
+		if _, err := HerdrProtocolVersion(version); err == nil {
+			t.Fatalf("HerdrProtocolVersion(%q) error = nil, want error", version)
+		}
 	}
 }
 
