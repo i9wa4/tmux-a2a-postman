@@ -1,18 +1,18 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -26,6 +26,8 @@ type sessionPane struct {
 	paneID         string
 	title          string
 	currentCommand string
+	backend        string
+	nativeIDs      map[string]string
 }
 
 func compactStatusMark(state string) string {
@@ -196,7 +198,8 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.NodeCount = len(result.Nodes)
 	result.VisibleState = status.SessionVisibleState(result.Nodes)
 	result.Queues = inputs.queues
-	result.Windows = buildSessionWindows(result.Nodes, inputs.panes)
+	result.LayoutGroups = buildSessionLayoutGroups(result.Nodes, inputs.panes)
+	result.Windows = buildSessionWindows(result.LayoutGroups)
 	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
 	result.CommandApproval = buildCommandApprovalStatus(inputs.cfg)
 	result.Compact = buildSessionCompact(result, inputs.panes)
@@ -585,69 +588,30 @@ func collectSessionQueues(sessionDir string) status.SessionQueues {
 }
 
 func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
-	windowListOut, err := exec.Command(
-		"tmux",
-		"list-windows",
-		"-t",
-		sessionName,
-		"-F",
-		"#{window_index}",
-	).CombinedOutput()
+	layout, err := (multiplexer.TmuxBackend{}).SessionLayout(context.Background(), sessionName)
 	if err != nil {
-		if strings.Contains(string(windowListOut), "no server running") || strings.Contains(string(windowListOut), "can't find session") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("listing windows for session %s: %w", sessionName, err)
+		return nil, err
 	}
+	return sessionPanesFromLayout(layout), nil
+}
 
+func sessionPanesFromLayout(layout multiplexer.SessionLayout) []sessionPane {
 	var panes []sessionPane
-	for _, windowIndex := range strings.Split(strings.TrimSpace(string(windowListOut)), "\n") {
-		if windowIndex == "" {
-			continue
-		}
-
-		out, err := exec.Command(
-			"tmux",
-			"list-panes",
-			"-t",
-			sessionName+":"+windowIndex,
-			"-F",
-			"#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
-		).CombinedOutput()
-		if err != nil {
-			if strings.Contains(string(out), "can't find window") {
+	for _, group := range layout.Groups {
+		windowIndex := group.NativeIDs["window_index"]
+		for _, item := range group.Items {
+			if item.Kind != multiplexer.LayoutItemKindPane {
 				continue
-			}
-			if strings.Contains(string(out), "no server running") {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("listing panes for session %s window %s: %w", sessionName, windowIndex, err)
-		}
-
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 5)
-			if len(parts) < 4 {
-				continue
-			}
-			windowOrder, _ := strconv.Atoi(parts[0])
-			paneOrder := 0
-			if len(parts) > 1 {
-				paneOrder, _ = strconv.Atoi(parts[1])
-			}
-			currentCommand := ""
-			if len(parts) == 5 {
-				currentCommand = parts[4]
 			}
 			panes = append(panes, sessionPane{
-				windowIndex:    parts[0],
-				windowOrder:    windowOrder,
-				paneOrder:      paneOrder,
-				paneID:         parts[2],
-				title:          parts[3],
-				currentCommand: currentCommand,
+				windowIndex:    windowIndex,
+				windowOrder:    group.Order,
+				paneOrder:      item.Order,
+				paneID:         item.ID.Native,
+				title:          item.LogicalName,
+				currentCommand: item.CurrentCommand,
+				backend:        string(item.ID.Backend),
+				nativeIDs:      cloneStringMap(item.NativeIDs),
 			})
 		}
 	}
@@ -662,7 +626,7 @@ func discoverSessionPanes(sessionName string) ([]sessionPane, error) {
 		return panes[i].paneID < panes[j].paneID
 	})
 
-	return panes, nil
+	return panes
 }
 
 func buildSessionCompact(health status.SessionStatus, panes []sessionPane) string {
@@ -712,7 +676,7 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 	return strings.Join(windowMarks, ":")
 }
 
-func buildSessionWindows(nodes []status.NodeStatus, panes []sessionPane) []status.SessionWindow {
+func buildSessionLayoutGroups(nodes []status.NodeStatus, panes []sessionPane) []status.LayoutGroup {
 	nodeByPaneID := make(map[string]status.NodeStatus, len(nodes))
 	for _, node := range nodes {
 		if node.PaneID == "" {
@@ -722,7 +686,7 @@ func buildSessionWindows(nodes []status.NodeStatus, panes []sessionPane) []statu
 	}
 
 	windowByIndex := make(map[string]int)
-	var windows []status.SessionWindow
+	var groups []status.LayoutGroup
 	for _, pane := range panes {
 		node, ok := nodeByPaneID[pane.paneID]
 		if !ok {
@@ -731,12 +695,51 @@ func buildSessionWindows(nodes []status.NodeStatus, panes []sessionPane) []statu
 
 		index, exists := windowByIndex[pane.windowIndex]
 		if !exists {
-			windows = append(windows, status.SessionWindow{Index: pane.windowIndex})
-			index = len(windows) - 1
+			groups = append(groups, status.LayoutGroup{
+				Kind:    "window",
+				ID:      pane.windowIndex,
+				Index:   pane.windowIndex,
+				Backend: pane.backend,
+				NativeIDs: map[string]string{
+					"window_index": pane.windowIndex,
+				},
+			})
+			index = len(groups) - 1
 			windowByIndex[pane.windowIndex] = index
 		}
-		windows[index].Nodes = append(windows[index].Nodes, status.WindowNode{Name: node.Name})
+		groups[index].Nodes = append(groups[index].Nodes, status.LayoutNode{
+			Name:      node.Name,
+			PaneID:    pane.paneID,
+			Backend:   pane.backend,
+			NativeIDs: cloneStringMap(pane.nativeIDs),
+		})
 	}
 
+	return groups
+}
+
+func buildSessionWindows(layoutGroups []status.LayoutGroup) []status.SessionWindow {
+	windows := make([]status.SessionWindow, 0, len(layoutGroups))
+	for _, group := range layoutGroups {
+		if group.Kind != "window" {
+			continue
+		}
+		window := status.SessionWindow{Index: group.Index}
+		for _, node := range group.Nodes {
+			window.Nodes = append(window.Nodes, status.WindowNode{Name: node.Name})
+		}
+		windows = append(windows, window)
+	}
 	return windows
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
 }
