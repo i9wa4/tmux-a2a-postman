@@ -131,8 +131,11 @@ Issue #657 separates interactive pane input from filesystem mailbox delivery.
 - The legacy `controlplane.HandAdapter` interface embeds both contracts for
   compatibility while call sites are split over later issues.
 
-Herdr interactive delivery stays out of scope until #660 defines read/write
-security gates and #658 validates read-only Herdr behavior.
+Issue #659 adds a Herdr interactive delivery adapter for explicitly configured
+Herdr backends only. It does not change the default hand adapter, so tmux
+delivery remains the active production behavior unless callers provide Herdr
+runtime identity, a write-capable client, sanitizer readiness, and passing
+security/licensing gates.
 
 ## 9. Herdr Gates
 
@@ -147,6 +150,8 @@ Herdr access remains blocked until the gates in
   and the #660 write gate composes the pane-targeted read gate, confirms input
   sanitization, and confirms compliance decisions.
 
-Future Herdr read/write paths should use `multiplexer.ValidateHerdrReadGate` or
+Herdr read/write paths use `multiplexer.ValidateHerdrReadGate` or
 `multiplexer.ValidateHerdrWriteGate` as their preflight guard before consuming
-Herdr data or issuing Herdr mutations.
+Herdr data or issuing Herdr mutations. Write paths also revalidate the
+configured pane against the Herdr session snapshot before text input or marker
+metadata mutation.

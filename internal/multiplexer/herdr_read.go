@@ -121,8 +121,9 @@ type HerdrDiscoveryResult struct {
 }
 
 type HerdrBackend struct {
-	Config HerdrReadConfig
-	Client HerdrReadClient
+	Config         HerdrReadConfig
+	Client         HerdrReadClient
+	InputSanitizer HerdrInputSanitizer
 }
 
 func NewHerdrBackend(config HerdrReadConfig, client HerdrReadClient) (HerdrBackend, error) {

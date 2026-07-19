@@ -21,7 +21,8 @@ import (
 type HandKind string
 
 const (
-	HandKindTmux HandKind = "tmux"
+	HandKindTmux  HandKind = "tmux"
+	HandKindHerdr HandKind = "herdr"
 
 	BrainRuntimeUnknown = agentruntime.Unknown
 )
@@ -145,6 +146,32 @@ type TmuxInteractiveDeliveryAdapter struct {
 	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
 	PaneSender   notification.PaneSender
 	Backend      multiplexer.PaneBackend
+}
+
+type HerdrInteractiveDeliveryAdapter struct {
+	Backend        multiplexer.HerdrBackend
+	InputSanitizer multiplexer.HerdrInputSanitizer
+}
+
+func (HerdrInteractiveDeliveryAdapter) Kind() HandKind {
+	return HandKindHerdr
+}
+
+func (a HerdrInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	if target.Hand.Kind != HandKindHerdr {
+		return fmt.Errorf("herdr hand adapter cannot deliver to %q", target.Hand.Kind)
+	}
+	backend := a.Backend
+	if backend.InputSanitizer == nil {
+		backend.InputSanitizer = a.InputSanitizer
+	}
+	if backend.InputSanitizer == nil {
+		backend.InputSanitizer = notification.PrepareInteractivePaneMessage
+	}
+	return backend.SendPaneInput(context.Background(), multiplexer.HerdrPaneID(target.Hand.Address), multiplexer.HerdrPaneInput{
+		Text:       delivery.Content,
+		EnterCount: delivery.EnterCount,
+	})
 }
 
 func (TmuxInteractiveDeliveryAdapter) Kind() HandKind {
