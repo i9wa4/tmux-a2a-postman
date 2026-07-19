@@ -1,14 +1,17 @@
 package controlplane
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
 
@@ -194,6 +197,66 @@ func TestTmuxInteractiveDeliveryAdapterUsesPaneSender(t *testing.T) {
 	}
 }
 
+func TestHerdrInteractiveDeliveryAdapterUsesBackendAndSanitizes(t *testing.T) {
+	client := &fakeHerdrControlplaneWriteClient{
+		snapshot: validHerdrControlplaneSnapshot(),
+	}
+	adapter := HerdrInteractiveDeliveryAdapter{
+		Backend: multiplexer.HerdrBackend{
+			Config: validHerdrControlplaneConfig(),
+			Client: client,
+		},
+	}
+
+	err := adapter.Deliver(Target{
+		ActorID:     "worker",
+		RunID:       "work:worker",
+		SessionName: "work",
+		SessionDir:  t.TempDir(),
+		Hand:        HandAttachment{Kind: HandKindHerdr, Address: "workspace-1:pane-1"},
+	}, PaneDelivery{
+		Content: "\x1b[31mnotice worker\x1b[0m",
+	})
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	if client.writeTextCalls != 1 || client.writeTextPane != "workspace-1:pane-1" {
+		t.Fatalf("write text call = calls:%d pane:%q, want Herdr pane write", client.writeTextCalls, client.writeTextPane)
+	}
+	if !strings.Contains(client.writeTextText, "<!-- message start -->") ||
+		!strings.Contains(client.writeTextText, "notice worker") ||
+		strings.Contains(client.writeTextText, "\x1b") {
+		t.Fatalf("write text = %q, want wrapped sanitized content", client.writeTextText)
+	}
+	if client.sendKeyCalls != 1 || client.sendKeyKey != multiplexer.HerdrKeyEnter {
+		t.Fatalf("send key call = calls:%d key:%q, want one Herdr Enter key", client.sendKeyCalls, client.sendKeyKey)
+	}
+}
+
+func TestHerdrInteractiveDeliveryAdapterRejectsWrongHandKind(t *testing.T) {
+	client := &fakeHerdrControlplaneWriteClient{
+		snapshot: validHerdrControlplaneSnapshot(),
+	}
+	adapter := HerdrInteractiveDeliveryAdapter{
+		Backend: multiplexer.HerdrBackend{
+			Config:         validHerdrControlplaneConfig(),
+			Client:         client,
+			InputSanitizer: func(text string) (string, error) { return text, nil },
+		},
+	}
+
+	err := adapter.Deliver(Target{
+		Hand: HandAttachment{Kind: HandKindTmux, Address: "%1"},
+	}, PaneDelivery{Content: "notice"})
+	if err == nil {
+		t.Fatal("Deliver() error = nil, want wrong hand kind error")
+	}
+	if client.writeTextCalls != 0 || client.sendKeyCalls != 0 {
+		t.Fatalf("mutation calls = write:%d key:%d, want none", client.writeTextCalls, client.sendKeyCalls)
+	}
+}
+
 func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -229,6 +292,109 @@ func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 	if string(body) != "system delivery" {
 		t.Fatalf("inbox body = %q, want %q", string(body), "system delivery")
 	}
+}
+
+type fakeHerdrControlplaneWriteClient struct {
+	snapshot multiplexer.HerdrSessionSnapshot
+
+	writeTextCalls int
+	writeTextPane  string
+	writeTextText  string
+	sendKeyCalls   int
+	sendKeyPane    string
+	sendKeyKey     string
+}
+
+func (f *fakeHerdrControlplaneWriteClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+	return validHerdrControlplaneEnvelope(), nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {
+	return multiplexer.HerdrPaneReadResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) WritePaneText(_ context.Context, paneID string, text string) (multiplexer.HerdrWriteResult, error) {
+	f.writeTextCalls++
+	f.writeTextPane = paneID
+	f.writeTextText = text
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) SendPaneKey(_ context.Context, paneID string, key string) (multiplexer.HerdrWriteResult, error) {
+	f.sendKeyCalls++
+	f.sendKeyPane = paneID
+	f.sendKeyKey = key
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) SetPaneMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func (f *fakeHerdrControlplaneWriteClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrControlplaneEnvelope()}, nil
+}
+
+func validHerdrControlplaneConfig() multiplexer.HerdrReadConfig {
+	return multiplexer.HerdrReadConfig{
+		Enabled: true,
+		Runtime: multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+			PaneID:      "workspace-1:pane-1",
+		},
+		Policy: multiplexer.HerdrGatePolicy{
+			ReadEnabled:             true,
+			WriteEnabled:            true,
+			AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
+			AllowedSessions:         []string{"work"},
+			AllowedWorkspaceIDs:     []string{"workspace-1"},
+			AllowedProtocolVersions: []string{"1"},
+			AllowedSchemaVersions:   []int{1},
+			InputSanitizerReady:     true,
+			ComplianceDecision:      multiplexer.HerdrComplianceDecisionCommercial,
+		},
+	}
+}
+
+func validHerdrControlplaneSnapshot() multiplexer.HerdrSessionSnapshot {
+	return multiplexer.HerdrSessionSnapshot{
+		Envelope: validHerdrControlplaneEnvelope(),
+		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
+			ID: "workspace-1",
+		}},
+		Tabs: []multiplexer.HerdrTabSnapshot{{
+			ID:          "workspace-1:tab-1",
+			WorkspaceID: "workspace-1",
+		}},
+		Panes: []multiplexer.HerdrPaneSnapshot{{
+			ID:          "workspace-1:pane-1",
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+		}},
+	}
+}
+
+func validHerdrControlplaneEnvelope() multiplexer.HerdrResponseEnvelope {
+	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}
 }
 
 func TestFilesystemSystemMessageAdapterWritesInbox(t *testing.T) {
