@@ -41,10 +41,33 @@ The tmux backend preserves existing capture forms:
 The public `paneutil.Capture*` functions remain unchanged and delegate to the
 tmux backend.
 
-## 5. Current Context Boundary
+## 5. Current Identity Boundary
 
-This issue does not move current context resolution. Later work should use this
-contract to separate:
+Current identity is represented by `multiplexer.CurrentIdentity`:
+
+- `Backend`: the source backend, currently `tmux`.
+- `SessionName`: the logical postman session scope.
+- `NodeName`: the logical postman node name.
+- `Pane`: the backend-neutral pane resource ID.
+- `NativeIDs`: backend-native evidence, such as tmux pane ID, session name, and
+  pane title.
+
+The tmux backend preserves existing lookup behavior:
+
+- `TMUX_PANE` targets session-name and pane-title lookups when available.
+- Untargeted `display-message` remains the fallback when `TMUX_PANE` is absent.
+- `TMUX_PANE` itself remains the current pane ID when present.
+- Lookup failures are explicit `IdentityError` values at the backend boundary.
+  Compatibility wrappers still return empty strings to preserve existing CLI
+  behavior.
+
+Herdr support should keep the same logical `session:node` address shape while
+resolving internally through Herdr named session, workspace ID, tab ID, and pane
+ID. Herdr labels are display/fallback information, not authoritative identity.
+
+## 6. Current Context Boundary
+
+Current context resolution must stay separated from current identity lookup:
 
 - current identity lookup: backend kind, pane ID, session ID/name, node name;
 - ownership/context checks: `ContextOwnsSession`, `FindSessionOwner`, and
@@ -53,7 +76,7 @@ contract to separate:
 Ownership-dependent behavior belongs to #656 before #654 generalizes current
 context resolution.
 
-## 6. Layout And Status Boundary
+## 7. Layout And Status Boundary
 
 Issue #655 owns structural layout/status projection. This issue only records
 that backend-neutral status should not require callers to parse tmux window or
@@ -62,7 +85,7 @@ pane command output directly.
 Compatibility requirements for #655 include existing status JSON,
 `SessionStatus.Compact`, and `get-status-oneline`.
 
-## 7. Herdr Gates
+## 8. Herdr Gates
 
 Herdr access remains blocked:
 
