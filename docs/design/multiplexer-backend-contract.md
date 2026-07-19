@@ -130,13 +130,14 @@ security gates and #658 validates read-only Herdr behavior.
 
 ## 9. Herdr Gates
 
-Herdr access remains blocked:
+Herdr access remains blocked until the gates in
+[Herdr Security And Licensing Gates](herdr-security-licensing-gates.md) pass:
 
-- #660 must define read/write security gates, allowlists, protocol/schema
-  checks, no-server error normalization, and licensing/compliance decisions.
-- #658 may add read-only Herdr behavior only after the #660 read gate.
-- #659 may add Herdr write/mutation only after #658 and #660.
+- #658 may add read-only Herdr behavior only after calling the #660 read gate
+  for socket/session/workspace allowlists and protocol/schema checks.
+- #659 may add Herdr write/mutation only after #658 validates read-only behavior
+  and the #660 write gate confirms input sanitization and compliance decisions.
 
-Herdr read/write paths should include a pre-flight guard or equivalent
-mechanical check so explicit issue-body blockers are enforced in code or local
-workflow before activation.
+Future Herdr read/write paths should use `multiplexer.ValidateHerdrReadGate` or
+`multiplexer.ValidateHerdrWriteGate` as their preflight guard before consuming
+Herdr data or issuing Herdr mutations.
