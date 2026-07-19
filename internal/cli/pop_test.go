@@ -165,8 +165,8 @@ func TestReceiverRuntimeContextSummaryForPopUsesCurrentIdentityResolver(t *testi
 	identityCalls := 0
 	summary, errText := receiverRuntimeContextSummaryForPop(sessionDir, "msg.md", popReceiverContextOptions{
 		ContextID:   "ctx",
-		SessionName: "review",
-		Node:        "worker",
+		SessionName: "path-session",
+		Node:        "path-node",
 		CurrentIdentity: func() (multiplexer.CurrentIdentity, error) {
 			identityCalls++
 			return multiplexer.CurrentIdentity{
@@ -190,6 +190,12 @@ func TestReceiverRuntimeContextSummaryForPopUsesCurrentIdentityResolver(t *testi
 	}
 	if summary == nil || summary.Fields.Tmux == nil || summary.Fields.Tmux.PaneID != "%88" {
 		t.Fatalf("summary tmux fields = %#v, want pane %%88", summary)
+	}
+	if summary.Fields.Tmux.Session != "identity-session" {
+		t.Fatalf("summary tmux session = %q, want identity-session", summary.Fields.Tmux.Session)
+	}
+	if summary.Fields.Role != "identity-worker" {
+		t.Fatalf("summary role = %q, want identity-worker", summary.Fields.Role)
 	}
 }
 
