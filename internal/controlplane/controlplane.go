@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
@@ -36,6 +37,8 @@ type HandAttachment struct {
 	Address string
 }
 
+var registeredHerdrHandAdapters sync.Map
+
 type Target struct {
 	ActorID     string
 	RunID       string
@@ -57,14 +60,23 @@ func TargetForNode(nodeName string, nodeInfo discovery.NodeInfo) Target {
 		}
 	}
 
+	handKind := HandKindTmux
+	if multiplexer.BackendKindFromString(nodeInfo.Backend) == multiplexer.BackendKindHerdr {
+		handKind = HandKindHerdr
+	}
+	brainRuntime := BrainRuntimeUnknown
+	if nodeInfo.Runtime != "" {
+		brainRuntime = nodeInfo.Runtime
+	}
+
 	return Target{
 		ActorID: actorID,
 		RunID:   runID,
 		Brain: Brain{
-			Runtime: BrainRuntimeUnknown,
+			Runtime: brainRuntime,
 		},
 		Hand: HandAttachment{
-			Kind:    HandKindTmux,
+			Kind:    handKind,
 			Address: nodeInfo.PaneID,
 		},
 		SessionName: nodeInfo.SessionName,
@@ -153,6 +165,21 @@ type HerdrInteractiveDeliveryAdapter struct {
 	InputSanitizer multiplexer.HerdrInputSanitizer
 }
 
+type HerdrHandAdapter struct {
+	HerdrInteractiveDeliveryAdapter
+	SystemMessageDeliveryAdapter SystemMessageDeliveryAdapter
+}
+
+func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
+	if strings.TrimSpace(paneID) == "" {
+		return func() {}
+	}
+	registeredHerdrHandAdapters.Store(paneID, adapter)
+	return func() {
+		registeredHerdrHandAdapters.Delete(paneID)
+	}
+}
+
 func (HerdrInteractiveDeliveryAdapter) Kind() HandKind {
 	return HandKindHerdr
 }
@@ -168,10 +195,32 @@ func (a HerdrInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDel
 	if backend.InputSanitizer == nil {
 		backend.InputSanitizer = notification.PrepareInteractivePaneMessage
 	}
+	enterCount := notification.ResolveEnterCount(delivery.EnterCount, func() (string, error) {
+		if target.Brain.Runtime != "" && target.Brain.Runtime != BrainRuntimeUnknown {
+			return target.Brain.Runtime, nil
+		}
+		return backend.PaneCurrentCommand(context.Background(), multiplexer.HerdrPaneID(target.Hand.Address))
+	})
 	return backend.SendPaneInput(context.Background(), multiplexer.HerdrPaneID(target.Hand.Address), multiplexer.HerdrPaneInput{
 		Text:       delivery.Content,
-		EnterCount: delivery.EnterCount,
+		EnterCount: enterCount,
 	})
+}
+
+func (a HerdrHandAdapter) Kind() HandKind {
+	return HandKindHerdr
+}
+
+func (a HerdrHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	return a.HerdrInteractiveDeliveryAdapter.Deliver(target, delivery)
+}
+
+func (a HerdrHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+	adapter := a.SystemMessageDeliveryAdapter
+	if adapter == nil {
+		adapter = FilesystemSystemMessageAdapter{}
+	}
+	return adapter.DeliverSystemMessage(target, delivery)
 }
 
 func (TmuxInteractiveDeliveryAdapter) Kind() HandKind {
@@ -267,6 +316,13 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	switch target.Hand.Kind {
 	case HandKindTmux:
 		return TmuxHandAdapter{}, nil
+	case HandKindHerdr:
+		if registered, ok := registeredHerdrHandAdapters.Load(target.Hand.Address); ok {
+			if adapter, ok := registered.(HerdrHandAdapter); ok {
+				return adapter, nil
+			}
+		}
+		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)
 	default:
 		return nil, fmt.Errorf("unsupported hand kind %q", target.Hand.Kind)
 	}

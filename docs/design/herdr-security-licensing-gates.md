@@ -139,8 +139,10 @@ Herdr interactive delivery must preserve the security intent of the tmux
 - keep key-combo APIs and text-input APIs separate;
 - never pass untrusted body text as key-combo syntax.
 
-Until this path exists and has focused tests, `ValidateHerdrWriteGate` must
-return `sanitizer_missing`.
+Issue #659 implements this path behind explicit registration. Herdr write
+configuration still must set `InputSanitizerReady`; otherwise
+`ValidateHerdrWriteGate` returns `sanitizer_missing` before write or mutation
+RPCs are issued.
 
 ## 9. Licensing And Compliance
 

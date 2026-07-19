@@ -591,6 +591,7 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	nonDaemonDeliveryBudget       *nonDaemonDeliveryBudget   // Issue #572: bounded concurrency for post/auto-PING/manual-PING delivery
 	clock                         func() time.Time
+	ownershipBackend              multiplexer.OwnershipBackend
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -598,6 +599,10 @@ type DaemonState struct {
 // IsSessionEnabled returns true for all sessions (#217).
 func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 	return newDaemonStateWithClock(drainWindowSeconds, contextID, time.Now)
+}
+
+func (ds *DaemonState) SetOwnershipBackend(backend multiplexer.OwnershipBackend) {
+	ds.ownershipBackend = backend
 }
 
 func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock func() time.Time) *DaemonState {
@@ -899,12 +904,15 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 }
 
 func (ds *DaemonState) persistSessionEnabledMarker(sessionName string, enabled bool) {
-	// Persist cross-daemon state in tmux server option (best-effort).
-	tmuxBackend := multiplexer.TmuxBackend{}
+	// Persist cross-daemon state in the configured ownership backend (best-effort).
+	backend := ds.ownershipBackend
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
+	}
 	if enabled {
-		_ = tmuxBackend.SetSessionOwnerMarker(context.Background(), ds.contextID, sessionName, os.Getpid())
+		_ = backend.SetSessionOwnerMarker(context.Background(), ds.contextID, sessionName, os.Getpid())
 	} else {
-		_ = tmuxBackend.ClearSessionOwnerMarker(context.Background(), sessionName)
+		_ = backend.ClearSessionOwnerMarker(context.Background(), sessionName)
 	}
 }
 

@@ -362,7 +362,17 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {
-		if err := tmuxBackend.SetPaneOwnerMarker(ctx, multiplexer.TmuxPaneID(nodeInfo.PaneID), contextID); err != nil {
+		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+		backend, backendErr := multiplexer.OwnershipBackendForKind(backendKind)
+		if backendErr != nil {
+			log.Printf(
+				"postman: WARNING: failed to select ownership backend for pane %s: %v\n",
+				nodeInfo.PaneID, backendErr,
+			)
+			continue
+		}
+		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+		if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
 			log.Printf(
 				"postman: WARNING: failed to claim pane %s: %v\n",
 				nodeInfo.PaneID, err,

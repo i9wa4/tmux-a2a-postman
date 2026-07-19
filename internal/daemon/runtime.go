@@ -1695,12 +1695,18 @@ func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeI
 }
 
 func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo) {
-	tmuxBackend := multiplexer.TmuxBackend{}
 	for _, nodeInfo := range freshNodes {
 		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
 			continue
 		}
-		if err := tmuxBackend.SetPaneOwnerMarker(context.Background(), multiplexer.TmuxPaneID(nodeInfo.PaneID), rt.contextID); err != nil {
+		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+		backend, err := multiplexer.OwnershipBackendForKind(backendKind)
+		if err != nil {
+			log.Printf("postman: WARNING: failed to select ownership backend for pane %s: %v\n", nodeInfo.PaneID, err)
+			continue
+		}
+		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+		if err := backend.SetPaneOwnerMarker(context.Background(), pane, rt.contextID); err != nil {
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}

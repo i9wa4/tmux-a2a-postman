@@ -131,11 +131,18 @@ Issue #657 separates interactive pane input from filesystem mailbox delivery.
 - The legacy `controlplane.HandAdapter` interface embeds both contracts for
   compatibility while call sites are split over later issues.
 
-Issue #659 adds a Herdr interactive delivery adapter for explicitly configured
-Herdr backends only. It does not change the default hand adapter, so tmux
-delivery remains the active production behavior unless callers provide Herdr
-runtime identity, a write-capable client, sanitizer readiness, and passing
-security/licensing gates.
+Issue #659 adds a Herdr interactive delivery adapter for explicitly registered
+Herdr backends only. Empty backend metadata still resolves to tmux, and Herdr
+targets fail closed unless their pane ID has a registered Herdr hand adapter.
+This keeps tmux as the active default while making Herdr reachable for callers
+that provide Herdr runtime identity, a write-capable client, sanitizer
+readiness, accepted compliance, and passing security/licensing gates.
+
+Herdr interactive delivery uses the same runtime-aware submit-count resolution
+as tmux delivery. When the target brain runtime is Codex and `enter_count` is
+unset, Herdr sends two fixed submit key mutations. The Herdr key-combo mutation
+uses `C-m`, matching the tmux path's documented Codex submit behavior instead
+of the literal `Enter` key name that tmux avoids for Codex multiline readline.
 
 ## 9. Herdr Gates
 
@@ -154,4 +161,6 @@ Herdr read/write paths use `multiplexer.ValidateHerdrReadGate` or
 `multiplexer.ValidateHerdrWriteGate` as their preflight guard before consuming
 Herdr data or issuing Herdr mutations. Write paths also revalidate the
 configured pane against the Herdr session snapshot before text input or marker
-metadata mutation.
+metadata mutation. Session ownership metadata is keyed by logical postman
+session name under `postman.session_owner.<session>`, preserving tmux's
+per-logical-session isolation within an allowlisted Herdr workspace.

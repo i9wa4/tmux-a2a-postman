@@ -45,6 +45,26 @@ func TestTargetForNodeSeparatesActorRunBrainAndHand(t *testing.T) {
 	}
 }
 
+func TestTargetForNodeUsesExplicitHerdrBackendMetadata(t *testing.T) {
+	target := TargetForNode("work:worker", discovery.NodeInfo{
+		PaneID:      "workspace-1:pane-1",
+		SessionName: "work",
+		SessionDir:  "/tmp/work",
+		Backend:     string(multiplexer.BackendKindHerdr),
+		Runtime:     "codex",
+	})
+
+	if target.Hand.Kind != HandKindHerdr {
+		t.Fatalf("Hand.Kind = %q, want herdr", target.Hand.Kind)
+	}
+	if target.Hand.Address != "workspace-1:pane-1" {
+		t.Fatalf("Hand.Address = %q, want Herdr pane", target.Hand.Address)
+	}
+	if target.Brain.Runtime != "codex" {
+		t.Fatalf("Brain.Runtime = %q, want codex", target.Brain.Runtime)
+	}
+}
+
 func TestTmuxHandAdapterDeliverUsesHandAttachment(t *testing.T) {
 	var (
 		gotPaneID         string
@@ -229,8 +249,66 @@ func TestHerdrInteractiveDeliveryAdapterUsesBackendAndSanitizes(t *testing.T) {
 		strings.Contains(client.writeTextText, "\x1b") {
 		t.Fatalf("write text = %q, want wrapped sanitized content", client.writeTextText)
 	}
-	if client.sendKeyCalls != 1 || client.sendKeyKey != multiplexer.HerdrKeyEnter {
+	if client.sendKeyCalls != 1 || client.sendKeyKey != multiplexer.HerdrKeySubmit {
 		t.Fatalf("send key call = calls:%d key:%q, want one Herdr Enter key", client.sendKeyCalls, client.sendKeyKey)
+	}
+}
+
+func TestHerdrInteractiveDeliveryAdapterUsesCodexDefaultEnterCount(t *testing.T) {
+	client := &fakeHerdrControlplaneWriteClient{
+		snapshot: validHerdrControlplaneSnapshot(),
+	}
+	adapter := HerdrInteractiveDeliveryAdapter{
+		Backend: multiplexer.HerdrBackend{
+			Config: validHerdrControlplaneConfig(),
+			Client: client,
+		},
+	}
+
+	err := adapter.Deliver(Target{
+		Brain: Brain{Runtime: "codex"},
+		Hand:  HandAttachment{Kind: HandKindHerdr, Address: "workspace-1:pane-1"},
+	}, PaneDelivery{Content: "notice", EnterCount: 0})
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if client.sendKeyCalls != 2 || client.sendKeyKey != multiplexer.HerdrKeySubmit {
+		t.Fatalf("send key call = calls:%d key:%q, want two submit keys for Codex default", client.sendKeyCalls, client.sendKeyKey)
+	}
+}
+
+func TestDefaultHandAdapterSelectsRegisteredHerdrAdapter(t *testing.T) {
+	client := &fakeHerdrControlplaneWriteClient{
+		snapshot: validHerdrControlplaneSnapshot(),
+	}
+	unregister := RegisterHerdrHandAdapter("workspace-1:pane-1", HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{
+				Config: validHerdrControlplaneConfig(),
+				Client: client,
+			},
+		},
+	})
+	t.Cleanup(unregister)
+
+	target := TargetForNode("work:worker", discovery.NodeInfo{
+		PaneID:      "workspace-1:pane-1",
+		SessionName: "work",
+		Backend:     string(multiplexer.BackendKindHerdr),
+		Runtime:     "codex",
+	})
+	adapter, err := DefaultHandAdapter(target)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter() error = %v", err)
+	}
+	if adapter.Kind() != HandKindHerdr {
+		t.Fatalf("adapter.Kind() = %q, want herdr", adapter.Kind())
+	}
+	if err := adapter.Deliver(target, PaneDelivery{Content: "notice"}); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if client.writeTextCalls != 1 || client.sendKeyCalls != 2 {
+		t.Fatalf("Herdr delivery calls = write:%d key:%d, want reachable registered Herdr delivery", client.writeTextCalls, client.sendKeyCalls)
 	}
 }
 
