@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -1476,6 +1477,67 @@ func TestMergeConfig_NodeMerge(t *testing.T) {
 	if base.Nodes["new"].Template != "new template" {
 		t.Errorf("new.Template: got %q, want %q", base.Nodes["new"].Template, "new template")
 	}
+}
+
+func TestSetSessionEnabledMarkerWithBackendUsesInjectedBackend(t *testing.T) {
+	backend := &fakeConfigOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", true); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(enable) error = %v", err)
+	}
+	if backend.setSessionCalls != 1 || backend.contextID != "ctx-main" || backend.sessionName != "work" {
+		t.Fatalf("set session marker = calls:%d context:%q session:%q, want injected backend", backend.setSessionCalls, backend.contextID, backend.sessionName)
+	}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", false); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(disable) error = %v", err)
+	}
+	if backend.clearSessionCalls != 1 || backend.clearSessionName != "work" {
+		t.Fatalf("clear session marker = calls:%d session:%q, want injected backend", backend.clearSessionCalls, backend.clearSessionName)
+	}
+}
+
+type fakeConfigOwnershipBackend struct {
+	kind multiplexer.BackendKind
+
+	setSessionCalls   int
+	contextID         string
+	sessionName       string
+	clearSessionCalls int
+	clearSessionName  string
+}
+
+func (f *fakeConfigOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeConfigOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextID, sessionName string, _ int) error {
+	f.setSessionCalls++
+	f.contextID = contextID
+	f.sessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessionName string) error {
+	f.clearSessionCalls++
+	f.clearSessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetPaneOwnerMarker(context.Context, multiplexer.ResourceID, string) error {
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestLoadConfig_IgnoresProjectLocalWhenXDGExists(t *testing.T) {

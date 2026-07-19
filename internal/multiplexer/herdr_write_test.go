@@ -3,6 +3,7 @@ package multiplexer
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 )
 
@@ -67,8 +68,25 @@ func TestHerdrBackendSendPaneInputSanitizesBeforeWrite(t *testing.T) {
 	if client.writeTextCalls != 1 || client.writeTextPane != "workspace-1:pane-1" || client.writeTextText != "sanitized:hello" {
 		t.Fatalf("write text call = calls:%d pane:%q text:%q, want sanitized write", client.writeTextCalls, client.writeTextPane, client.writeTextText)
 	}
-	if client.sendKeyCalls != 2 || client.sendKeyPane != "workspace-1:pane-1" || client.sendKeyKey != HerdrKeyEnter {
+	if client.sendKeyCalls != 2 || client.sendKeyPane != "workspace-1:pane-1" || client.sendKeyKey != HerdrKeySubmit {
 		t.Fatalf("send key call = calls:%d pane:%q key:%q, want two Enter keys", client.sendKeyCalls, client.sendKeyPane, client.sendKeyKey)
+	}
+}
+
+func TestHerdrBackendSendPaneInputNormalizesUnavailableWriteError(t *testing.T) {
+	client := &fakeHerdrWriteClient{
+		fakeHerdrReadClient: fakeHerdrReadClient{snapshot: validHerdrSessionSnapshot()},
+		writeTextErr:        net.ErrClosed,
+	}
+	backend := HerdrBackend{
+		Config:         validHerdrReadConfig(),
+		Client:         client,
+		InputSanitizer: passThroughHerdrInput,
+	}
+
+	err := backend.SendPaneInput(context.Background(), HerdrPaneID("workspace-1:pane-1"), HerdrPaneInput{Text: "hello"})
+	if !errors.Is(err, ErrHerdrBackendUnavailable) {
+		t.Fatalf("SendPaneInput() error = %v, want ErrHerdrBackendUnavailable", err)
 	}
 }
 
@@ -113,7 +131,7 @@ func TestHerdrBackendSendPaneInputRequiresSnapshotContainmentBeforeWrite(t *test
 
 func TestHerdrBackendSessionOwnerMarkerUsesWorkspaceMetadata(t *testing.T) {
 	snapshot := validHerdrSessionSnapshot()
-	snapshot.Workspaces[0].Metadata = map[string]string{HerdrSessionOwnerMetadataKey: "ctx-1:123"}
+	snapshot.Workspaces[0].Metadata = map[string]string{HerdrSessionOwnerMetadataKey + ".work": "ctx-1:123"}
 	client := &fakeHerdrReadClient{snapshot: snapshot}
 	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
 
@@ -141,7 +159,7 @@ func TestHerdrBackendSetAndClearSessionOwnerMarkerUseWorkspaceMetadata(t *testin
 	}
 	if client.setWorkspaceMetadataCalls != 1 ||
 		client.setWorkspaceMetadataID != "workspace-1" ||
-		client.setWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey ||
+		client.setWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey+".work" ||
 		client.setWorkspaceMetadataValue != "ctx-1:123" {
 		t.Fatalf("set workspace metadata = calls:%d id:%q key:%q value:%q, want session marker",
 			client.setWorkspaceMetadataCalls,
@@ -155,7 +173,7 @@ func TestHerdrBackendSetAndClearSessionOwnerMarkerUseWorkspaceMetadata(t *testin
 	}
 	if client.clearWorkspaceMetadataCalls != 1 ||
 		client.clearWorkspaceMetadataID != "workspace-1" ||
-		client.clearWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey {
+		client.clearWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey+".work" {
 		t.Fatalf("clear workspace metadata = calls:%d id:%q key:%q, want session marker clear",
 			client.clearWorkspaceMetadataCalls,
 			client.clearWorkspaceMetadataID,
@@ -179,6 +197,25 @@ func TestHerdrBackendSetSessionOwnerMarkerRejectsUnsafeMarkerBeforeSnapshot(t *t
 	}
 	if client.snapshotCalls != 0 || client.setWorkspaceMetadataCalls != 0 {
 		t.Fatalf("client calls = snapshot:%d setWorkspace:%d, want none before marker sanitization passes", client.snapshotCalls, client.setWorkspaceMetadataCalls)
+	}
+}
+
+func TestHerdrBackendSetSessionOwnerMarkerRejectsWhitespaceContextBeforeConcat(t *testing.T) {
+	client := &fakeHerdrWriteClient{fakeHerdrReadClient: fakeHerdrReadClient{
+		snapshot: validHerdrSessionSnapshot(),
+	}}
+	backend := HerdrBackend{
+		Config:         validHerdrReadConfig(),
+		Client:         client,
+		InputSanitizer: passThroughHerdrInput,
+	}
+
+	err := backend.SetSessionOwnerMarker(context.Background(), "   ", "work", 123)
+	if err == nil {
+		t.Fatal("SetSessionOwnerMarker() error = nil, want empty context error")
+	}
+	if client.snapshotCalls != 0 || client.setWorkspaceMetadataCalls != 0 {
+		t.Fatalf("client calls = snapshot:%d setWorkspace:%d, want none before context sanitization passes", client.snapshotCalls, client.setWorkspaceMetadataCalls)
 	}
 }
 

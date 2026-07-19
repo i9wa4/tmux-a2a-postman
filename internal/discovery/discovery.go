@@ -17,6 +17,8 @@ type NodeInfo struct {
 	PaneID      string
 	SessionName string
 	SessionDir  string
+	Backend     string
+	Runtime     string
 }
 
 // CollisionReport describes a pane collision where two panes share the same nodeKey.

@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	HerdrKeyEnter                 = "Enter"
+	// Match tmux delivery's Codex submit key; literal Enter may insert a newline.
+	HerdrKeySubmit                = "C-m"
 	HerdrSessionOwnerMetadataKey  = "postman.session_owner"
 	HerdrPaneContextIDMetadataKey = "postman.context_id"
 )
@@ -71,7 +72,7 @@ func (b HerdrBackend) SendPaneInput(ctx context.Context, pane ResourceID, input 
 		return err
 	}
 	for range herdrSubmitEnterCount(input.EnterCount) {
-		result, err := client.SendPaneKey(ctx, pane.Native, HerdrKeyEnter)
+		result, err := client.SendPaneKey(ctx, pane.Native, HerdrKeySubmit)
 		if err != nil {
 			return NormalizeHerdrBackendError(err)
 		}
@@ -89,13 +90,17 @@ func (b HerdrBackend) SessionOwnerMarker(ctx context.Context, sessionName string
 	if sessionName != b.Config.Runtime.SessionName {
 		return "", ErrHerdrSessionNameMismatch
 	}
+	metadataKey, err := herdrSessionOwnerMetadataKey(sessionName)
+	if err != nil {
+		return "", err
+	}
 	snapshot, err := b.readValidatedSnapshot(ctx, HerdrReadScopeDiscovery)
 	if err != nil {
 		return "", err
 	}
 	for _, workspace := range snapshot.Workspaces {
 		if workspace.ID == b.Config.Runtime.WorkspaceID {
-			return workspace.Metadata[HerdrSessionOwnerMetadataKey], nil
+			return workspace.Metadata[metadataKey], nil
 		}
 	}
 	return "", nil
@@ -105,14 +110,19 @@ func (b HerdrBackend) SetSessionOwnerMarker(ctx context.Context, contextID, sess
 	if err := b.authorizeWritePath(); err != nil {
 		return err
 	}
-	if contextID == "" {
-		return fmt.Errorf("context ID is empty")
-	}
 	if sessionName != b.Config.Runtime.SessionName {
 		return ErrHerdrSessionNameMismatch
 	}
 	if pid <= 0 {
 		pid = os.Getpid()
+	}
+	contextID, err := sanitizeHerdrMetadataValue(contextID)
+	if err != nil {
+		return err
+	}
+	metadataKey, err := herdrSessionOwnerMetadataKey(sessionName)
+	if err != nil {
+		return err
 	}
 	markerValue, err := sanitizeHerdrMetadataValue(contextID + ":" + strconv.Itoa(pid))
 	if err != nil {
@@ -125,7 +135,7 @@ func (b HerdrBackend) SetSessionOwnerMarker(ctx context.Context, contextID, sess
 	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return err
 	}
-	result, err := client.SetWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, HerdrSessionOwnerMetadataKey, markerValue)
+	result, err := client.SetWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, metadataKey, markerValue)
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
@@ -139,6 +149,10 @@ func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName s
 	if sessionName != b.Config.Runtime.SessionName {
 		return ErrHerdrSessionNameMismatch
 	}
+	metadataKey, err := herdrSessionOwnerMetadataKey(sessionName)
+	if err != nil {
+		return err
+	}
 	client, err := b.writeClient()
 	if err != nil {
 		return err
@@ -146,11 +160,19 @@ func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName s
 	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return err
 	}
-	result, err := client.ClearWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, HerdrSessionOwnerMetadataKey)
+	result, err := client.ClearWorkspaceMetadata(ctx, b.Config.Runtime.WorkspaceID, metadataKey)
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
 	return b.validateWriteEnvelope(result.Envelope)
+}
+
+func herdrSessionOwnerMetadataKey(sessionName string) (string, error) {
+	sessionName, err := sanitizeHerdrMetadataValue(sessionName)
+	if err != nil {
+		return "", fmt.Errorf("invalid herdr session owner metadata key: %w", err)
+	}
+	return HerdrSessionOwnerMetadataKey + "." + sessionName, nil
 }
 
 func (b HerdrBackend) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {

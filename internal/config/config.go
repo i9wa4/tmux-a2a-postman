@@ -1314,13 +1314,20 @@ func FindContextSessionName(baseDir, contextID string) string {
 }
 
 func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error {
+	return SetSessionEnabledMarkerWithBackend(multiplexer.TmuxBackend{}, contextID, sessionName, enabled)
+}
+
+func SetSessionEnabledMarkerWithBackend(backend multiplexer.OwnershipBackend, contextID, sessionName string, enabled bool) error {
 	if sessionName == "" {
 		return fmt.Errorf("session name is empty")
 	}
-	if enabled {
-		return (multiplexer.TmuxBackend{}).SetSessionOwnerMarker(context.Background(), contextID, sessionName, os.Getpid())
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
 	}
-	return (multiplexer.TmuxBackend{}).ClearSessionOwnerMarker(context.Background(), sessionName)
+	if enabled {
+		return backend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, os.Getpid())
+	}
+	return backend.ClearSessionOwnerMarker(context.Background(), sessionName)
 }
 
 func CurrentTmuxIdentity() (multiplexer.CurrentIdentity, error) {

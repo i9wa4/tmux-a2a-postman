@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -21,6 +22,53 @@ type OwnershipBackend interface {
 	PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error)
 	SetPaneOwnerMarker(ctx context.Context, pane ResourceID, contextID string) error
 	ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error
+}
+
+var registeredOwnershipBackends sync.Map
+
+func BackendKindFromString(backend string) BackendKind {
+	switch BackendKind(strings.TrimSpace(backend)) {
+	case BackendKindHerdr:
+		return BackendKindHerdr
+	default:
+		return BackendKindTmux
+	}
+}
+
+func PaneIDForBackend(backend BackendKind, paneID string) ResourceID {
+	switch backend {
+	case BackendKindHerdr:
+		return HerdrPaneID(paneID)
+	default:
+		return TmuxPaneID(paneID)
+	}
+}
+
+func RegisterOwnershipBackend(backend OwnershipBackend) func() {
+	if backend == nil {
+		return func() {}
+	}
+	key := backend.Kind()
+	registeredOwnershipBackends.Store(key, backend)
+	return func() {
+		registeredOwnershipBackends.Delete(key)
+	}
+}
+
+func OwnershipBackendForKind(backend BackendKind) (OwnershipBackend, error) {
+	switch backend {
+	case BackendKindTmux, "":
+		return TmuxBackend{}, nil
+	case BackendKindHerdr:
+		if registered, ok := registeredOwnershipBackends.Load(BackendKindHerdr); ok {
+			if ownershipBackend, ok := registered.(OwnershipBackend); ok {
+				return ownershipBackend, nil
+			}
+		}
+		return nil, fmt.Errorf("herdr ownership backend not registered")
+	default:
+		return nil, fmt.Errorf("unsupported ownership backend %q", backend)
+	}
 }
 
 func (b TmuxBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
