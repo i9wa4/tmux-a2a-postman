@@ -40,6 +40,11 @@ Issue #658 may add only read behavior after the read gate passes. Issue #659
 may add write behavior only after #658 validates the read path and the write
 gate passes.
 
+Issue #659 keeps Herdr disabled unless `[postman.herdr]` is explicitly enabled,
+the configured runtime identity passes the read/write gate policy, a Herdr
+client is available, and startup discovery validates the configured workspace
+before registering pane delivery or ownership mutation routes.
+
 ## 3. Mechanical Gate
 
 `multiplexer.ValidateHerdrReadGate` and

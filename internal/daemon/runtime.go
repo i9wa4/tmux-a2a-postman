@@ -19,6 +19,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -56,7 +57,8 @@ type daemonRuntime struct {
 	idleTracker                     *idle.IdleTracker
 	clock                           func() time.Time
 
-	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes  *atomic.Pointer[map[string]discovery.NodeInfo]
+	herdrRuntime *herdrruntime.Runtime
 
 	watchedDirs        map[string]bool
 	claimedPanes       map[string]bool
@@ -143,6 +145,7 @@ func newDaemonRuntime(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) *daemonRuntime {
 	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
@@ -162,6 +165,7 @@ func newDaemonRuntime(
 		daemonState:                   daemonState,
 		idleTracker:                   idleTracker,
 		sharedNodes:                   sharedNodes,
+		herdrRuntime:                  herdrRuntime,
 		watchedDirs:                   make(map[string]bool),
 		claimedPanes:                  make(map[string]bool),
 		prevSessionNodes:              make(map[string][]string),
@@ -329,10 +333,9 @@ func (rt *daemonRuntime) bootstrap() {
 
 func (rt *daemonRuntime) handleContextDone() {
 	rt.daemonState.enabledSessionsMu.RLock()
-	tmuxBackend := multiplexer.TmuxBackend{}
 	for sessionName, enabled := range rt.daemonState.enabledSessions {
 		if enabled {
-			_ = tmuxBackend.ClearSessionOwnerMarker(context.Background(), sessionName)
+			_ = rt.ownershipBackendForSession(sessionName).ClearSessionOwnerMarker(context.Background(), sessionName)
 		}
 	}
 	rt.daemonState.enabledSessionsMu.RUnlock()
@@ -1559,8 +1562,48 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	if err != nil {
 		return nil, nil, err
 	}
+	if rt.herdrRuntime != nil {
+		herdrNodes, herdrCollisions, herdrErr := rt.herdrRuntime.Discover(context.Background(), rt.baseDir, rt.contextID)
+		if herdrErr != nil {
+			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
+		} else {
+			for nodeKey, nodeInfo := range herdrNodes {
+				freshNodes[nodeKey] = nodeInfo
+			}
+			collisions = append(collisions, herdrCollisions...)
+		}
+	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	return freshNodes, collisions, nil
+}
+
+func (rt *daemonRuntime) ownershipBackendForSession(sessionName string) multiplexer.OwnershipBackend {
+	if rt != nil && rt.herdrRuntime != nil && rt.herdrRuntime.OwnsSession(sessionName) {
+		if backend := rt.herdrRuntime.OwnershipBackend(); backend != nil {
+			return backend
+		}
+	}
+	if rt != nil && rt.daemonState != nil && rt.daemonState.ownershipBackend != nil {
+		return rt.daemonState.ownershipBackend
+	}
+	return multiplexer.TmuxBackend{}
+}
+
+func (rt *daemonRuntime) ownerForNodeSession(ctx context.Context, nodeInfo discovery.NodeInfo) string {
+	if multiplexer.BackendKindFromString(nodeInfo.Backend) != multiplexer.BackendKindHerdr {
+		return config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID)
+	}
+	backend := rt.ownershipBackendForSession(nodeInfo.SessionName)
+	marker, err := backend.SessionOwnerMarker(ctx, nodeInfo.SessionName)
+	if err != nil {
+		log.Printf("postman: WARNING: failed to read herdr session owner for %s: %v\n", nodeInfo.SessionName, err)
+		return ""
+	}
+	ownerContext, _, _ := strings.Cut(marker, ":")
+	if ownerContext != "" && ownerContext != rt.contextID {
+		return ownerContext
+	}
+	return ""
 }
 
 func (rt *daemonRuntime) storeSharedNodes() {
@@ -1865,7 +1908,7 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 				continue
 			}
 		}
-		if owner := config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID); owner != "" {
+		if owner := rt.ownerForNodeSession(context.Background(), nodeInfo); owner != "" {
 			continue
 		}
 

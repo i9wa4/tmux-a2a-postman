@@ -131,12 +131,13 @@ Issue #657 separates interactive pane input from filesystem mailbox delivery.
 - The legacy `controlplane.HandAdapter` interface embeds both contracts for
   compatibility while call sites are split over later issues.
 
-Issue #659 adds a Herdr interactive delivery adapter for explicitly registered
-Herdr backends only. Empty backend metadata still resolves to tmux, and Herdr
-targets fail closed unless their pane ID has a registered Herdr hand adapter.
-This keeps tmux as the active default while making Herdr reachable for callers
-that provide Herdr runtime identity, a write-capable client, sanitizer
-readiness, accepted compliance, and passing security/licensing gates.
+Issue #659 adds a disabled-by-default Herdr runtime bootstrap. Empty backend
+metadata still resolves to tmux. When `[postman.herdr]` is enabled and a
+write-capable Herdr client is available, startup performs gated Herdr discovery,
+adds Herdr panes to the live `discovery.NodeInfo` map with backend/runtime
+metadata, registers pane-specific Herdr hand adapters, and registers Herdr
+ownership mutation routing before delivery. Herdr targets still fail closed if
+their pane was not discovered and registered by this bootstrap.
 
 Herdr interactive delivery uses the same runtime-aware submit-count resolution
 as tmux delivery. When the target brain runtime is Codex and `enter_count` is

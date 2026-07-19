@@ -77,6 +77,7 @@ type Config struct {
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
+	Herdr                          HerdrConfig                     `toml:"herdr"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -107,6 +108,44 @@ type CommandApprovalPolicy struct {
 type DeprecatedCommandApproverNode struct {
 	Field string
 	Value string
+}
+
+type HerdrConfig struct {
+	Enabled                 bool     `toml:"enabled"`
+	SocketPath              string   `toml:"socket_path"`
+	SessionName             string   `toml:"session_name"`
+	WorkspaceID             string   `toml:"workspace_id"`
+	AllowedSocketPaths      []string `toml:"allowed_socket_paths"`
+	AllowedSessions         []string `toml:"allowed_sessions"`
+	AllowedWorkspaceIDs     []string `toml:"allowed_workspace_ids"`
+	AllowedProtocolVersions []string `toml:"allowed_protocol_versions"`
+	AllowedSchemaVersions   []int    `toml:"allowed_schema_versions"`
+	ReadEnabled             bool     `toml:"read_enabled"`
+	WriteEnabled            bool     `toml:"write_enabled"`
+	InputSanitizerReady     bool     `toml:"input_sanitizer_ready"`
+	ComplianceDecision      string   `toml:"compliance_decision"`
+}
+
+func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
+	return multiplexer.HerdrReadConfig{
+		Enabled: h.Enabled,
+		Runtime: multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  h.SocketPath,
+			SessionName: h.SessionName,
+			WorkspaceID: h.WorkspaceID,
+		},
+		Policy: multiplexer.HerdrGatePolicy{
+			ReadEnabled:             h.ReadEnabled,
+			WriteEnabled:            h.WriteEnabled,
+			AllowedSocketPaths:      h.AllowedSocketPaths,
+			AllowedSessions:         h.AllowedSessions,
+			AllowedWorkspaceIDs:     h.AllowedWorkspaceIDs,
+			AllowedProtocolVersions: h.AllowedProtocolVersions,
+			AllowedSchemaVersions:   h.AllowedSchemaVersions,
+			InputSanitizerReady:     h.InputSanitizerReady,
+			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
+		},
+	}
 }
 
 // NodeConfig holds per-node configuration.

@@ -18,6 +18,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -748,6 +749,7 @@ func RunDaemonLoop(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	runDaemonLoopWithWatcherEvents(
 		ctx,
@@ -769,6 +771,7 @@ func RunDaemonLoop(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
 }
 
@@ -792,6 +795,7 @@ func runDaemonLoopWithWatcherEvents(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	// Apply configurable queue warning threshold before any workers start.
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
@@ -820,6 +824,7 @@ func runDaemonLoopWithWatcherEvents(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
 
 	scanTicker := time.NewTicker(time.Duration(cfg.ScanInterval * float64(time.Second)))

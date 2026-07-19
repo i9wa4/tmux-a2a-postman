@@ -341,6 +341,7 @@ func TestRunDaemonLoop_WatcherErrorIsNonFatalAndLaterReadEventIsProcessed(t *tes
 			idle.NewIdleTracker(),
 			nil,
 			sessionName,
+			nil,
 		)
 	}()
 	t.Cleanup(func() {
