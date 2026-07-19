@@ -335,7 +335,9 @@ func (rt *daemonRuntime) handleContextDone() {
 	rt.daemonState.enabledSessionsMu.RLock()
 	for sessionName, enabled := range rt.daemonState.enabledSessions {
 		if enabled {
-			_ = rt.ownershipBackendForSession(sessionName).ClearSessionOwnerMarker(context.Background(), sessionName)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = rt.ownershipBackendForSession(sessionName).ClearSessionOwnerMarker(ctx, sessionName)
+			cancel()
 		}
 	}
 	rt.daemonState.enabledSessionsMu.RUnlock()
@@ -1563,7 +1565,9 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		return nil, nil, err
 	}
 	if rt.herdrRuntime != nil {
-		herdrNodes, herdrCollisions, herdrErr := rt.herdrRuntime.Discover(context.Background(), rt.baseDir, rt.contextID)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		herdrNodes, herdrCollisions, herdrErr := rt.herdrRuntime.Discover(ctx, rt.baseDir, rt.contextID)
+		cancel()
 		if herdrErr != nil {
 			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
 		} else {
