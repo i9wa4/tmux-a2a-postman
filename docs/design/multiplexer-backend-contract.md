@@ -110,6 +110,12 @@ derive compatibility `windows` groups for existing UI consumers. That projection
 must stay clearly marked as compatibility output and must not introduce pane
 state precedence changes before #639 resolves the semantic model.
 
+Issue #658 adds a disabled-by-default Herdr read-only backend spike documented
+in [Herdr Read-Only Discovery Spike](herdr-readonly-discovery-spike.md). The
+spike uses backend-neutral `layout_groups` with Herdr tab groups and marks tmux
+`windows` as unsupported native evidence instead of treating tabs as tmux
+windows.
+
 ## 8. Interactive Delivery Boundary
 
 Issue #657 separates interactive pane input from filesystem mailbox delivery.
