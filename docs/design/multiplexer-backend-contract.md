@@ -95,6 +95,21 @@ pane command output directly.
 Compatibility requirements for #655 include existing status JSON,
 `SessionStatus.Compact`, and `get-status-oneline`.
 
+Issue #655 adds a backend-owned `SessionLayout` contract with ordered layout
+groups and items. For tmux, those groups are tmux windows and the items are
+panes. The public status payload keeps the legacy `windows` projection for
+existing tmux JSON/TUI consumers and adds `layout_groups` as the backend-neutral
+structural view. `SessionStatus.Compact` and `get-status-oneline` continue to
+derive from the same ordered tmux-compatible pane projection, so their semantics
+do not change here.
+
+First-phase Herdr support should omit tmux-style `windows` as an authoritative
+native shape. After #660 allows Herdr reads, #658 may populate
+`layout_groups` from Herdr workspace/tab/pane layout data and may optionally
+derive compatibility `windows` groups for existing UI consumers. That projection
+must stay clearly marked as compatibility output and must not introduce pane
+state precedence changes before #639 resolves the semantic model.
+
 ## 8. Herdr Gates
 
 Herdr access remains blocked:
