@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
@@ -1343,6 +1345,46 @@ func TestGetTmuxPaneID(t *testing.T) {
 			t.Fatalf("invocations = %#v, want %#v", got, want)
 		}
 	})
+}
+
+func TestCurrentTmuxIdentityRejectsNonCanonicalTMUXPane(t *testing.T) {
+	tests := []string{
+		"postman",
+		"postman:1.0",
+		"1.0",
+		"%42 ",
+		" %42",
+		"%",
+		"%abc",
+		"%42;display-message",
+	}
+
+	for _, paneID := range tests {
+		t.Run(paneID, func(t *testing.T) {
+			t.Setenv("TMUX_PANE", paneID)
+
+			_, err := CurrentTmuxIdentity()
+			if err == nil {
+				t.Fatal("CurrentTmuxIdentity() error = nil, want lookup failure")
+			}
+			var identityErr multiplexer.IdentityError
+			if !errors.As(err, &identityErr) {
+				t.Fatalf("CurrentTmuxIdentity() error = %T %v, want IdentityError", err, err)
+			}
+			if identityErr.Field != "pane_id" || identityErr.Failure != multiplexer.IdentityFailureLookupFailed {
+				t.Fatalf("identity error = %#v, want pane_id lookup_failed", identityErr)
+			}
+			if got := GetTmuxPaneID(); got != "" {
+				t.Fatalf("GetTmuxPaneID() = %q, want empty", got)
+			}
+			if got := GetTmuxSessionName(); got != "" {
+				t.Fatalf("GetTmuxSessionName() = %q, want empty", got)
+			}
+			if got := GetTmuxPaneName(); got != "" {
+				t.Fatalf("GetTmuxPaneName() = %q, want empty", got)
+			}
+		})
+	}
 }
 
 func TestMergeConfig_ScalarOverride(t *testing.T) {
