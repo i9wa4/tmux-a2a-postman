@@ -24,9 +24,10 @@ parse native IDs directly.
 - `Kind`: resource category such as `pane`, `session`, or `node`.
 - `Native`: the backend-owned identifier, such as a tmux `%NN` pane ID.
 
-Existing `discovery.NodeInfo.PaneID` remains a string for compatibility in this
-issue. New backend-facing code converts it at the boundary with
-`multiplexer.TmuxPaneID`.
+Existing `discovery.NodeInfo.PaneID` and `TMUX_PANE` values remain strings for
+compatibility in this issue. Backend-facing identity code converts them at the
+tmux compatibility boundary with `multiplexer.TmuxPaneID` and passes
+`multiplexer.IdentityTarget` values rather than raw native strings.
 
 ## 4. Capture Boundary
 
@@ -58,8 +59,13 @@ The tmux backend preserves existing lookup behavior:
 - Untargeted `display-message` remains the fallback when `TMUX_PANE` is absent.
 - `TMUX_PANE` itself remains the current pane ID when present.
 - Lookup failures are explicit `IdentityError` values at the backend boundary.
+  Blank `pane_id`, `session_name`, and `pane_title` outputs are lookup failures.
   Compatibility wrappers still return empty strings to preserve existing CLI
   behavior.
+- Production runtime-context send/pop paths consume one `CurrentIdentity`
+  resolver so pane, session, and node fields do not drift across independent
+  tmux lookups. CLI tests may still inject legacy tmux-named hooks; that seam is
+  compatibility-only and should not be used for new backend code.
 
 Herdr support should keep the same logical `session:node` address shape while
 resolving internally through Herdr named session, workspace ID, tab ID, and pane
