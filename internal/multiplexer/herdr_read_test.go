@@ -138,6 +138,21 @@ func TestHerdrBackendDiscoveryRejectsPaneWithMissingTab(t *testing.T) {
 	}
 }
 
+func TestHerdrBackendDiscoveryRejectsMissingWorkspaceRoot(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Workspaces = nil
+	client := &fakeHerdrReadClient{
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.Discover(context.Background(), config.Runtime.SessionName)
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("Discover() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+}
+
 func TestHerdrBackendCapturePaneRequiresPaneReadGate(t *testing.T) {
 	client := &fakeHerdrReadClient{
 		ping:     validHerdrEnvelope(),
@@ -210,6 +225,27 @@ func TestHerdrBackendCapturePaneRequiresSnapshotContainment(t *testing.T) {
 	}
 }
 
+func TestHerdrBackendCapturePaneRequiresWorkspaceRoot(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Workspaces = []HerdrWorkspaceSnapshot{{
+		ID:    "workspace-other",
+		Label: "other",
+	}}
+	client := &fakeHerdrReadClient{
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.CapturePane(context.Background(), HerdrPaneID("workspace-1:pane-1"), CaptureOptions{})
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("CapturePane() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+	if client.readPaneCalls != 0 {
+		t.Fatalf("readPaneCalls = %d, want 0 before workspace root passes", client.readPaneCalls)
+	}
+}
+
 func TestHerdrBackendPaneCurrentCommandReadGatePrecedesTargetMismatch(t *testing.T) {
 	client := &fakeHerdrReadClient{}
 	config := validHerdrReadConfig()
@@ -238,6 +274,24 @@ func TestHerdrBackendPaneCurrentCommandRequiresSnapshotContainment(t *testing.T)
 	}
 	if client.processInfoCalls != 0 {
 		t.Fatalf("processInfoCalls = %d, want 0 before snapshot containment passes", client.processInfoCalls)
+	}
+}
+
+func TestHerdrBackendPaneCurrentCommandRequiresWorkspaceRoot(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Workspaces = nil
+	client := &fakeHerdrReadClient{
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.PaneCurrentCommand(context.Background(), HerdrPaneID("workspace-1:pane-1"))
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("PaneCurrentCommand() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+	if client.processInfoCalls != 0 {
+		t.Fatalf("processInfoCalls = %d, want 0 before workspace root passes", client.processInfoCalls)
 	}
 }
 
