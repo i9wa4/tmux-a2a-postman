@@ -21,12 +21,16 @@ type CurrentIdentity struct {
 	NativeIDs   map[string]string
 }
 
+type IdentityTarget struct {
+	Pane ResourceID
+}
+
 type IdentityBackend interface {
 	Kind() BackendKind
-	CurrentIdentity(ctx context.Context, paneID string) (CurrentIdentity, error)
-	CurrentPaneID(ctx context.Context, paneID string) (ResourceID, error)
-	CurrentSessionName(ctx context.Context, paneID string) (string, error)
-	CurrentNodeName(ctx context.Context, paneID string) (string, error)
+	CurrentIdentity(ctx context.Context, target IdentityTarget) (CurrentIdentity, error)
+	CurrentPaneID(ctx context.Context, target IdentityTarget) (ResourceID, error)
+	CurrentSessionName(ctx context.Context, pane ResourceID) (string, error)
+	CurrentNodeName(ctx context.Context, pane ResourceID) (string, error)
 }
 
 type IdentityError struct {
@@ -47,16 +51,16 @@ func (e IdentityError) Unwrap() error {
 	return e.Err
 }
 
-func (b TmuxBackend) CurrentIdentity(ctx context.Context, paneID string) (CurrentIdentity, error) {
-	pane, err := b.CurrentPaneID(ctx, paneID)
+func (b TmuxBackend) CurrentIdentity(ctx context.Context, target IdentityTarget) (CurrentIdentity, error) {
+	pane, err := b.CurrentPaneID(ctx, target)
 	if err != nil {
 		return CurrentIdentity{}, err
 	}
-	sessionName, err := b.CurrentSessionName(ctx, pane.Native)
+	sessionName, err := b.CurrentSessionName(ctx, pane)
 	if err != nil {
 		return CurrentIdentity{}, err
 	}
-	nodeName, err := b.CurrentNodeName(ctx, pane.Native)
+	nodeName, err := b.CurrentNodeName(ctx, pane)
 	if err != nil {
 		return CurrentIdentity{}, err
 	}
@@ -73,9 +77,12 @@ func (b TmuxBackend) CurrentIdentity(ctx context.Context, paneID string) (Curren
 	}, nil
 }
 
-func (b TmuxBackend) CurrentPaneID(_ context.Context, paneID string) (ResourceID, error) {
-	if paneID != "" {
-		return TmuxPaneID(paneID), nil
+func (b TmuxBackend) CurrentPaneID(_ context.Context, target IdentityTarget) (ResourceID, error) {
+	if target.Pane != (ResourceID{}) {
+		if target.Pane.Backend != BackendKindTmux || target.Pane.Kind != ResourceKindPane || strings.TrimSpace(target.Pane.Native) == "" {
+			return ResourceID{}, identityLookupError("pane_id", nil)
+		}
+		return target.Pane, nil
 	}
 	out, err := b.Runner.Output("display-message", "-p", "#{pane_id}")
 	if err != nil {
@@ -88,27 +95,34 @@ func (b TmuxBackend) CurrentPaneID(_ context.Context, paneID string) (ResourceID
 	return TmuxPaneID(value), nil
 }
 
-func (b TmuxBackend) CurrentSessionName(_ context.Context, paneID string) (string, error) {
-	value, err := b.currentDisplayMessage(paneID, "#{session_name}")
+func (b TmuxBackend) CurrentSessionName(_ context.Context, pane ResourceID) (string, error) {
+	value, err := b.currentDisplayMessage(pane, "#{session_name}")
 	if err != nil {
 		return "", identityLookupError("session_name", err)
 	}
+	if value == "" {
+		return "", identityLookupError("session_name", nil)
+	}
 	return value, nil
 }
 
-func (b TmuxBackend) CurrentNodeName(_ context.Context, paneID string) (string, error) {
-	value, err := b.currentDisplayMessage(paneID, "#{pane_title}")
+func (b TmuxBackend) CurrentNodeName(_ context.Context, pane ResourceID) (string, error) {
+	value, err := b.currentDisplayMessage(pane, "#{pane_title}")
 	if err != nil {
 		return "", identityLookupError("pane_title", err)
 	}
+	if value == "" {
+		return "", identityLookupError("pane_title", nil)
+	}
 	return value, nil
 }
 
-func (b TmuxBackend) currentDisplayMessage(paneID, format string) (string, error) {
-	args := []string{"display-message"}
-	if paneID != "" {
-		args = append(args, "-t", paneID)
+func (b TmuxBackend) currentDisplayMessage(pane ResourceID, format string) (string, error) {
+	if pane.Backend != BackendKindTmux || pane.Kind != ResourceKindPane || strings.TrimSpace(pane.Native) == "" {
+		return "", identityLookupError("pane_id", nil)
 	}
+	args := []string{"display-message"}
+	args = append(args, "-t", pane.Native)
 	args = append(args, "-p", format)
 	out, err := b.Runner.Output(args...)
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
@@ -156,6 +157,39 @@ func TestWritePopMessageOutputReturnsReceiptWriteError(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty when receipt write fails", stdout.String())
+	}
+}
+
+func TestReceiverRuntimeContextSummaryForPopUsesCurrentIdentityResolver(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "ctx", "review")
+	identityCalls := 0
+	summary, errText := receiverRuntimeContextSummaryForPop(sessionDir, "msg.md", popReceiverContextOptions{
+		ContextID:   "ctx",
+		SessionName: "review",
+		Node:        "worker",
+		CurrentIdentity: func() (multiplexer.CurrentIdentity, error) {
+			identityCalls++
+			return multiplexer.CurrentIdentity{
+				Backend:     multiplexer.BackendKindTmux,
+				SessionName: "identity-session",
+				NodeName:    "identity-worker",
+				Pane:        multiplexer.TmuxPaneID("%88"),
+				NativeIDs: map[string]string{
+					"pane_id":      "%88",
+					"session_name": "identity-session",
+					"pane_title":   "identity-worker",
+				},
+			}, nil
+		},
+	})
+	if errText != "" {
+		t.Fatalf("receiverRuntimeContextSummaryForPop error = %q", errText)
+	}
+	if identityCalls != 1 {
+		t.Fatalf("current identity calls = %d, want 1", identityCalls)
+	}
+	if summary == nil || summary.Fields.Tmux == nil || summary.Fields.Tmux.PaneID != "%88" {
+		t.Fatalf("summary tmux fields = %#v, want pane %%88", summary)
 	}
 }
 

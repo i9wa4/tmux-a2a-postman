@@ -1323,12 +1323,28 @@ func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error 
 	return (multiplexer.TmuxBackend{}).ClearSessionOwnerMarker(context.Background(), sessionName)
 }
 
+func CurrentTmuxIdentity() (multiplexer.CurrentIdentity, error) {
+	return (multiplexer.TmuxBackend{}).CurrentIdentity(context.Background(), currentTmuxIdentityTarget())
+}
+
+func currentTmuxIdentityTarget() multiplexer.IdentityTarget {
+	target := multiplexer.IdentityTarget{}
+	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
+		target.Pane = multiplexer.TmuxPaneID(paneID)
+	}
+	return target
+}
+
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxSessionName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	sessionName, err := (multiplexer.TmuxBackend{}).CurrentSessionName(context.Background(), paneID)
+	backend := multiplexer.TmuxBackend{}
+	pane, err := backend.CurrentPaneID(context.Background(), currentTmuxIdentityTarget())
+	if err != nil {
+		return ""
+	}
+	sessionName, err := backend.CurrentSessionName(context.Background(), pane)
 	if err != nil {
 		return ""
 	}
@@ -1339,8 +1355,7 @@ func GetTmuxSessionName() string {
 // Uses TMUX_PANE env var when available; falls back to display-message query.
 // Returns empty string if not in tmux or if the command fails.
 func GetTmuxPaneID() string {
-	paneID := os.Getenv("TMUX_PANE")
-	pane, err := (multiplexer.TmuxBackend{}).CurrentPaneID(context.Background(), paneID)
+	pane, err := (multiplexer.TmuxBackend{}).CurrentPaneID(context.Background(), currentTmuxIdentityTarget())
 	if err != nil {
 		return ""
 	}
@@ -1351,8 +1366,12 @@ func GetTmuxPaneID() string {
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxPaneName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	nodeName, err := (multiplexer.TmuxBackend{}).CurrentNodeName(context.Background(), paneID)
+	backend := multiplexer.TmuxBackend{}
+	pane, err := backend.CurrentPaneID(context.Background(), currentTmuxIdentityTarget())
+	if err != nil {
+		return ""
+	}
+	nodeName, err := backend.CurrentNodeName(context.Background(), pane)
 	if err != nil {
 		return ""
 	}
