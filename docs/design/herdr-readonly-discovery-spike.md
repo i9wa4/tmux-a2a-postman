@@ -24,15 +24,17 @@ construct `multiplexer.HerdrReadConfig{Enabled: true, ...}` with:
 - allowed protocol and schema versions.
 
 `multiplexer.NewHerdrBackend` refuses disabled configuration and missing
-clients. Every read path calls the #660 read gate before consuming Herdr
-response fields. Discovery reads use `HerdrReadScopeDiscovery`; pane capture and
-process info use `HerdrReadScopePane`.
+clients. Every read path calls the #660 read gate against local runtime policy
+before making any Herdr client call, then validates each returned response
+envelope before consuming Herdr response fields. Discovery reads use
+`HerdrReadScopeDiscovery`; pane capture and process info use
+`HerdrReadScopePane`.
 
 ## 3. Read APIs
 
 The backend accepts an injected read-only client with these operations:
 
-- `ping` for protocol/schema preflight before data reads;
+- `ping` for optional read-only availability probes;
 - `session.snapshot` for workspace/tab/pane discovery;
 - `pane.read` for capture;
 - `pane.process_info` for current-command evidence.

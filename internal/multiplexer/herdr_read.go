@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -19,6 +20,7 @@ var (
 	ErrHerdrReadClientMissing   = errors.New("herdr read client missing")
 	ErrHerdrPaneTargetMismatch  = errors.New("herdr pane target mismatch")
 	ErrHerdrSessionNameMismatch = errors.New("herdr session name mismatch")
+	ErrHerdrSnapshotInvalid     = errors.New("herdr snapshot invalid")
 )
 
 type HerdrReadConfig struct {
@@ -146,30 +148,30 @@ func (b HerdrBackend) SessionLayout(ctx context.Context, sessionName string) (Se
 }
 
 func (b HerdrBackend) Discover(ctx context.Context, sessionName string) (HerdrDiscoveryResult, error) {
+	if err := b.authorizeReadPath(HerdrReadScopeDiscovery); err != nil {
+		return HerdrDiscoveryResult{}, err
+	}
 	if strings.TrimSpace(sessionName) != strings.TrimSpace(b.Config.Runtime.SessionName) {
 		return HerdrDiscoveryResult{}, ErrHerdrSessionNameMismatch
 	}
-	if err := b.validateReadGate(ctx, HerdrReadScopeDiscovery, HerdrResponseEnvelope{}); err != nil {
-		return HerdrDiscoveryResult{}, err
-	}
-	snapshot, err := b.Client.SessionSnapshot(ctx)
+	snapshot, err := b.readValidatedSnapshot(ctx, HerdrReadScopeDiscovery)
 	if err != nil {
-		return HerdrDiscoveryResult{}, NormalizeHerdrBackendError(err)
-	}
-	if err := b.validateEnvelope(HerdrReadScopeDiscovery, snapshot.Envelope); err != nil {
 		return HerdrDiscoveryResult{}, err
 	}
-	return b.discoveryFromSnapshot(sessionName, snapshot), nil
+	return b.discoveryFromSnapshot(sessionName, snapshot)
 }
 
 func (b HerdrBackend) CapturePane(ctx context.Context, pane ResourceID, opts CaptureOptions) (string, error) {
+	if err := b.authorizeReadPath(HerdrReadScopePane); err != nil {
+		return "", err
+	}
 	if pane.Backend != BackendKindHerdr || pane.Kind != ResourceKindPane {
 		return "", fmt.Errorf("herdr capture requires herdr pane resource: %#v", pane)
 	}
 	if pane.Native != b.Config.Runtime.PaneID {
 		return "", ErrHerdrPaneTargetMismatch
 	}
-	if err := b.validateReadGate(ctx, HerdrReadScopePane, HerdrResponseEnvelope{}); err != nil {
+	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return "", err
 	}
 	result, err := b.Client.ReadPane(ctx, pane.Native, herdrPaneReadOptions(opts))
@@ -183,13 +185,16 @@ func (b HerdrBackend) CapturePane(ctx context.Context, pane ResourceID, opts Cap
 }
 
 func (b HerdrBackend) PaneCurrentCommand(ctx context.Context, pane ResourceID) (string, error) {
+	if err := b.authorizeReadPath(HerdrReadScopePane); err != nil {
+		return "", err
+	}
 	if pane.Backend != BackendKindHerdr || pane.Kind != ResourceKindPane {
 		return "", fmt.Errorf("herdr process info requires herdr pane resource: %#v", pane)
 	}
 	if pane.Native != b.Config.Runtime.PaneID {
 		return "", ErrHerdrPaneTargetMismatch
 	}
-	if err := b.validateReadGate(ctx, HerdrReadScopePane, HerdrResponseEnvelope{}); err != nil {
+	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return "", err
 	}
 	result, err := b.Client.PaneProcessInfo(ctx, pane.Native)
@@ -202,21 +207,26 @@ func (b HerdrBackend) PaneCurrentCommand(ctx context.Context, pane ResourceID) (
 	return result.ProcessInfo.CurrentCommand(), nil
 }
 
-func (b HerdrBackend) validateReadGate(ctx context.Context, scope HerdrReadScope, envelope HerdrResponseEnvelope) error {
+func (b HerdrBackend) authorizeReadPath(scope HerdrReadScope) error {
 	if !b.Config.Enabled {
 		return ErrHerdrReadDisabled
 	}
 	if b.Client == nil {
 		return ErrHerdrReadClientMissing
 	}
-	if envelope.ProtocolVersion == "" && envelope.SchemaVersion == 0 {
-		pingEnvelope, err := b.Client.Ping(ctx)
-		if err != nil {
-			return NormalizeHerdrBackendError(err)
-		}
-		envelope = pingEnvelope
-	}
+	envelope := b.localReadGateEnvelope()
 	return b.validateEnvelope(scope, envelope)
+}
+
+func (b HerdrBackend) localReadGateEnvelope() HerdrResponseEnvelope {
+	envelope := HerdrResponseEnvelope{}
+	if len(b.Config.Policy.AllowedProtocolVersions) > 0 {
+		envelope.ProtocolVersion = b.Config.Policy.AllowedProtocolVersions[0]
+	}
+	if len(b.Config.Policy.AllowedSchemaVersions) > 0 {
+		envelope.SchemaVersion = b.Config.Policy.AllowedSchemaVersions[0]
+	}
+	return envelope
 }
 
 func (b HerdrBackend) validateEnvelope(scope HerdrReadScope, envelope HerdrResponseEnvelope) error {
@@ -225,7 +235,49 @@ func (b HerdrBackend) validateEnvelope(scope HerdrReadScope, envelope HerdrRespo
 	return ValidateHerdrReadGate(policy, b.Config.Runtime, envelope)
 }
 
-func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSessionSnapshot) HerdrDiscoveryResult {
+func (b HerdrBackend) readValidatedSnapshot(ctx context.Context, scope HerdrReadScope) (HerdrSessionSnapshot, error) {
+	snapshot, err := b.Client.SessionSnapshot(ctx)
+	if err != nil {
+		return HerdrSessionSnapshot{}, NormalizeHerdrBackendError(err)
+	}
+	if err := b.validateEnvelope(scope, snapshot.Envelope); err != nil {
+		return HerdrSessionSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (b HerdrBackend) validateConfiguredPaneInSnapshot(ctx context.Context) error {
+	snapshot, err := b.readValidatedSnapshot(ctx, HerdrReadScopePane)
+	if err != nil {
+		return err
+	}
+	return b.validatePaneContainment(snapshot, b.Config.Runtime.TabID, b.Config.Runtime.PaneID)
+}
+
+func (b HerdrBackend) validatePaneContainment(snapshot HerdrSessionSnapshot, tabID, paneID string) error {
+	tabs := herdrTabsByID(snapshot.Tabs, b.Config.Runtime.WorkspaceID)
+	if _, ok := tabs[tabID]; !ok {
+		return fmt.Errorf("%w: configured tab %q is not in workspace %q", ErrHerdrSnapshotInvalid, tabID, b.Config.Runtime.WorkspaceID)
+	}
+	for _, pane := range snapshot.Panes {
+		if pane.ID != paneID {
+			continue
+		}
+		if pane.WorkspaceID != b.Config.Runtime.WorkspaceID {
+			return fmt.Errorf("%w: pane %q is in workspace %q, want %q", ErrHerdrSnapshotInvalid, pane.ID, pane.WorkspaceID, b.Config.Runtime.WorkspaceID)
+		}
+		if pane.TabID != tabID {
+			return fmt.Errorf("%w: pane %q is in tab %q, want %q", ErrHerdrSnapshotInvalid, pane.ID, pane.TabID, tabID)
+		}
+		if pane.Stale {
+			return fmt.Errorf("%w: pane %q is stale: %s", ErrHerdrSnapshotInvalid, pane.ID, pane.StaleReason)
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: pane %q is not in latest snapshot", ErrHerdrSnapshotInvalid, paneID)
+}
+
+func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSessionSnapshot) (HerdrDiscoveryResult, error) {
 	layout := SessionLayout{
 		Backend:     BackendKindHerdr,
 		SessionName: sessionName,
@@ -241,12 +293,8 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 		},
 	}
 
-	tabByID := make(map[string]HerdrTabSnapshot, len(snapshot.Tabs))
-	for _, tab := range snapshot.Tabs {
-		if tab.WorkspaceID != b.Config.Runtime.WorkspaceID {
-			continue
-		}
-		tabByID[tab.ID] = tab
+	tabByID := herdrTabsByID(snapshot.Tabs, b.Config.Runtime.WorkspaceID)
+	for _, tab := range tabByID {
 		layout.Groups = append(layout.Groups, herdrLayoutGroup(tab))
 	}
 
@@ -263,11 +311,7 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 		}
 		groupIndex, ok := groupByTabID[pane.TabID]
 		if !ok {
-			tab := HerdrTabSnapshot{ID: pane.TabID, WorkspaceID: pane.WorkspaceID}
-			tabByID[tab.ID] = tab
-			layout.Groups = append(layout.Groups, herdrLayoutGroup(tab))
-			groupIndex = len(layout.Groups) - 1
-			groupByTabID[pane.TabID] = groupIndex
+			return HerdrDiscoveryResult{}, fmt.Errorf("%w: pane %q references missing tab %q", ErrHerdrSnapshotInvalid, pane.ID, pane.TabID)
 		}
 		nodeName := herdrPostmanNodeName(pane)
 		if nodeName != "" {
@@ -299,7 +343,18 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 		Collisions:              herdrIdentityCollisions(nodeClaims),
 		StalePanes:              stalePanes,
 		UnsupportedStatusFields: []string{"windows"},
+	}, nil
+}
+
+func herdrTabsByID(tabs []HerdrTabSnapshot, workspaceID string) map[string]HerdrTabSnapshot {
+	tabByID := make(map[string]HerdrTabSnapshot, len(tabs))
+	for _, tab := range tabs {
+		if tab.WorkspaceID != workspaceID {
+			continue
+		}
+		tabByID[tab.ID] = tab
 	}
+	return tabByID
 }
 
 func herdrLayoutGroup(tab HerdrTabSnapshot) LayoutGroup {
@@ -400,12 +455,20 @@ func (info HerdrPaneProcessInfo) CurrentCommand() string {
 	}
 	process := info.ForegroundProcesses[0]
 	if process.Command != "" {
-		return process.Command
+		return herdrCommandToken(process.Command)
 	}
 	if len(process.Argv) > 0 {
-		return process.Argv[0]
+		return herdrCommandToken(process.Argv[0])
 	}
-	return process.Name
+	return herdrCommandToken(process.Name)
+}
+
+func herdrCommandToken(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
 }
 
 func NormalizeHerdrBackendError(err error) error {

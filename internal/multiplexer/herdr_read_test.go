@@ -25,9 +25,37 @@ func TestHerdrBackendDiscoveryRequiresReadGateBeforeSnapshot(t *testing.T) {
 
 	_, err := backend.Discover(context.Background(), config.Runtime.SessionName)
 	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_enabled", HerdrGateFailureClosed)
+	if client.pingCalls != 0 {
+		t.Fatalf("pingCalls = %d, want 0 before read gate passes", client.pingCalls)
+	}
 	if client.snapshotCalls != 0 {
 		t.Fatalf("snapshotCalls = %d, want 0 before read gate passes", client.snapshotCalls)
 	}
+}
+
+func TestHerdrBackendDiscoveryRequiresAllowlistBeforeClientCall(t *testing.T) {
+	client := &fakeHerdrReadClient{
+		ping: validHerdrEnvelope(),
+	}
+	config := validHerdrReadConfig()
+	config.Policy.AllowedWorkspaceIDs = []string{"workspace-other"}
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.Discover(context.Background(), config.Runtime.SessionName)
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "workspace_id", HerdrGateFailureNotAllowlisted)
+	if client.pingCalls != 0 || client.snapshotCalls != 0 {
+		t.Fatalf("client calls = ping:%d snapshot:%d, want none", client.pingCalls, client.snapshotCalls)
+	}
+}
+
+func TestHerdrBackendReadGatePrecedesSessionMismatch(t *testing.T) {
+	client := &fakeHerdrReadClient{}
+	config := validHerdrReadConfig()
+	config.Policy.ReadEnabled = false
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.Discover(context.Background(), "other")
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_enabled", HerdrGateFailureClosed)
 }
 
 func TestHerdrBackendDiscoveryProjectsReadOnlyLayout(t *testing.T) {
@@ -94,9 +122,26 @@ func TestHerdrBackendDiscoveryRejectsUnsupportedSnapshotEnvelope(t *testing.T) {
 	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "protocol_version", HerdrGateFailureUnsupportedProtocol)
 }
 
+func TestHerdrBackendDiscoveryRejectsPaneWithMissingTab(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[0].TabID = "workspace-1:missing-tab"
+	client := &fakeHerdrReadClient{
+		ping:     validHerdrEnvelope(),
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.Discover(context.Background(), config.Runtime.SessionName)
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("Discover() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+}
+
 func TestHerdrBackendCapturePaneRequiresPaneReadGate(t *testing.T) {
 	client := &fakeHerdrReadClient{
-		ping: validHerdrEnvelope(),
+		ping:     validHerdrEnvelope(),
+		snapshot: validHerdrSessionSnapshot(),
 		readPane: HerdrPaneReadResult{
 			Envelope: validHerdrEnvelope(),
 			Text:     "hello\n",
@@ -134,9 +179,72 @@ func TestHerdrBackendCapturePaneRequiresConfiguredPaneTarget(t *testing.T) {
 	}
 }
 
+func TestHerdrBackendCapturePaneReadGatePrecedesTargetMismatch(t *testing.T) {
+	client := &fakeHerdrReadClient{}
+	config := validHerdrReadConfig()
+	config.Policy.ReadEnabled = false
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.CapturePane(context.Background(), HerdrPaneID("workspace-1:pane-2"), CaptureOptions{})
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_enabled", HerdrGateFailureClosed)
+	if client.snapshotCalls != 0 || client.readPaneCalls != 0 {
+		t.Fatalf("client calls = snapshot:%d read:%d, want none", client.snapshotCalls, client.readPaneCalls)
+	}
+}
+
+func TestHerdrBackendCapturePaneRequiresSnapshotContainment(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[0].TabID = "workspace-1:other-tab"
+	client := &fakeHerdrReadClient{
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.CapturePane(context.Background(), HerdrPaneID("workspace-1:pane-1"), CaptureOptions{})
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("CapturePane() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+	if client.readPaneCalls != 0 {
+		t.Fatalf("readPaneCalls = %d, want 0 before snapshot containment passes", client.readPaneCalls)
+	}
+}
+
+func TestHerdrBackendPaneCurrentCommandReadGatePrecedesTargetMismatch(t *testing.T) {
+	client := &fakeHerdrReadClient{}
+	config := validHerdrReadConfig()
+	config.Policy.ReadEnabled = false
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.PaneCurrentCommand(context.Background(), HerdrPaneID("workspace-1:pane-2"))
+	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "read_enabled", HerdrGateFailureClosed)
+	if client.snapshotCalls != 0 || client.processInfoCalls != 0 {
+		t.Fatalf("client calls = snapshot:%d process_info:%d, want none", client.snapshotCalls, client.processInfoCalls)
+	}
+}
+
+func TestHerdrBackendPaneCurrentCommandRequiresSnapshotContainment(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[0].WorkspaceID = "workspace-2"
+	client := &fakeHerdrReadClient{
+		snapshot: snapshot,
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+
+	_, err := backend.PaneCurrentCommand(context.Background(), HerdrPaneID("workspace-1:pane-1"))
+	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("PaneCurrentCommand() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+	if client.processInfoCalls != 0 {
+		t.Fatalf("processInfoCalls = %d, want 0 before snapshot containment passes", client.processInfoCalls)
+	}
+}
+
 func TestHerdrBackendPaneCurrentCommandReadsProcessInfo(t *testing.T) {
 	client := &fakeHerdrReadClient{
-		ping: validHerdrEnvelope(),
+		ping:     validHerdrEnvelope(),
+		snapshot: validHerdrSessionSnapshot(),
 		processInfo: HerdrPaneProcessInfoResult{
 			Envelope: validHerdrEnvelope(),
 			ProcessInfo: HerdrPaneProcessInfo{
@@ -159,6 +267,46 @@ func TestHerdrBackendPaneCurrentCommandReadsProcessInfo(t *testing.T) {
 	}
 }
 
+func TestHerdrPaneProcessInfoCurrentCommandNormalizesExecutableToken(t *testing.T) {
+	tests := []struct {
+		name string
+		info HerdrPaneProcessInfo
+		want string
+	}{
+		{
+			name: "command with args",
+			info: HerdrPaneProcessInfo{ForegroundProcesses: []HerdrProcessInfo{{
+				Command: "/usr/bin/zsh -l",
+				Argv:    []string{"ignored"},
+				Name:    "ignored",
+			}}},
+			want: "zsh",
+		},
+		{
+			name: "argv path",
+			info: HerdrPaneProcessInfo{ForegroundProcesses: []HerdrProcessInfo{{
+				Argv: []string{"/nix/store/hash/bin/codex", "--yolo"},
+				Name: "ignored",
+			}}},
+			want: "codex",
+		},
+		{
+			name: "name path",
+			info: HerdrPaneProcessInfo{ForegroundProcesses: []HerdrProcessInfo{{
+				Name: "/bin/bash",
+			}}},
+			want: "bash",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.info.CurrentCommand(); got != tt.want {
+				t.Fatalf("CurrentCommand() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeHerdrBackendErrorUnavailable(t *testing.T) {
 	err := NormalizeHerdrBackendError(net.ErrClosed)
 	if !errors.Is(err, ErrHerdrBackendUnavailable) {
@@ -167,22 +315,25 @@ func TestNormalizeHerdrBackendErrorUnavailable(t *testing.T) {
 }
 
 type fakeHerdrReadClient struct {
-	ping            HerdrResponseEnvelope
-	pingErr         error
-	snapshot        HerdrSessionSnapshot
-	snapshotErr     error
-	readPane        HerdrPaneReadResult
-	readPaneErr     error
-	processInfo     HerdrPaneProcessInfoResult
-	processInfoErr  error
-	snapshotCalls   int
-	readPaneCalls   int
-	readPaneID      string
-	readOptions     HerdrPaneReadOptions
-	processInfoPane string
+	ping             HerdrResponseEnvelope
+	pingErr          error
+	snapshot         HerdrSessionSnapshot
+	snapshotErr      error
+	readPane         HerdrPaneReadResult
+	readPaneErr      error
+	processInfo      HerdrPaneProcessInfoResult
+	processInfoErr   error
+	pingCalls        int
+	snapshotCalls    int
+	readPaneCalls    int
+	processInfoCalls int
+	readPaneID       string
+	readOptions      HerdrPaneReadOptions
+	processInfoPane  string
 }
 
 func (f *fakeHerdrReadClient) Ping(context.Context) (HerdrResponseEnvelope, error) {
+	f.pingCalls++
 	if f.pingErr != nil {
 		return HerdrResponseEnvelope{}, f.pingErr
 	}
@@ -208,6 +359,7 @@ func (f *fakeHerdrReadClient) ReadPane(_ context.Context, paneID string, opts He
 }
 
 func (f *fakeHerdrReadClient) PaneProcessInfo(_ context.Context, paneID string) (HerdrPaneProcessInfoResult, error) {
+	f.processInfoCalls++
 	f.processInfoPane = paneID
 	if f.processInfoErr != nil {
 		return HerdrPaneProcessInfoResult{}, f.processInfoErr
