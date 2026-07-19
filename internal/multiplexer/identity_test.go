@@ -148,6 +148,53 @@ func TestTmuxBackendCurrentIdentityRejectsWrongBackendTarget(t *testing.T) {
 	assertIdentityLookupFailure(t, err, "pane_id")
 }
 
+func TestTmuxBackendCurrentIdentityRejectsGenericTmuxTargets(t *testing.T) {
+	tests := []string{
+		"postman",
+		"postman:1.0",
+		"1.0",
+		"%9 ",
+		" %9",
+		"%",
+		"%abc",
+		"%9;display-message",
+	}
+
+	for _, paneID := range tests {
+		t.Run(paneID, func(t *testing.T) {
+			target := IdentityTarget{Pane: TmuxPaneID(paneID)}
+
+			_, err := (TmuxBackend{}).CurrentIdentity(context.Background(), target)
+			assertIdentityLookupFailure(t, err, "pane_id")
+		})
+	}
+}
+
+func TestIsCanonicalTmuxPaneID(t *testing.T) {
+	tests := []struct {
+		paneID string
+		want   bool
+	}{
+		{paneID: "%0", want: true},
+		{paneID: "%42", want: true},
+		{paneID: "postman", want: false},
+		{paneID: "postman:1.0", want: false},
+		{paneID: "1.0", want: false},
+		{paneID: "%42 ", want: false},
+		{paneID: " %42", want: false},
+		{paneID: "%", want: false},
+		{paneID: "%abc", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.paneID, func(t *testing.T) {
+			if got := IsCanonicalTmuxPaneID(tt.paneID); got != tt.want {
+				t.Fatalf("IsCanonicalTmuxPaneID(%q) = %v, want %v", tt.paneID, got, tt.want)
+			}
+		})
+	}
+}
+
 func assertIdentityLookupFailure(t *testing.T, err error, field string) {
 	t.Helper()
 	if err == nil {

@@ -384,16 +384,15 @@ func receiverRuntimeContextSummaryForPop(sessionDir, messageID string, opts popR
 	if err != nil {
 		return nil, "receiver_runtime_context_unavailable: current identity lookup failed"
 	}
-	paneID := identity.Pane.Native
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:                        now,
 		Scope:                      "receiver",
 		ContextID:                  opts.ContextID,
 		MessageID:                  messageID,
-		TmuxSession:                opts.SessionName,
-		Node:                       opts.Node,
-		PaneID:                     paneID,
-		Runtime:                    runtimecontext.CollectLaunchCommandMetadata(paneID),
+		TmuxSession:                identity.SessionName,
+		Node:                       identity.NodeName,
+		PaneID:                     identity.Pane.Native,
+		Runtime:                    runtimecontext.CollectLaunchCommandMetadata(identity.Pane.Native),
 		SuppressRuntimeAutoCollect: true,
 	})
 	saved, err := runtimecontext.SaveSnapshot(sessionDir, snapshot)
