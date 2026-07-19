@@ -243,7 +243,19 @@ func (b HerdrBackend) readValidatedSnapshot(ctx context.Context, scope HerdrRead
 	if err := b.validateEnvelope(scope, snapshot.Envelope); err != nil {
 		return HerdrSessionSnapshot{}, err
 	}
+	if err := b.validateSnapshotWorkspaceRoot(snapshot); err != nil {
+		return HerdrSessionSnapshot{}, err
+	}
 	return snapshot, nil
+}
+
+func (b HerdrBackend) validateSnapshotWorkspaceRoot(snapshot HerdrSessionSnapshot) error {
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.ID == b.Config.Runtime.WorkspaceID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: configured workspace %q is not in latest snapshot", ErrHerdrSnapshotInvalid, b.Config.Runtime.WorkspaceID)
 }
 
 func (b HerdrBackend) validateConfiguredPaneInSnapshot(ctx context.Context) error {
