@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
@@ -95,17 +97,50 @@ func TestLogDiscoveredCollisionsReportsHerdrRediscoveryAndManualPingCollisions(t
 	}
 }
 
+func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryEmpty(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	client := &fakeCLIHerdrClient{snapshot: validCLIDuplicateHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, collisions, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	if err != nil {
+		t.Fatalf("discoverFreshNodesWithHerdr() error = %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("nodes = %#v, want duplicate Herdr claims to remain unroutable", nodes)
+	}
+	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
+		t.Fatalf("collisions = %#v, want Herdr-only duplicate collision despite empty tmux discovery", collisions)
+	}
+}
+
 func TestRunStartWithFlags_SourceContractReportsHerdrCollisionsAfterStartupRediscoveryAndManualPing(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 
-	if !strings.Contains(source, "herdrNodes, herdrCollisions, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)") {
-		t.Fatal("startup re-discovery no longer collects Herdr collision reports with bounded context")
+	if !strings.Contains(source, "discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)") {
+		t.Fatal("startup/manual rediscovery no longer uses the shared Herdr collision helper")
 	}
-	if !strings.Contains(source, "freshCollisions = append(freshCollisions, herdrCollisions...)") {
+	if !strings.Contains(source, "collisions = append(collisions, herdrCollisions...)") {
 		t.Fatal("Herdr collision reports are no longer appended before rediscovery/manual PING logging")
 	}
 	if strings.Contains(source, "herdrRuntime.Discover(context.Background(), baseDir, contextID)") {
 		t.Fatal("start.go still uses an unbounded background context for Herdr discovery")
+	}
+	if strings.Contains(source, "discErr == nil && len(freshDiscovered) > 0") {
+		t.Fatal("manual PING still skips Herdr discovery when tmux discovery returns zero nodes")
 	}
 }
 
@@ -873,5 +908,74 @@ func assertPathMissing(t *testing.T, path string) {
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("Stat(%q) error = %v, want not exists", path, err)
+	}
+}
+
+type fakeCLIHerdrClient struct {
+	snapshot multiplexer.HerdrSessionSnapshot
+}
+
+func (f *fakeCLIHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}, nil
+}
+
+func (f *fakeCLIHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeCLIHerdrClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {
+	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func validCLIHerdrConfig() config.HerdrConfig {
+	return config.HerdrConfig{
+		Enabled:                 true,
+		SocketPath:              "/tmp/herdr.sock",
+		SessionName:             "work",
+		WorkspaceID:             "workspace-1",
+		AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
+		AllowedSessions:         []string{"work"},
+		AllowedWorkspaceIDs:     []string{"workspace-1"},
+		AllowedProtocolVersions: []string{"1"},
+		AllowedSchemaVersions:   []int{1},
+		ReadEnabled:             true,
+		WriteEnabled:            true,
+		InputSanitizerReady:     true,
+		ComplianceDecision:      string(multiplexer.HerdrComplianceDecisionAGPL),
+	}
+}
+
+func validCLIDuplicateHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
+	return multiplexer.HerdrSessionSnapshot{
+		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
+			ID:       "workspace-1",
+			Metadata: map[string]string{},
+		}},
+		Tabs: []multiplexer.HerdrTabSnapshot{{
+			ID:          "workspace-1:tab-1",
+			WorkspaceID: "workspace-1",
+			Metadata:    map[string]string{},
+		}},
+		Panes: []multiplexer.HerdrPaneSnapshot{
+			{
+				ID:          "workspace-1:pane-1",
+				WorkspaceID: "workspace-1",
+				TabID:       "workspace-1:tab-1",
+				PostmanNode: "worker",
+				ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+			},
+			{
+				ID:          "workspace-1:pane-2",
+				WorkspaceID: "workspace-1",
+				TabID:       "workspace-1:tab-1",
+				PostmanNode: "worker",
+				ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+			},
+		},
 	}
 }

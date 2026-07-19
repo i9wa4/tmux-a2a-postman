@@ -220,6 +220,12 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
 		t.Fatalf("collisions = %#v, want duplicate Herdr collision", collisions)
 	}
+	if err := rt.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err != nil {
+		t.Fatalf("SetSessionEnabledMarker() duplicate-only Herdr cold start error = %v", err)
+	}
+	if client.setWorkspaceMetadataWorkspace != "workspace-1" || client.setWorkspaceMetadataValue == "" {
+		t.Fatalf("set workspace metadata workspace=%q value=%q, want duplicate-only cold start session marker", client.setWorkspaceMetadataWorkspace, client.setWorkspaceMetadataValue)
+	}
 	for _, paneID := range []string{"workspace-1:pane-1", "workspace-1:pane-2"} {
 		target := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: paneID}}
 		if _, err := controlplane.DefaultHandAdapter(target); err == nil {
@@ -419,6 +425,8 @@ type fakeRuntimeHerdrClient struct {
 	setPaneMetadataKey   string
 	setPaneMetadataValue string
 
+	setWorkspaceMetadataWorkspace   string
+	setWorkspaceMetadataValue       string
 	clearWorkspaceMetadataWorkspace string
 	clearWorkspaceMetadataKey       string
 }
@@ -454,7 +462,9 @@ func (f *fakeRuntimeHerdrClient) SendPaneKey(_ context.Context, _ string, key st
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeRuntimeHerdrClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+func (f *fakeRuntimeHerdrClient) SetWorkspaceMetadata(_ context.Context, workspaceID string, _ string, value string) (multiplexer.HerdrWriteResult, error) {
+	f.setWorkspaceMetadataWorkspace = workspaceID
+	f.setWorkspaceMetadataValue = value
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
