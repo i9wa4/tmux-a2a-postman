@@ -132,10 +132,11 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 				continue
 			}
 			nodeKey := rt.cfg.SessionName + ":" + item.LogicalName
+			paneBackend := rt.backendForPane(tabID, item.ID.Native)
+			rt.ownershipBackend.setSessionBackend(paneBackend)
 			if collidedNodeKeys[nodeKey] {
 				continue
 			}
-			paneBackend := rt.backendForPane(tabID, item.ID.Native)
 			rt.registerPaneBackend(item.ID.Native, paneBackend)
 			livePanes[item.ID.Native] = true
 			nodes[nodeKey] = discovery.NodeInfo{
@@ -234,6 +235,16 @@ func (m *ownershipMux) setPaneBackend(paneID string, backend multiplexer.HerdrBa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byPane[paneID] = backend
+	m.setSessionBackendLocked(backend)
+}
+
+func (m *ownershipMux) setSessionBackend(backend multiplexer.HerdrBackend) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setSessionBackendLocked(backend)
+}
+
+func (m *ownershipMux) setSessionBackendLocked(backend multiplexer.HerdrBackend) {
 	sessionBackend := backend
 	m.sessionBackend = &sessionBackend
 }
