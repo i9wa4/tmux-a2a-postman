@@ -136,6 +136,9 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	herdrNodes, herdrCollisions, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)
 	if herdrErr != nil {
 		log.Printf("⚠️  postman: herdr discovery failed: %v\n", herdrErr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tmux discovery failed: %w; herdr discovery failed: %v", err, herdrErr)
+		}
 		return fresh, collisions, nil
 	}
 	collisions = append(collisions, mergeDiscoveredNodes(fresh, herdrNodes)...)
