@@ -154,7 +154,7 @@ func TestSessionStatusLayoutGroupsProjectTmuxWindowsCompatibility(t *testing.T) 
 		t.Fatalf("len(LayoutGroups) = %d, want 1: %#v", len(health.LayoutGroups), health.LayoutGroups)
 	}
 	group := health.LayoutGroups[0]
-	if group.Kind != "window" || group.Index != "0" || group.Backend != "tmux" {
+	if group.Kind != "window" || group.ID != "review:0" || group.Index != "0" || group.Backend != "tmux" {
 		t.Fatalf("LayoutGroups[0] = %#v, want tmux window group", group)
 	}
 	if len(group.Nodes) != 2 {
