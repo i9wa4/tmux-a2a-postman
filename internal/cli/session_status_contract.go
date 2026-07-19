@@ -27,6 +27,7 @@ type sessionPane struct {
 	title          string
 	currentCommand string
 	backend        string
+	groupID        string
 	nativeIDs      map[string]string
 }
 
@@ -611,6 +612,7 @@ func sessionPanesFromLayout(layout multiplexer.SessionLayout) []sessionPane {
 				title:          item.LogicalName,
 				currentCommand: item.CurrentCommand,
 				backend:        string(item.ID.Backend),
+				groupID:        group.ID.Native,
 				nativeIDs:      cloneStringMap(item.NativeIDs),
 			})
 		}
@@ -697,7 +699,7 @@ func buildSessionLayoutGroups(nodes []status.NodeStatus, panes []sessionPane) []
 		if !exists {
 			groups = append(groups, status.LayoutGroup{
 				Kind:    "window",
-				ID:      pane.windowIndex,
+				ID:      pane.groupID,
 				Index:   pane.windowIndex,
 				Backend: pane.backend,
 				NativeIDs: map[string]string{
