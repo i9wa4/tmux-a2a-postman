@@ -83,6 +83,9 @@ func TestSessionStatusProjectionParity(t *testing.T) {
 				t.Fatalf("collectSessionStatus() error = %v", err)
 			}
 
+			if len(legacy.LayoutGroups) == 0 {
+				t.Fatal("legacy LayoutGroups is empty, want backend-neutral layout projection")
+			}
 			assertSessionStatusParity(t, legacy, projected)
 		})
 	}
@@ -122,6 +125,43 @@ func TestGetStatusOnelineProjectionParity(t *testing.T) {
 	projectedOneline := formatAllSessionStatusOneline(projected)
 	if legacyOneline != projectedOneline {
 		t.Fatalf("oneline mismatch:\nlegacy:    %q\nprojected: %q", legacyOneline, projectedOneline)
+	}
+}
+
+func TestSessionStatusLayoutGroupsProjectTmuxWindowsCompatibility(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "idle"},
+		map[string]int{},
+		nil,
+	)
+
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+
+	if got, want := health.Compact, "🟢🟢"; got != want {
+		t.Fatalf("Compact = %q, want %q", got, want)
+	}
+	if len(health.Windows) != 1 || health.Windows[0].Index != "0" {
+		t.Fatalf("Windows = %#v, want tmux-compatible window projection", health.Windows)
+	}
+	if got := []string{health.Windows[0].Nodes[0].Name, health.Windows[0].Nodes[1].Name}; !reflect.DeepEqual(got, []string{"worker", "critic"}) {
+		t.Fatalf("window nodes = %#v", got)
+	}
+	if len(health.LayoutGroups) != 1 {
+		t.Fatalf("len(LayoutGroups) = %d, want 1: %#v", len(health.LayoutGroups), health.LayoutGroups)
+	}
+	group := health.LayoutGroups[0]
+	if group.Kind != "window" || group.Index != "0" || group.Backend != "tmux" {
+		t.Fatalf("LayoutGroups[0] = %#v, want tmux window group", group)
+	}
+	if len(group.Nodes) != 2 {
+		t.Fatalf("len(LayoutGroups[0].Nodes) = %d, want 2", len(group.Nodes))
+	}
+	if group.Nodes[0].Name != "worker" || group.Nodes[0].PaneID != "%11" || group.Nodes[0].Backend != "tmux" {
+		t.Fatalf("LayoutGroups[0].Nodes[0] = %#v", group.Nodes[0])
 	}
 }
 
