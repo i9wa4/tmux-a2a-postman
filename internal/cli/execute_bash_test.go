@@ -883,6 +883,50 @@ func TestRunExecuteBashDecisionHistoryCommandTextOptIn(t *testing.T) {
 	}
 }
 
+func TestRunExecuteBashRecordDecisionWarnsWhenDecisionHistorySyncFailsAfterAppend(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	threadID := fixture.appendCommandApprovalRequest(t, policy, "printf approve-with-history-sync-failure", time.Now().Add(time.Hour))
+	if err := os.WriteFile(journal.CommandApprovalDecisionHistoryDir(fixture.sessionDir), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile(history path as file) error = %v", err)
+	}
+
+	err := runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+		"--reason", "authoritative decision survives derived sync failure",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext(record decision) error = %v, want nil after authoritative append: stderr=%s", err, fixture.stderr.String())
+	}
+	if !strings.Contains(fixture.stderr.String(), "command approval decision history sync failed after recording decision") {
+		t.Fatalf("stderr = %q, want decision history sync warning", fixture.stderr.String())
+	}
+
+	state, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil {
+		t.Fatalf("ProjectCommandApprovalState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCommandApprovalState() ok = false, want true")
+	}
+	if got := state.Threads[threadID].Status; got != projection.CommandApprovalStatusApproved {
+		t.Fatalf("thread status = %q, want approved", got)
+	}
+}
+
 func (f *executeBashFixture) appendCommandApproval(t *testing.T, policy resolvedCommandApprovalPolicy, commandText string, decision journal.ApprovalDecision, decisionReviewer string, expiresAt time.Time) string {
 	t.Helper()
 

@@ -47,6 +47,7 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 	}
 	requests := make(map[string]CommandApprovalRequestPayload)
 	requestedAt := make(map[string]string)
+	expected := make(map[string]CommandApprovalDecisionHistoryEntry)
 	for _, event := range events {
 		switch event.Type {
 		case CommandApprovalRequestedEventType:
@@ -66,10 +67,19 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 				continue
 			}
 			entry := commandApprovalDecisionHistoryEntry(event, request, requestedAt[event.ThreadID], payload)
-			if err := writeJSONAtomically(commandApprovalDecisionHistoryPath(sessionDir, event), entry); err != nil {
-				return fmt.Errorf("writing command approval decision history: %w", err)
-			}
+			expected[commandApprovalDecisionHistoryFilename(event)] = entry
 		}
+	}
+	if len(expected) == 0 {
+		return pruneCommandApprovalDecisionHistory(sessionDir, expected)
+	}
+	for filename, entry := range expected {
+		if err := writeJSONAtomically(filepath.Join(CommandApprovalDecisionHistoryDir(sessionDir), filename), entry); err != nil {
+			return fmt.Errorf("writing command approval decision history: %w", err)
+		}
+	}
+	if err := pruneCommandApprovalDecisionHistory(sessionDir, expected); err != nil {
+		return fmt.Errorf("pruning command approval decision history: %w", err)
 	}
 	return nil
 }
@@ -121,7 +131,33 @@ func commandApprovalDecisionEffectiveStatus(request CommandApprovalRequestPayloa
 }
 
 func commandApprovalDecisionHistoryPath(sessionDir string, event Event) string {
-	return filepath.Join(CommandApprovalDecisionHistoryDir(sessionDir), fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID))
+	return filepath.Join(CommandApprovalDecisionHistoryDir(sessionDir), commandApprovalDecisionHistoryFilename(event))
+}
+
+func commandApprovalDecisionHistoryFilename(event Event) string {
+	return fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID)
+}
+
+func pruneCommandApprovalDecisionHistory(sessionDir string, expected map[string]CommandApprovalDecisionHistoryEntry) error {
+	entries, err := os.ReadDir(CommandApprovalDecisionHistoryDir(sessionDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		if _, ok := expected[entry.Name()]; ok {
+			continue
+		}
+		if err := os.Remove(filepath.Join(CommandApprovalDecisionHistoryDir(sessionDir), entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ListCommandApprovalDecisionHistory(sessionDir string) ([]CommandApprovalDecisionHistoryEntry, error) {
