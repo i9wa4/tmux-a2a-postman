@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 type HerdrAccessPhase string
@@ -47,6 +48,13 @@ func (e HerdrGateError) Error() string {
 	return fmt.Sprintf("herdr %s gate %s for %s", e.Phase, e.Failure, e.Field)
 }
 
+type HerdrReadScope string
+
+const (
+	HerdrReadScopeDiscovery HerdrReadScope = ""
+	HerdrReadScopePane      HerdrReadScope = "pane"
+)
+
 type HerdrRuntimeIdentity struct {
 	SocketPath  string
 	SessionName string
@@ -58,6 +66,7 @@ type HerdrRuntimeIdentity struct {
 type HerdrGatePolicy struct {
 	ReadEnabled             bool
 	WriteEnabled            bool
+	ReadScope               HerdrReadScope
 	AllowedSocketPaths      []string
 	AllowedSessions         []string
 	AllowedWorkspaceIDs     []string
@@ -86,23 +95,16 @@ func HerdrRuntimeIdentityFromEnv(getenv func(string) string) HerdrRuntimeIdentit
 }
 
 func ValidateHerdrReadGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
-	if !policy.ReadEnabled {
-		return herdrGateError(HerdrAccessPhaseRead, "", HerdrGateFailureClosed)
-	}
-	if err := validateHerdrRuntime(HerdrAccessPhaseRead, policy, runtime); err != nil {
-		return err
-	}
-	return validateHerdrEnvelope(HerdrAccessPhaseRead, policy, envelope)
+	return validateHerdrReadGateForPhase(HerdrAccessPhaseRead, policy, runtime, envelope)
 }
 
 func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
 	if !policy.WriteEnabled {
 		return herdrGateError(HerdrAccessPhaseWrite, "", HerdrGateFailureClosed)
 	}
-	if err := validateHerdrRuntime(HerdrAccessPhaseWrite, policy, runtime); err != nil {
-		return err
-	}
-	if err := validateHerdrEnvelope(HerdrAccessPhaseWrite, policy, envelope); err != nil {
+	writePolicy := policy
+	writePolicy.ReadScope = HerdrReadScopePane
+	if err := validateHerdrReadGateForPhase(HerdrAccessPhaseWrite, writePolicy, runtime, envelope); err != nil {
 		return err
 	}
 	if !policy.InputSanitizerReady {
@@ -114,17 +116,41 @@ func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity
 	return nil
 }
 
-func validateHerdrRuntime(phase HerdrAccessPhase, policy HerdrGatePolicy, runtime HerdrRuntimeIdentity) error {
-	required := map[string]string{
-		"socket_path":  runtime.SocketPath,
-		"session_name": runtime.SessionName,
-		"workspace_id": runtime.WorkspaceID,
-		"tab_id":       runtime.TabID,
-		"pane_id":      runtime.PaneID,
+func validateHerdrReadGateForPhase(phase HerdrAccessPhase, policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
+	if !policy.ReadEnabled {
+		return herdrGateError(phase, "read_enabled", HerdrGateFailureClosed)
 	}
-	for field, value := range required {
-		if value == "" {
-			return herdrGateError(phase, field, HerdrGateFailureMissingRuntime)
+	if err := validateHerdrRuntime(phase, policy, runtime); err != nil {
+		return err
+	}
+	return validateHerdrEnvelope(phase, policy, envelope)
+}
+
+func validateHerdrRuntime(phase HerdrAccessPhase, policy HerdrGatePolicy, runtime HerdrRuntimeIdentity) error {
+	required := []struct {
+		field string
+		value string
+	}{
+		{field: "socket_path", value: runtime.SocketPath},
+		{field: "session_name", value: runtime.SessionName},
+		{field: "workspace_id", value: runtime.WorkspaceID},
+	}
+	if policy.ReadScope == HerdrReadScopePane {
+		required = append(
+			required,
+			struct {
+				field string
+				value string
+			}{field: "tab_id", value: runtime.TabID},
+			struct {
+				field string
+				value string
+			}{field: "pane_id", value: runtime.PaneID},
+		)
+	}
+	for _, requiredField := range required {
+		if requiredField.value == "" {
+			return herdrGateError(phase, requiredField.field, HerdrGateFailureMissingRuntime)
 		}
 	}
 	if !contains(policy.AllowedSocketPaths, runtime.SocketPath) {
@@ -140,7 +166,8 @@ func validateHerdrRuntime(phase HerdrAccessPhase, policy HerdrGatePolicy, runtim
 }
 
 func validateHerdrEnvelope(phase HerdrAccessPhase, policy HerdrGatePolicy, envelope HerdrResponseEnvelope) error {
-	if envelope.ProtocolVersion == "" || !contains(policy.AllowedProtocolVersions, envelope.ProtocolVersion) {
+	protocolVersion := strings.TrimSpace(envelope.ProtocolVersion)
+	if _, err := HerdrProtocolVersion(protocolVersion); err != nil || !contains(policy.AllowedProtocolVersions, protocolVersion) {
 		return herdrGateError(phase, "protocol_version", HerdrGateFailureUnsupportedProtocol)
 	}
 	if envelope.SchemaVersion <= 0 || !containsInt(policy.AllowedSchemaVersions, envelope.SchemaVersion) {
@@ -182,10 +209,18 @@ func HerdrTabID(tabID string) ResourceID {
 	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindTab, Native: tabID}
 }
 
+func HerdrProtocolVersion(version string) (int, error) {
+	return parsePositiveHerdrVersion("protocol", version)
+}
+
 func HerdrSchemaVersion(version string) (int, error) {
-	n, err := strconv.Atoi(version)
+	return parsePositiveHerdrVersion("schema", version)
+}
+
+func parsePositiveHerdrVersion(name, version string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(version))
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("invalid Herdr schema version %q", version)
+		return 0, fmt.Errorf("invalid Herdr %s version %q", name, version)
 	}
 	return n, nil
 }

@@ -134,9 +134,12 @@ Herdr access remains blocked until the gates in
 [Herdr Security And Licensing Gates](herdr-security-licensing-gates.md) pass:
 
 - #658 may add read-only Herdr behavior only after calling the #660 read gate
-  for socket/session/workspace allowlists and protocol/schema checks.
+  for socket/session/workspace allowlists and protocol/schema checks. Discovery
+  reads use the default discovery scope; pane-targeted reads must opt into the
+  pane scope and provide tab/pane identity.
 - #659 may add Herdr write/mutation only after #658 validates read-only behavior
-  and the #660 write gate confirms input sanitization and compliance decisions.
+  and the #660 write gate composes the pane-targeted read gate, confirms input
+  sanitization, and confirms compliance decisions.
 
 Future Herdr read/write paths should use `multiplexer.ValidateHerdrReadGate` or
 `multiplexer.ValidateHerdrWriteGate` as their preflight guard before consuming

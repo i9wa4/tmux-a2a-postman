@@ -23,9 +23,11 @@ Herdr reads and writes are separate capabilities.
 Read capabilities include:
 
 - opening or selecting `HERDR_SOCKET_PATH`;
-- reading `session.snapshot`;
-- reading pane content through CLI or socket APIs such as `pane.read`;
-- consuming workspace, tab, pane, layout, metadata, or process information.
+- discovery reads such as `session.snapshot` and workspace/tab/pane layout
+  enumeration;
+- pane-targeted reads such as CLI or socket APIs like `pane.read`;
+- consuming workspace, tab, pane, layout, metadata, or process information after
+  the matching read scope passes.
 
 Write capabilities include:
 
@@ -47,13 +49,18 @@ future Herdr paths.
 The read gate fails closed unless all are true:
 
 - read access is explicitly enabled by policy;
-- `HERDR_SOCKET_PATH`, Herdr named session, workspace ID, tab ID, and pane ID
-  are present in the runtime identity;
+- `HERDR_SOCKET_PATH`, Herdr named session, and workspace ID are present in the
+  runtime identity;
 - socket path, named session, and workspace ID match explicit allowlists;
 - the response protocol version is supported before response fields are trusted;
 - the response schema version is supported before response fields are trusted.
 
-The write gate applies every read-gate check and also requires:
+Discovery reads use the default `multiplexer.HerdrReadScopeDiscovery` scope and
+must not require tab or pane IDs before #658 can discover them. Pane-targeted
+reads use `multiplexer.HerdrReadScopePane` and additionally require tab ID and
+pane ID before consuming pane content or pane metadata.
+
+The write gate composes the pane-targeted read gate and also requires:
 
 - write access is explicitly enabled by policy;
 - a Herdr-safe interactive input sanitization path is ready;
@@ -71,9 +78,9 @@ Allowlists must be exact matches, not pattern or prefix checks:
 - session: exact Herdr named session selected by config or launch environment;
 - workspace: exact Herdr workspace ID.
 
-Tab and pane IDs are required runtime identity fields but are not global
-allowlist roots. They must be scoped under an allowlisted session/workspace and
-validated against `session.snapshot` before use.
+Tab and pane IDs are required only for pane-targeted reads and writes. They are
+not global allowlist roots. They must be scoped under an allowlisted
+session/workspace and validated against `session.snapshot` before use.
 
 If multiple Herdr panes advertise the same postman node name, #658 must report a
 collision instead of silently selecting a pane.
