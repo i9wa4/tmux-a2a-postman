@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -41,6 +42,44 @@ func isolateConfigLookup(t *testing.T, root string) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Chdir(root)
+}
+
+func TestMergeDiscoveredNodesReportsCrossBackendCollisionWithoutOverwrite(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "%1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindTmux),
+		},
+	}
+	collisions := mergeDiscoveredNodes(nodes, map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "workspace-1:pane-1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindHerdr),
+		},
+	})
+
+	if got := nodes["work:worker"].PaneID; got != "%1" {
+		t.Fatalf("node pane = %q, want original tmux pane", got)
+	}
+	if len(collisions) != 1 {
+		t.Fatalf("collisions = %#v, want one cross-backend collision", collisions)
+	}
+	if collisions[0].NodeKey != "work:worker" || collisions[0].WinnerPaneID != "%1" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
+		t.Fatalf("collision = %#v, want tmux winner and Herdr loser", collisions[0])
+	}
+}
+
+func TestRunStartWithFlags_SourceContractUsesProductionHerdrSocketClient(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if !strings.Contains(source, "newHerdrRuntimeClient herdrruntime.ClientFactory = herdrruntime.NewSocketClient") {
+		t.Fatal("start.go no longer wires the production Herdr socket client factory")
+	}
+	if strings.Contains(source, "herdr socket client is not configured") {
+		t.Fatal("start.go still contains the disabled Herdr client stub")
+	}
 }
 
 func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {

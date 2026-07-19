@@ -36,9 +36,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
-var newHerdrRuntimeClient herdrruntime.ClientFactory = func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
-	return nil, fmt.Errorf("%w: herdr socket client is not configured", multiplexer.ErrHerdrBackendUnavailable)
-}
+var newHerdrRuntimeClient herdrruntime.ClientFactory = herdrruntime.NewSocketClient
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
 func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
@@ -94,13 +92,23 @@ func activePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	return activeNodes
 }
 
-func mergeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) {
+func mergeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) []discovery.CollisionReport {
 	if dst == nil || len(src) == 0 {
-		return
+		return nil
 	}
+	var collisions []discovery.CollisionReport
 	for nodeKey, nodeInfo := range src {
+		if existing, exists := dst[nodeKey]; exists && multiplexer.BackendKindFromString(existing.Backend) != multiplexer.BackendKindFromString(nodeInfo.Backend) {
+			collisions = append(collisions, discovery.CollisionReport{
+				NodeKey:      nodeKey,
+				WinnerPaneID: existing.PaneID,
+				LoserPaneID:  nodeInfo.PaneID,
+			})
+			continue
+		}
 		dst[nodeKey] = nodeInfo
 	}
+	return collisions
 }
 
 func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
@@ -393,7 +401,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		nodes = make(map[string]discovery.NodeInfo)
 		startupCollisions = nil
 	}
-	mergeDiscoveredNodes(nodes, herdrStartupNodes)
+	startupCollisions = append(startupCollisions, mergeDiscoveredNodes(nodes, herdrStartupNodes)...)
 	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
@@ -438,7 +446,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 			if herdrErr != nil {
 				log.Printf("⚠️  postman: startup herdr re-discovery failed: %v\n", herdrErr)
 			} else {
-				mergeDiscoveredNodes(fresh, herdrNodes)
+				_ = mergeDiscoveredNodes(fresh, herdrNodes)
 			}
 		}
 		activationNodesLocal := activationNodeNames(cfg)
@@ -551,9 +559,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 
 	// Issue #71: Create state management instances
 	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
-	if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
-		daemonState.SetOwnershipBackend(herdrRuntime.OwnershipBackend())
-	}
+	daemonState.SetOwnershipBackendSelector(func(session string) multiplexer.OwnershipBackend {
+		if herdrRuntime != nil && herdrRuntime.OwnsSession(session) {
+			return herdrRuntime.OwnershipBackend()
+		}
+		return multiplexer.TmuxBackend{}
+	})
 	daemonState.AutoEnableSessionIfNew(sessionName)
 	for _, activatedSession := range startupActivatedSessions {
 		daemonState.AutoEnableSessionIfNew(activatedSession)
@@ -657,7 +668,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 								if herdrErr != nil {
 									log.Printf("⚠️  postman: manual PING herdr discovery failed: %v\n", herdrErr)
 								} else {
-									mergeDiscoveredNodes(freshDiscovered, herdrNodes)
+									_ = mergeDiscoveredNodes(freshDiscovered, herdrNodes)
 								}
 							}
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)

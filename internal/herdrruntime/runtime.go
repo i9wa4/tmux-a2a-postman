@@ -22,8 +22,10 @@ type Runtime struct {
 	client           multiplexer.HerdrReadClient
 	ownershipBackend *ownershipMux
 
-	mu       sync.Mutex
-	cleanups []func()
+	mu              sync.Mutex
+	cleanups        []func()
+	paneCleanups    map[string]func()
+	registeredPanes map[string]bool
 }
 
 func New(cfg *config.Config, factory ClientFactory) (*Runtime, error) {
@@ -44,6 +46,8 @@ func New(cfg *config.Config, factory ClientFactory) (*Runtime, error) {
 		cfg:              cfg.Herdr,
 		client:           client,
 		ownershipBackend: newOwnershipMux(cfg.Herdr.SessionName),
+		paneCleanups:     make(map[string]func()),
+		registeredPanes:  make(map[string]bool),
 	}
 	rt.cleanups = append(rt.cleanups, multiplexer.RegisterOwnershipBackend(rt.ownershipBackend))
 	return rt, nil
@@ -113,6 +117,7 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 		}
 	}
 
+	livePanes := make(map[string]bool)
 	for _, group := range result.Layout.Groups {
 		tabID := group.ID.Native
 		for _, item := range group.Items {
@@ -122,6 +127,7 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			nodeKey := rt.cfg.SessionName + ":" + item.LogicalName
 			paneBackend := rt.backendForPane(tabID, item.ID.Native)
 			rt.registerPaneBackend(item.ID.Native, paneBackend)
+			livePanes[item.ID.Native] = true
 			nodes[nodeKey] = discovery.NodeInfo{
 				PaneID:      item.ID.Native,
 				SessionName: rt.cfg.SessionName,
@@ -131,6 +137,7 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			}
 		}
 	}
+	rt.reconcilePaneBackends(livePanes)
 	return nodes, collisions, nil
 }
 
@@ -144,6 +151,13 @@ func (rt *Runtime) Close() {
 		rt.cleanups[i]()
 	}
 	rt.cleanups = nil
+	for paneID, cleanup := range rt.paneCleanups {
+		if cleanup != nil {
+			cleanup()
+		}
+		delete(rt.paneCleanups, paneID)
+	}
+	rt.registeredPanes = make(map[string]bool)
 	rt.ownershipBackend.clear()
 }
 
@@ -163,12 +177,32 @@ func (rt *Runtime) registerPaneBackend(paneID string, backend multiplexer.HerdrB
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.ownershipBackend.setPaneBackend(paneID, backend)
-	rt.cleanups = append(rt.cleanups, controlplane.RegisterHerdrHandAdapter(paneID, controlplane.HerdrHandAdapter{
+	rt.registeredPanes[paneID] = true
+	if cleanup, ok := rt.paneCleanups[paneID]; ok {
+		cleanup()
+	}
+	rt.paneCleanups[paneID] = controlplane.RegisterHerdrHandAdapter(paneID, controlplane.HerdrHandAdapter{
 		HerdrInteractiveDeliveryAdapter: controlplane.HerdrInteractiveDeliveryAdapter{
 			Backend:        backend,
 			InputSanitizer: notification.PrepareInteractivePaneMessage,
 		},
-	}))
+	})
+}
+
+func (rt *Runtime) reconcilePaneBackends(livePanes map[string]bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for paneID := range rt.registeredPanes {
+		if livePanes[paneID] {
+			continue
+		}
+		if cleanup := rt.paneCleanups[paneID]; cleanup != nil {
+			cleanup()
+		}
+		delete(rt.paneCleanups, paneID)
+		delete(rt.registeredPanes, paneID)
+		rt.ownershipBackend.deletePaneBackend(paneID)
+	}
 }
 
 type ownershipMux struct {
@@ -189,6 +223,12 @@ func (m *ownershipMux) setPaneBackend(paneID string, backend multiplexer.HerdrBa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byPane[paneID] = backend
+}
+
+func (m *ownershipMux) deletePaneBackend(paneID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.byPane, paneID)
 }
 
 func (m *ownershipMux) clear() {

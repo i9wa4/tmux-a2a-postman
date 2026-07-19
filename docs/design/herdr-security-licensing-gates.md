@@ -150,6 +150,18 @@ configuration still must set `InputSanitizerReady`; otherwise
 `ValidateHerdrWriteGate` returns `sanitizer_missing` before write or mutation
 RPCs are issued.
 
+Production #659 wiring uses Herdr's newline-delimited JSON Unix socket transport
+through a small local client. It calls `session.snapshot`, `pane.read`,
+`pane.process_info`, `pane.send_text`, `pane.send_keys`, and
+`workspace.report_metadata` / `pane.report_metadata`; marker clears report the
+same metadata token with a null value. The client maps Herdr `tokens` into the
+backend metadata view used by ownership marker reads.
+
+Cross-backend duplicate `session:node` keys are reported as collisions and do
+not overwrite the first discovered route. Herdr pane registration is reconciled
+on every snapshot, so panes missing from the latest Herdr discovery are
+unregistered from both direct delivery and ownership mutation routing.
+
 ## 9. Licensing And Compliance
 
 The gate does not make a legal compatibility conclusion. A write-capable path
@@ -174,11 +186,29 @@ The current accepted-path test records the official Herdr LICENSE permalink
 inputs only. This records source provenance without asserting legal
 compatibility.
 
+<<<<<<< HEAD
 The normative freshness boundary is 24 hours after `RevalidatedAt`, inclusive:
 the write gate accepts a record when `now - RevalidatedAt <= 24h` and rejects
 records older than 24 hours or whose revalidation timestamp is in the future.
 The runtime supplies the current time through an injectable policy time source;
 production uses the system clock and tests use a fixed clock.
+||||||| parent of 50c8645 (fix(multiplexer): complete herdr production runtime wiring (#659))
+- `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
+- `commercial`: a commercial license covers the integration shape;
+- `review-only`: no distributable/generated/write integration may be shipped.
+
+CLI or socket use alone does not resolve licensing obligations. A future issue
+must record the exact integration shape before changing dependency, vendoring,
+generated code, or distribution behavior.
+=======
+- `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
+- `commercial`: a commercial license covers the integration shape;
+- `review-only`: no distributable/generated/write integration may be shipped.
+
+CLI or socket use alone does not resolve licensing obligations. Any future
+change that adds dependency, vendoring, generated code, or broader distribution
+behavior must record the exact integration shape before implementation.
+>>>>>>> 50c8645 (fix(multiplexer): complete herdr production runtime wiring (#659))
 
 ## 10. Out Of Scope
 

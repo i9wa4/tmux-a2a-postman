@@ -1567,9 +1567,7 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		if herdrErr != nil {
 			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
 		} else {
-			for nodeKey, nodeInfo := range herdrNodes {
-				freshNodes[nodeKey] = nodeInfo
-			}
+			collisions = append(collisions, mergeRuntimeDiscoveredNodes(freshNodes, herdrNodes)...)
 			collisions = append(collisions, herdrCollisions...)
 		}
 	}
@@ -1583,10 +1581,29 @@ func (rt *daemonRuntime) ownershipBackendForSession(sessionName string) multiple
 			return backend
 		}
 	}
-	if rt != nil && rt.daemonState != nil && rt.daemonState.ownershipBackend != nil {
-		return rt.daemonState.ownershipBackend
+	if rt != nil && rt.daemonState != nil {
+		return rt.daemonState.ownershipBackendForSessionName(sessionName)
 	}
 	return multiplexer.TmuxBackend{}
+}
+
+func mergeRuntimeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) []discovery.CollisionReport {
+	if dst == nil || len(src) == 0 {
+		return nil
+	}
+	var collisions []discovery.CollisionReport
+	for nodeKey, nodeInfo := range src {
+		if existing, exists := dst[nodeKey]; exists && multiplexer.BackendKindFromString(existing.Backend) != multiplexer.BackendKindFromString(nodeInfo.Backend) {
+			collisions = append(collisions, discovery.CollisionReport{
+				NodeKey:      nodeKey,
+				WinnerPaneID: existing.PaneID,
+				LoserPaneID:  nodeInfo.PaneID,
+			})
+			continue
+		}
+		dst[nodeKey] = nodeInfo
+	}
+	return collisions
 }
 
 func (rt *daemonRuntime) ownerForNodeSession(ctx context.Context, nodeInfo discovery.NodeInfo) string {
