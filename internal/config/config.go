@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1329,21 +1328,11 @@ func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error 
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxSessionName() string {
 	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{session_name}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
-	output, err := cmd.Output()
+	sessionName, err := (multiplexer.TmuxBackend{}).CurrentSessionName(context.Background(), paneID)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return sessionName
 }
 
 // GetTmuxPaneID returns the current tmux pane ID (e.g. "%42").
@@ -1351,15 +1340,11 @@ func GetTmuxSessionName() string {
 // Returns empty string if not in tmux or if the command fails.
 func GetTmuxPaneID() string {
 	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		return paneID
-	}
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_id}")
-	output, err := cmd.Output()
+	pane, err := (multiplexer.TmuxBackend{}).CurrentPaneID(context.Background(), paneID)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return pane.Native
 }
 
 // GetTmuxPaneName returns the current tmux pane title.
@@ -1367,21 +1352,11 @@ func GetTmuxPaneID() string {
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxPaneName() string {
 	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_title}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_title}")
-	output, err := cmd.Output()
+	nodeName, err := (multiplexer.TmuxBackend{}).CurrentNodeName(context.Background(), paneID)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return nodeName
 }
 
 // GetNodeConfig returns the effective NodeConfig for the given node name,
