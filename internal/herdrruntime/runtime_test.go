@@ -235,7 +235,7 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 }
 
 func TestSocketClientHonorsContextDeadlineAfterConnect(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := tempHerdrSocketPath(t)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("Listen(unix) error = %v", err)
@@ -271,7 +271,7 @@ func TestSocketClientHonorsContextDeadlineAfterConnect(t *testing.T) {
 }
 
 func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := tempHerdrSocketPath(t)
 	methods := serveFakeHerdrSocket(t, socketPath)
 
 	client, err := herdrruntime.NewSocketClient(config.HerdrConfig{SocketPath: socketPath})
@@ -311,6 +311,18 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 			t.Fatalf("method[%d] = %q, want %q (all=%#v)", i, gotMethods[i], wantMethods[i], gotMethods)
 		}
 	}
+}
+
+func tempHerdrSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "herdr-")
+	if err != nil {
+		t.Fatalf("MkdirTemp(/tmp) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+	return filepath.Join(dir, "h.sock")
 }
 
 func validRuntimeHerdrConfig() config.HerdrConfig {
