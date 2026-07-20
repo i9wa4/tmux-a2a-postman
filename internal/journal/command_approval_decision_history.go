@@ -130,10 +130,6 @@ func commandApprovalDecisionEffectiveStatus(request CommandApprovalRequestPayloa
 	}
 }
 
-func commandApprovalDecisionHistoryPath(sessionDir string, event Event) string {
-	return filepath.Join(CommandApprovalDecisionHistoryDir(sessionDir), commandApprovalDecisionHistoryFilename(event))
-}
-
 func commandApprovalDecisionHistoryFilename(event Event) string {
 	return fmt.Sprintf("%012d-%s.json", event.Sequence, event.EventID)
 }
