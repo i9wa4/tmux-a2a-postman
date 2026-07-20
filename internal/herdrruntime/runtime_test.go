@@ -249,7 +249,9 @@ func TestSocketClientHonorsContextDeadlineAfterConnect(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		time.Sleep(2 * time.Second)
 	}()
 	client, err := herdrruntime.NewSocketClient(config.HerdrConfig{SocketPath: socketPath})

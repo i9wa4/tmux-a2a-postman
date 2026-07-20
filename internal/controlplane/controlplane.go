@@ -141,12 +141,7 @@ func (TmuxHandAdapter) Kind() HandKind {
 }
 
 func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
-	return TmuxInteractiveDeliveryAdapter{
-		ProbeRuntime: a.ProbeRuntime,
-		SendToPane:   a.SendToPane,
-		PaneSender:   a.PaneSender,
-		Backend:      a.Backend,
-	}.Deliver(target, delivery)
+	return TmuxInteractiveDeliveryAdapter(a).Deliver(target, delivery)
 }
 
 func (a TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
