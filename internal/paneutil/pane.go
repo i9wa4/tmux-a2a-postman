@@ -5,14 +5,9 @@ import (
 	"fmt"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
-	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxrunner"
 )
 
 type tmuxCombinedOutputFunc func(args ...string) ([]byte, error)
-
-func runTmuxCombinedOutput(args ...string) ([]byte, error) {
-	return tmuxrunner.CombinedOutput(args...)
-}
 
 // CaptureContent captures the visible content of a tmux pane.
 // Returns the content as a string, or empty string on error.
