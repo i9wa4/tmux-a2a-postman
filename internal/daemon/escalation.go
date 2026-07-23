@@ -298,7 +298,7 @@ func escalationNotificationMessage(trips []escalationTrip) string {
 		if trip.Node != "" {
 			target = "node=" + trip.Node
 		}
-		builder.WriteString(fmt.Sprintf("- %s %s observed=%d threshold=%d", trip.Kind, target, trip.Observed, trip.Threshold))
+		fmt.Fprintf(&builder, "- %s %s observed=%d threshold=%d", trip.Kind, target, trip.Observed, trip.Threshold)
 		if trip.Detail != "" {
 			builder.WriteString(" detail=" + trip.Detail)
 		}
