@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -901,12 +900,11 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 
 func (ds *DaemonState) persistSessionEnabledMarker(sessionName string, enabled bool) {
 	// Persist cross-daemon state in tmux server option (best-effort).
-	key := "@a2a_session_on_" + sessionName
+	tmuxBackend := multiplexer.TmuxBackend{}
 	if enabled {
-		val := ds.contextID + ":" + strconv.Itoa(os.Getpid())
-		_ = exec.Command("tmux", "set-option", "-g", key, val).Run()
+		_ = tmuxBackend.SetSessionOwnerMarker(context.Background(), ds.contextID, sessionName, os.Getpid())
 	} else {
-		_ = exec.Command("tmux", "set-option", "-gu", key).Run()
+		_ = tmuxBackend.ClearSessionOwnerMarker(context.Background(), sessionName)
 	}
 }
 
