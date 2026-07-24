@@ -26,9 +26,10 @@ type CommandApprovalRequestPayload struct {
 }
 
 type CommandApprovalDecisionPayload struct {
-	Reviewer string           `json:"reviewer"`
-	Decision ApprovalDecision `json:"decision"`
-	Reason   string           `json:"reason,omitempty"`
+	Reviewer  string           `json:"reviewer"`
+	Decision  ApprovalDecision `json:"decision"`
+	Reason    string           `json:"reason,omitempty"`
+	MessageID string           `json:"message_id,omitempty"`
 }
 
 type CommandExecutionDecisionPayload struct {

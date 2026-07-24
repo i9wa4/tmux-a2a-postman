@@ -1474,21 +1474,24 @@ func TestApprovalDecisionFromContent(t *testing.T) {
 		name    string
 		content string
 		want    journal.ApprovalDecision
+		reason  string
 		ok      bool
 	}{
 		{
 			name: "approved",
 			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
 				"  thread_id: thread-review-01\n---\n\nAPPROVED: looks good\n",
-			want: journal.ApprovalDecisionApproved,
-			ok:   true,
+			want:   journal.ApprovalDecisionApproved,
+			reason: "looks good",
+			ok:     true,
 		},
 		{
 			name: "not approved",
 			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
 				"  thread_id: thread-review-01\n---\n\nNOT APPROVED: missing verification\n",
-			want: journal.ApprovalDecisionRejected,
-			ok:   true,
+			want:   journal.ApprovalDecisionRejected,
+			reason: "missing verification",
+			ok:     true,
 		},
 		{
 			name: "plain body is not a decision",
@@ -1500,12 +1503,15 @@ func TestApprovalDecisionFromContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := approvalDecisionFromContent(tt.content)
+			got, reason, ok := approvalDecisionFromContent(tt.content)
 			if ok != tt.ok {
 				t.Fatalf("approvalDecisionFromContent() ok = %v, want %v", ok, tt.ok)
 			}
 			if got != tt.want {
 				t.Fatalf("approvalDecisionFromContent() = %q, want %q", got, tt.want)
+			}
+			if reason != tt.reason {
+				t.Fatalf("approvalDecisionFromContent() reason = %q, want %q", reason, tt.reason)
 			}
 		})
 	}
@@ -1686,6 +1692,31 @@ func TestDeliverMessage_CommandApprovalReplyFromRealCommandApproverNodeRecordsAp
 	}
 	if thread.Status != projection.CommandApprovalStatusApproved {
 		t.Fatalf("thread status = %q, want %q", thread.Status, projection.CommandApprovalStatusApproved)
+	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(requesterSessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory(requester) error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("requester decision history entries = %d, want 1", len(history))
+	}
+	if history[0].ThreadID != threadID || history[0].Decision != journal.ApprovalDecisionApproved || history[0].EffectiveStatus != "approved" {
+		t.Fatalf("requester decision history = %#v, want approved entry for thread %q", history[0], threadID)
+	}
+	if history[0].DecisionMessageID != replyFilename {
+		t.Fatalf("decision message id = %q, want %q", history[0].DecisionMessageID, replyFilename)
+	}
+	if history[0].DecisionReason != "digest reviewed." {
+		t.Fatalf("decision reason = %q, want reply prefix reason", history[0].DecisionReason)
+	}
+
+	reviewerHistory, err := journal.ListCommandApprovalDecisionHistory(reviewerSessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory(reviewer) error = %v", err)
+	}
+	if len(reviewerHistory) != 0 {
+		t.Fatalf("reviewer decision history entries = %d, want 0 because reviewer session has no matching request: %#v", len(reviewerHistory), reviewerHistory)
 	}
 }
 
