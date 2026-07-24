@@ -263,6 +263,7 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
+		"  \"display-message -p #{pane_id}\") printf '%s\\n' '%11' ;;\n" +
 		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
 		"  \"list-panes -a -F\"*)\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
@@ -539,6 +540,7 @@ func installSessionStatusDebugTmux(t *testing.T, contextID, sessionName string) 
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
+		"  \"display-message -p #{pane_id}\") printf '%s\\n' '%11' ;;\n" +
 		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
 		"  \"list-panes -a -F\"*)\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker'\n" +
@@ -709,6 +711,7 @@ func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	scriptPath := filepath.Join(scriptDir, "tmux")
 	script := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
+		"  \"display-message -p #{pane_id}\") printf '%s\\n' '%11' ;;\n" +
 		"  \"display-message \"*\"#{session_name}\"*) printf '%s\\n' \"" + sessionName + "\" ;;\n" +
 		"  \"list-panes -a -F\"*)\n" +
 		"    printf '%s\\n' '%11\t" + contextID + "\t" + sessionName + "\tworker' '%12\t" + contextID + "\t" + sessionName + "\tcritic'\n" +
