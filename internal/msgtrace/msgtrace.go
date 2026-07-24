@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/traceid"
 )
 
 const Component = "message_lifecycle"
@@ -27,6 +28,15 @@ type Fields struct {
 	SubmitPath            string
 	Result                string
 	Reason                string
+	CorrelationID         string
+	TriggerFamily         string
+	NodeKey               string
+	PaneID                string
+	Runtime               string
+	Trigger               string
+	CaptureScope          string
+	MarkerCount           int
+	MarkerPrefixLines     int
 }
 
 func FromContent(filename, messagePath, tmuxSession, content string) Fields {
@@ -49,6 +59,32 @@ func FromContent(filename, messagePath, tmuxSession, content string) Fields {
 		fields.MessageID = filepath.Base(messagePath)
 	}
 	return fields
+}
+
+func FromTrustedDaemonPingContent(filename, messagePath, tmuxSession, content string) Fields {
+	fields := FromContent(filename, messagePath, tmuxSession, content)
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil {
+		return fields
+	}
+	if !strings.EqualFold(metadata.From, "postman") || !strings.EqualFold(metadata.MessageType, "ping") {
+		return fields
+	}
+	if traceid.ValidateCorrelationID(metadata.CorrelationID) != nil || !validTriggerFamily(metadata.TriggerFamily) {
+		return fields
+	}
+	fields.CorrelationID = metadata.CorrelationID
+	fields.TriggerFamily = metadata.TriggerFamily
+	return fields
+}
+
+func validTriggerFamily(family string) bool {
+	switch family {
+	case "runtime-auto", "compaction", "manual-tui", "other":
+		return true
+	default:
+		return false
+	}
 }
 
 func Log(event string, fields Fields) {
@@ -86,6 +122,19 @@ func Line(event string, fields Fields) string {
 	appendField("submit_path", fields.SubmitPath)
 	appendField("result", fields.Result)
 	appendField("reason", fields.Reason)
+	appendField("correlation_id", fields.CorrelationID)
+	appendField("trigger_family", fields.TriggerFamily)
+	appendField("node_key", fields.NodeKey)
+	appendField("pane_id", fields.PaneID)
+	appendField("runtime", fields.Runtime)
+	appendField("trigger", fields.Trigger)
+	appendField("capture_scope", fields.CaptureScope)
+	if fields.MarkerCount > 0 {
+		parts = append(parts, fmt.Sprintf("marker_count=%d", fields.MarkerCount))
+	}
+	if fields.MarkerPrefixLines > 0 {
+		parts = append(parts, fmt.Sprintf("marker_prefix_lines=%d", fields.MarkerPrefixLines))
+	}
 	return strings.Join(parts, " ")
 }
 

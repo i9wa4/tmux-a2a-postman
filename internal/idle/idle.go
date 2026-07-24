@@ -19,6 +19,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/traceid"
 )
 
 const (
@@ -35,6 +36,8 @@ const (
 	compactionScopeRecent  compactionCaptureScope = "recent"
 	compactionScopeHistory compactionCaptureScope = "history"
 )
+
+var newCorrelationID = traceid.NewCorrelationID
 
 // NodeActivity holds activity tracking state for a node (Issue #55).
 type NodeActivity struct {
@@ -55,9 +58,18 @@ type PaneActivityExport struct {
 }
 
 type CompactionPingTarget struct {
-	NodeKey string
-	Runtime string
-	Trigger string
+	NodeKey           string
+	PaneID            string
+	Runtime           string
+	Trigger           string
+	CorrelationID     string
+	CaptureScope      string
+	CompactionHash    uint32
+	MarkerCount       int
+	MarkerLineHash    uint32
+	MarkerSuffixID    compactionSuffixIdentity
+	MarkerPrefixHash  uint32
+	MarkerPrefixLines int
 }
 
 type compactionSuffixIdentity struct {
@@ -82,6 +94,7 @@ type PaneCaptureState struct {
 	LastCompactionSuffix      compactionSuffixIdentity
 	LastCompactionPrefixHash  uint32 // Hash of scanned content through the latest marker occurrence
 	LastCompactionPrefixLines int    // Line count through the latest marker occurrence
+	CompactionInFlightID      string
 }
 
 // IdleTracker manages idle detection state (Issue #71).
@@ -449,7 +462,8 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 	}
 	if state.LastCompactionPrefixHash == scan.MarkerPrefixHash {
 		if scan.MarkerPrefixLines <= 1 {
-			return state.LastCompactionHash == compactionHash
+			return state.LastCompactionMarkerHash == scan.MarkerLineHash &&
+				scan.MarkerCount <= state.LastCompactionMarkers
 		}
 		return true
 	}
@@ -457,6 +471,9 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 }
 
 func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, scope compactionCaptureScope, now time.Time) bool {
+	if state.CompactionInFlightID != "" {
+		return false
+	}
 	if !state.LastCompactionPingAt.IsZero() && now.Sub(state.LastCompactionPingAt) < compactionPingCooldown {
 		return false
 	}
@@ -477,6 +494,16 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionSuffix = scan.LatestMarkerSuffixID
 	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
+}
+
+func recordCompactionInFlight(state *PaneCaptureState, correlationID string) {
+	state.CompactionInFlightID = correlationID
+}
+
+func clearCompactionInFlight(state *PaneCaptureState, correlationID string) {
+	if correlationID == "" || state.CompactionInFlightID == correlationID {
+		state.CompactionInFlightID = ""
+	}
 }
 
 func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, scope compactionCaptureScope) {
@@ -535,6 +562,76 @@ func compactionAbsenceAuthoritative(state PaneCaptureState, scope compactionCapt
 	return state.LastCompactionTrigger == "" ||
 		scope == compactionScopeHistory ||
 		state.LastCompactionScope != compactionScopeHistory
+}
+
+type CompactionPingOutcome string
+
+const (
+	CompactionPingDelivered   CompactionPingOutcome = "delivered"
+	CompactionPingUndelivered CompactionPingOutcome = "undelivered"
+	CompactionPingError       CompactionPingOutcome = "error"
+	CompactionPingSkipped     CompactionPingOutcome = "skipped"
+)
+
+func buildCompactionPingTarget(nodeKey, paneID, runtime string, scan compactionMarkerScan, compactionHash uint32, scope compactionCaptureScope) (CompactionPingTarget, error) {
+	correlationID, err := newCorrelationID()
+	if err != nil {
+		return CompactionPingTarget{}, err
+	}
+	return CompactionPingTarget{
+		NodeKey:           nodeKey,
+		PaneID:            paneID,
+		Runtime:           runtime,
+		Trigger:           scan.Trigger,
+		CorrelationID:     correlationID,
+		CaptureScope:      string(scope),
+		CompactionHash:    compactionHash,
+		MarkerCount:       scan.MarkerCount,
+		MarkerLineHash:    scan.MarkerLineHash,
+		MarkerSuffixID:    scan.LatestMarkerSuffixID,
+		MarkerPrefixHash:  scan.MarkerPrefixHash,
+		MarkerPrefixLines: scan.MarkerPrefixLines,
+	}, nil
+}
+
+func scanFromCompactionTarget(target CompactionPingTarget) compactionMarkerScan {
+	return compactionMarkerScan{
+		Trigger:              target.Trigger,
+		MarkerCount:          target.MarkerCount,
+		MarkerLineHash:       target.MarkerLineHash,
+		LatestMarkerSuffixID: target.MarkerSuffixID,
+		MarkerPrefixHash:     target.MarkerPrefixHash,
+		MarkerPrefixLines:    target.MarkerPrefixLines,
+	}
+}
+
+func scopeFromCompactionTarget(target CompactionPingTarget) compactionCaptureScope {
+	switch compactionCaptureScope(target.CaptureScope) {
+	case compactionScopeVisible, compactionScopeRecent, compactionScopeHistory:
+		return compactionCaptureScope(target.CaptureScope)
+	default:
+		return ""
+	}
+}
+
+func (t *IdleTracker) RecordCompactionPingOutcome(target CompactionPingTarget, outcome CompactionPingOutcome, at time.Time) {
+	if target.PaneID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	state, ok := t.paneCaptureState[target.PaneID]
+	if !ok {
+		return
+	}
+	clearCompactionInFlight(&state, target.CorrelationID)
+	if outcome == CompactionPingDelivered {
+		recordCompactionPing(&state, scanFromCompactionTarget(target), target.CompactionHash, scopeFromCompactionTarget(target), at)
+		state.LastCompactionTrigger = target.Trigger
+		t.rememberNodeCompaction(target.NodeKey, state)
+	}
+	t.paneCaptureState[target.PaneID] = state
 }
 
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
@@ -619,11 +716,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 						applyCompactionMemory(&state, memory)
 					}
 					if shouldPingCompaction(state, scan, compactionHash, compactionScope, now) {
-						recordCompactionPing(&state, scan, compactionHash, compactionScope, now)
-						compactionTargets[nodeKey] = CompactionPingTarget{
-							NodeKey: nodeKey,
-							Runtime: runtime,
-							Trigger: scan.Trigger,
+						if target, err := buildCompactionPingTarget(nodeKey, paneID, runtime, scan, compactionHash, compactionScope); err == nil {
+							recordCompactionInFlight(&state, target.CorrelationID)
+							compactionTargets[nodeKey] = target
 						}
 					} else {
 						refreshSameCompactionMarker(&state, scan, compactionHash, compactionScope)
@@ -641,11 +736,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 			if scan := compactionTriggerScan(runtime, compactionContent); scan.Trigger != "" {
 				if shouldPingCompaction(state, scan, compactionHash, compactionScope, now) {
-					recordCompactionPing(&state, scan, compactionHash, compactionScope, now)
-					compactionTargets[nodeKey] = CompactionPingTarget{
-						NodeKey: nodeKey,
-						Runtime: runtime,
-						Trigger: scan.Trigger,
+					if target, err := buildCompactionPingTarget(nodeKey, paneID, runtime, scan, compactionHash, compactionScope); err == nil {
+						recordCompactionInFlight(&state, target.CorrelationID)
+						compactionTargets[nodeKey] = target
 					}
 				} else {
 					refreshSameCompactionMarker(&state, scan, compactionHash, compactionScope)
@@ -660,6 +753,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				state.LastCompactionSuffix = compactionSuffixIdentity{}
 				state.LastCompactionPrefixHash = 0
 				state.LastCompactionPrefixLines = 0
+				state.CompactionInFlightID = ""
 				t.clearNodeCompactionMemory(nodeKey)
 			}
 		}

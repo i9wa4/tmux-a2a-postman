@@ -5,6 +5,73 @@ import (
 	"testing"
 )
 
+func TestInjectParamsMetadataStructuredFrontmatter(t *testing.T) {
+	content := "---\nparams:\n  from: postman\n  to: worker\n---\n\n# Ping\n"
+	got, changed, err := InjectParamsMetadata(content, map[string]string{
+		"correlation_id": "0123456789abcdef0123456789abcdef",
+		"trigger_family": "runtime-auto",
+	})
+	if err != nil {
+		t.Fatalf("InjectParamsMetadata() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("InjectParamsMetadata() changed = false, want true")
+	}
+	metadata, err := ParseMetadata(got)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if metadata.CorrelationID != "0123456789abcdef0123456789abcdef" || metadata.TriggerFamily != "runtime-auto" {
+		t.Fatalf("metadata = %+v, want injected trace fields", metadata)
+	}
+}
+
+func TestInjectParamsMetadataIgnoresBodyTextCollision(t *testing.T) {
+	content := "---\nother: value\n---\n\nbody params:\n  from: postman\n"
+	got, changed, err := InjectParamsMetadata(content, map[string]string{
+		"correlation_id": "0123456789abcdef0123456789abcdef",
+		"trigger_family": "runtime-auto",
+	})
+	if err != nil {
+		t.Fatalf("InjectParamsMetadata() error = %v", err)
+	}
+	if changed || got != content {
+		t.Fatalf("InjectParamsMetadata() = changed %v content %q, want unchanged", changed, got)
+	}
+}
+
+func TestInjectParamsMetadataPlainTemplateUnchanged(t *testing.T) {
+	content := "PING from postman daemon"
+	got, changed, err := InjectParamsMetadata(content, map[string]string{
+		"correlation_id": "0123456789abcdef0123456789abcdef",
+		"trigger_family": "runtime-auto",
+	})
+	if err != nil {
+		t.Fatalf("InjectParamsMetadata() error = %v", err)
+	}
+	if changed || got != content {
+		t.Fatalf("InjectParamsMetadata() = changed %v content %q, want unchanged plain template", changed, got)
+	}
+}
+
+func TestInjectParamsMetadataRejectsMalformedOrDuplicate(t *testing.T) {
+	_, _, err := InjectParamsMetadata("---\nparams:\n  from: postman\n", map[string]string{
+		"correlation_id": "0123456789abcdef0123456789abcdef",
+		"trigger_family": "runtime-auto",
+	})
+	if err == nil {
+		t.Fatal("InjectParamsMetadata() malformed frontmatter error = nil")
+	}
+
+	_, _, err = InjectParamsMetadata("---\nparams:\n  correlation_id: 0123456789abcdef0123456789abcdef\n  from: postman\n---\n", map[string]string{
+		"correlation_id": "fedcba9876543210fedcba9876543210",
+		"trigger_family": "runtime-auto",
+	})
+	if err == nil {
+		t.Fatal("InjectParamsMetadata() duplicate correlation_id error = nil")
+	}
+}
+
 func TestResolveReplyPolicyFromMetadata(t *testing.T) {
 	tests := []struct {
 		name string

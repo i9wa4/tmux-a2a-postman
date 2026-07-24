@@ -22,15 +22,18 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
+	"github.com/i9wa4/tmux-a2a-postman/internal/traceid"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
 
@@ -103,28 +106,95 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 	for _, target := range targets {
 		nodeInfo, ok := nodes[target.NodeKey]
 		if !ok {
+			logCompactionDispatch(contextID, discovery.NodeInfo{}, target, target.CorrelationID, "skipped", "missing_node")
+			idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingSkipped, time.Now())
 			continue
 		}
 		func() {
+			correlationID := target.CorrelationID
+			if err := traceid.ValidateCorrelationID(correlationID); err != nil {
+				logCompactionDispatch(contextID, nodeInfo, target, correlationID, "error", "invalid_correlation_id")
+				idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingError, time.Now())
+				log.Printf("postman: compaction-triggered PING skipped for %s: invalid correlation ID: %v\n", target.NodeKey, err)
+				return
+			}
 			reservation, shouldSend := reserveDirectPingAutoWake(target.NodeKey, nodeInfo)
 			if !shouldSend {
+				logCompactionDispatch(contextID, nodeInfo, target, correlationID, "skipped", "matching_auto_ping_in_flight")
+				idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingSkipped, time.Now())
 				log.Printf("postman: compaction-triggered PING skipped for %s: matching auto-PING already in flight\n", target.NodeKey)
 				return
 			}
 			defer reservation.Release()
 
-			options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
+			logCompactionDispatch(contextID, nodeInfo, target, correlationID, "attempted", "")
+			options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime, CorrelationID: correlationID, TriggerFamily: "compaction"}
 			result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
 			if err != nil {
+				logCompactionDispatch(contextID, nodeInfo, target, correlationID, "error", "sender_error")
+				idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingError, time.Now())
 				log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
 				return
 			}
-			if result.Delivered {
-				recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
+			if !result.Delivered {
+				logCompactionDispatch(contextID, nodeInfo, target, correlationID, "undelivered", "sender_undelivered")
+				idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingUndelivered, time.Now())
+				log.Printf("postman: compaction-triggered PING undelivered for %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
+				return
 			}
+			logCompactionDispatch(contextID, nodeInfo, target, correlationID, "delivered", "")
+			idleTracker.RecordCompactionPingOutcome(target, idle.CompactionPingDelivered, time.Now())
+			recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
 			log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
 		}()
 	}
+}
+
+func logCompactionDispatch(contextID string, nodeInfo discovery.NodeInfo, target idle.CompactionPingTarget, correlationID, result, reason string) {
+	msgtrace.Log("compaction_dispatch", msgtrace.Fields{
+		Recipient:         ping.ExtractSimpleName(target.NodeKey),
+		ContextID:         contextID,
+		TmuxSession:       nodeInfo.SessionName,
+		CorrelationID:     correlationID,
+		TriggerFamily:     "compaction",
+		Result:            result,
+		Reason:            reason,
+		NodeKey:           target.NodeKey,
+		PaneID:            nodeInfo.PaneID,
+		Runtime:           target.Runtime,
+		Trigger:           target.Trigger,
+		CaptureScope:      target.CaptureScope,
+		MarkerCount:       target.MarkerCount,
+		MarkerPrefixLines: target.MarkerPrefixLines,
+	})
+}
+
+func recordManualPingResult(targetName string, nodeInfo discovery.NodeInfo, result controlplane.SystemMessageResult, err error, successCount, failCount *atomic.Int32, daemonEvents chan<- tui.DaemonEvent) {
+	if err != nil {
+		log.Printf("❌ postman: PING to %s failed: %v\n", targetName, err)
+		failCount.Add(1)
+		tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
+			Type:    "message_received",
+			Message: fmt.Sprintf("PING failed for %s: %v", targetName, err),
+		})
+		return
+	}
+	if !result.Delivered {
+		log.Printf("❌ postman: PING to %s undelivered\n", targetName)
+		failCount.Add(1)
+		tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
+			Type:    "message_received",
+			Message: fmt.Sprintf("PING undelivered for %s", targetName),
+		})
+		return
+	}
+	recordDirectPingDelivered(targetName, nodeInfo, "operator_tui", time.Now())
+	log.Printf("📮 postman: PING sent to %s\n", targetName)
+	successCount.Add(1)
+	tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
+		Type:    "message_received",
+		Message: fmt.Sprintf("PING sent to %s", targetName),
+	})
 }
 
 func reserveDirectPingAutoWake(nodeKey string, nodeInfo discovery.NodeInfo) (*autoping.Reservation, bool) {
@@ -703,27 +773,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 										}
 										defer reservation.Release()
 
-										result, err := ping.SendPingToNodeWithResult(target.info, contextID, target.name,
+										result, err := ping.SendPingToNodeWithOptions(target.info, contextID, target.name,
 											cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap,
-											pingAdjacency, freshNodes)
-										if err != nil {
-											log.Printf("❌ postman: PING to %s failed: %v\n", target.name, err)
-											failCount.Add(1)
-											tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
-												Type:    "message_received",
-												Message: fmt.Sprintf("PING failed for %s: %v", target.name, err),
-											})
-										} else {
-											if result.Delivered {
-												recordDirectPingDelivered(target.name, target.info, "operator_tui", time.Now())
-											}
-											log.Printf("📮 postman: PING sent to %s\n", target.name)
-											successCount.Add(1)
-											tui.SendEventNonBlocking(daemonEvents, tui.DaemonEvent{
-												Type:    "message_received",
-												Message: fmt.Sprintf("PING sent to %s", target.name),
-											})
-										}
+											pingAdjacency, freshNodes, ping.SendOptions{TriggerFamily: "manual-tui"})
+										recordManualPingResult(target.name, target.info, result, err, &successCount, &failCount, daemonEvents)
 									}()
 								}
 							}()

@@ -2,6 +2,7 @@ package idle
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,47 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
+
+func TestBuildCompactionPingTargetPropagatesCorrelationGenerationFailure(t *testing.T) {
+	original := newCorrelationID
+	newCorrelationID = func() (string, error) {
+		return "", errors.New("entropy unavailable")
+	}
+	t.Cleanup(func() { newCorrelationID = original })
+
+	target, err := buildCompactionPingTarget("review:worker", "%11", "codex", compactionMarkerScan{
+		Trigger:     "codex:context-compaction",
+		MarkerCount: 1,
+	}, 1234, compactionScopeHistory)
+	if err == nil {
+		t.Fatal("buildCompactionPingTarget() error = nil, want generation error")
+	}
+	if target.CorrelationID != "" {
+		t.Fatalf("target = %+v, want no target correlation ID on generation failure", target)
+	}
+}
+
+func TestShouldPingCompaction_AllowsMarkerOnlyReplacementAfterAuthoritativeClear(t *testing.T) {
+	firstContent := "• Context compacted\nafter first compaction"
+	secondContent := "• Context compacted\nafter later compaction"
+	firstScan := compactionTriggerScan("codex", firstContent)
+	secondScan := compactionTriggerScan("codex", secondContent)
+	now := time.Date(2026, time.July, 24, 3, 10, 0, 0, time.UTC)
+	state := PaneCaptureState{}
+	recordCompactionPing(&state, firstScan, hashContentCRC32(firstContent), compactionScopeHistory, now.Add(-2*compactionPingCooldown))
+	state.LastCompactionTrigger = ""
+
+	if !shouldPingCompaction(state, secondScan, hashContentCRC32(secondContent), compactionScopeHistory, now) {
+		t.Fatal("shouldPingCompaction() = false, want true for marker-only replacement after authoritative clear")
+	}
+}
+
+func recordCompactionTargetsDelivered(t *testing.T, tracker *IdleTracker, targets []CompactionPingTarget, at time.Time) {
+	t.Helper()
+	for _, target := range targets {
+		tracker.RecordCompactionPingOutcome(target, CompactionPingDelivered, at)
+	}
+}
 
 func TestUpdateActivity(t *testing.T) {
 	now := time.Date(2026, time.May, 21, 1, 2, 3, 0, time.UTC)
@@ -536,6 +578,7 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeForInitialMarker(t
 	if targets[0].Trigger != "claude:conversation-compaction" {
 		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "claude:conversation-compaction")
 	}
+	recordCompactionTargetsDelivered(t, tracker, targets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -548,6 +591,73 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeForInitialMarker(t
 	}
 	if state.LastCompactionHash != state.LastHash {
 		t.Fatal("checkPaneCapture() did not record the initial compaction pane hash")
+	}
+}
+
+func TestCheckPaneCapture_CompactionOutcomeControlsRetryEligibility(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		outcome    CompactionPingOutcome
+		wantRetry  bool
+		wantCommit bool
+	}{
+		{name: "delivered commits handled marker", outcome: CompactionPingDelivered, wantRetry: false, wantCommit: true},
+		{name: "undelivered remains retryable", outcome: CompactionPingUndelivered, wantRetry: true},
+		{name: "error remains retryable", outcome: CompactionPingError, wantRetry: true},
+		{name: "skipped remains retryable", outcome: CompactionPingSkipped, wantRetry: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptDir := t.TempDir()
+			scriptPath := filepath.Join(scriptDir, "tmux")
+			script := "#!/bin/sh\n" +
+				"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+				"  printf '%s\\n' '%11\tclaude'\n" +
+				"  exit 0\n" +
+				"fi\n" +
+				"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+				"  printf '%s\\n' '✻ Conversation compacted (ctrl+o for history)'\n" +
+				"  exit 0\n" +
+				"fi\n" +
+				"exit 1\n"
+			if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+				t.Fatalf("WriteFile(fake tmux): %v", err)
+			}
+			t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			now := time.Date(2026, time.July, 24, 3, 40, 0, 0, time.UTC)
+			tracker := newIdleTrackerWithClock(func() time.Time { return now })
+			cfg := &config.Config{ActivityWindowSeconds: 120, NodeStaleSeconds: 600}
+			sessionDir := filepath.Join(t.TempDir(), "review")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			nodes := map[string]discovery.NodeInfo{
+				"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+			}
+
+			firstTargets := tracker.checkPaneCapture(cfg, nodes)
+			if len(firstTargets) != 1 {
+				t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+			}
+			tracker.RecordCompactionPingOutcome(firstTargets[0], tt.outcome, now)
+			tracker.mu.Lock()
+			stateAfterOutcome := tracker.paneCaptureState["%11"]
+			tracker.mu.Unlock()
+			if stateAfterOutcome.CompactionInFlightID != "" {
+				t.Fatalf("CompactionInFlightID after outcome = %q, want cleared", stateAfterOutcome.CompactionInFlightID)
+			}
+			secondTargets := tracker.checkPaneCapture(cfg, nodes)
+			if gotRetry := len(secondTargets) == 1; gotRetry != tt.wantRetry {
+				t.Fatalf("retry eligibility = %v, want %v; targets=%+v", gotRetry, tt.wantRetry, secondTargets)
+			}
+
+			tracker.mu.Lock()
+			state := tracker.paneCaptureState["%11"]
+			tracker.mu.Unlock()
+			if gotCommit := !state.LastCompactionPingAt.IsZero() && state.LastCompactionHash != 0 && state.LastCompactionMarkers > 0; gotCommit != tt.wantCommit {
+				t.Fatalf("handled marker committed = %v, want %v; state=%+v", gotCommit, tt.wantCommit, state)
+			}
+		})
 	}
 }
 
@@ -612,6 +722,7 @@ func TestCheckPaneCapture_CompactionTriggerReturnsDetectedNodeAfterInitialCaptur
 	if targets[0].Trigger != "claude:conversation-compaction" {
 		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "claude:conversation-compaction")
 	}
+	recordCompactionTargetsDelivered(t, tracker, targets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -701,6 +812,7 @@ func TestCheckPaneCapture_CompactionTriggerUsesRecentHistory(t *testing.T) {
 	if targets[0].Trigger != "codex:context-compaction" {
 		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "codex:context-compaction")
 	}
+	recordCompactionTargetsDelivered(t, tracker, targets, now)
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -804,6 +916,7 @@ func TestCheckPaneCapture_CompactionTriggerFallsBackToFullHistoryWhenMarkerOutru
 	if targets[0].Trigger != "claude:conversation-compaction" {
 		t.Fatalf("checkPaneCapture() trigger = %q, want %q", targets[0].Trigger, "claude:conversation-compaction")
 	}
+	recordCompactionTargetsDelivered(t, tracker, targets, now)
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -1027,6 +1140,7 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhenTailMarkerLaterSeenI
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for recent-tail marker", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	now = now.Add(compactionPingCooldown + time.Second)
 	secondVisible := "post output 2"
@@ -1124,6 +1238,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenRecentMarkerReplacedBySing
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for recent-tail marker A", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	now = now.Add(compactionPingCooldown + time.Second)
 	secondVisible := "after history marker B"
@@ -1214,6 +1329,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenRecentMarkerReplacedBySing
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for recent-tail marker A", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	now = now.Add(compactionPingCooldown + time.Second)
 	secondVisible := sharedPostMarkerPrefix + " marker B tail"
@@ -1300,6 +1416,7 @@ func TestCheckPaneCapture_CompactionTriggerRetainsBoundedSuffixIdentityForLargeH
 	if len(targets) != 1 {
 		t.Fatalf("checkPaneCapture() returned %d targets, want 1 for full-history marker", len(targets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, targets, now)
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -1393,6 +1510,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenSingleMarkerFullHistoryFal
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for full-history fallback marker A", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	now = now.Add(compactionPingCooldown + time.Second)
 	secondVisible := "after second fallback compaction"
@@ -1414,6 +1532,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenSingleMarkerFullHistoryFal
 	if secondTargets[0].NodeKey != "review:worker" {
 		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
+	recordCompactionTargetsDelivered(t, tracker, secondTargets, now)
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -1501,6 +1620,7 @@ func TestCheckPaneCapture_CompactionTriggerKeepsFullHistoryMemoryAcrossTailOnlyA
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for full-history fallback marker", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	if err := os.Remove(historyCalledPath); err != nil {
 		t.Fatalf("Remove(history-called): %v", err)
@@ -1595,6 +1715,7 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameMarkerAfterStalePrun
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	now = now.Add(2 * time.Second)
 	if err := os.WriteFile(listPath, nil, 0o644); err != nil {
@@ -1672,6 +1793,7 @@ func TestCheckPaneCapture_CompactionTriggerClearedMarkerAllowsFreshInitialMarker
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	if err := os.WriteFile(capturePath, []byte("ready after compaction"), 0o644); err != nil {
 		t.Fatalf("WriteFile(capture cleared): %v", err)
@@ -1798,6 +1920,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, now)
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -1831,6 +1954,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerHistoryMarkerAppearsA
 	if secondTargets[0].NodeKey != "review:worker" {
 		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
+	recordCompactionTargetsDelivered(t, tracker, secondTargets, now)
 
 	tracker.mu.Lock()
 	state = tracker.paneCaptureState["%11"]
@@ -1916,6 +2040,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerSingleHistoryMarkerRe
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -1944,6 +2069,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerSingleHistoryMarkerRe
 	if secondTargets[0].NodeKey != "review:worker" {
 		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
 	}
+	recordCompactionTargetsDelivered(t, tracker, secondTargets, time.Now())
 
 	tracker.mu.Lock()
 	state = tracker.paneCaptureState["%11"]
@@ -1959,7 +2085,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenNewerSingleHistoryMarkerRe
 	}
 }
 
-func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesOldMarker(t *testing.T) {
+func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhenOnlyOutputAfterMarkerOnlyHistoryChanges(t *testing.T) {
 	scriptDir := t.TempDir()
 	visiblePath := filepath.Join(scriptDir, "visible.txt")
 	historyPath := filepath.Join(scriptDir, "history.txt")
@@ -2015,7 +2141,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	}
 
 	firstVisible := "after first compaction"
-	firstHistory := "older retained context\n• Context compacted\n" + firstVisible
+	firstHistory := "• Context compacted\n" + firstVisible
 	if err := os.WriteFile(visiblePath, []byte(firstVisible), 0o644); err != nil {
 		t.Fatalf("WriteFile(visible first): %v", err)
 	}
@@ -2026,6 +2152,7 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -2048,11 +2175,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 		t.Fatalf("WriteFile(history second): %v", err)
 	}
 	secondTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(secondTargets) != 1 {
-		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 for a marker-only newer history window replacing the old marker", len(secondTargets))
-	}
-	if secondTargets[0].NodeKey != "review:worker" {
-		t.Fatalf("second checkPaneCapture() target = %q, want %q", secondTargets[0].NodeKey, "review:worker")
+	if len(secondTargets) != 0 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 0 when only output after a marker-only history marker changed", len(secondTargets))
 	}
 
 	tracker.mu.Lock()
@@ -2061,8 +2185,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if state.LastHash != hashContentCRC32(secondVisible) {
 		t.Fatal("checkPaneCapture() changed idle hash away from visible pane content")
 	}
-	if state.LastCompactionHash != hashContentCRC32(secondHistory) {
-		t.Fatal("checkPaneCapture() did not record the marker-only replacement history hash")
+	if state.LastCompactionHash != hashContentCRC32(firstHistory) {
+		t.Fatal("checkPaneCapture() changed the marker-only compaction hash without a new marker occurrence")
 	}
 	if state.LastCompactionMarkers != 1 {
 		t.Fatalf("checkPaneCapture() recorded %d compaction markers, want 1", state.LastCompactionMarkers)
@@ -2088,11 +2212,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 		t.Fatalf("WriteFile(history third): %v", err)
 	}
 	thirdTargets := tracker.checkPaneCapture(cfg, nodes)
-	if len(thirdTargets) != 1 {
-		t.Fatalf("third checkPaneCapture() returned %d targets, want 1 for a newer marker-only history window replacing a stored marker-only prefix", len(thirdTargets))
-	}
-	if thirdTargets[0].NodeKey != "review:worker" {
-		t.Fatalf("third checkPaneCapture() target = %q, want %q", thirdTargets[0].NodeKey, "review:worker")
+	if len(thirdTargets) != 0 {
+		t.Fatalf("third checkPaneCapture() returned %d targets, want 0 when only output after the stored marker-only prefix changed", len(thirdTargets))
 	}
 
 	tracker.mu.Lock()
@@ -2101,8 +2222,8 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsWhenMarkerOnlyHistoryReplacesO
 	if state.LastHash != hashContentCRC32(thirdVisible) {
 		t.Fatal("checkPaneCapture() changed idle hash away from third visible pane content")
 	}
-	if state.LastCompactionHash != hashContentCRC32(thirdHistory) {
-		t.Fatal("checkPaneCapture() did not record the third marker-only replacement history hash")
+	if state.LastCompactionHash != hashContentCRC32(firstHistory) {
+		t.Fatal("checkPaneCapture() changed the marker-only compaction hash after another post-marker output change")
 	}
 	if state.LastCompactionMarkers != 1 {
 		t.Fatalf("checkPaneCapture() recorded %d compaction markers after third poll, want 1", state.LastCompactionMarkers)
@@ -2182,6 +2303,7 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhenOnlyOutputAfterOldHi
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -2258,6 +2380,7 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatWhileMarkerRemainsVisibl
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for an already-visible initial marker", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, time.Now())
 
 	tracker.mu.Lock()
 	state := tracker.paneCaptureState["%11"]
@@ -2316,6 +2439,7 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameCaptureAfterMarkerCl
 	if len(firstTargets) != 1 {
 		t.Fatalf("first checkPaneCapture() returned %d targets, want 1 for an already-visible initial marker", len(firstTargets))
 	}
+	recordCompactionTargetsDelivered(t, tracker, firstTargets, time.Now())
 
 	if err := os.WriteFile(capturePath, []byte("ready"), 0o644); err != nil {
 		t.Fatalf("WriteFile(capture ready): %v", err)

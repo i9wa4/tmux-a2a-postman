@@ -29,6 +29,8 @@ type Metadata struct {
 	RuntimeContextScope      string
 	RuntimeContextCapturedAt string
 	RuntimeContextHash       string
+	CorrelationID            string
+	TriggerFamily            string
 	BlockedReportID          string
 	BlockedScope             string
 	BlockedScopeID           string
@@ -205,6 +207,10 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.RuntimeContextCapturedAt = value
 			case "runtimeContextHash", "runtime_context_hash":
 				metadata.RuntimeContextHash = value
+			case "correlation_id":
+				metadata.CorrelationID = value
+			case "trigger_family":
+				metadata.TriggerFamily = value
 			case "blocked_report_id":
 				metadata.BlockedReportID = value
 			case "blocked_scope":
@@ -221,6 +227,68 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("missing from or to in params block")
 	}
 	return metadata, nil
+}
+
+func InjectParamsMetadata(content string, fields map[string]string) (string, bool, error) {
+	if len(fields) == 0 {
+		return content, false, nil
+	}
+	scan, ok, err := scanFrontmatter(content)
+	if !ok || err != nil {
+		return content, false, err
+	}
+	lines := strings.Split(scan.frontmatter, "\n")
+	paramsIndex, paramsEnd := paramsBlockRange(lines)
+	if paramsIndex < 0 {
+		return content, false, nil
+	}
+	childIndent := paramsChildIndent(lines, paramsIndex, paramsEnd)
+	if childIndent <= 0 {
+		childIndent = 2
+	}
+	for key, value := range fields {
+		if err := validatePlainParamsValue(key, value); err != nil {
+			return "", false, err
+		}
+	}
+
+	insertAt := paramsIndex + 1
+	for idx := paramsIndex + 1; idx < paramsEnd; idx++ {
+		key, _, ok := directParamsChild(lines[idx], childIndent)
+		if !ok {
+			continue
+		}
+		if _, exists := fields[key]; exists {
+			return "", false, fmt.Errorf("params field %q already exists", key)
+		}
+	}
+	prefix := strings.Repeat(" ", childIndent)
+	newLines := []string{
+		prefix + "correlation_id: " + fields["correlation_id"],
+		prefix + "trigger_family: " + fields["trigger_family"],
+	}
+	updated := append([]string{}, lines[:insertAt]...)
+	updated = append(updated, newLines...)
+	updated = append(updated, lines[insertAt:]...)
+	return content[:scan.frontmatterStart] + strings.Join(updated, "\n") + content[scan.closeStart:], true, nil
+}
+
+func validatePlainParamsValue(key, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", key)
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", key)
+	}
+	if strings.ContainsAny(value, ":\r\n\t#\"'{}[]&,*>!|%@`") {
+		return fmt.Errorf("%s contains unsupported characters", key)
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("%s must not contain whitespace or control characters", key)
+		}
+	}
+	return nil
 }
 
 func ValidateInputRequestToken(value string) error {

@@ -1,20 +1,65 @@
 package cli
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 )
+
+func captureStartLogs(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	oldOutput := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	})
+	fn()
+	return buf.String()
+}
+
+func countStartLogLines(logs string, parts ...string) int {
+	count := 0
+	for _, line := range strings.Split(logs, "\n") {
+		if line == "" {
+			continue
+		}
+		matched := true
+		for _, part := range parts {
+			if !strings.Contains(line, part) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			count++
+		}
+	}
+	return count
+}
+
+func pingTestStartTemplate(body string) string {
+	return "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n" + body
+}
 
 func TestRunStartWithFlags_SourceContractDoesNotWatchConfigForHotReload(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
@@ -555,18 +600,34 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{
-		DaemonMessageTemplate: "{message}\n{role_content}",
+		DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n{message}\n{role_content}",
 		TmuxTimeout:           1.0,
 		CompactionSkillCatalogs: map[string]string{
 			"": "### Available Skills\n\n- `agent-harness-engineering`: Claude rules.",
 		},
 	}
 
-	sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
-		NodeKey: "review:worker",
-		Runtime: "claude",
-		Trigger: "claude:conversation-compaction",
-	}})
+	correlationID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	logs := captureStartLogs(t, func() {
+		sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
+			NodeKey:       "review:worker",
+			Runtime:       "claude",
+			Trigger:       "claude:conversation-compaction",
+			CorrelationID: correlationID,
+		}})
+	})
+	if countStartLogLines(logs, "event=compaction_dispatch", "result=attempted", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one compaction_dispatch for ID", logs)
+	}
+	if countStartLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one ping_attempt for ID", logs)
+	}
+	if countStartLogLines(logs, "event=ping_result", "result=delivered", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one delivered ping_result for ID", logs)
+	}
+	if strings.Contains(logs, "marker_line_hash=") || strings.Contains(logs, "marker_prefix_hash=") {
+		t.Fatalf("logs leak content-derived marker hashes: %q", logs)
+	}
 
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	entries, err := os.ReadDir(inboxDir)
@@ -587,6 +648,13 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	if !strings.Contains(string(body), "Claude rules.") {
 		t.Fatalf("compaction-triggered PING body = %q, want compaction skill catalog", string(body))
 	}
+	metadata, err := envelope.ParseMetadata(string(body))
+	if err != nil {
+		t.Fatalf("ParseMetadata(compaction PING): %v", err)
+	}
+	if metadata.CorrelationID != correlationID || metadata.TriggerFamily != "compaction" {
+		t.Fatalf("metadata = %+v, want compaction correlation fields", metadata)
+	}
 
 	state, ok, err := projection.ProjectAutoPingState(sessionDir)
 	if err != nil {
@@ -601,6 +669,255 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	}
 	if got.Reason != "discovered" || got.ResolutionReason != "compaction" {
 		t.Fatalf("compaction-resolved state = %#v", got)
+	}
+}
+
+func TestSendCompactionPings_QueueFullDoesNotRecordDelivered(t *testing.T) {
+	tracker := idle.NewIdleTracker()
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.June, 28, 7, 43, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-compaction", "review", now)
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%11",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-20 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Format(time.RFC3339Nano),
+	}, now.Add(-time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	for i := range 20 {
+		name := filepath.Join(inboxDir, "20260628-074300-raaaa-from-postman-to-worker-"+string(rune('a'+i))+".md")
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile queued %d: %v", i, err)
+		}
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	}
+	cfg := &config.Config{
+		DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n{message}",
+		TmuxTimeout:           1.0,
+	}
+	correlationID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	logs := captureStartLogs(t, func() {
+		sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
+			NodeKey:       "review:worker",
+			Runtime:       "claude",
+			Trigger:       "claude:conversation-compaction",
+			CorrelationID: correlationID,
+		}})
+	})
+	if countStartLogLines(logs, "event=compaction_dispatch", "result=attempted", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one compaction_dispatch for ID", logs)
+	}
+	if countStartLogLines(logs, "event=ping_result", "result=undelivered", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one undelivered ping_result for ID", logs)
+	}
+
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir(inbox): %v", err)
+	}
+	if len(entries) != 20 {
+		t.Fatalf("inbox count = %d, want 20 with zero new envelope on queue full", len(entries))
+	}
+	state, ok, err := projection.ProjectAutoPingState(sessionDir)
+	if err != nil {
+		t.Fatalf("ProjectAutoPingState: %v", err)
+	}
+	if !ok || !state.Nodes["review:worker"].Pending {
+		t.Fatalf("pending state = %#v ok=%v, want still pending after undelivered compaction", state.Nodes["review:worker"], ok)
+	}
+}
+
+func TestSendCompactionPings_ReservedAutoWakeLogsSkippedWithoutEnvelope(t *testing.T) {
+	tracker := idle.NewIdleTracker()
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.June, 28, 7, 46, 0, 0, time.UTC)
+	installStartTestJournalManager(t, sessionDir, "ctx-compaction", "review", now)
+	pending := projection.AutoPingEventPayload{
+		NodeKey:      "review:worker",
+		SessionName:  "review",
+		NodeName:     "worker",
+		PaneID:       "%11",
+		Reason:       "discovered",
+		TriggeredAt:  now.Add(-30 * time.Second).Format(time.RFC3339Nano),
+		DelaySeconds: 20,
+		NotBeforeAt:  now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}
+	if err := journal.RecordProcessEvent(sessionDir, "review", projection.AutoPingPendingEventType, journal.VisibilityOperatorVisible, pending, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("RecordProcessEvent(pending): %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%11", SessionName: "review", SessionDir: sessionDir}
+	identity, ok, err := autoping.CurrentPendingIdentity(sessionDir, pending.NodeKey, nodeInfo.PaneID)
+	if err != nil {
+		t.Fatalf("CurrentPendingIdentity: %v", err)
+	}
+	if !ok {
+		t.Fatal("CurrentPendingIdentity ok = false, want true")
+	}
+	held, reserved := autoping.TryReserve(identity)
+	if !reserved {
+		t.Fatal("TryReserve() = false, want true for first reservation")
+	}
+	defer held.Release()
+
+	cfg := &config.Config{
+		DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n{message}",
+		TmuxTimeout:           1.0,
+	}
+	nodes := map[string]discovery.NodeInfo{"review:worker": nodeInfo}
+	correlationID := "cccccccccccccccccccccccccccccccc"
+	logs := captureStartLogs(t, func() {
+		sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
+			NodeKey:       "review:worker",
+			Runtime:       "claude",
+			Trigger:       "claude:conversation-compaction",
+			CorrelationID: correlationID,
+		}})
+	})
+	if countStartLogLines(logs, "event=compaction_dispatch", "result=skipped", "reason=matching_auto_ping_in_flight", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one skipped compaction_dispatch", logs)
+	}
+	if countStartLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 0 {
+		t.Fatalf("logs = %q, want no ping_attempt on skipped dispatch", logs)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("ReadDir(inbox): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("inbox entries = %d, want zero on skipped dispatch", len(entries))
+	}
+}
+
+func TestSendCompactionPings_MissingNodeLogsTerminalSkippedDispatch(t *testing.T) {
+	tracker := idle.NewIdleTracker()
+	cfg := &config.Config{DaemonMessageTemplate: pingTestStartTemplate("# Ping"), TmuxTimeout: 1.0}
+	correlationID := "dddddddddddddddddddddddddddddddd"
+	logs := captureStartLogs(t, func() {
+		sendCompactionPings("ctx-compaction", cfg, tracker, map[string]discovery.NodeInfo{}, []idle.CompactionPingTarget{{
+			NodeKey:       "review:missing",
+			PaneID:        "%11",
+			Runtime:       "claude",
+			Trigger:       "claude:conversation-compaction",
+			CorrelationID: correlationID,
+		}})
+	})
+	if countStartLogLines(logs, "event=compaction_dispatch", "result=skipped", "reason=missing_node", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one missing-node terminal dispatch", logs)
+	}
+	if countStartLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 0 {
+		t.Fatalf("logs = %q, want zero ping_attempt for missing node", logs)
+	}
+}
+
+func TestSendCompactionPings_InvalidCorrelationIDLogsTerminalErrorDispatch(t *testing.T) {
+	tracker := idle.NewIdleTracker()
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	}
+	cfg := &config.Config{DaemonMessageTemplate: pingTestStartTemplate("# Ping"), TmuxTimeout: 1.0}
+	logs := captureStartLogs(t, func() {
+		sendCompactionPings("ctx-compaction", cfg, tracker, nodes, []idle.CompactionPingTarget{{
+			NodeKey:       "review:worker",
+			PaneID:        "%11",
+			Runtime:       "claude",
+			Trigger:       "claude:conversation-compaction",
+			CorrelationID: "invalid-id",
+		}})
+	})
+	if countStartLogLines(logs, "event=compaction_dispatch", "result=error", "reason=invalid_correlation_id", "correlation_id=invalid-id") != 1 {
+		t.Fatalf("logs = %q, want one invalid-ID terminal dispatch", logs)
+	}
+	if countStartLogLines(logs, "event=ping_attempt", "correlation_id=invalid-id") != 0 {
+		t.Fatalf("logs = %q, want zero ping_attempt for invalid ID", logs)
+	}
+}
+
+func TestRecordManualPingResult_UndeliveredCountsFailure(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installStartTestJournalManager(t, sessionDir, "ctx-manual", "review", time.Date(2026, time.June, 28, 7, 44, 0, 0, time.UTC))
+	nodeInfo := discovery.NodeInfo{PaneID: "%11", SessionName: "review", SessionDir: sessionDir}
+	var successCount atomic.Int32
+	var failCount atomic.Int32
+	events := make(chan tui.DaemonEvent, 1)
+
+	recordManualPingResult("review:worker", nodeInfo, controlplane.SystemMessageResult{Delivered: false}, nil, &successCount, &failCount, events)
+
+	if successCount.Load() != 0 || failCount.Load() != 1 {
+		t.Fatalf("success=%d fail=%d, want success=0 fail=1", successCount.Load(), failCount.Load())
+	}
+	select {
+	case event := <-events:
+		if !strings.Contains(event.Message, "undelivered") {
+			t.Fatalf("event = %#v, want undelivered message", event)
+		}
+	default:
+		t.Fatal("no daemon event emitted for undelivered manual PING")
+	}
+	replayed, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	for _, event := range replayed {
+		if event.Type == projection.AutoPingDeliveredEventType {
+			t.Fatalf("unexpected delivered journal event: %#v", event)
+		}
+	}
+}
+
+func TestRecordManualPingResult_DeliveredCountsSuccess(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installStartTestJournalManager(t, sessionDir, "ctx-manual", "review", time.Date(2026, time.June, 28, 7, 45, 0, 0, time.UTC))
+	nodeInfo := discovery.NodeInfo{PaneID: "%11", SessionName: "review", SessionDir: sessionDir}
+	var successCount atomic.Int32
+	var failCount atomic.Int32
+	events := make(chan tui.DaemonEvent, 1)
+
+	recordManualPingResult("review:worker", nodeInfo, controlplane.SystemMessageResult{Delivered: true}, nil, &successCount, &failCount, events)
+
+	if successCount.Load() != 1 || failCount.Load() != 0 {
+		t.Fatalf("success=%d fail=%d, want success=1 fail=0", successCount.Load(), failCount.Load())
+	}
+	replayed, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	delivered := 0
+	for _, event := range replayed {
+		if event.Type == projection.AutoPingDeliveredEventType {
+			delivered++
+		}
+	}
+	if delivered != 1 {
+		t.Fatalf("delivered event count = %d, want 1", delivered)
 	}
 }
 

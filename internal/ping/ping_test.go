@@ -1,7 +1,9 @@
 package ping
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
@@ -33,6 +36,45 @@ func readSingleInboxMessage(t *testing.T, sessionDir, nodeName string) (string, 
 	return filename, string(content)
 }
 
+func capturePingLogs(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	oldOutput := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	})
+	fn()
+	return buf.String()
+}
+
+func countLogLines(logs string, parts ...string) int {
+	count := 0
+	for _, line := range strings.Split(logs, "\n") {
+		if line == "" {
+			continue
+		}
+		matched := true
+		for _, part := range parts {
+			if !strings.Contains(line, part) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			count++
+		}
+	}
+	return count
+}
+
+func pingTestTemplate(body string) string {
+	return "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n" + body
+}
+
 func TestSendPingToNode_InboxPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "test-session")
@@ -51,7 +93,7 @@ func TestSendPingToNode_InboxPath(t *testing.T) {
 	}
 
 	// Template includes {inbox_path} to verify it is expanded
-	tmpl := "node: {node}\ninbox: {inbox_path}"
+	tmpl := pingTestTemplate("node: {node}\ninbox: {inbox_path}")
 	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
@@ -93,7 +135,7 @@ func TestSendPingToNode_SentinelObfuscation(t *testing.T) {
 	}
 
 	// Ping template wraps with both protocol sentinels.
-	tmpl := "<!-- message start -->\n{template}\n<!-- end of message -->\n"
+	tmpl := pingTestTemplate("<!-- message start -->\n{template}\n<!-- end of message -->\n")
 
 	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
@@ -133,7 +175,7 @@ func TestSendPingToNode(t *testing.T) {
 
 	activeNodes := []string{"worker", "orchestrator"}
 	livenessMap := map[string]bool{} // Empty for this test (PING time)
-	err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, activeNodes, livenessMap, map[string][]string{}, map[string]discovery.NodeInfo{})
+	err := SendPingToNode(nodeInfo, "test-ctx", "worker", pingTestTemplate("PING {node} in {context_id}"), cfg, activeNodes, livenessMap, map[string][]string{}, map[string]discovery.NodeInfo{})
 	if err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
@@ -166,7 +208,7 @@ func TestSendPingToNode_ReplyCommandExpandsConcreteRecipient(t *testing.T) {
 		ReplyCommand: "tmux-a2a-postman send-heredoc --to <recipient>",
 	}
 
-	if err := SendPingToNode(nodeInfo, "ctx-ping", "worker", "Reply: {reply_command}", cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
+	if err := SendPingToNode(nodeInfo, "ctx-ping", "worker", pingTestTemplate("Reply: {reply_command}"), cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -319,7 +361,7 @@ func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalo
 		},
 	}
 
-	tmpl := "{role_content}"
+	tmpl := pingTestTemplate("{role_content}")
 	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{}); err != nil {
 		t.Fatalf("SendPingToNodeWithOptions normal error = %v", err)
 	}
@@ -393,7 +435,7 @@ func TestSendPingToNode_DeliveryFlow(t *testing.T) {
 		TmuxTimeout:          1.0,
 	}
 
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node} in {context_id}", cfg, []string{"worker"}, map[string]bool{"review-session:worker": true}, map[string][]string{}, nodes); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", pingTestTemplate("PING {node} in {context_id}"), cfg, []string{"worker"}, map[string]bool{"review-session:worker": true}, map[string][]string{}, nodes); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 
@@ -443,7 +485,7 @@ func TestSendPingToNodeWithResult_QueueFullReturnsUndeliveredWithoutDeadLetter(t
 	}
 	cfg := &config.Config{
 		TmuxTimeout:           5.0,
-		DaemonMessageTemplate: "PING {node} in {context_id}",
+		DaemonMessageTemplate: pingTestTemplate("PING {node} in {context_id}"),
 	}
 
 	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
@@ -484,6 +526,223 @@ func TestSendPingToNodeWithResult_QueueFullReturnsUndeliveredWithoutDeadLetter(t
 	}
 }
 
+func TestSendPingToNodeWithOptions_StoresCorrelationMetadataOnlyWhenDelivered(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "correlation-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "correlation-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	result, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "correlation-session:worker", cfg.DaemonMessageTemplate, cfg,
+		[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{TriggerFamily: "manual-tui"})
+	if err != nil || !result.Delivered {
+		t.Fatalf("SendPingToNodeWithOptions() = %+v, %v; want delivered", result, err)
+	}
+	_, content := readSingleInboxMessage(t, sessionDir, "worker")
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if metadata.CorrelationID == "" || metadata.TriggerFamily != "manual-tui" {
+		t.Fatalf("metadata = %+v, want correlation ID and manual-tui family", metadata)
+	}
+}
+
+func TestSendPingToNodeWithOptions_ReconcilesDeliveredTraceID(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "trace-delivered-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "trace-delivered-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	correlationID := "11111111111111111111111111111111"
+	var resultDelivered bool
+	logs := capturePingLogs(t, func() {
+		result, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "trace-delivered-session:worker", cfg.DaemonMessageTemplate, cfg,
+			[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: correlationID, TriggerFamily: TriggerFamilyManualTUI})
+		if err != nil {
+			t.Fatalf("SendPingToNodeWithOptions() error = %v", err)
+		}
+		resultDelivered = result.Delivered
+	})
+	if !resultDelivered {
+		t.Fatal("Delivered = false, want true")
+	}
+	if countLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one ping_attempt for ID", logs)
+	}
+	if countLogLines(logs, "event=ping_result", "result=delivered", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one delivered ping_result for ID", logs)
+	}
+	_, content := readSingleInboxMessage(t, sessionDir, "worker")
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if metadata.CorrelationID != correlationID || metadata.TriggerFamily != "manual-tui" {
+		t.Fatalf("metadata = %+v, want exact ID universe", metadata)
+	}
+}
+
+func TestSendPingToNodeWithOptions_ReconcilesUndeliveredTraceIDWithZeroEnvelope(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "trace-undelivered-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	for i := range 20 {
+		name := filepath.Join(inboxDir, fmt.Sprintf("20260628-0744%02d-raaaa-from-postman-to-worker.md", i))
+		if err := os.WriteFile(name, []byte("queued"), 0o600); err != nil {
+			t.Fatalf("WriteFile queued %d: %v", i, err)
+		}
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "trace-undelivered-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	correlationID := "22222222222222222222222222222222"
+	var resultDelivered bool
+	logs := capturePingLogs(t, func() {
+		result, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "trace-undelivered-session:worker", cfg.DaemonMessageTemplate, cfg,
+			[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: correlationID, TriggerFamily: TriggerFamilyRuntimeAuto})
+		if err != nil {
+			t.Fatalf("SendPingToNodeWithOptions() error = %v", err)
+		}
+		resultDelivered = result.Delivered
+	})
+	if resultDelivered {
+		t.Fatal("Delivered = true, want false")
+	}
+	if countLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one ping_attempt for ID", logs)
+	}
+	if countLogLines(logs, "event=ping_result", "result=undelivered", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one undelivered ping_result for ID", logs)
+	}
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	if len(entries) != 20 {
+		t.Fatalf("inbox count = %d, want original queue only", len(entries))
+	}
+}
+
+func TestSendPingToNodeWithOptions_ReconcilesErrorTraceIDWithZeroEnvelope(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "not-a-directory")
+	if err := os.WriteFile(sessionDir, []byte("file"), 0o600); err != nil {
+		t.Fatalf("WriteFile sessionDir fixture: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "trace-error-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	correlationID := "33333333333333333333333333333333"
+	logs := capturePingLogs(t, func() {
+		result, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "trace-error-session:worker", cfg.DaemonMessageTemplate, cfg,
+			[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: correlationID, TriggerFamily: TriggerFamilyManualTUI})
+		if err == nil {
+			t.Fatal("SendPingToNodeWithOptions() error = nil, want filesystem delivery error")
+		}
+		if result.Delivered {
+			t.Fatal("Delivered = true, want false on error")
+		}
+	})
+	if countLogLines(logs, "event=ping_attempt", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one ping_attempt for ID", logs)
+	}
+	if countLogLines(logs, "event=ping_result", "result=error", "correlation_id="+correlationID) != 1 {
+		t.Fatalf("logs = %q, want one error ping_result for ID", logs)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker")); err == nil {
+		t.Fatal("inbox exists, want no envelope directory")
+	}
+}
+
+func TestSendPingToNodeWithOptions_RejectsInvalidCorrelationID(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "invalid-correlation-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "invalid-correlation-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	_, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "invalid-correlation-session:worker", cfg.DaemonMessageTemplate, cfg,
+		[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: "trace-123", TriggerFamily: TriggerFamilyManualTUI})
+	if err == nil {
+		t.Fatal("SendPingToNodeWithOptions() error = nil, want invalid correlation ID error")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir inbox: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stored envelopes = %d, want 0 on invalid correlation ID", len(entries))
+	}
+}
+
+func TestSendPingToNodeWithOptions_RejectsInvalidTriggerFamily(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "invalid-trigger-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "invalid-trigger-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping"}
+	_, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "invalid-trigger-session:worker", cfg.DaemonMessageTemplate, cfg,
+		[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: "44444444444444444444444444444444", TriggerFamily: TriggerFamily("surprise")})
+	if err == nil {
+		t.Fatal("SendPingToNodeWithOptions() error = nil, want invalid trigger family error")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir inbox: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stored envelopes = %d, want 0 on invalid trigger family", len(entries))
+	}
+}
+
+func TestSendPingToNodeWithOptions_RejectsDuplicateTraceMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "duplicate-trace-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "duplicate-trace-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "---\nparams:\n  from: postman\n  to: {node}\n  contextId: {context_id}\n  messageId: {filename}\n  messageType: ping\n  correlation_id: 0123456789abcdef0123456789abcdef\n---\n\n# Ping"}
+	_, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "duplicate-trace-session:worker", cfg.DaemonMessageTemplate, cfg,
+		[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: "fedcba9876543210fedcba9876543210", TriggerFamily: TriggerFamilyManualTUI})
+	if err == nil {
+		t.Fatal("SendPingToNodeWithOptions() error = nil, want duplicate trace metadata error")
+	}
+}
+
+func TestSendPingToNodeWithOptions_RejectsTemplateWithoutParamsTraceBoundary(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "plain-template-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodeInfo := discovery.NodeInfo{PaneID: "%100", SessionName: "plain-template-session", SessionDir: sessionDir}
+	cfg := &config.Config{TmuxTimeout: 5, DaemonMessageTemplate: "PING {node}"}
+	_, err := SendPingToNodeWithOptions(nodeInfo, "trace-ctx", "plain-template-session:worker", cfg.DaemonMessageTemplate, cfg,
+		[]string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{CorrelationID: "55555555555555555555555555555555", TriggerFamily: TriggerFamilyManualTUI})
+	if err == nil {
+		t.Fatal("SendPingToNodeWithOptions() error = nil, want unsupported-template error")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir inbox: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stored envelopes = %d, want 0 when trace boundary is unsupported", len(entries))
+	}
+}
+
 func TestSendPingToNode_NotificationAttemptedOnDelivery(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "tmux-args.txt")
@@ -513,7 +772,7 @@ func TestSendPingToNode_NotificationAttemptedOnDelivery(t *testing.T) {
 		TmuxTimeout:          1.0,
 	}
 
-	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", "PING {node}", cfg, []string{"worker"}, map[string]bool{"notify-session:worker": true}, map[string][]string{}, nodes); err != nil {
+	if err := SendPingToNode(nodeInfo, "test-ctx", "worker", pingTestTemplate("PING {node}"), cfg, []string{"worker"}, map[string]bool{"notify-session:worker": true}, map[string][]string{}, nodes); err != nil {
 		t.Fatalf("SendPingToNode() error = %v", err)
 	}
 

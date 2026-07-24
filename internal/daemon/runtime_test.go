@@ -60,6 +60,10 @@ func waitForInboxEntries(t *testing.T, sessionDir, nodeName string, want int) {
 	}
 }
 
+func daemonPingTestTemplate(body string) string {
+	return "---\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  messageId: {filename}\n  messageType: ping\n---\n\n" + body
+}
+
 func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRuntimeResult {
 	t.Helper()
 	rt.ensureDaemonSubmitRuntime()
@@ -1305,7 +1309,7 @@ func TestDispatchAutoPing_QueuesRetryWhenNonDaemonBudgetFull(t *testing.T) {
 		"review:worker",
 		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
 		projection.AutoPingNodeState{},
-		"PING {node}",
+		daemonPingTestTemplate("PING {node}"),
 		nil,
 		nil,
 		nil,
@@ -1363,7 +1367,7 @@ func TestDispatchAutoPing_DropsAfterMaxStaleRetries(t *testing.T) {
 		"review:worker",
 		discovery.NodeInfo{SessionName: "review", PaneID: "%1"},
 		projection.AutoPingNodeState{},
-		"PING {node}",
+		daemonPingTestTemplate("PING {node}"),
 		nil, nil, nil, nil,
 		maxAutoPingStaleRetries,
 	)
@@ -2713,7 +2717,7 @@ func TestDispatchPendingAutoPings_ForeignOwnedSessionStaysPendingAndDisabled(t *
 	rt := &daemonRuntime{
 		baseDir:     baseDir,
 		contextID:   "ctx-self",
-		cfg:         &config.Config{DaemonMessageTemplate: "PING {node} in {context_id}"},
+		cfg:         &config.Config{DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}")},
 		adjacency:   map[string][]string{},
 		daemonState: NewDaemonState(0, "ctx-self"),
 		nodes: map[string]discovery.NodeInfo{
@@ -2770,7 +2774,7 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},
@@ -2793,6 +2797,7 @@ func TestDispatchPendingAutoPings_DeliversDuePendingPingAndClearsDebt(t *testing
 
 func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T) {
 	baseDir := t.TempDir()
+	installRuntimeTestTmux(t, baseDir)
 	sessionDir := filepath.Join(baseDir, "ctx-self", "review")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs(): %v", err)
@@ -2819,7 +2824,7 @@ func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: "---\nparams:\n  contextId: {context_id}\n  from: postman\n  to: {node}\n  messageId: {filename}\n  messageType: ping\n---\n\n# Ping",
 		},
 		adjacency:   map[string][]string{},
 		daemonState: NewDaemonState(0, "ctx-self"),
@@ -2829,9 +2834,6 @@ func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T
 				SessionName: "review",
 				SessionDir:  sessionDir,
 			},
-		},
-		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
-			return controlplane.SystemMessageResult{Delivered: true}, nil
 		},
 		clock: func() time.Time { return deliveredAt },
 	}
@@ -2849,6 +2851,14 @@ func TestDispatchPendingAutoPingsRecordsDeliveredAtWithRuntimeClock(t *testing.T
 	}
 	if got, want := state.Nodes["review:worker"].DeliveredAt, deliveredAt.Format(time.RFC3339Nano); got != want {
 		t.Fatalf("DeliveredAt = %q, want %q", got, want)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("runtime-auto stored envelopes = %d, %v; want one", len(entries), err)
+	}
+	content, err := os.ReadFile(filepath.Join(sessionDir, "inbox", "worker", entries[0].Name()))
+	if err != nil || !strings.Contains(string(content), "trigger_family: runtime-auto") || !strings.Contains(string(content), "correlation_id: ") {
+		t.Fatalf("runtime-auto envelope lacks correlation metadata: %q, %v", content, err)
 	}
 }
 
@@ -2896,7 +2906,7 @@ func TestDispatchAutoPingDeliverySkipsStalePendingResolvedByOperatorTUI(t *testi
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 		},
 		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
 			calls.Add(1)
@@ -2923,7 +2933,7 @@ func TestDispatchAutoPingDeliverySkipsStalePendingResolvedByOperatorTUI(t *testi
 		t.Fatal("beginAutoPing: want true for first call")
 	}
 
-	rt.dispatchAutoPingDelivery(pendingPayload.NodeKey, nodeInfo, pending, "PING {node}", nil, nil, nil, nil, 0)
+	rt.dispatchAutoPingDelivery(pendingPayload.NodeKey, nodeInfo, pending, daemonPingTestTemplate("PING {node}"), nil, nil, nil, nil, 0)
 	waitForAutoPingEventIdle(t, rt, pendingPayload.NodeKey, 2*time.Second)
 
 	if got := calls.Load(); got != 0 {
@@ -2987,7 +2997,7 @@ func TestDispatchAutoPingDeliverySkipsWhenPendingWakeReserved(t *testing.T) {
 	rt := &daemonRuntime{
 		baseDir:   baseDir,
 		contextID: "ctx-self",
-		cfg:       &config.Config{DaemonMessageTemplate: "PING {node} in {context_id}"},
+		cfg:       &config.Config{DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}")},
 		sendAutoPing: func(discovery.NodeInfo, string, string, string, *config.Config, []string, map[string]bool, map[string][]string, map[string]discovery.NodeInfo) (controlplane.SystemMessageResult, error) {
 			calls.Add(1)
 			return controlplane.SystemMessageResult{Delivered: true}, nil
@@ -3002,7 +3012,7 @@ func TestDispatchAutoPingDeliverySkipsWhenPendingWakeReserved(t *testing.T) {
 		t.Fatal("beginAutoPing: want true for first call")
 	}
 
-	rt.dispatchAutoPingDelivery(pending.NodeKey, nodeInfo, pending, "PING {node}", nil, nil, nil, nil, 0)
+	rt.dispatchAutoPingDelivery(pending.NodeKey, nodeInfo, pending, daemonPingTestTemplate("PING {node}"), nil, nil, nil, nil, 0)
 	waitForAutoPingEventIdle(t, rt, pending.NodeKey, 2*time.Second)
 
 	if got := calls.Load(); got != 0 {
@@ -3050,7 +3060,7 @@ func TestDispatchPendingAutoPings_DoesNotBlockDaemonLoopWhilePaneDeliveryRuns(t 
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},
@@ -3109,7 +3119,7 @@ func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.
 		contextID:   "ctx-self",
 		selfSession: "review",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},
@@ -3226,7 +3236,7 @@ func TestBootstrap_ReconcilesDuePendingAutoPingDebtAfterHydration(t *testing.T) 
 		contextID:   "ctx-self",
 		selfSession: "review",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},
@@ -3286,7 +3296,7 @@ func TestDispatchPendingAutoPings_QueueFullLeavesPendingWithoutDeadLetter(t *tes
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},
@@ -3351,7 +3361,7 @@ func TestDispatchPendingAutoPings_RespectsNotBeforeAt(t *testing.T) {
 		baseDir:   baseDir,
 		contextID: "ctx-self",
 		cfg: &config.Config{
-			DaemonMessageTemplate: "PING {node} in {context_id}",
+			DaemonMessageTemplate: daemonPingTestTemplate("PING {node} in {context_id}"),
 			TmuxTimeout:           1.0,
 		},
 		adjacency:   map[string][]string{},

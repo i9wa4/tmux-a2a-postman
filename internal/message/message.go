@@ -1001,6 +1001,17 @@ func DeliverSystemMessageDirectResultToTarget(filename string, target controlpla
 	return result, nil
 }
 
+// LogPingTrace records the correlation fields created at the PING initiating
+// attempt. It intentionally contains no content or path outside the standard
+// lifecycle fields.
+func LogPingTrace(event, filename string, target controlplane.Target, contextID, correlationID, triggerFamily, result string) {
+	msgtrace.Log(event, msgtrace.Fields{
+		MessageID: filename, Recipient: target.ActorID, ContextID: contextID,
+		TmuxSession: target.SessionName, CorrelationID: correlationID,
+		TriggerFamily: triggerFamily, Result: result,
+	})
+}
+
 // countInboxMessages returns the number of .md files in an inbox directory.
 // Returns 0, nil if the directory does not exist (empty inbox is not an error).
 func countInboxMessages(inboxDir string) (int, error) {

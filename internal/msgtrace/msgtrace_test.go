@@ -18,6 +18,15 @@ func TestLineIncludesStableLifecycleFields(t *testing.T) {
 		SubmitPath:            "daemon-submit",
 		Result:                "delivered",
 		Reason:                "ok",
+		CorrelationID:         "4d6a0f1e",
+		TriggerFamily:         "runtime-auto",
+		NodeKey:               "tmux-a2a-postman:worker",
+		PaneID:                "%11",
+		Runtime:               "codex",
+		Trigger:               "codex:context-compaction",
+		CaptureScope:          "history",
+		MarkerCount:           1,
+		MarkerPrefixLines:     1,
 	})
 
 	wantParts := []string{
@@ -37,6 +46,15 @@ func TestLineIncludesStableLifecycleFields(t *testing.T) {
 		"submit_path=daemon-submit",
 		"result=delivered",
 		"reason=ok",
+		"correlation_id=4d6a0f1e",
+		"trigger_family=runtime-auto",
+		"node_key=tmux-a2a-postman:worker",
+		"pane_id=%11",
+		"runtime=codex",
+		"trigger=codex:context-compaction",
+		"capture_scope=history",
+		"marker_count=1",
+		"marker_prefix_lines=1",
 	}
 	for _, part := range wantParts {
 		if !containsField(got, part) {
@@ -45,15 +63,18 @@ func TestLineIncludesStableLifecycleFields(t *testing.T) {
 	}
 }
 
-func TestFromContentUsesEnvelopeMetadata(t *testing.T) {
+func TestFromContentUsesEnvelopeMetadataWithoutPromotingTraceFields(t *testing.T) {
 	content := `---
 params:
   contextId: ctx-1
   messageId: envelope-id.md
-  from: worker
+  from: postman
   to: orchestrator
+  messageType: ping
   input_request_id: ireq_123
   replyTo: original.md
+  correlation_id: 0123456789abcdef0123456789abcdef
+  trigger_family: manual-tui
 ---
 
 # Message
@@ -62,11 +83,54 @@ params:
 	if got.MessageID != "envelope-id.md" {
 		t.Fatalf("MessageID = %q, want envelope metadata id", got.MessageID)
 	}
-	if got.Sender != "worker" || got.Recipient != "orchestrator" || got.ContextID != "ctx-1" {
+	if got.Sender != "postman" || got.Recipient != "orchestrator" || got.ContextID != "ctx-1" {
 		t.Fatalf("metadata fields not copied: %+v", got)
 	}
 	if got.InputRequestID != "ireq_123" || got.ReplyTo != "original.md" {
 		t.Fatalf("correlation fields not copied: %+v", got)
+	}
+	if got.CorrelationID != "" || got.TriggerFamily != "" {
+		t.Fatalf("generic parser promoted trace metadata: %+v", got)
+	}
+}
+
+func TestFromTrustedDaemonPingContentPromotesValidatedTraceMetadata(t *testing.T) {
+	content := `---
+params:
+  contextId: ctx-1
+  messageId: envelope-id.md
+  from: postman
+  to: orchestrator
+  messageType: ping
+  correlation_id: 0123456789abcdef0123456789abcdef
+  trigger_family: manual-tui
+---
+
+# Message
+`
+	got := FromTrustedDaemonPingContent("filename.md", "read/filename.md", "session-1", content)
+	if got.CorrelationID != "0123456789abcdef0123456789abcdef" || got.TriggerFamily != "manual-tui" {
+		t.Fatalf("trusted daemon PING trace metadata not copied: %+v", got)
+	}
+}
+
+func TestFromTrustedDaemonPingContentRejectsInvalidTraceMetadata(t *testing.T) {
+	content := `---
+params:
+  contextId: ctx-1
+  messageId: envelope-id.md
+  from: postman
+  to: orchestrator
+  messageType: ping
+  correlation_id: INVALID
+  trigger_family: manual-tui
+---
+
+# Message
+`
+	got := FromTrustedDaemonPingContent("filename.md", "read/filename.md", "session-1", content)
+	if got.CorrelationID != "" || got.TriggerFamily != "" {
+		t.Fatalf("trusted parser copied invalid trace fields: %+v", got)
 	}
 }
 
