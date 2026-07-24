@@ -1,18 +1,18 @@
 package config
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 const (
@@ -77,6 +77,7 @@ type Config struct {
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
+	Herdr                          HerdrConfig                     `toml:"herdr"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -107,6 +108,44 @@ type CommandApprovalPolicy struct {
 type DeprecatedCommandApproverNode struct {
 	Field string
 	Value string
+}
+
+type HerdrConfig struct {
+	Enabled                 bool     `toml:"enabled"`
+	SocketPath              string   `toml:"socket_path"`
+	SessionName             string   `toml:"session_name"`
+	WorkspaceID             string   `toml:"workspace_id"`
+	AllowedSocketPaths      []string `toml:"allowed_socket_paths"`
+	AllowedSessions         []string `toml:"allowed_sessions"`
+	AllowedWorkspaceIDs     []string `toml:"allowed_workspace_ids"`
+	AllowedProtocolVersions []string `toml:"allowed_protocol_versions"`
+	AllowedSchemaVersions   []int    `toml:"allowed_schema_versions"`
+	ReadEnabled             bool     `toml:"read_enabled"`
+	WriteEnabled            bool     `toml:"write_enabled"`
+	InputSanitizerReady     bool     `toml:"input_sanitizer_ready"`
+	ComplianceDecision      string   `toml:"compliance_decision"`
+}
+
+func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
+	return multiplexer.HerdrReadConfig{
+		Enabled: h.Enabled,
+		Runtime: multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  h.SocketPath,
+			SessionName: h.SessionName,
+			WorkspaceID: h.WorkspaceID,
+		},
+		Policy: multiplexer.HerdrGatePolicy{
+			ReadEnabled:             h.ReadEnabled,
+			WriteEnabled:            h.WriteEnabled,
+			AllowedSocketPaths:      h.AllowedSocketPaths,
+			AllowedSessions:         h.AllowedSessions,
+			AllowedWorkspaceIDs:     h.AllowedWorkspaceIDs,
+			AllowedProtocolVersions: h.AllowedProtocolVersions,
+			AllowedSchemaVersions:   h.AllowedSchemaVersions,
+			InputSanitizerReady:     h.InputSanitizerReady,
+			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
+		},
+	}
 }
 
 // NodeConfig holds per-node configuration.
@@ -1194,11 +1233,10 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 	if sessionName == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "show-options", "-gqv", "@a2a_session_on_"+sessionName).Output()
+	value, err := (multiplexer.TmuxBackend{}).SessionOwnerMarker(context.Background(), sessionName)
 	if err != nil {
 		return ""
 	}
-	value := strings.TrimSpace(string(out))
 	if value == "" {
 		return ""
 	}
@@ -1315,78 +1353,98 @@ func FindContextSessionName(baseDir, contextID string) string {
 }
 
 func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error {
+	return SetSessionEnabledMarkerWithBackend(multiplexer.TmuxBackend{}, contextID, sessionName, enabled)
+}
+
+func SetSessionEnabledMarkerWithBackend(backend multiplexer.OwnershipBackend, contextID, sessionName string, enabled bool) error {
 	if sessionName == "" {
 		return fmt.Errorf("session name is empty")
 	}
-	key := "@a2a_session_on_" + sessionName
-	if enabled {
-		if contextID == "" {
-			return fmt.Errorf("context ID is empty")
-		}
-		value := contextID + ":" + strconv.Itoa(os.Getpid())
-		return exec.Command("tmux", "set-option", "-g", key, value).Run()
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
 	}
-	return exec.Command("tmux", "set-option", "-gu", key).Run()
+	if enabled {
+		return backend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, os.Getpid())
+	}
+	return backend.ClearSessionOwnerMarker(context.Background(), sessionName)
+}
+
+func CurrentTmuxIdentity() (multiplexer.CurrentIdentity, error) {
+	target, err := currentTmuxIdentityTarget()
+	if err != nil {
+		return multiplexer.CurrentIdentity{}, err
+	}
+	return (multiplexer.TmuxBackend{}).CurrentIdentity(context.Background(), target)
+}
+
+func currentTmuxIdentityTarget() (multiplexer.IdentityTarget, error) {
+	target := multiplexer.IdentityTarget{}
+	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
+		if !multiplexer.IsCanonicalTmuxPaneID(paneID) {
+			return multiplexer.IdentityTarget{}, multiplexer.IdentityError{
+				Backend: multiplexer.BackendKindTmux,
+				Failure: multiplexer.IdentityFailureLookupFailed,
+				Field:   "pane_id",
+			}
+		}
+		target.Pane = multiplexer.TmuxPaneID(paneID)
+	}
+	return target, nil
 }
 
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxSessionName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{session_name}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
-	output, err := cmd.Output()
+	backend := multiplexer.TmuxBackend{}
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := backend.CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	sessionName, err := backend.CurrentSessionName(context.Background(), pane)
+	if err != nil {
+		return ""
+	}
+	return sessionName
 }
 
 // GetTmuxPaneID returns the current tmux pane ID (e.g. "%42").
 // Uses TMUX_PANE env var when available; falls back to display-message query.
 // Returns empty string if not in tmux or if the command fails.
 func GetTmuxPaneID() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		return paneID
-	}
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_id}")
-	output, err := cmd.Output()
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := (multiplexer.TmuxBackend{}).CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	return pane.Native
 }
 
 // GetTmuxPaneName returns the current tmux pane title.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxPaneName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_title}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_title}")
-	output, err := cmd.Output()
+	backend := multiplexer.TmuxBackend{}
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := backend.CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	nodeName, err := backend.CurrentNodeName(context.Background(), pane)
+	if err != nil {
+		return ""
+	}
+	return nodeName
 }
 
 // GetNodeConfig returns the effective NodeConfig for the given node name,

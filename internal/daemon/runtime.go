@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,10 +19,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -54,7 +57,8 @@ type daemonRuntime struct {
 	idleTracker                     *idle.IdleTracker
 	clock                           func() time.Time
 
-	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes  *atomic.Pointer[map[string]discovery.NodeInfo]
+	herdrRuntime *herdrruntime.Runtime
 
 	watchedDirs        map[string]bool
 	claimedPanes       map[string]bool
@@ -141,6 +145,7 @@ func newDaemonRuntime(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) *daemonRuntime {
 	daemonSubmitWorkerLimit := daemonSubmitWorkerLimitFromConfig(cfg)
 	return &daemonRuntime{
@@ -160,6 +165,7 @@ func newDaemonRuntime(
 		daemonState:                   daemonState,
 		idleTracker:                   idleTracker,
 		sharedNodes:                   sharedNodes,
+		herdrRuntime:                  herdrRuntime,
 		watchedDirs:                   make(map[string]bool),
 		claimedPanes:                  make(map[string]bool),
 		prevSessionNodes:              make(map[string][]string),
@@ -329,7 +335,9 @@ func (rt *daemonRuntime) handleContextDone() {
 	rt.daemonState.enabledSessionsMu.RLock()
 	for sessionName, enabled := range rt.daemonState.enabledSessions {
 		if enabled {
-			_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+sessionName).Run()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = rt.ownershipBackendForSession(sessionName).ClearSessionOwnerMarker(ctx, sessionName)
+			cancel()
 		}
 	}
 	rt.daemonState.enabledSessionsMu.RUnlock()
@@ -1469,6 +1477,7 @@ func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candida
 	}
 
 	preClaimed := 0
+	tmuxBackend := multiplexer.TmuxBackend{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) != 2 {
@@ -1479,7 +1488,7 @@ func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candida
 		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}
-		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+		if err := tmuxBackend.SetPaneOwnerMarker(context.Background(), multiplexer.TmuxPaneID(parts[0]), contextID); err != nil {
 			log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
 			continue
 		}
@@ -1555,8 +1564,67 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	if err != nil {
 		return nil, nil, err
 	}
+	if rt.herdrRuntime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		herdrNodes, herdrCollisions, herdrErr := rt.herdrRuntime.Discover(ctx, rt.baseDir, rt.contextID)
+		cancel()
+		if herdrErr != nil {
+			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
+		} else {
+			collisions = append(collisions, mergeRuntimeDiscoveredNodes(freshNodes, herdrNodes)...)
+			collisions = append(collisions, herdrCollisions...)
+		}
+	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	return freshNodes, collisions, nil
+}
+
+func (rt *daemonRuntime) ownershipBackendForSession(sessionName string) multiplexer.OwnershipBackend {
+	if rt != nil && rt.herdrRuntime != nil && rt.herdrRuntime.OwnsSession(sessionName) {
+		if backend := rt.herdrRuntime.OwnershipBackend(); backend != nil {
+			return backend
+		}
+	}
+	if rt != nil && rt.daemonState != nil {
+		return rt.daemonState.ownershipBackendForSessionName(sessionName)
+	}
+	return multiplexer.TmuxBackend{}
+}
+
+func mergeRuntimeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) []discovery.CollisionReport {
+	if dst == nil || len(src) == 0 {
+		return nil
+	}
+	var collisions []discovery.CollisionReport
+	for nodeKey, nodeInfo := range src {
+		if existing, exists := dst[nodeKey]; exists && multiplexer.BackendKindFromString(existing.Backend) != multiplexer.BackendKindFromString(nodeInfo.Backend) {
+			collisions = append(collisions, discovery.CollisionReport{
+				NodeKey:      nodeKey,
+				WinnerPaneID: existing.PaneID,
+				LoserPaneID:  nodeInfo.PaneID,
+			})
+			continue
+		}
+		dst[nodeKey] = nodeInfo
+	}
+	return collisions
+}
+
+func (rt *daemonRuntime) ownerForNodeSession(ctx context.Context, nodeInfo discovery.NodeInfo) string {
+	if multiplexer.BackendKindFromString(nodeInfo.Backend) != multiplexer.BackendKindHerdr {
+		return config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID)
+	}
+	backend := rt.ownershipBackendForSession(nodeInfo.SessionName)
+	marker, err := backend.SessionOwnerMarker(ctx, nodeInfo.SessionName)
+	if err != nil {
+		log.Printf("postman: WARNING: failed to read herdr session owner for %s: %v\n", nodeInfo.SessionName, err)
+		return ""
+	}
+	ownerContext, _, _ := strings.Cut(marker, ":")
+	if ownerContext != "" && ownerContext != rt.contextID {
+		return ownerContext
+	}
+	return ""
 }
 
 func (rt *daemonRuntime) storeSharedNodes() {
@@ -1695,11 +1763,14 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
 			continue
 		}
-		claimCmd := exec.Command(
-			"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
-			"@a2a_context_id", rt.contextID,
-		)
-		if err := claimCmd.Run(); err != nil {
+		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+		backend, err := multiplexer.OwnershipBackendForKind(backendKind)
+		if err != nil {
+			log.Printf("postman: WARNING: failed to select ownership backend for pane %s: %v\n", nodeInfo.PaneID, err)
+			continue
+		}
+		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+		if err := backend.SetPaneOwnerMarker(context.Background(), pane, rt.contextID); err != nil {
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}
@@ -1858,7 +1929,7 @@ func (rt *daemonRuntime) dispatchPendingAutoPings(freshNodes map[string]discover
 				continue
 			}
 		}
-		if owner := config.FindSessionOwner(rt.baseDir, nodeInfo.SessionName, rt.contextID); owner != "" {
+		if owner := rt.ownerForNodeSession(context.Background(), nodeInfo); owner != "" {
 			continue
 		}
 

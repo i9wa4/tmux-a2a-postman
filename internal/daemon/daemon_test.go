@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
@@ -65,6 +67,78 @@ func TestDaemonStateDrainWindowUsesInjectedClock(t *testing.T) {
 	}
 }
 
+func TestDaemonStateSetSessionEnabledUsesInjectedOwnershipBackend(t *testing.T) {
+	ds := NewDaemonState(0, "ctx-main")
+	backend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+	ds.SetOwnershipBackend(backend)
+
+	ds.SetSessionEnabled("work", true)
+	if backend.setSessionCalls != 1 || backend.contextID != "ctx-main" || backend.sessionName != "work" {
+		t.Fatalf("set session marker = calls:%d context:%q session:%q, want injected backend", backend.setSessionCalls, backend.contextID, backend.sessionName)
+	}
+
+	ds.SetSessionEnabled("work", false)
+	if backend.clearSessionCalls != 1 || backend.clearSessionName != "work" {
+		t.Fatalf("clear session marker = calls:%d session:%q, want injected backend", backend.clearSessionCalls, backend.clearSessionName)
+	}
+}
+
+func TestDaemonStateSetSessionEnabledSelectsOwnershipBackendPerSession(t *testing.T) {
+	ds := NewDaemonState(0, "ctx-main")
+	tmuxBackend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindTmux}
+	herdrBackend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+	ds.SetOwnershipBackendSelector(func(sessionName string) multiplexer.OwnershipBackend {
+		if sessionName == "herdr-work" {
+			return herdrBackend
+		}
+		return tmuxBackend
+	})
+
+	ds.SetSessionEnabled("tmux-work", true)
+	if herdrBackend.setSessionCalls != 0 {
+		t.Fatalf("Herdr backend used for tmux session, calls=%d", herdrBackend.setSessionCalls)
+	}
+	if tmuxBackend.setSessionCalls != 1 || tmuxBackend.sessionName != "tmux-work" {
+		t.Fatalf("tmux backend calls=%d session=%q, want one tmux session write", tmuxBackend.setSessionCalls, tmuxBackend.sessionName)
+	}
+
+	ds.SetSessionEnabled("herdr-work", true)
+	if herdrBackend.setSessionCalls != 1 || herdrBackend.sessionName != "herdr-work" {
+		t.Fatalf("Herdr backend calls=%d session=%q, want one Herdr session write", herdrBackend.setSessionCalls, herdrBackend.sessionName)
+	}
+}
+
+func TestDaemonRuntimeClaimNewPanesUsesRegisteredHerdrOwnershipBackend(t *testing.T) {
+	backend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	rt := &daemonRuntime{
+		contextID:    "ctx-main",
+		claimedPanes: make(map[string]bool),
+	}
+	rt.claimNewPanes(map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "workspace-1:pane-1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindHerdr),
+		},
+	})
+
+	if backend.setPaneCalls != 1 {
+		t.Fatalf("set pane calls = %d, want 1", backend.setPaneCalls)
+	}
+	if backend.pane != multiplexer.HerdrPaneID("workspace-1:pane-1") {
+		t.Fatalf("pane = %#v, want Herdr pane resource", backend.pane)
+	}
+	if backend.paneContextID != "ctx-main" {
+		t.Fatalf("pane context = %q, want ctx-main", backend.paneContextID)
+	}
+	if !rt.claimedPanes["workspace-1:pane-1"] {
+		t.Fatal("Herdr pane was not recorded as claimed")
+	}
+}
+
 func TestReserveDeliveryRouteUsesExplicitClock(t *testing.T) {
 	ds := NewDaemonState(0, "ctx-main")
 	route := "orchestrator:messenger"
@@ -111,6 +185,56 @@ func TestReserveDeliveryRouteUsesExplicitClock(t *testing.T) {
 	if !reservedAt.Equal(start.Add(15 * time.Second)) {
 		t.Fatalf("post-gap reservedAt = %v, want %v", reservedAt, start.Add(15*time.Second))
 	}
+}
+
+type fakeDaemonOwnershipBackend struct {
+	kind multiplexer.BackendKind
+
+	setSessionCalls   int
+	contextID         string
+	sessionName       string
+	clearSessionCalls int
+	clearSessionName  string
+
+	setPaneCalls  int
+	pane          multiplexer.ResourceID
+	paneContextID string
+}
+
+func (f *fakeDaemonOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeDaemonOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeDaemonOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextID, sessionName string, _ int) error {
+	f.setSessionCalls++
+	f.contextID = contextID
+	f.sessionName = sessionName
+	return nil
+}
+
+func (f *fakeDaemonOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessionName string) error {
+	f.clearSessionCalls++
+	f.clearSessionName = sessionName
+	return nil
+}
+
+func (f *fakeDaemonOwnershipBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeDaemonOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID, contextID string) error {
+	f.setPaneCalls++
+	f.pane = pane
+	f.paneContextID = contextID
+	return nil
+}
+
+func (f *fakeDaemonOwnershipBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestReserveDeliveryRoute_BackoffWhenInFlightReservationOutlivesGap(t *testing.T) {

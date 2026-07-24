@@ -1,17 +1,19 @@
 package controlplane
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -20,7 +22,8 @@ import (
 type HandKind string
 
 const (
-	HandKindTmux HandKind = "tmux"
+	HandKindTmux  HandKind = "tmux"
+	HandKindHerdr HandKind = "herdr"
 
 	BrainRuntimeUnknown = agentruntime.Unknown
 )
@@ -33,6 +36,8 @@ type HandAttachment struct {
 	Kind    HandKind
 	Address string
 }
+
+var registeredHerdrHandAdapters sync.Map
 
 type Target struct {
 	ActorID     string
@@ -55,14 +60,23 @@ func TargetForNode(nodeName string, nodeInfo discovery.NodeInfo) Target {
 		}
 	}
 
+	handKind := HandKindTmux
+	if multiplexer.BackendKindFromString(nodeInfo.Backend) == multiplexer.BackendKindHerdr {
+		handKind = HandKindHerdr
+	}
+	brainRuntime := BrainRuntimeUnknown
+	if nodeInfo.Runtime != "" {
+		brainRuntime = nodeInfo.Runtime
+	}
+
 	return Target{
 		ActorID: actorID,
 		RunID:   runID,
 		Brain: Brain{
-			Runtime: BrainRuntimeUnknown,
+			Runtime: brainRuntime,
 		},
 		Hand: HandAttachment{
-			Kind:    HandKindTmux,
+			Kind:    handKind,
 			Address: nodeInfo.PaneID,
 		},
 		SessionName: nodeInfo.SessionName,
@@ -101,15 +115,25 @@ type SystemMessageResult struct {
 	Delivered bool
 }
 
-type HandAdapter interface {
+type InteractiveDeliveryAdapter interface {
 	Kind() HandKind
 	Deliver(target Target, delivery PaneDelivery) error
+}
+
+type SystemMessageDeliveryAdapter interface {
 	DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error)
+}
+
+type HandAdapter interface {
+	InteractiveDeliveryAdapter
+	SystemMessageDeliveryAdapter
 }
 
 type TmuxHandAdapter struct {
 	ProbeRuntime func(paneID string) (string, error)
 	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+	PaneSender   notification.PaneSender
+	Backend      multiplexer.PaneBackend
 }
 
 func (TmuxHandAdapter) Kind() HandKind {
@@ -117,15 +141,100 @@ func (TmuxHandAdapter) Kind() HandKind {
 }
 
 func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	return TmuxInteractiveDeliveryAdapter(a).Deliver(target, delivery)
+}
+
+func (a TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+	return (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(target, delivery)
+}
+
+type TmuxInteractiveDeliveryAdapter struct {
+	ProbeRuntime func(paneID string) (string, error)
+	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+	PaneSender   notification.PaneSender
+	Backend      multiplexer.PaneBackend
+}
+
+type HerdrInteractiveDeliveryAdapter struct {
+	Backend        multiplexer.HerdrBackend
+	InputSanitizer multiplexer.HerdrInputSanitizer
+}
+
+type HerdrHandAdapter struct {
+	HerdrInteractiveDeliveryAdapter
+	SystemMessageDeliveryAdapter SystemMessageDeliveryAdapter
+}
+
+func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
+	if strings.TrimSpace(paneID) == "" {
+		return func() {}
+	}
+	registeredHerdrHandAdapters.Store(paneID, adapter)
+	return func() {
+		registeredHerdrHandAdapters.Delete(paneID)
+	}
+}
+
+func (HerdrInteractiveDeliveryAdapter) Kind() HandKind {
+	return HandKindHerdr
+}
+
+func (a HerdrInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	if target.Hand.Kind != HandKindHerdr {
+		return fmt.Errorf("herdr hand adapter cannot deliver to %q", target.Hand.Kind)
+	}
+	backend := a.Backend
+	if backend.InputSanitizer == nil {
+		backend.InputSanitizer = a.InputSanitizer
+	}
+	if backend.InputSanitizer == nil {
+		backend.InputSanitizer = notification.PrepareInteractivePaneMessage
+	}
+	enterCount := notification.ResolveEnterCount(delivery.EnterCount, func() (string, error) {
+		if target.Brain.Runtime != "" && target.Brain.Runtime != BrainRuntimeUnknown {
+			return target.Brain.Runtime, nil
+		}
+		return backend.PaneCurrentCommand(context.Background(), multiplexer.HerdrPaneID(target.Hand.Address))
+	})
+	return backend.SendPaneInput(context.Background(), multiplexer.HerdrPaneID(target.Hand.Address), multiplexer.HerdrPaneInput{
+		Text:       delivery.Content,
+		EnterCount: enterCount,
+	})
+}
+
+func (a HerdrHandAdapter) Kind() HandKind {
+	return HandKindHerdr
+}
+
+func (a HerdrHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	return a.HerdrInteractiveDeliveryAdapter.Deliver(target, delivery)
+}
+
+func (a HerdrHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+	adapter := a.SystemMessageDeliveryAdapter
+	if adapter == nil {
+		adapter = FilesystemSystemMessageAdapter{}
+	}
+	return adapter.DeliverSystemMessage(target, delivery)
+}
+
+func (TmuxInteractiveDeliveryAdapter) Kind() HandKind {
+	return HandKindTmux
+}
+
+func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDelivery) error {
 	if target.Hand.Kind != HandKindTmux {
 		return fmt.Errorf("tmux hand adapter cannot deliver to %q", target.Hand.Kind)
 	}
 
 	probeRuntime := a.ProbeRuntime
 	if probeRuntime == nil {
+		backend := a.Backend
+		if backend == nil {
+			backend = multiplexer.TmuxBackend{}
+		}
 		probeRuntime = func(paneID string) (string, error) {
-			out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_current_command}").Output()
-			return strings.TrimSpace(string(out)), err
+			return backend.PaneCurrentCommand(context.Background(), multiplexer.TmuxPaneID(paneID))
 		}
 	}
 	sendToPane := a.SendToPane
@@ -140,19 +249,37 @@ func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
 		return probeRuntime(target.Hand.Address)
 	})
 
-	return sendToPane(
-		target.Hand.Address,
-		delivery.Content,
-		delivery.EnterDelay,
-		delivery.TmuxTimeout,
-		enterCount,
-		delivery.BypassCooldown,
-		delivery.VerifyDelay,
-		delivery.MaxRetries,
-	)
+	paneSender := a.PaneSender
+	if paneSender == nil {
+		paneSender = notification.PaneSenderFunc(func(paneDelivery notification.PaneDelivery) error {
+			return sendToPane(
+				paneDelivery.PaneID,
+				paneDelivery.Message,
+				paneDelivery.EnterDelay,
+				paneDelivery.TmuxTimeout,
+				paneDelivery.EnterCount,
+				paneDelivery.BypassCooldown,
+				paneDelivery.VerifyDelay,
+				paneDelivery.MaxRetries,
+			)
+		})
+	}
+
+	return paneSender.DeliverPane(notification.PaneDelivery{
+		PaneID:         target.Hand.Address,
+		Message:        delivery.Content,
+		EnterDelay:     delivery.EnterDelay,
+		TmuxTimeout:    delivery.TmuxTimeout,
+		EnterCount:     enterCount,
+		BypassCooldown: delivery.BypassCooldown,
+		VerifyDelay:    delivery.VerifyDelay,
+		MaxRetries:     delivery.MaxRetries,
+	})
 }
 
-func (TmuxHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+type FilesystemSystemMessageAdapter struct{}
+
+func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
 	recipientInbox := target.InboxDir()
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
 		return SystemMessageResult{}, fmt.Errorf("creating recipient inbox: %w", err)
@@ -184,6 +311,13 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	switch target.Hand.Kind {
 	case HandKindTmux:
 		return TmuxHandAdapter{}, nil
+	case HandKindHerdr:
+		if registered, ok := registeredHerdrHandAdapters.Load(target.Hand.Address); ok {
+			if adapter, ok := registered.(HerdrHandAdapter); ok {
+				return adapter, nil
+			}
+		}
+		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)
 	default:
 		return nil, fmt.Errorf("unsupported hand kind %q", target.Hand.Kind)
 	}

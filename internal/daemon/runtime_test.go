@@ -23,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -435,6 +436,7 @@ func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
 				nil,
 				nil,
 				"",
+				nil,
 			)
 			if got := cap(rt.daemonSubmitSem); got != tt.want {
 				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)
@@ -2414,6 +2416,33 @@ func TestNewAutoPingDispatchSnapshot_ClonesDispatchInputs(t *testing.T) {
 	}
 	if got := snapshot.adjacency["review:worker"][0]; got != "review:critic" {
 		t.Fatalf("snapshot adjacency = %q, want review:critic", got)
+	}
+}
+
+func TestMergeRuntimeDiscoveredNodesReportsCrossBackendCollisionWithoutOverwrite(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "%1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindTmux),
+		},
+	}
+	collisions := mergeRuntimeDiscoveredNodes(nodes, map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "workspace-1:pane-1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindHerdr),
+		},
+	})
+
+	if got := nodes["work:worker"].PaneID; got != "%1" {
+		t.Fatalf("node pane = %q, want original tmux pane", got)
+	}
+	if len(collisions) != 1 {
+		t.Fatalf("collisions = %#v, want one cross-backend collision", collisions)
+	}
+	if collisions[0].NodeKey != "work:worker" || collisions[0].WinnerPaneID != "%1" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
+		t.Fatalf("collision = %#v, want tmux winner and Herdr loser", collisions[0])
 	}
 }
 
