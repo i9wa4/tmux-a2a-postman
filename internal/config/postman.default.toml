@@ -81,6 +81,11 @@ input_request_stale_seconds = 3600 # Status projection threshold for stale unfil
 verdict_grace_seconds = 3600       # Grace period for requester verdict stamps after filled reply-required input requests
 verdict_debt_cap = 3               # Maximum unstamped fills before new reply-required sends are refused (<0 = disabled)
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
+escalation_check_interval_seconds = 0    # Threshold-push cadence; 0 disables escalation pushes
+escalation_oldest_open_seconds = 0        # Oldest open input request threshold; 0 disables this tripwire
+escalation_dead_letter_count = 0          # Dead-letter count threshold; 0 disables this tripwire
+escalation_unread_backlog_count = 0       # Per-node unread backlog threshold; 0 disables this tripwire
+escalation_stale_node_seconds = 0         # Stale node age threshold; 0 disables this tripwire
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true

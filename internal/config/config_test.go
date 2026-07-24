@@ -489,6 +489,20 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.DaemonSubmitWorkerLimit != DefaultDaemonSubmitWorkerLimit {
 		t.Errorf("default DaemonSubmitWorkerLimit: got %d, want %d", cfg.DaemonSubmitWorkerLimit, DefaultDaemonSubmitWorkerLimit)
 	}
+	if cfg.EscalationCheckIntervalSeconds != 0 ||
+		cfg.EscalationOldestOpenSeconds != 0 ||
+		cfg.EscalationDeadLetterCount != 0 ||
+		cfg.EscalationUnreadBacklogCount != 0 ||
+		cfg.EscalationStaleNodeSeconds != 0 {
+		t.Errorf(
+			"default escalation thresholds should be disabled, got interval=%v oldest_open=%v dead_letter=%d unread=%d stale=%v",
+			cfg.EscalationCheckIntervalSeconds,
+			cfg.EscalationOldestOpenSeconds,
+			cfg.EscalationDeadLetterCount,
+			cfg.EscalationUnreadBacklogCount,
+			cfg.EscalationStaleNodeSeconds,
+		)
+	}
 	if cfg.AutoEnableNewSessions == nil || !*cfg.AutoEnableNewSessions {
 		t.Errorf("default AutoEnableNewSessions: got %v, want true for cross-session startup/discovery auto-PING", cfg.AutoEnableNewSessions)
 	}

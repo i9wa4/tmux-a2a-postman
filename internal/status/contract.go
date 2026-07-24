@@ -1,6 +1,6 @@
 package status
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 const DeliveryStuckAfterSeconds = 180
 
@@ -24,6 +24,18 @@ type NodeStatus struct {
 	NodeLocal           *NodeLocalStatus            `json:"node_local,omitempty"`
 	Flow                *NodeFlowStatus             `json:"flow,omitempty"`
 	Queues              *NodeQueues                 `json:"queues,omitempty"`
+	ConventionMeter     *ConventionMeterStatus      `json:"convention_meter,omitempty"`
+}
+
+type ConventionMeterStatus struct {
+	CheckedMessages            int     `json:"checked_messages"`
+	ViolationCount             int     `json:"violation_count"`
+	ViolationRate              float64 `json:"violation_rate"`
+	MissingVerdictOfCount      int     `json:"missing_verdict_of_count"`
+	MissingEvidenceCount       int     `json:"missing_evidence_count"`
+	MissingReplyReferenceCount int     `json:"missing_reply_reference_count"`
+	Signal                     string  `json:"signal"`
+	Interpretation             string  `json:"interpretation"`
 }
 
 type ScreenProgressEvidence struct {

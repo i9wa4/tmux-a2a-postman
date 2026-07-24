@@ -27,13 +27,22 @@ func applySessionStatusEnrichment(health *status.SessionStatus, delivery *status
 
 func enrichSessionStatus(health *status.SessionStatus, sessionDir string, now time.Time) {
 	blockedByNode := map[string][]projection.BlockedReport{}
+	conventionByNode := map[string]projection.ConventionMeterNode{}
 	if sessionDir != "" {
 		if blocked, ok, err := projection.ProjectBlockedReportState(sessionDir, health.SessionName); err == nil && ok {
 			blockedByNode = blocked.ReportsByNode
 		}
+		if convention, ok, err := projection.ProjectConventionMeterState(sessionDir, health.SessionName); err == nil && ok {
+			conventionByNode = convention.Nodes
+		}
 	}
 	delivery := collectSessionDelivery(sessionDir, health.Queues, now)
 	applySessionStatusEnrichment(health, delivery, blockedByNode)
+	for idx := range health.Nodes {
+		if convention, ok := conventionByNode[health.Nodes[idx].Name]; ok {
+			health.Nodes[idx].ConventionMeter = statusConventionMeter(convention)
+		}
+	}
 }
 
 func collectSessionDelivery(sessionDir string, queues status.SessionQueues, now time.Time) *status.DeliveryStatus {

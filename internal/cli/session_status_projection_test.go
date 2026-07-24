@@ -400,8 +400,8 @@ func TestSessionStatusAddsSchemaV4SeverityForInputRequests(t *testing.T) {
 		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if health.SchemaVersion != 4 {
-		t.Fatalf("SchemaVersion = %d, want 4", health.SchemaVersion)
+	if health.SchemaVersion != 5 {
+		t.Fatalf("SchemaVersion = %d, want 5", health.SchemaVersion)
 	}
 	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
 		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)
@@ -558,6 +558,40 @@ func TestSessionStatusReportsInferredBlockedFirstLineAndClearsOnDone(t *testing.
 	}
 	if got := nodeByName["worker"].Flow.State; got != "idle" {
 		t.Fatalf("worker flow state after DONE = %q, want idle", got)
+	}
+}
+
+func TestSessionStatusExposesConventionMeterPerNode(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		nil,
+		nil,
+	)
+	sessionDir := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName)
+	now := time.Date(2026, time.April, 14, 5, 18, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, fixture.contextID, fixture.sessionName, 333, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	content := sessionStatusMessageContent("worker", "critic", "done.md", nil, "DONE: implemented")
+	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, "done.md", "worker", "critic", content, now.Add(time.Second))
+
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeStatus{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	meter := nodeByName["worker"].ConventionMeter
+	if meter == nil {
+		t.Fatal("worker convention_meter is nil, want projected meter")
+	}
+	if meter.CheckedMessages != 1 || meter.ViolationCount != 1 || meter.MissingEvidenceCount != 1 || meter.MissingReplyReferenceCount != 1 {
+		t.Fatalf("worker convention_meter = %#v, want missing evidence and reply reference", meter)
 	}
 }
 
