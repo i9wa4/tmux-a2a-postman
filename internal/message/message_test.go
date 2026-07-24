@@ -240,6 +240,58 @@ func TestDeliverMessage(t *testing.T) {
 	}
 }
 
+func TestDeliverMessageEvidenceGateUsesFileObservationTime(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	filename := "20260713-095959-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-07-13T10:00:01Z\n---\n\nDONE\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	beforeActivation := time.Date(2026, 7, 13, 9, 59, 59, 0, time.UTC)
+	if err := os.Chtimes(postPath, beforeActivation, beforeActivation); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+		"worker":       {"orchestrator"},
+	}
+	cfg := &config.Config{
+		EnterDelay:                  0.1,
+		TmuxTimeout:                 1.0,
+		EvidencePresenceGateEnabled: true,
+		EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+	}
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); err != nil {
+		t.Errorf("message not delivered to inbox: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(sessionDir, "dead-letter", "*missing-evidence*"))
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("message was dead-lettered using sender timestamp: %v", matches)
+	}
+}
+
 func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	sessionDir := t.TempDir()
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

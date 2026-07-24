@@ -77,6 +77,8 @@ type Config struct {
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
+	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
+	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig

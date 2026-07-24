@@ -34,6 +34,7 @@ const (
 	deadLetterReasonSenderSessionDisabled    = "sender session disabled"
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 	deadLetterReasonForeignSession           = "foreign session"
+	deadLetterReasonMissingEvidence          = "missing-evidence"
 )
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
@@ -48,6 +49,7 @@ const (
 	DlSuffixTTLExpired       = "-dl-ttl-expired"
 	dlSuffixForeignSession   = "-dl-foreign-session"
 	dlSuffixForgedSender     = "-dl-forged-sender"
+	dlSuffixMissingEvidence  = "-dl-missing-evidence"
 )
 
 // inboxQueueCap is the maximum number of messages allowed in a recipient inbox
@@ -677,9 +679,25 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			log.Printf("postman: WARNING: failed to read message for envelope validation %s: %v\n", filename, readErr)
 		} else {
 			messageContent = string(rawBytes)
-			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
+			metadata, parseErr := ParseEnvelopeMetadata(string(rawBytes))
+			envFrom, envTo := "", ""
+			if parseErr == nil {
+				envFrom, envTo = metadata.From, metadata.To
+			}
 			policyInput.EnvelopeChecked = true
 			policyInput.EnvelopeMismatch = parseErr != nil || envFrom != info.From || envTo != info.To
+			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+				if decision.SendDeadLetterNotification {
+					sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+				}
+				emitDeliveryDecisionEvent(events, decision, info, filename)
+				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
+			}
+			policyInput.EvidencePresenceGateChecked = true
+			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveAt(evidenceGateObservedAt(postPath))
+			policyInput.CompletionClaim = isCompletionClaim(metadata.Body)
+			policyInput.EvidencePresent = hasEvidenceReplayContract(metadata)
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 				if decision.SendDeadLetterNotification {

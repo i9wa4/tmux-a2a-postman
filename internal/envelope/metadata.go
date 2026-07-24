@@ -23,6 +23,13 @@ type Metadata struct {
 	InputRequestSetID        string
 	Verdict                  string
 	VerdictOf                string
+	EvidenceCommand          string
+	EvidenceCWD              string
+	EvidenceEnvAllowlist     string
+	EvidenceTimeoutSeconds   string
+	EvidenceSideEffectClass  string
+	EvidenceArtifact         string
+	EvidenceHash             string
 	BranchID                 string
 	CompletionRule           string
 	RuntimeContextID         string
@@ -193,6 +200,20 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.Verdict = value
 			case "verdictOf", "verdict_of":
 				metadata.VerdictOf = value
+			case "evidence_command":
+				metadata.EvidenceCommand = value
+			case "evidence_cwd":
+				metadata.EvidenceCWD = value
+			case "evidence_env_allowlist":
+				metadata.EvidenceEnvAllowlist = value
+			case "evidence_timeout_seconds":
+				metadata.EvidenceTimeoutSeconds = value
+			case "evidence_side_effect_class":
+				metadata.EvidenceSideEffectClass = value
+			case "evidence_artifact":
+				metadata.EvidenceArtifact = value
+			case "evidence_hash":
+				metadata.EvidenceHash = value
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":

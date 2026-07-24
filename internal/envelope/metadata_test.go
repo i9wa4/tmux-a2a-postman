@@ -152,6 +152,36 @@ func TestParseMetadataAcceptsVerdictFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataAcceptsEvidenceFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  evidence_command: go test ./...\n  evidence_cwd: /repo\n  evidence_env_allowlist: PATH,HOME\n  evidence_timeout_seconds: 120\n  evidence_side_effect_class: idempotent\n  evidence_artifact: reports/test.json\n  evidence_hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n\nDONE\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.EvidenceCommand != "go test ./..." {
+		t.Fatalf("EvidenceCommand = %q, want command", got.EvidenceCommand)
+	}
+	if got.EvidenceCWD != "/repo" {
+		t.Fatalf("EvidenceCWD = %q, want cwd", got.EvidenceCWD)
+	}
+	if got.EvidenceEnvAllowlist != "PATH,HOME" {
+		t.Fatalf("EvidenceEnvAllowlist = %q, want allowlist", got.EvidenceEnvAllowlist)
+	}
+	if got.EvidenceTimeoutSeconds != "120" {
+		t.Fatalf("EvidenceTimeoutSeconds = %q, want timeout", got.EvidenceTimeoutSeconds)
+	}
+	if got.EvidenceSideEffectClass != "idempotent" {
+		t.Fatalf("EvidenceSideEffectClass = %q, want side effect class", got.EvidenceSideEffectClass)
+	}
+	if got.EvidenceArtifact != "reports/test.json" {
+		t.Fatalf("EvidenceArtifact = %q, want artifact path", got.EvidenceArtifact)
+	}
+	if got.EvidenceHash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("EvidenceHash = %q, want hash", got.EvidenceHash)
+	}
+}
+
 func TestParseMetadataAcceptsSnakeCaseVerdictOf(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  verdict: fail\n  verdict_of: ireq_456\n---\n\nnot yet\n"
 
