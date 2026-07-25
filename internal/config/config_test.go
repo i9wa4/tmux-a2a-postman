@@ -465,12 +465,6 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.VerdictDebtCap != 3 {
 		t.Errorf("default VerdictDebtCap: got %d, want 3", cfg.VerdictDebtCap)
 	}
-	if cfg.AuditReviewProbabilityFloor != 0.05 {
-		t.Errorf("default AuditReviewProbabilityFloor: got %v, want 0.05", cfg.AuditReviewProbabilityFloor)
-	}
-	if cfg.AuditTarget != "" {
-		t.Errorf("default AuditTarget: got %q, want empty", cfg.AuditTarget)
-	}
 	if cfg.HasExplicitUINodeSetting() {
 		t.Error("default UINode should not be treated as an explicit operator setting")
 	}
@@ -500,6 +494,20 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestLoadConfig_AuditDrawDefaults(t *testing.T) {
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig with empty path failed: %v", err)
+	}
+
+	if cfg.AuditReviewProbabilityFloor != 0.05 {
+		t.Errorf("default AuditReviewProbabilityFloor: got %v, want 0.05", cfg.AuditReviewProbabilityFloor)
+	}
+	if cfg.AuditTarget != "" {
+		t.Errorf("default AuditTarget: got %q, want empty", cfg.AuditTarget)
 	}
 }
 
