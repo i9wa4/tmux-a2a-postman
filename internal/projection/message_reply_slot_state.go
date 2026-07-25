@@ -479,6 +479,10 @@ func sortedInputRequestDetails(exact, fallback map[string]InputRequestDetail) []
 }
 
 func simpleNameForSession(name, sessionName string) string {
+	return SimpleNameForSession(name, sessionName)
+}
+
+func SimpleNameForSession(name, sessionName string) string {
 	fullName := nodeaddr.Full(name, sessionName)
 	recipientSession, recipientName, hasSession := nodeaddr.Split(fullName)
 	if hasSession && recipientSession == sessionName {

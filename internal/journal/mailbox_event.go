@@ -36,6 +36,14 @@ func RecordProcessMailboxPayload(sessionDir, tmuxSessionName, eventType string, 
 	return manager.RecordMailboxPayload(sessionDir, tmuxSessionName, eventType, visibility, payload, now)
 }
 
+func RecordProcessMailboxPayloadIfAbsent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, equivalent EventEquivalenceFunc, now time.Time) (bool, error) {
+	manager := currentProcessManager()
+	if manager == nil {
+		return false, nil
+	}
+	return manager.RecordMailboxPayloadIfAbsent(sessionDir, tmuxSessionName, eventType, visibility, payload, equivalent, now)
+}
+
 func (m *Manager) RecordMailboxPayload(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, now time.Time) error {
 	writer, err := m.writerFor(sessionDir, tmuxSessionName, now)
 	if err != nil {
@@ -48,4 +56,18 @@ func (m *Manager) RecordMailboxPayload(sessionDir, tmuxSessionName, eventType st
 		ThreadID: payload.ThreadID,
 	}, now)
 	return err
+}
+
+func (m *Manager) RecordMailboxPayloadIfAbsent(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, equivalent EventEquivalenceFunc, now time.Time) (bool, error) {
+	writer, err := m.writerFor(sessionDir, tmuxSessionName, now)
+	if err != nil {
+		return false, err
+	}
+	if payload.Directory == "" {
+		payload.Directory = directoryNameFromEventType(eventType)
+	}
+	_, appended, err := writer.AppendCurrentSessionEventIfAbsent(eventType, visibility, payload, AppendOptions{
+		ThreadID: payload.ThreadID,
+	}, now, equivalent)
+	return appended, err
 }
