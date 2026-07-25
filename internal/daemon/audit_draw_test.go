@@ -82,12 +82,15 @@ func TestRecordMailboxProjectionPayload_JournalsAuditDrawAfterPassVerdict(t *tes
 	}
 }
 
-func TestRecordMailboxProjectionPayload_SampledAuditDrawEnqueuesReviewRequiredMail(t *testing.T) {
+func TestRecordMailboxProjectionPayload_SampledAuditDrawDeliversReviewRequiredMail(t *testing.T) {
 	originalTarget := auditTarget
 	auditTarget = "critic"
 	t.Cleanup(func() { auditTarget = originalTarget })
 
 	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
 	sessionName := "review"
 	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
 	manager := journal.NewManager("ctx-main", 4242)
@@ -119,16 +122,16 @@ func TestRecordMailboxProjectionPayload_SampledAuditDrawEnqueuesReviewRequiredMa
 		Content:   verdict,
 	})
 
-	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "critic"))
 	if err != nil {
-		t.Fatalf("ReadDir(post): %v", err)
+		t.Fatalf("ReadDir(inbox/critic): %v", err)
 	}
 	if len(entries) != 1 {
-		t.Fatalf("post entries = %d, want sampled audit request", len(entries))
+		t.Fatalf("critic inbox entries = %d, want sampled audit request", len(entries))
 	}
-	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	content, err := os.ReadFile(filepath.Join(sessionDir, "inbox", "critic", entries[0].Name()))
 	if err != nil {
-		t.Fatalf("ReadFile(audit post): %v", err)
+		t.Fatalf("ReadFile(audit inbox message): %v", err)
 	}
 	for _, want := range []string{
 		"to: critic",
@@ -140,6 +143,13 @@ func TestRecordMailboxProjectionPayload_SampledAuditDrawEnqueuesReviewRequiredMa
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("audit request missing %q:\n%s", want, string(content))
 		}
+	}
+	deadEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
+	if err != nil {
+		t.Fatalf("ReadDir(dead-letter): %v", err)
+	}
+	if len(deadEntries) != 0 {
+		t.Fatalf("dead-letter entries = %d, want no dead-letter for sampled audit request", len(deadEntries))
 	}
 
 	events, err := journal.Replay(sessionDir)

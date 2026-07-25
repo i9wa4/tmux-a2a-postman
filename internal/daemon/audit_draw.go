@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -98,20 +98,17 @@ func enqueueAuditReviewRequest(sessionDir, sessionName string, draw projection.A
 		return "", "", err
 	}
 	content := auditReviewRequestContent(filename, inputRequestID, target, draw, now)
-	postDir := filepath.Join(sessionDir, "post")
-	if err := os.MkdirAll(postDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("creating post directory: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(postDir, filename), []byte(content), 0o600); err != nil {
-		return "", "", fmt.Errorf("writing audit request: %w", err)
-	}
-	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
-		MessageID: filename,
-		From:      "postman",
-		To:        target,
-		Path:      filepath.Join("post", filename),
-		Content:   content,
+	deliveryTarget := controlplane.TargetForNode(target, discovery.NodeInfo{
+		SessionName: sessionName,
+		SessionDir:  sessionDir,
 	})
+	result, err := message.DeliverSystemMessageDirectResultToTarget(filename, deliveryTarget, "postman", "", content, config.DefaultConfig(), nil, nil, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("delivering audit request: %w", err)
+	}
+	if !result.Delivered {
+		return "", "", fmt.Errorf("audit target inbox is full")
+	}
 	return filename, inputRequestID, nil
 }
 
