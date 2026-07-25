@@ -594,11 +594,10 @@ func TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnconfigured(t *t
 	}
 }
 
-// TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnresolvable guards the
-// second case of #626's decided requirement 1: command_approver_node configured but
-// naming a node that doesn't exist must fail open exactly like an
-// unconfigured command_approver_node, not fail closed.
-func TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnresolvable(t *testing.T) {
+// TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeUnresolvable
+// prevents a configured-but-unresolvable reviewer from silently executing a
+// blocking command (#680).
+func TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeUnresolvable(t *testing.T) {
 	policyConfig := config.CommandApprovalPolicy{
 		Requester: "worker",
 		Reviewer:  "orchestrator",
@@ -615,15 +614,15 @@ func TestRunExecuteBashBlockingFailsOpenWhenCommandApproverNodeUnresolvable(t *t
 		"--category", "release",
 		"--command", "printf unresolvable",
 	))
-	if err != nil {
-		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want unresolved approver block")
 	}
-	if fixture.runCount != 1 {
-		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
 	}
 	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
-	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
-		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
+	if decision.Decision != "blocked" {
+		t.Fatalf("decision = %q, want blocked", decision.Decision)
 	}
 }
 

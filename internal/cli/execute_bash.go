@@ -158,8 +158,9 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
 	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode()
+	approverConfigured := strings.TrimSpace(cfg.CommandApproverNode) != ""
 
-	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
+	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, approverConfigured, validReviewer, ctx.now())
 	if err != nil {
 		return err
 	}
@@ -435,8 +436,11 @@ func validateCommandApprovalThreadID(threadID string) error {
 // mode. This must never be conflated with an actual recorded approval.
 const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
 
-func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
+func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, approverConfigured, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
 	if !validReviewer {
+		if approverConfigured && policy.Mode == "blocking" {
+			return commandApprovalEvaluation{Decision: "unresolved_command_approver", Allowed: false, Reason: "configured command_approver_node is not resolvable; blocking approval fails closed"}, nil
+		}
 		// #626 decided requirement 1 (unified fail-open rule): unless a
 		// valid command_approver_node is configured, every command is treated as
 		// approved across all three modes, including blocking. This is
