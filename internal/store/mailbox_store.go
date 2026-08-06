@@ -1,11 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // DeadLetterPlan is the pure path plan for writing or moving a message to dead-letter/.
@@ -198,6 +201,13 @@ var osArchiveFileOps = archiveFileOps{
 	rename:   os.Rename,
 }
 
+type verifiedArchiveHooks struct {
+	beforeStage  func()
+	beforeUnlink func()
+}
+
+var defaultVerifiedArchiveHooks verifiedArchiveHooks
+
 // ArchiveInboxMessage moves an inbox message to read/ or removes duplicates.
 func ArchiveInboxMessage(absPath, filename string) (string, error) {
 	plan, err := PlanArchiveInboxMessage(absPath, filename)
@@ -205,6 +215,98 @@ func ArchiveInboxMessage(absPath, filename string) (string, error) {
 		return "", err
 	}
 	return archiveInboxMessageWithOps(plan, osArchiveFileOps)
+}
+
+// ArchiveInboxMessageVerified verifies or repairs read/ with the exact source
+// content before removing the inbox source. Source preservation is preferred
+// over returning a corrupt or missing archived body.
+func ArchiveInboxMessageVerified(absPath, filename string, data []byte) (string, error) {
+	plan, err := PlanArchiveInboxMessage(absPath, filename)
+	if err != nil {
+		return "", err
+	}
+	readPath, cleanup, err := archiveInboxMessageVerifiedWithHooks(plan, data, defaultVerifiedArchiveHooks)
+	if err != nil {
+		return "", err
+	}
+	if err := cleanup(); err != nil {
+		return "", err
+	}
+	return readPath, nil
+}
+
+// BeginArchiveInboxMessageVerified completes the durable portion of a verified
+// inbox archive and returns cleanup for the remaining private stage state.
+//
+// On success the read archive content and parent read directory are durable, so
+// callers may report a successful pop before invoking cleanup. Cleanup remains
+// idempotent and recoverable through RecoverArchiveBindings if the process dies
+// or cleanup fails.
+func BeginArchiveInboxMessageVerified(absPath, filename string, data []byte) (string, func() error, error) {
+	plan, err := PlanArchiveInboxMessage(absPath, filename)
+	if err != nil {
+		return "", nil, err
+	}
+	return archiveInboxMessageVerifiedWithHooks(plan, data, defaultVerifiedArchiveHooks)
+}
+
+// RecoverArchiveBindings repairs or fails closed on orphaned verified archive
+// stages left in inbox directories by an interrupted direct pop.
+func RecoverArchiveBindings(sessionDir string) error {
+	inboxRoot := filepath.Join(sessionDir, "inbox")
+	readDir := filepath.Join(sessionDir, "read")
+	entries, err := os.ReadDir(inboxRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading inbox root for archive binding recovery: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := recoverArchiveBindingsInInboxDir(filepath.Join(inboxRoot, entry.Name()), readDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func archiveInboxMessageVerifiedWithHooks(plan InboxArchivePlan, data []byte, hooks verifiedArchiveHooks) (readPath string, cleanup func() error, err error) {
+	source, err := openBoundArchiveSource(plan.SourcePath, data)
+	if err != nil {
+		return "", nil, err
+	}
+	stageName, err := source.Stage(hooks.beforeStage)
+	if err != nil {
+		_ = source.Close()
+		return "", nil, err
+	}
+	staged := true
+	defer func() {
+		if staged {
+			_ = source.Restore(stageName)
+			_ = source.Close()
+		}
+	}()
+	if err := ensureReadArchiveContent(plan.ReadPath, data); err != nil {
+		return "", nil, err
+	}
+	var once sync.Once
+	var cleanupErr error
+	cleanup = func() error {
+		once.Do(func() {
+			defer source.Close()
+			cleanupErr = source.UnlinkStage(stageName, hooks.beforeUnlink)
+			if cleanupErr != nil && source.archiveBindingCleanupComplete(stageName) {
+				cleanupErr = nil
+			}
+		})
+		return cleanupErr
+	}
+	staged = false
+	return plan.ReadPath, cleanup, nil
 }
 
 func archiveInboxMessageWithOps(plan InboxArchivePlan, ops archiveFileOps) (string, error) {
@@ -223,6 +325,124 @@ func archiveInboxMessageWithOps(plan InboxArchivePlan, ops archiveFileOps) (stri
 		return "", fmt.Errorf("archiving message: %w", err)
 	}
 	return plan.ReadPath, nil
+}
+
+func ensureReadArchiveContent(readPath string, data []byte) error {
+	info, err := os.Lstat(readPath)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("checking archive read path: refusing symlink %s", readPath)
+		}
+		current, readErr := os.ReadFile(readPath)
+		if readErr != nil {
+			return fmt.Errorf("checking archive read path: %w", readErr)
+		}
+		if bytes.Equal(current, data) {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking archive read path: %w", err)
+	}
+
+	dir := filepath.Dir(readPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating read directory: %w", err)
+	}
+	dirInfo, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("checking read directory: %w", err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("checking read directory: refusing symlink %s", dir)
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(readPath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temporary archive read path: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing temporary archive read path: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("syncing temporary archive read path: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temporary archive read path: %w", err)
+	}
+	if err := os.Rename(tmpPath, readPath); err != nil {
+		return fmt.Errorf("repairing archive read path: %w", err)
+	}
+	cleanupTmp = false
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("syncing archive read directory: %w", err)
+	}
+	return nil
+}
+
+func validateVerifiedArchiveSource(sourcePath string, data []byte) (fs.FileInfo, error) {
+	sourceInfo, err := os.Lstat(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("checking archive source: %w", err)
+	}
+	if sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("checking archive source: refusing symlink %s", sourcePath)
+	}
+	if !sourceInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("checking archive source: refusing non-regular file %s", sourcePath)
+	}
+	sourceFile, err := os.Open(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening archive source for verification: %w", err)
+	}
+	defer sourceFile.Close()
+	descriptorInfo, err := sourceFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stating archive source descriptor: %w", err)
+	}
+	if !os.SameFile(sourceInfo, descriptorInfo) {
+		return nil, fmt.Errorf("checking archive source: source object changed for %s", sourcePath)
+	}
+	if !descriptorInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("checking archive source descriptor: refusing non-regular file %s", sourcePath)
+	}
+	current, err := io.ReadAll(sourceFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading archive source descriptor for verification: %w", err)
+	}
+	if !bytes.Equal(current, data) {
+		return nil, fmt.Errorf("checking archive source: source bytes changed for %s", sourcePath)
+	}
+	currentInfo, err := sourceFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("checking archive source descriptor after read: %w", err)
+	}
+	if !os.SameFile(descriptorInfo, currentInfo) {
+		return nil, fmt.Errorf("checking archive source descriptor after read: source object changed for %s", sourcePath)
+	}
+	return sourceInfo, nil
+}
+
+var syncDirectory = func(dir string) error {
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := dirHandle.Sync(); err != nil {
+		_ = dirHandle.Close()
+		return err
+	}
+	if err := dirHandle.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // PopReceiptPlan is the pure path plan for writing a pop receipt next to a read/ archive.

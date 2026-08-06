@@ -133,9 +133,13 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				projected.InfoUnreadCounts[meta.To]++
 			}
 		case MailboxProjectionReadEventType:
+			readEventID := event.EventID
+			if payload.ReadID != "" {
+				readEventID = payload.ReadID
+			}
 			decrementCount(projected.UnreadCounts, meta.To)
-			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt, event.EventID)
-			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt, event.EventID)
+			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt, readEventID)
+			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt, readEventID)
 			if inputRequest, ok := infoUnread[inputRequestKey(meta.MessageID, meta.To)]; ok {
 				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))

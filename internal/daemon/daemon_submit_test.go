@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 func verdictGateSendContent(from, to, messageID, replyPolicy, inputRequestID string) string {
@@ -1001,6 +1005,236 @@ func TestProcessDaemonSubmitRequest_PopArchivesUnreadMessage(t *testing.T) {
 	}
 	if response.UnreadBefore != 2 {
 		t.Fatalf("response.UnreadBefore = %d, want 2", response.UnreadBefore)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_PopReportsDeterministicStaleBacklog(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	oldest := "20260414-032800-from-orchestrator-to-worker.md"
+	newer := "20260414-032900-from-orchestrator-to-worker.md"
+	newest := "20260414-033000-from-orchestrator-to-worker.md"
+	otherRoute := "20260414-033100-from-reviewer-to-worker.md"
+	for filename, body := range map[string]string{
+		oldest:     "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:28:00Z\n---\n\noldest\n",
+		newer:      "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:29:00Z\n---\n\nnewer\n",
+		newest:     "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:30:00Z\n---\n\nnewest\n",
+		otherRoute: "---\nparams:\n  from: reviewer\n  to: worker\n  timestamp: 2026-04-14T03:31:00Z\n---\n\nother route\n",
+	} {
+		if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", filename, err)
+		}
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-stale-backlog",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-stale-backlog"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != oldest {
+		t.Fatalf("response.Filename = %q, want %q", response.Filename, oldest)
+	}
+	if response.StaleBacklog == nil {
+		t.Fatal("response.StaleBacklog = nil, want same-route backlog notice")
+	}
+	if response.StaleBacklog.NewerUnreadCount != 2 || response.StaleBacklog.NewestMessageID != newest {
+		t.Fatalf("response.StaleBacklog = %#v, want two same-route messages ending at %q", response.StaleBacklog, newest)
+	}
+	wantIDs := []string{newer, newest}
+	if strings.Join(response.StaleBacklog.NewerMessageIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("NewerMessageIDs = %#v, want %#v", response.StaleBacklog.NewerMessageIDs, wantIDs)
+	}
+	if strings.Contains(strings.Join(response.StaleBacklog.NewerMessageIDs, ","), otherRoute) {
+		t.Fatalf("other route appeared in stale backlog: %#v", response.StaleBacklog.NewerMessageIDs)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_PopCleanupFailureIsWarningOnlyAndRecoverable(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260414-032801-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:28:01Z\n---\n\noldest\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-cleanup-warning",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	var buf bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+	})
+	cleanupFns := make(chan func(), 1)
+	originalCleanupLauncher := daemonSubmitArchiveCleanupLauncher
+	daemonSubmitArchiveCleanupLauncher = func(cleanup func()) {
+		cleanupFns <- cleanup
+	}
+	t.Cleanup(func() {
+		daemonSubmitArchiveCleanupLauncher = originalCleanupLauncher
+	})
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-cleanup-warning"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Error != "" || response.Filename != filename || response.Content != content {
+		t.Fatalf("response = error %q filename %q content %q, want success for archived body", response.Error, response.Filename, response.Content)
+	}
+	stageName := singleDaemonArchiveStageName(t, inboxDir)
+	if err := os.Remove(filepath.Join(inboxDir, stageName)); err != nil {
+		t.Fatalf("Remove stage before cleanup: %v", err)
+	}
+
+	cleanup := <-cleanupFns
+	cleanup()
+	if !strings.Contains(buf.String(), "event=pop_archive_cleanup_failed") {
+		t.Fatalf("cleanup failure log missing:\n%s", buf.String())
+	}
+	if err := store.RecoverArchiveBindings(sessionDir); err != nil {
+		t.Fatalf("RecoverArchiveBindings: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxDir, stageName+".bind.json")); !os.IsNotExist(err) {
+		t.Fatalf("manifest still exists after recovery: %v", err)
+	}
+}
+
+func singleDaemonArchiveStageName(t *testing.T, inboxDir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	var stages []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && strings.Contains(name, ".archive-") && !strings.HasSuffix(name, ".bind.json") {
+			stages = append(stages, name)
+		}
+	}
+	if len(stages) != 1 {
+		t.Fatalf("archive stage count = %d, want 1: %v", len(stages), stages)
+	}
+	return stages[0]
+}
+
+func TestProcessDaemonSubmitRequest_PopRecoversArchiveBindingBeforeScan(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", "20260806-071500-from-orchestrator-to-worker.md")
+	content := "daemon recovery body"
+	if err := os.MkdirAll(filepath.Dir(inboxPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+	info, err := os.Stat(inboxPath)
+	if err != nil {
+		t.Fatalf("Stat inbox: %v", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("Stat_t unavailable")
+	}
+	readPath := filepath.Join(sessionDir, "read", filepath.Base(inboxPath))
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+	if err := os.Remove(inboxPath); err != nil {
+		t.Fatalf("Remove inbox: %v", err)
+	}
+	sum := sha256.Sum256([]byte(content))
+	baseName := filepath.Base(inboxPath)
+	stageName := "." + baseName + ".archive-daemon-recovery"
+	manifestPath := filepath.Join(filepath.Dir(inboxPath), stageName+".bind.json")
+	manifest := map[string]any{
+		"schema_version": 1,
+		"base_name":      baseName,
+		"stage_name":     stageName,
+		"device":         uint64(stat.Dev),
+		"inode":          uint64(stat.Ino),
+		"size":           int64(len(content)),
+		"sha256":         hex.EncodeToString(sum[:]),
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, append(manifestData, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile manifest: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-recover",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-recover"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !response.Empty {
+		t.Fatalf("response.Empty = false, want recovered archive with no unread message")
+	}
+	got, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("ReadFile readPath: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("read content = %q, want %q", got, content)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("manifest still exists after daemon recovery: %v", err)
 	}
 }
 

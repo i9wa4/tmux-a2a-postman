@@ -1836,6 +1836,125 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing
 	}
 }
 
+func TestDispatchPendingDaemonSubmitRequestsCompletesMissedPopBeforeBlockedArchiveCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-scan-cleanup"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260502-004701-r1111-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-05-02T00:47:01+09:00\n---\n\nhello\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-scan-cleanup",
+		Command:   projection.DaemonSubmitPop,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	cleanupFns := make(chan func(), 1)
+	originalCleanupLauncher := daemonSubmitArchiveCleanupLauncher
+	daemonSubmitArchiveCleanupLauncher = func(cleanup func()) {
+		cleanupFns <- cleanup
+	}
+	t.Cleanup(func() {
+		daemonSubmitArchiveCleanupLauncher = originalCleanupLauncher
+	})
+
+	rt := &daemonRuntime{
+		baseDir:    baseDir,
+		sessionDir: sessionDir,
+		contextID:  contextID,
+		nodes:      map[string]discovery.NodeInfo{},
+		events:     make(chan tui.DaemonEvent, 8),
+	}
+
+	start := time.Now()
+	rt.dispatchPendingDaemonSubmitRequests()
+	workerResult := waitForDaemonSubmitResult(t, rt)
+	elapsed := time.Since(start)
+	if workerResult.err != nil {
+		t.Fatalf("daemon-submit worker error: %v", workerResult.err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Fatalf("worker result took %s, want under unchanged 2s contract", elapsed)
+	}
+	rt.handleDaemonSubmitResult(workerResult)
+
+	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
+		t.Fatalf("request file still present or wrong error: %v", err)
+	}
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if got, err := os.ReadFile(readPath); err != nil || string(got) != content {
+		t.Fatalf("read archive = %q, %v; want durable content", got, err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-pop-scan-cleanup"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if response.Filename != filename || response.Content != content {
+		t.Fatalf("response = filename %q content %q, want %q and original content", response.Filename, response.Content, filename)
+	}
+
+	cleanup := <-cleanupFns
+	assertArchiveBindingLeftForDaemonTest(t, inboxDir)
+	cleanup()
+	assertNoArchiveBindingLeftForDaemonTest(t, inboxDir)
+}
+
+func assertArchiveBindingLeftForDaemonTest(t *testing.T, inboxDir string) {
+	t.Helper()
+	stageCount, manifestCount := countArchiveBindingEntriesForDaemonTest(t, inboxDir)
+	if stageCount != 1 || manifestCount != 1 {
+		t.Fatalf("archive binding entries = stages:%d manifests:%d, want 1/1", stageCount, manifestCount)
+	}
+}
+
+func assertNoArchiveBindingLeftForDaemonTest(t *testing.T, inboxDir string) {
+	t.Helper()
+	stageCount, manifestCount := countArchiveBindingEntriesForDaemonTest(t, inboxDir)
+	if stageCount != 0 || manifestCount != 0 {
+		t.Fatalf("archive binding entries = stages:%d manifests:%d, want 0/0", stageCount, manifestCount)
+	}
+}
+
+func countArchiveBindingEntriesForDaemonTest(t *testing.T, inboxDir string) (int, int) {
+	t.Helper()
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("ReadDir inbox: %v", err)
+	}
+	var stageCount, manifestCount int
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		switch {
+		case strings.Contains(name, ".archive-") && strings.HasSuffix(name, ".bind.json"):
+			manifestCount++
+		case strings.Contains(name, ".archive-"):
+			stageCount++
+		}
+	}
+	return stageCount, manifestCount
+}
+
 func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *testing.T) {
 	tmpDir := t.TempDir()
 

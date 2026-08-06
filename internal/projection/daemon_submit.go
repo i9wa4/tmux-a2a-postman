@@ -65,9 +65,22 @@ type DaemonSubmitResponse struct {
 	Content            string                     `json:"content,omitempty"`
 	MarkdownPath       string                     `json:"markdown_path,omitempty"`
 	UnreadBefore       int                        `json:"unread_before,omitempty"`
+	StaleBacklog       *PopStaleBacklogNotice     `json:"stale_backlog,omitempty"`
 	RuntimeDiagnostics *status.RuntimeDiagnostics `json:"runtime_diagnostics,omitempty"`
 	RuntimeProfile     *RuntimeProfileCapture     `json:"runtime_profile,omitempty"`
 	Error              string                     `json:"error,omitempty"`
+}
+
+// PopStaleBacklogNotice describes newer unread messages observed after a pop.
+type PopStaleBacklogNotice struct {
+	State            string   `json:"state"`
+	Reason           string   `json:"reason,omitempty"`
+	PoppedMessageID  string   `json:"popped_message_id,omitempty"`
+	Sender           string   `json:"sender,omitempty"`
+	Recipient        string   `json:"recipient,omitempty"`
+	NewerUnreadCount int      `json:"newer_unread_count,omitempty"`
+	NewestMessageID  string   `json:"newest_message_id,omitempty"`
+	NewerMessageIDs  []string `json:"newer_message_ids,omitempty"`
 }
 
 type DaemonSubmitResponseTimeoutError struct {

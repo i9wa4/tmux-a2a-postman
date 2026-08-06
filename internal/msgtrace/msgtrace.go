@@ -27,6 +27,8 @@ type Fields struct {
 	SubmitPath            string
 	Result                string
 	Reason                string
+	NewerUnreadCount      int
+	NewestMessageID       string
 }
 
 func FromContent(filename, messagePath, tmuxSession, content string) Fields {
@@ -86,6 +88,10 @@ func Line(event string, fields Fields) string {
 	appendField("submit_path", fields.SubmitPath)
 	appendField("result", fields.Result)
 	appendField("reason", fields.Reason)
+	if fields.NewerUnreadCount > 0 {
+		parts = append(parts, fmt.Sprintf("newer_unread_count=%d", fields.NewerUnreadCount))
+	}
+	appendField("newest_message_id", fields.NewestMessageID)
 	return strings.Join(parts, " ")
 }
 

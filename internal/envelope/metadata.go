@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/mandate"
 )
 
 type Metadata struct {
@@ -18,6 +20,13 @@ type Metadata struct {
 	ThreadID                 string
 	TaskID                   string
 	RunID                    string
+	MandateID                string
+	AuthorityGeneration      int
+	LaneID                   string
+	ParentLaneID             string
+	AcceptancePredicate      string
+	SupersessionState        string
+	TerminalAcceptanceState  string
 	InputRequestID           string
 	FillsInputRequestID      string
 	InputRequestSetID        string
@@ -183,6 +192,20 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.TaskID = value
 			case "run_id":
 				metadata.RunID = value
+			case "mandate_id":
+				metadata.MandateID = value
+			case "authority_generation":
+				metadata.AuthorityGeneration = mandate.ParseGeneration(value)
+			case "lane_id":
+				metadata.LaneID = value
+			case "parent_lane_id":
+				metadata.ParentLaneID = value
+			case "acceptance_predicate":
+				metadata.AcceptancePredicate = value
+			case "supersession_state":
+				metadata.SupersessionState = value
+			case "terminal_acceptance_state":
+				metadata.TerminalAcceptanceState = value
 			case "input_request_id":
 				metadata.InputRequestID = value
 			case "fills_input_request_id":
@@ -411,7 +434,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "thread_id", "task_id", "run_id", "mandate_id", "authority_generation", "lane_id", "parent_lane_id", "acceptance_predicate", "supersession_state", "terminal_acceptance_state", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
@@ -530,6 +553,20 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "replyPolicy", true
 	case "replyTo", "reply_to":
 		return "replyTo", true
+	case "mandate_id":
+		return "mandate_id", true
+	case "authority_generation":
+		return "authority_generation", true
+	case "lane_id":
+		return "lane_id", true
+	case "parent_lane_id":
+		return "parent_lane_id", true
+	case "acceptance_predicate":
+		return "acceptance_predicate", true
+	case "supersession_state":
+		return "supersession_state", true
+	case "terminal_acceptance_state":
+		return "terminal_acceptance_state", true
 	case "input_request_id":
 		return "input_request_id", true
 	case "fills_input_request_id":
@@ -576,7 +613,7 @@ func managedParamFieldAliases(fieldKey string) []string {
 		return []string{"fills_input_request_id"}
 	case "input_request_set_id":
 		return []string{"input_request_set_id"}
-	case "branch_id", "completion_rule":
+	case "mandate_id", "authority_generation", "lane_id", "parent_lane_id", "acceptance_predicate", "supersession_state", "terminal_acceptance_state", "branch_id", "completion_rule":
 		return []string{fieldKey}
 	case "runtimeContextId":
 		return []string{"runtimeContextId", "runtime_context_id"}

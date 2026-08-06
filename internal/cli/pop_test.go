@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +22,19 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
+
+type fakePopReadWriter struct {
+	err    error
+	events int
+}
+
+func (w *fakePopReadWriter) AppendEvent(eventType string, visibility journal.Visibility, payload interface{}, now time.Time) (journal.Event, error) {
+	if w.err != nil {
+		return journal.Event{}, w.err
+	}
+	w.events++
+	return journal.Event{Type: eventType, Visibility: visibility}, nil
+}
 
 func TestRunPop_ContextIDFlagAccepted(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -114,6 +130,261 @@ func TestRunPopWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 }
 
+func TestRunPop_DirectPopReadEventFailureLeavesRecoverableOutbox(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-outbox"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260801-015500-from-orchestrator-to-worker.md"
+	inboxPath := filepath.Join(inboxDir, filename)
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	content := messageFixture("orchestrator", "worker", "outbox payload")
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	restoreCurrent := openCurrentPopReadWriter
+	restoreShadow := openShadowPopReadWriter
+	t.Cleanup(func() {
+		openCurrentPopReadWriter = restoreCurrent
+		openShadowPopReadWriter = restoreShadow
+	})
+	openCurrentPopReadWriter = func(string) (popReadEventWriter, error) {
+		return nil, errors.New("force current writer fallback")
+	}
+	openShadowPopReadWriter = func(string, string, string, int, time.Time) (popReadEventWriter, error) {
+		return &fakePopReadWriter{err: errors.New("forced append failure")}, nil
+	}
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(string, string, string) bool {
+			return false
+		},
+	}, []string{"--context-id", contextID})
+	if err == nil || !strings.Contains(err.Error(), "recording pop read event") {
+		t.Fatalf("runPopWithContext error = %v, want read event failure", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no success output", stdout.String())
+	}
+	outboxPath := filepath.Join(directPopReadOutboxDir(sessionDir), filename+".json")
+	if _, err := os.Stat(outboxPath); err != nil {
+		t.Fatalf("outbox stat = %v, want durable outbox record", err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "read", filename)); err != nil {
+		t.Fatalf("read archive stat = %v, want archived body preserved", err)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("inbox stat error = %v, want source removed only after archive", err)
+	}
+
+	replayed := &fakePopReadWriter{}
+	openCurrentPopReadWriter = func(string) (popReadEventWriter, error) {
+		return replayed, nil
+	}
+	openShadowPopReadWriter = restoreShadow
+	if err := replayDirectPopReadOutbox(sessionDir); err != nil {
+		t.Fatalf("replayDirectPopReadOutbox: %v", err)
+	}
+	if replayed.events != 1 {
+		t.Fatalf("replayed events = %d, want 1", replayed.events)
+	}
+	if _, err := os.Stat(outboxPath); !os.IsNotExist(err) {
+		t.Fatalf("outbox stat after replay = %v, want removed", err)
+	}
+}
+
+func TestReplayDirectPopReadOutboxDedupesAppendBeforeDeleteCrash(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-outbox-dedupe"
+	sessionName := "test-session"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, contextID, sessionName, os.Getpid(), now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+
+	filename := "20260801-120000-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  replyPolicy: required\n  timestamp: 2026-08-01T12:00:00Z\n---\n\nneeds input\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", filename),
+		Content:   content,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent(delivered): %v", err)
+	}
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+
+	restoreHook := directPopReadAfterAppendHook
+	directPopReadAfterAppendHook = func() error {
+		return errors.New("simulated crash after append before outbox delete")
+	}
+	err = recordDirectPopRead(sessionDir, contextID, sessionName, readPath, filename, content)
+	directPopReadAfterAppendHook = restoreHook
+	if err == nil || !strings.Contains(err.Error(), "simulated crash") {
+		t.Fatalf("recordDirectPopRead error = %v, want simulated crash", err)
+	}
+	t.Cleanup(func() {
+		directPopReadAfterAppendHook = restoreHook
+	})
+
+	outboxPath := filepath.Join(directPopReadOutboxDir(sessionDir), filename+".json")
+	if _, err := os.Stat(outboxPath); err != nil {
+		t.Fatalf("outbox stat = %v, want append-before-delete crash record", err)
+	}
+	readID := stableDirectPopReadID(contextID, sessionName, filename)
+	assertLogicalReadEventCount(t, sessionDir, readID, 1)
+
+	if err := replayDirectPopReadOutbox(sessionDir); err != nil {
+		t.Fatalf("replayDirectPopReadOutbox(first): %v", err)
+	}
+	if err := replayDirectPopReadOutbox(sessionDir); err != nil {
+		t.Fatalf("replayDirectPopReadOutbox(second): %v", err)
+	}
+	if _, err := os.Stat(outboxPath); !os.IsNotExist(err) {
+		t.Fatalf("outbox stat after replay = %v, want removed", err)
+	}
+	assertLogicalReadEventCount(t, sessionDir, readID, 1)
+
+	state, ok, err := projection.ProjectMessageInputRequestStateAt(sessionDir, sessionName, now.Add(2*time.Minute), projection.DefaultInputRequestStaleAfterSeconds)
+	if err != nil {
+		t.Fatalf("ProjectMessageInputRequestStateAt: %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageInputRequestStateAt ok = false, want projected state")
+	}
+	if len(state.InputRequired) != 1 {
+		t.Fatalf("InputRequired = %#v, want one read request detail", state.InputRequired)
+	}
+	if state.InputRequired[0].ReadEventID != readID {
+		t.Fatalf("ReadEventID = %q, want stable read ID %q", state.InputRequired[0].ReadEventID, readID)
+	}
+}
+
+func TestRunPop_DirectPopRecoversArchiveBindingBeforeScan(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-direct-recovery"
+	sessionName := "test-session"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260806-071600-from-orchestrator-to-worker.md"
+	inboxPath := filepath.Join(inboxDir, filename)
+	content := messageFixture("orchestrator", "worker", "direct recovery body")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+	stageName := "." + filename + ".archive-direct-recovery"
+	writeArchiveBindingManifestForCLITest(t, inboxPath, stageName, content)
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, name string) bool {
+			return false
+		},
+	}, []string{"--context-id", contextID, "--runtime-context", "none"})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout.String())
+	if payload.MessageID != filename {
+		t.Fatalf("MessageID = %q, want recovered message %q", payload.MessageID, filename)
+	}
+	assertPopPayloadArchive(t, payload, content)
+	assertMissingPathForCLITest(t, filepath.Join(inboxDir, stageName+".bind.json"))
+}
+
+func assertLogicalReadEventCount(t *testing.T, sessionDir, readID string, want int) {
+	t.Helper()
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay: %v", err)
+	}
+	got := 0
+	for _, event := range events {
+		if event.Type != projection.MailboxProjectionReadEventType {
+			continue
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("Unmarshal read payload: %v", err)
+		}
+		if payload.ReadID == readID {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("read events for %q = %d, want %d", readID, got, want)
+	}
+}
+
+func writeArchiveBindingManifestForCLITest(t *testing.T, sourcePath, stageName, content string) {
+	t.Helper()
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatalf("Stat source: %v", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("Stat_t unavailable")
+	}
+	sum := sha256.Sum256([]byte(content))
+	manifest := map[string]any{
+		"schema_version": 1,
+		"base_name":      filepath.Base(sourcePath),
+		"stage_name":     stageName,
+		"device":         uint64(stat.Dev),
+		"inode":          uint64(stat.Ino),
+		"size":           int64(len(content)),
+		"sha256":         hex.EncodeToString(sum[:]),
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(sourcePath), stageName+".bind.json"), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile manifest: %v", err)
+	}
+}
+
+func assertMissingPathForCLITest(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(%s) = %v, want missing", path, err)
+	}
+}
+
 func TestWritePopMessageOutputReturnsReceiptWriteError(t *testing.T) {
 	tmpDir := t.TempDir()
 	readDir := filepath.Join(tmpDir, "ctx", "review", "read")
@@ -127,6 +398,7 @@ func TestWritePopMessageOutputReturnsReceiptWriteError(t *testing.T) {
 		markdownPath,
 		intPtr(1),
 		intPtr(0),
+		nil,
 		"none",
 		nil,
 		projection.SubmitPathPost,
@@ -156,6 +428,87 @@ func TestWritePopMessageOutputReturnsReceiptWriteError(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty when receipt write fails", stdout.String())
+	}
+}
+
+func TestRunPop_DirectPopReportsStaleBacklogFromSameSender(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-stale-backlog-direct"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	oldest := "20260414-032800-from-orchestrator-to-worker.md"
+	newest := "20260414-032900-from-orchestrator-to-worker.md"
+	otherSender := "20260414-033000-from-reviewer-to-worker.md"
+	for filename, body := range map[string]string{
+		oldest:      messageFixture("orchestrator", "worker", "old assignment"),
+		newest:      messageFixture("orchestrator", "worker", "new authority"),
+		otherSender: messageFixture("reviewer", "worker", "unrelated review"),
+	} {
+		if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", filename, err)
+		}
+	}
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return false
+		},
+	}, []string{"--context-id", contextID, "--runtime-context", "none"})
+	if err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+
+	payload := decodePopMessageOutputForTest(t, stdout.String())
+	if payload.StaleBacklog == nil {
+		t.Fatalf("StaleBacklog = nil, want notice: %s", stdout.String())
+	}
+	if payload.StaleBacklog.State != "newer_unread_from_same_sender" {
+		t.Fatalf("StaleBacklog.State = %q", payload.StaleBacklog.State)
+	}
+	if payload.StaleBacklog.PoppedMessageID != oldest {
+		t.Fatalf("PoppedMessageID = %q, want %q", payload.StaleBacklog.PoppedMessageID, oldest)
+	}
+	if payload.StaleBacklog.NewerUnreadCount != 1 || payload.StaleBacklog.NewestMessageID != newest {
+		t.Fatalf("StaleBacklog = %#v, want one newer orchestrator message %q", payload.StaleBacklog, newest)
+	}
+	receipt := filepath.Join(sessionDir, "read", "20260414-032800-from-orchestrator-to-worker.pop.json")
+	receiptBytes, err := os.ReadFile(receipt)
+	if err != nil {
+		t.Fatalf("ReadFile receipt: %v", err)
+	}
+	if !bytes.Contains(receiptBytes, []byte(`"stale_backlog"`)) {
+		t.Fatalf("receipt missing stale_backlog: %s", receiptBytes)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay: %v", err)
+	}
+	foundRead := false
+	for _, event := range events {
+		if event.Type != projection.MailboxProjectionReadEventType {
+			continue
+		}
+		var readPayload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &readPayload); err != nil {
+			t.Fatalf("Unmarshal read payload: %v", err)
+		}
+		if readPayload.MessageID == oldest && readPayload.Path == filepath.Join("read", oldest) && strings.Contains(readPayload.Content, "old assignment") {
+			foundRead = true
+		}
+	}
+	if !foundRead {
+		t.Fatalf("direct pop did not record read event for %s; events=%#v", oldest, events)
 	}
 }
 
@@ -597,7 +950,7 @@ func TestRunPop_PrintsJSONMessagePayloadByDefault(t *testing.T) {
 	}
 }
 
-func TestRunPop_IncludesFilesystemSessionDiagnostics(t *testing.T) {
+func TestRunPop_IncludesSessionDiagnostics(t *testing.T) {
 	tmpDir := t.TempDir()
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
 
@@ -634,8 +987,8 @@ func TestRunPop_IncludesFilesystemSessionDiagnostics(t *testing.T) {
 		t.Fatalf("SessionDiagnostics missing: %s", stdout)
 	}
 	diag := *payload.SessionDiagnostics
-	if diag.Source != "filesystem" {
-		t.Fatalf("diagnostics source = %q, want filesystem", diag.Source)
+	if diag.Source != "projection" {
+		t.Fatalf("diagnostics source = %q, want projection", diag.Source)
 	}
 	if diag.UnreadInboxCount != 1 || diag.PostCount != 1 || diag.DeadLetterCount != 1 {
 		t.Fatalf("queue diagnostics = %#v, want unread=1 post=1 dead-letter=1", diag)
@@ -922,6 +1275,87 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	}
 	if _, err := os.Stat(originalInboxPath); err != nil {
 		t.Fatalf("daemon submit path should not mutate inbox directly in CLI test: %v", err)
+	}
+}
+
+func TestRunPop_DaemonSubmitResponsePropagatesStaleBacklog(t *testing.T) {
+	tmpDir := t.TempDir()
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "worker")
+
+	contextID := "ctx-pop-submit-stale-backlog"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("[postman]\nedges = [\"orchestrator --- worker\"]\n\n[worker]\nrole = \"worker\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
+		t.Fatalf("WriteFile postman.pid: %v", err)
+	}
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	staleBacklog := &projection.PopStaleBacklogNotice{
+		State:            "newer_unread_from_same_sender",
+		Reason:           "newer unread messages from the same sender and recipient remain queued; check current authority before acting on the popped message",
+		PoppedMessageID:  filename,
+		Sender:           "orchestrator",
+		Recipient:        "worker",
+		NewerUnreadCount: 2,
+		NewestMessageID:  "20260414-033000-from-orchestrator-to-worker.md",
+		NewerMessageIDs: []string{
+			"20260414-032900-from-orchestrator-to-worker.md",
+			"20260414-033000-from-orchestrator-to-worker.md",
+		},
+	}
+
+	go func() {
+		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+			RequestID:    request.RequestID,
+			Command:      request.Command,
+			HandledAt:    time.Now().UTC().Format(time.RFC3339),
+			Filename:     filename,
+			Content:      messageFixture("orchestrator", "worker", "daemon submit pop payload"),
+			MarkdownPath: filepath.Join(sessionDir, "read", filename),
+			UnreadBefore: 3,
+			StaleBacklog: staleBacklog,
+		}); err != nil {
+			t.Errorf("WriteDaemonSubmitResponse: %v", err)
+		}
+		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Remove requestPath: %v", err)
+		}
+	}()
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunPop([]string{"--config", configPath, "--context-id", contextID, "--runtime-context", "none"})
+	})
+	if err != nil {
+		t.Fatalf("RunPop: %v\nstderr=%s", err, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	payload := decodePopMessageOutputForTest(t, stdout)
+	if payload.StaleBacklog == nil {
+		t.Fatalf("StaleBacklog = nil, want propagated daemon notice: %s", stdout)
+	}
+	if payload.StaleBacklog.NewerUnreadCount != 2 || payload.StaleBacklog.NewestMessageID != staleBacklog.NewestMessageID {
+		t.Fatalf("StaleBacklog = %#v, want %#v", payload.StaleBacklog, staleBacklog)
+	}
+	receiptPath := filepath.Join(sessionDir, "read", "20260414-032800-from-orchestrator-to-worker.pop.json")
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("ReadFile receipt: %v", err)
+	}
+	receiptPayload := decodePopMessageOutputForTest(t, string(receiptBytes))
+	if receiptPayload.StaleBacklog == nil {
+		t.Fatalf("receipt stale_backlog = nil, want propagated daemon notice: %s", receiptBytes)
+	}
+	if receiptPayload.StaleBacklog.NewerUnreadCount != 2 || receiptPayload.StaleBacklog.NewestMessageID != staleBacklog.NewestMessageID {
+		t.Fatalf("receipt StaleBacklog = %#v, want %#v", receiptPayload.StaleBacklog, staleBacklog)
 	}
 }
 
@@ -1379,6 +1813,13 @@ func TestRunPop_ReportsMessageIDAndExactInputRequestFields(t *testing.T) {
 		"  messageId: " + messageFile + "\n" +
 		"  replyPolicy: required\n" +
 		"  replyTo: previous.md\n" +
+		"  mandate_id: portfolio-20260729\n" +
+		"  authority_generation: 4\n" +
+		"  lane_id: lane-current\n" +
+		"  parent_lane_id: lane-root\n" +
+		"  acceptance_predicate: all_lanes_accepted\n" +
+		"  supersession_state: current\n" +
+		"  terminal_acceptance_state: pending\n" +
 		"  input_request_id: ireq_123\n" +
 		"  fills_input_request_id: ireq_prev\n" +
 		"  input_request_set_id: ireqset_1\n" +
@@ -1403,6 +1844,12 @@ func TestRunPop_ReportsMessageIDAndExactInputRequestFields(t *testing.T) {
 	}
 	if payload.InputRequestID != "ireq_123" {
 		t.Fatalf("payload.InputRequestID = %q, want ireq_123", payload.InputRequestID)
+	}
+	if payload.MandateID != "portfolio-20260729" || payload.AuthorityGeneration != 4 || payload.LaneID != "lane-current" || payload.ParentLaneID != "lane-root" || payload.AcceptancePredicate != "all_lanes_accepted" {
+		t.Fatalf("mandate fields = %#v, want canonical authority fields", payload)
+	}
+	if payload.SupersessionState != "current" || payload.TerminalAcceptanceState != "pending" {
+		t.Fatalf("authority states = %q/%q, want current/pending", payload.SupersessionState, payload.TerminalAcceptanceState)
 	}
 	if payload.FillsInputRequestID != "ireq_prev" {
 		t.Fatalf("payload.FillsInputRequestID = %q, want ireq_prev", payload.FillsInputRequestID)

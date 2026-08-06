@@ -182,6 +182,94 @@ func TestParseMetadataAcceptsExternalTaskRunFields(t *testing.T) {
 	}
 }
 
+func TestParseMetadataMandateFieldsAbsentByDefault(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n---\n\nplease work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.MandateID != "" || got.AuthorityGeneration != 0 || got.LaneID != "" || got.SupersessionState != "" || got.TerminalAcceptanceState != "" {
+		t.Fatalf("mandate fields = %#v, want absent zero values", got)
+	}
+}
+
+func TestParseMetadataAcceptsPresentMandateFields(t *testing.T) {
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: m1.md\n" +
+		"  mandate_id: portfolio-20260729\n" +
+		"  authority_generation: 4\n" +
+		"  lane_id: lane-current\n" +
+		"  parent_lane_id: lane-root\n" +
+		"---\n\nplease work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.MandateID != "portfolio-20260729" || got.AuthorityGeneration != 4 || got.LaneID != "lane-current" || got.ParentLaneID != "lane-root" {
+		t.Fatalf("mandate fields = %#v, want present mandate fields", got)
+	}
+}
+
+func TestParseMetadataMalformedAuthorityGenerationFailsClosedToZero(t *testing.T) {
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: m1.md\n" +
+		"  mandate_id: portfolio-20260729\n" +
+		"  authority_generation: latest\n" +
+		"---\n\nplease work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.MandateID != "portfolio-20260729" || got.AuthorityGeneration != 0 {
+		t.Fatalf("authority fields = %q/%d, want mandate preserved and generation zero", got.MandateID, got.AuthorityGeneration)
+	}
+}
+
+func TestParseMetadataPreservesSupersededMandateState(t *testing.T) {
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: m1.md\n" +
+		"  mandate_id: portfolio-20260729\n" +
+		"  authority_generation: 3\n" +
+		"  supersession_state: superseded\n" +
+		"  terminal_acceptance_state: rejected\n" +
+		"---\n\nstale work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.SupersessionState != "superseded" || got.TerminalAcceptanceState != "rejected" {
+		t.Fatalf("authority states = %q/%q, want superseded/rejected", got.SupersessionState, got.TerminalAcceptanceState)
+	}
+}
+
+func TestParseMetadataPreservesAcceptanceFields(t *testing.T) {
+	content := "---\nparams:\n" +
+		"  from: orchestrator\n" +
+		"  to: worker\n" +
+		"  messageId: m1.md\n" +
+		"  acceptance_predicate: all_lanes_accepted\n" +
+		"  completion_rule: guardian_pass\n" +
+		"---\n\nplease work\n"
+
+	got, err := ParseMetadata(content)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if got.AcceptancePredicate != "all_lanes_accepted" || got.CompletionRule != "guardian_pass" {
+		t.Fatalf("acceptance fields = %q/%q, want preserved", got.AcceptancePredicate, got.CompletionRule)
+	}
+}
+
 func TestParseMetadataIgnoresLegacyReplyIdentityFields(t *testing.T) {
 	inputRequestAlias := "obligation" + "_id"
 	fillsAlias := "satisfies" + "_obligation" + "_id"

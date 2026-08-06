@@ -5,27 +5,35 @@ import "time"
 // MailboxEventPayload carries the mailbox file snapshot needed to rebuild
 // mailbox projection files from replay.
 type MailboxEventPayload struct {
-	Directory           string `json:"directory,omitempty"`
-	ContextID           string `json:"context_id,omitempty"`
-	MessageID           string `json:"message_id,omitempty"`
-	From                string `json:"from,omitempty"`
-	To                  string `json:"to,omitempty"`
-	ReplyPolicy         string `json:"reply_policy,omitempty"`
-	ReplyTo             string `json:"reply_to,omitempty"`
-	MessageType         string `json:"message_type,omitempty"`
-	Timestamp           string `json:"timestamp,omitempty"`
-	ThreadID            string `json:"thread_id,omitempty"`
-	TaskID              string `json:"task_id,omitempty"`
-	RunID               string `json:"run_id,omitempty"`
-	InputRequestID      string `json:"input_request_id,omitempty"`
-	FillsInputRequestID string `json:"fills_input_request_id,omitempty"`
-	InputRequestSetID   string `json:"input_request_set_id,omitempty"`
-	BranchID            string `json:"branch_id,omitempty"`
-	CompletionRule      string `json:"completion_rule,omitempty"`
-	Path                string `json:"path,omitempty"`
-	SourcePath          string `json:"source_path,omitempty"`
-	FailureReason       string `json:"failure_reason,omitempty"`
-	Content             string `json:"content,omitempty"`
+	Directory               string `json:"directory,omitempty"`
+	ContextID               string `json:"context_id,omitempty"`
+	ReadID                  string `json:"read_id,omitempty"`
+	MessageID               string `json:"message_id,omitempty"`
+	From                    string `json:"from,omitempty"`
+	To                      string `json:"to,omitempty"`
+	ReplyPolicy             string `json:"reply_policy,omitempty"`
+	ReplyTo                 string `json:"reply_to,omitempty"`
+	MessageType             string `json:"message_type,omitempty"`
+	Timestamp               string `json:"timestamp,omitempty"`
+	ThreadID                string `json:"thread_id,omitempty"`
+	TaskID                  string `json:"task_id,omitempty"`
+	RunID                   string `json:"run_id,omitempty"`
+	MandateID               string `json:"mandate_id,omitempty"`
+	AuthorityGeneration     int    `json:"authority_generation,omitempty"`
+	LaneID                  string `json:"lane_id,omitempty"`
+	ParentLaneID            string `json:"parent_lane_id,omitempty"`
+	AcceptancePredicate     string `json:"acceptance_predicate,omitempty"`
+	SupersessionState       string `json:"supersession_state,omitempty"`
+	TerminalAcceptanceState string `json:"terminal_acceptance_state,omitempty"`
+	InputRequestID          string `json:"input_request_id,omitempty"`
+	FillsInputRequestID     string `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID       string `json:"input_request_set_id,omitempty"`
+	BranchID                string `json:"branch_id,omitempty"`
+	CompletionRule          string `json:"completion_rule,omitempty"`
+	Path                    string `json:"path,omitempty"`
+	SourcePath              string `json:"source_path,omitempty"`
+	FailureReason           string `json:"failure_reason,omitempty"`
+	Content                 string `json:"content,omitempty"`
 }
 
 func RecordProcessMailboxPayload(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, now time.Time) error {

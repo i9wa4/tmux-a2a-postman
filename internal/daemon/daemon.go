@@ -24,8 +24,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/popnotice"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
@@ -43,10 +45,13 @@ const (
 // in milliseconds. Initialized from config at daemon startup; tests may
 // override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
 var (
-	daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
-	verdictGraceSeconds                    = defaultVerdictGraceSeconds
-	verdictDebtCap                         = defaultVerdictDebtCap
-	verdictExemptUINode                    = "messenger"
+	daemonSubmitQueueWarnThresholdMs   int64 = defaultDaemonSubmitQueueWarnThresholdMs
+	verdictGraceSeconds                      = defaultVerdictGraceSeconds
+	verdictDebtCap                           = defaultVerdictDebtCap
+	verdictExemptUINode                      = "messenger"
+	daemonSubmitArchiveCleanupLauncher       = func(cleanup func()) {
+		go cleanup()
+	}
 )
 
 type filesystemWatcher interface {
@@ -263,12 +268,15 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 	}
 }
 
-func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, func() error, error) {
 	if request.RequestID == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing request_id")
+		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("daemon submit pop missing request_id")
 	}
 	if request.Node == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing node")
+		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("daemon submit pop missing node")
+	}
+	if err := store.RecoverArchiveBindings(sessionDir); err != nil {
+		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("recovering daemon pop archive binding: %w", err)
 	}
 	inboxDir := filepath.Join(sessionDir, "inbox", request.Node)
 	msgs := message.ScanInboxMessages(inboxDir)
@@ -279,7 +287,7 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 			HandledAt:    time.Now().UTC().Format(time.RFC3339),
 			Empty:        true,
 			UnreadBefore: 0,
-		}, nil
+		}, nil, nil
 	}
 	sort.Slice(msgs, func(i, j int) bool {
 		return msgs[i].Filename < msgs[j].Filename
@@ -289,7 +297,7 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			return projection.DaemonSubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+			return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("reading pop message: %w", err)
 		}
 		msgs = message.ScanInboxMessages(inboxDir)
 		if len(msgs) == 0 {
@@ -299,7 +307,7 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 				HandledAt:    time.Now().UTC().Format(time.RFC3339),
 				Empty:        true,
 				UnreadBefore: 0,
-			}, nil
+			}, nil, nil
 		}
 		sort.Slice(msgs, func(i, j int) bool {
 			return msgs[i].Filename < msgs[j].Filename
@@ -307,12 +315,12 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		abs = filepath.Join(inboxDir, msgs[0].Filename)
 		data, err = os.ReadFile(abs)
 		if err != nil {
-			return projection.DaemonSubmitResponse{}, fmt.Errorf("reading pop message: %w", err)
+			return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("reading pop message: %w", err)
 		}
 	}
-	readPath, err := message.ArchiveInboxMessage(abs, msgs[0].Filename)
+	readPath, cleanup, err := store.BeginArchiveInboxMessageVerified(abs, msgs[0].Filename, data)
 	if err != nil {
-		return projection.DaemonSubmitResponse{}, err
+		return projection.DaemonSubmitResponse{}, nil, err
 	}
 	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
 	fields.DaemonSubmitRequestID = request.RequestID
@@ -328,7 +336,8 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		Content:      string(data),
 		MarkdownPath: readPath,
 		UnreadBefore: len(msgs),
-	}, nil
+		StaleBacklog: popnotice.BuildStaleBacklogNotice(msgs[0], msgs[1:]),
+	}, cleanup, nil
 }
 
 func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -496,6 +505,7 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	}
 
 	var response projection.DaemonSubmitResponse
+	var afterResponseCleanup func() error
 	switch request.Command {
 	case projection.DaemonSubmitSend:
 		response, err = handleDaemonSubmitSend(sessionDir, request)
@@ -504,7 +514,7 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 			result.PostPath = filepath.Join(sessionDir, "post", response.Filename)
 		}
 	case projection.DaemonSubmitPop:
-		response, err = handleDaemonSubmitPop(sessionDir, request)
+		response, afterResponseCleanup, err = handleDaemonSubmitPop(sessionDir, request)
 		if err == nil && !response.Empty {
 			result.ProjectionSyncSessionDir = sessionDir
 		}
@@ -531,6 +541,9 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		response.Error = err.Error()
 	}
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
+		if afterResponseCleanup != nil {
+			launchDaemonSubmitArchiveCleanup(sessionDir, request.RequestID, response.Filename, afterResponseCleanup)
+		}
 		return result, writeErr
 	}
 	responseWrittenAt := time.Now()
@@ -556,7 +569,19 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 	if removeErr := os.Remove(claimedPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		log.Printf("postman: WARNING: component=%s event=request_remove_failed submit_path=%s path=%s err=%v\n", projection.SubmitPathDaemon, projection.SubmitPathDaemon, claimedPath, removeErr)
 	}
+	if afterResponseCleanup != nil {
+		launchDaemonSubmitArchiveCleanup(sessionDir, request.RequestID, response.Filename, afterResponseCleanup)
+	}
 	return result, nil
+}
+
+func launchDaemonSubmitArchiveCleanup(sessionDir, requestID, filename string, cleanup func() error) {
+	daemonSubmitArchiveCleanupLauncher(func() {
+		if err := cleanup(); err != nil {
+			log.Printf("postman: WARNING: component=%s event=pop_archive_cleanup_failed submit_path=%s session=%s request=%s file=%s err=%v\n",
+				projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), requestID, filename, err)
+		}
+	})
 }
 
 func daemonSubmitDurationSince(createdAt string, now time.Time) time.Duration {

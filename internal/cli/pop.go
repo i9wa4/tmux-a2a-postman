@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,11 +17,43 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/popnotice"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"gopkg.in/yaml.v3"
+)
+
+type popReadEventWriter interface {
+	AppendEvent(eventType string, visibility journal.Visibility, payload interface{}, now time.Time) (journal.Event, error)
+}
+
+type popReadEventIdempotentWriter interface {
+	AppendCurrentSessionEventIfAbsent(eventType string, visibility journal.Visibility, payload interface{}, options journal.AppendOptions, now time.Time, equivalent journal.EventEquivalenceFunc) (journal.Event, bool, error)
+}
+
+type directPopReadOutboxRecord struct {
+	SchemaVersion int                         `json:"schema_version"`
+	ContextID     string                      `json:"context_id"`
+	SessionName   string                      `json:"session_name"`
+	ReadID        string                      `json:"read_id"`
+	ReadPath      string                      `json:"read_path"`
+	Filename      string                      `json:"filename"`
+	Content       string                      `json:"content"`
+	Payload       journal.MailboxEventPayload `json:"payload"`
+	CreatedAt     string                      `json:"created_at"`
+}
+
+var (
+	openCurrentPopReadWriter = func(sessionDir string) (popReadEventWriter, error) {
+		return journal.OpenCurrentWriter(sessionDir)
+	}
+	openShadowPopReadWriter = func(sessionDir, contextID, sessionName string, holderPID int, now time.Time) (popReadEventWriter, error) {
+		return journal.OpenShadowWriter(sessionDir, contextID, sessionName, holderPID, now)
+	}
+	directPopReadAfterAppendHook func() error
 )
 
 // RunPop reads and optionally archives the oldest unread inbox message (#277).
@@ -82,11 +116,18 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
-		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
+		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), response.StaleBacklog, *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
 			ContextID:   resolvedContextID,
 			SessionName: sessionName,
 			Node:        nodeName,
 		})
+	}
+
+	if err := replayDirectPopReadOutbox(sessionDir); err != nil {
+		return err
+	}
+	if err := store.RecoverArchiveBindings(sessionDir); err != nil {
+		return fmt.Errorf("recovering direct pop archive binding: %w", err)
 	}
 
 	msgs := message.ScanInboxMessages(inboxPath)
@@ -123,20 +164,239 @@ func runPopWithContext(ctx commandContext, args []string) error {
 	}
 
 	remaining := len(msgs)
-	readPath, err := archivePoppedMessage(abs, msgs[0].Filename)
+	staleBacklog := popnotice.BuildStaleBacklogNotice(msgs[0], msgs[1:])
+	readPath, err := archivePoppedMessage(abs, msgs[0].Filename, data)
 	if err != nil {
 		return err
 	}
+	if err := recordDirectPopRead(sessionDir, resolvedContextID, sessionName, readPath, msgs[0].Filename, string(data)); err != nil {
+		return err
+	}
 	remaining--
-	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost, popReceiverContextOptions{
+	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), staleBacklog, *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost, popReceiverContextOptions{
 		ContextID:   resolvedContextID,
 		SessionName: sessionName,
 		Node:        nodeName,
 	})
 }
 
-func archivePoppedMessage(absPath, filename string) (string, error) {
-	return message.ArchiveInboxMessage(absPath, filename)
+func archivePoppedMessage(absPath, filename string, data []byte) (string, error) {
+	return store.ArchiveInboxMessageVerified(absPath, filename, data)
+}
+
+func recordDirectPopRead(sessionDir, contextID, sessionName, readPath, filename, content string) error {
+	record := directPopReadOutboxRecord{
+		SchemaVersion: 1,
+		ContextID:     contextID,
+		SessionName:   sessionName,
+		ReadID:        stableDirectPopReadID(contextID, sessionName, filename),
+		ReadPath:      readPath,
+		Filename:      filename,
+		Content:       content,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	record.Payload = directPopReadPayload(contextID, record.ReadID, readPath, filename, content)
+	outboxPath, err := writeDirectPopReadOutbox(sessionDir, record)
+	if err != nil {
+		return err
+	}
+	if err := appendDirectPopReadRecord(sessionDir, record); err != nil {
+		return err
+	}
+	if directPopReadAfterAppendHook != nil {
+		if err := directPopReadAfterAppendHook(); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(outboxPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing pop read outbox record: %w", err)
+	}
+	if err := syncPopDirectory(filepath.Dir(outboxPath)); err != nil {
+		return fmt.Errorf("syncing pop read outbox removal: %w", err)
+	}
+	return nil
+}
+
+func directPopReadPayload(contextID, readID, readPath, filename, content string) journal.MailboxEventPayload {
+	if content == "" {
+		if readContent, err := os.ReadFile(readPath); err == nil && len(readContent) > 0 {
+			content = string(readContent)
+		}
+	}
+	payload := journal.MailboxEventPayload{
+		MessageID: filename,
+		ReadID:    readID,
+		Path:      filepath.Join("read", filename),
+		Content:   content,
+	}
+	if meta, err := envelope.ParseMetadata(content); err == nil {
+		payload.ContextID = meta.ContextID
+		payload.From = meta.From
+		payload.To = meta.To
+		payload.ReplyPolicy = meta.ReplyPolicy
+		payload.ReplyTo = meta.ReplyTo
+		payload.MessageType = meta.MessageType
+		payload.Timestamp = meta.Timestamp
+		payload.ThreadID = meta.ThreadID
+		payload.TaskID = meta.TaskID
+		payload.RunID = meta.RunID
+		payload.MandateID = meta.MandateID
+		payload.AuthorityGeneration = meta.AuthorityGeneration
+		payload.LaneID = meta.LaneID
+		payload.ParentLaneID = meta.ParentLaneID
+		payload.AcceptancePredicate = meta.AcceptancePredicate
+		payload.SupersessionState = meta.SupersessionState
+		payload.TerminalAcceptanceState = meta.TerminalAcceptanceState
+		payload.InputRequestID = meta.InputRequestID
+		payload.FillsInputRequestID = meta.FillsInputRequestID
+		payload.InputRequestSetID = meta.InputRequestSetID
+		payload.BranchID = meta.BranchID
+		payload.CompletionRule = meta.CompletionRule
+	}
+	if payload.ContextID == "" {
+		payload.ContextID = contextID
+	}
+	return payload
+}
+
+func stableDirectPopReadID(contextID, sessionName, filename string) string {
+	sum := sha256.Sum256([]byte(contextID + "\x00" + sessionName + "\x00" + filename))
+	return "direct-pop-read:" + hex.EncodeToString(sum[:])
+}
+
+func appendDirectPopReadRecord(sessionDir string, record directPopReadOutboxRecord) error {
+	if record.ReadID == "" {
+		record.ReadID = stableDirectPopReadID(record.ContextID, record.SessionName, record.Filename)
+	}
+	record.Payload.ReadID = record.ReadID
+	writer, err := openCurrentPopReadWriter(sessionDir)
+	if err != nil {
+		writer, err = openShadowPopReadWriter(sessionDir, record.ContextID, record.SessionName, os.Getpid(), time.Now())
+		if err != nil {
+			return fmt.Errorf("recording pop read event: %w", err)
+		}
+	}
+	if idempotentWriter, ok := writer.(popReadEventIdempotentWriter); ok {
+		if _, _, err := idempotentWriter.AppendCurrentSessionEventIfAbsent(projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, record.Payload, journal.AppendOptions{
+			ThreadID: record.Payload.ThreadID,
+		}, time.Now(), equivalentPopReadEvent(record.ReadID)); err != nil {
+			return fmt.Errorf("recording pop read event: %w", err)
+		}
+		return nil
+	}
+	if _, err := writer.AppendEvent(projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, record.Payload, time.Now()); err != nil {
+		return fmt.Errorf("recording pop read event: %w", err)
+	}
+	return nil
+}
+
+func equivalentPopReadEvent(readID string) journal.EventEquivalenceFunc {
+	return func(event journal.Event) (bool, error) {
+		if event.Type != projection.MailboxProjectionReadEventType || readID == "" {
+			return false, nil
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return false, err
+		}
+		return payload.ReadID == readID, nil
+	}
+}
+
+func directPopReadOutboxDir(sessionDir string) string {
+	return filepath.Join(sessionDir, "snapshot", "pop-read-outbox")
+}
+
+func writeDirectPopReadOutbox(sessionDir string, record directPopReadOutboxRecord) (string, error) {
+	dir := directPopReadOutboxDir(sessionDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("creating pop read outbox: %w", err)
+	}
+	path := filepath.Join(dir, record.Filename+".json")
+	tmp, err := os.CreateTemp(dir, "."+record.Filename+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("creating pop read outbox temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	data, err := json.Marshal(record)
+	if err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("encoding pop read outbox: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("writing pop read outbox: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("syncing pop read outbox: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("closing pop read outbox: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", fmt.Errorf("publishing pop read outbox: %w", err)
+	}
+	cleanup = false
+	if err := syncPopDirectory(dir); err != nil {
+		return "", fmt.Errorf("syncing pop read outbox directory: %w", err)
+	}
+	return path, nil
+}
+
+func replayDirectPopReadOutbox(sessionDir string) error {
+	dir := directPopReadOutboxDir(sessionDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading pop read outbox: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading pop read outbox record: %w", err)
+		}
+		var record directPopReadOutboxRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			return fmt.Errorf("decoding pop read outbox record %s: %w", path, err)
+		}
+		if err := appendDirectPopReadRecord(sessionDir, record); err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing replayed pop read outbox record: %w", err)
+		}
+	}
+	if len(entries) > 0 {
+		if err := syncPopDirectory(dir); err != nil {
+			return fmt.Errorf("syncing replayed pop read outbox directory: %w", err)
+		}
+	}
+	return nil
+}
+
+func syncPopDirectory(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := handle.Sync(); err != nil {
+		_ = handle.Close()
+		return err
+	}
+	return handle.Close()
 }
 
 type popEmptyOutput struct {
@@ -146,33 +406,41 @@ type popEmptyOutput struct {
 }
 
 type popMessageOutput struct {
-	Status                      string                  `json:"status"`
-	MessageID                   string                  `json:"message_id,omitempty"`
-	MarkdownPath                string                  `json:"markdown_path,omitempty"`
-	MarkdownAbsolutePath        string                  `json:"markdown_absolute_path,omitempty"`
-	Frontmatter                 map[string]any          `json:"frontmatter,omitempty"`
-	From                        string                  `json:"from"`
-	To                          string                  `json:"to"`
-	ReplyPolicy                 string                  `json:"reply_policy,omitempty"`
-	ReplyTo                     string                  `json:"reply_to,omitempty"`
-	InputRequestID              string                  `json:"input_request_id,omitempty"`
-	FillsInputRequestID         string                  `json:"fills_input_request_id,omitempty"`
-	InputRequestSetID           string                  `json:"input_request_set_id,omitempty"`
-	BranchID                    string                  `json:"branch_id,omitempty"`
-	CompletionRule              string                  `json:"completion_rule,omitempty"`
-	Timestamp                   string                  `json:"timestamp"`
-	UnreadBefore                *int                    `json:"unread_before,omitempty"`
-	Remaining                   *int                    `json:"remaining,omitempty"`
-	ArchivedBodyReadRequired    bool                    `json:"archived_body_read_required,omitempty"`
-	ArchivedBodyReadInstruction string                  `json:"archived_body_read_instruction,omitempty"`
-	ReceiverRuntimeContext      *runtimecontext.Summary `json:"receiver_runtime_context,omitempty"`
-	ReceiverRuntimeContextError string                  `json:"receiver_runtime_context_error,omitempty"`
-	RuntimeContext              *runtimecontext.Summary `json:"runtime_context,omitempty"`
-	RuntimeContextError         string                  `json:"runtime_context_error,omitempty"`
-	PopReceiptPath              string                  `json:"pop_receipt_path,omitempty"`
-	PopReceiptAbsolutePath      string                  `json:"pop_receipt_absolute_path,omitempty"`
-	SessionDiagnostics          *popSessionDiagnostics  `json:"session_diagnostics,omitempty"`
-	SubmitPath                  projection.SubmitPath   `json:"submit_path,omitempty"`
+	Status                      string                            `json:"status"`
+	MessageID                   string                            `json:"message_id,omitempty"`
+	MarkdownPath                string                            `json:"markdown_path,omitempty"`
+	MarkdownAbsolutePath        string                            `json:"markdown_absolute_path,omitempty"`
+	Frontmatter                 map[string]any                    `json:"frontmatter,omitempty"`
+	From                        string                            `json:"from"`
+	To                          string                            `json:"to"`
+	ReplyPolicy                 string                            `json:"reply_policy,omitempty"`
+	ReplyTo                     string                            `json:"reply_to,omitempty"`
+	MandateID                   string                            `json:"mandate_id,omitempty"`
+	AuthorityGeneration         int                               `json:"authority_generation,omitempty"`
+	LaneID                      string                            `json:"lane_id,omitempty"`
+	ParentLaneID                string                            `json:"parent_lane_id,omitempty"`
+	AcceptancePredicate         string                            `json:"acceptance_predicate,omitempty"`
+	SupersessionState           string                            `json:"supersession_state,omitempty"`
+	TerminalAcceptanceState     string                            `json:"terminal_acceptance_state,omitempty"`
+	InputRequestID              string                            `json:"input_request_id,omitempty"`
+	FillsInputRequestID         string                            `json:"fills_input_request_id,omitempty"`
+	InputRequestSetID           string                            `json:"input_request_set_id,omitempty"`
+	BranchID                    string                            `json:"branch_id,omitempty"`
+	CompletionRule              string                            `json:"completion_rule,omitempty"`
+	Timestamp                   string                            `json:"timestamp"`
+	UnreadBefore                *int                              `json:"unread_before,omitempty"`
+	Remaining                   *int                              `json:"remaining,omitempty"`
+	StaleBacklog                *projection.PopStaleBacklogNotice `json:"stale_backlog,omitempty"`
+	ArchivedBodyReadRequired    bool                              `json:"archived_body_read_required,omitempty"`
+	ArchivedBodyReadInstruction string                            `json:"archived_body_read_instruction,omitempty"`
+	ReceiverRuntimeContext      *runtimecontext.Summary           `json:"receiver_runtime_context,omitempty"`
+	ReceiverRuntimeContextError string                            `json:"receiver_runtime_context_error,omitempty"`
+	RuntimeContext              *runtimecontext.Summary           `json:"runtime_context,omitempty"`
+	RuntimeContextError         string                            `json:"runtime_context_error,omitempty"`
+	PopReceiptPath              string                            `json:"pop_receipt_path,omitempty"`
+	PopReceiptAbsolutePath      string                            `json:"pop_receipt_absolute_path,omitempty"`
+	SessionDiagnostics          *popSessionDiagnostics            `json:"session_diagnostics,omitempty"`
+	SubmitPath                  projection.SubmitPath             `json:"submit_path,omitempty"`
 }
 
 type popReceiverContextOptions struct {
@@ -198,8 +466,8 @@ func writeEmptyPopOutput(stdout io.Writer, diagnostics *popSessionDiagnostics, s
 	return json.NewEncoder(stdout).Encode(popEmptyOutput{Status: "empty", SessionDiagnostics: diagnostics, SubmitPath: submitPath})
 }
 
-func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions) error {
-	return writePopMessageOutputWithOps(stdout, content, filename, markdownPath, unreadBefore, remaining, runtimeContextMode, diagnostics, submitPath, receiverOptions, osPopReceiptFileOps)
+func writePopMessageOutput(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, staleBacklog *projection.PopStaleBacklogNotice, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions) error {
+	return writePopMessageOutputWithOps(stdout, content, filename, markdownPath, unreadBefore, remaining, staleBacklog, runtimeContextMode, diagnostics, submitPath, receiverOptions, osPopReceiptFileOps)
 }
 
 type popReceiptFileOps struct {
@@ -212,7 +480,7 @@ var osPopReceiptFileOps = popReceiptFileOps{
 	writeFile: os.WriteFile,
 }
 
-func writePopMessageOutputWithOps(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions, receiptOps popReceiptFileOps) error {
+func writePopMessageOutputWithOps(stdout io.Writer, content, filename, markdownPath string, unreadBefore, remaining *int, staleBacklog *projection.PopStaleBacklogNotice, runtimeContextMode string, diagnostics *popSessionDiagnostics, submitPath projection.SubmitPath, receiverOptions popReceiverContextOptions, receiptOps popReceiptFileOps) error {
 	output := parseMessageContent(content, filename)
 	output.MarkdownPath = displayMarkdownPath(markdownPath)
 	if output.MarkdownPath != markdownPath {
@@ -224,6 +492,7 @@ func writePopMessageOutputWithOps(stdout io.Writer, content, filename, markdownP
 	}
 	output.UnreadBefore = unreadBefore
 	output.Remaining = remaining
+	output.StaleBacklog = staleBacklog
 	output.ArchivedBodyReadRequired = true
 	output.ArchivedBodyReadInstruction = archivedBodyReadInstruction
 	output.SessionDiagnostics = diagnostics
@@ -333,6 +602,13 @@ func parseMessageContent(content, filename string) popMessageOutput {
 	}
 	result.ReplyPolicy = metadata.ReplyPolicy
 	result.ReplyTo = metadata.ReplyTo
+	result.MandateID = metadata.MandateID
+	result.AuthorityGeneration = metadata.AuthorityGeneration
+	result.LaneID = metadata.LaneID
+	result.ParentLaneID = metadata.ParentLaneID
+	result.AcceptancePredicate = metadata.AcceptancePredicate
+	result.SupersessionState = metadata.SupersessionState
+	result.TerminalAcceptanceState = metadata.TerminalAcceptanceState
 	result.InputRequestID = metadata.InputRequestID
 	result.FillsInputRequestID = metadata.FillsInputRequestID
 	result.InputRequestSetID = metadata.InputRequestSetID
