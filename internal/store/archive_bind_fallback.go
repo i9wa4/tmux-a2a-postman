@@ -10,6 +10,10 @@ func openBoundArchiveSource(sourcePath string, data []byte) (*boundArchiveSource
 	return nil, fmt.Errorf("verified archive object binding is unsupported on this platform")
 }
 
+func openBoundArchiveSourceAt(any, string, string, []byte) (*boundArchiveSource, error) {
+	return nil, fmt.Errorf("verified archive object binding is unsupported on this platform")
+}
+
 func recoverArchiveBindingsInInboxDir(string, string) error {
 	return fmt.Errorf("verified archive object binding is unsupported on this platform")
 }

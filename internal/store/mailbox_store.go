@@ -250,6 +250,21 @@ func BeginArchiveInboxMessageVerified(absPath, filename string, data []byte) (st
 	return archiveInboxMessageVerifiedWithHooks(plan, data, defaultVerifiedArchiveHooks)
 }
 
+// BeginArchiveInboxMessageVerifiedAt completes a verified inbox archive using
+// an already-trusted source directory descriptor. The path still defines the
+// read/ archive location, but source verification, staging, and cleanup stay
+// relative to sourceDir.
+func BeginArchiveInboxMessageVerifiedAt(sourceDir *os.File, absPath, filename string, data []byte) (string, func() error, error) {
+	plan, err := PlanArchiveInboxMessage(absPath, filename)
+	if err != nil {
+		return "", nil, err
+	}
+	if sourceDir == nil {
+		return "", nil, fmt.Errorf("archive inbox message: source directory descriptor is nil")
+	}
+	return archiveInboxMessageVerifiedAtWithHooks(sourceDir, plan, data, defaultVerifiedArchiveHooks)
+}
+
 // RecoverArchiveBindings repairs or fails closed on orphaned verified archive
 // stages left in inbox directories by an interrupted direct pop.
 func RecoverArchiveBindings(sessionDir string) error {
@@ -278,6 +293,18 @@ func archiveInboxMessageVerifiedWithHooks(plan InboxArchivePlan, data []byte, ho
 	if err != nil {
 		return "", nil, err
 	}
+	return archiveInboxMessageVerifiedFromSource(source, plan, data, hooks)
+}
+
+func archiveInboxMessageVerifiedAtWithHooks(sourceDir *os.File, plan InboxArchivePlan, data []byte, hooks verifiedArchiveHooks) (readPath string, cleanup func() error, err error) {
+	source, err := openBoundArchiveSourceAt(sourceDir, plan.SourcePath, plan.Filename, data)
+	if err != nil {
+		return "", nil, err
+	}
+	return archiveInboxMessageVerifiedFromSource(source, plan, data, hooks)
+}
+
+func archiveInboxMessageVerifiedFromSource(source *boundArchiveSource, plan InboxArchivePlan, data []byte, hooks verifiedArchiveHooks) (readPath string, cleanup func() error, err error) {
 	stageName, err := source.Stage(hooks.beforeStage)
 	if err != nil {
 		_ = source.Close()

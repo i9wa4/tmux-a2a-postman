@@ -1973,6 +1973,78 @@ func TestHandleDaemonSubmitPopConfinesNodeToInboxRoot(t *testing.T) {
 	assertNoArchiveBindingLeftForDaemonTest(t, inboxDir)
 }
 
+func TestHandleDaemonSubmitPopArchivesOriginalDirectoryAfterMoveAndSymlinkSwap(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260502-004702-r1111-from-orchestrator-to-worker.md"
+	originalContent := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\noriginal\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(originalContent), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+	externalDir := filepath.Join(tmpDir, "external-inbox")
+	if err := os.MkdirAll(externalDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll external: %v", err)
+	}
+	externalContent := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nexternal\n"
+	if err := os.WriteFile(filepath.Join(externalDir, filename), []byte(externalContent), 0o600); err != nil {
+		t.Fatalf("WriteFile external: %v", err)
+	}
+	movedDir := filepath.Join(sessionDir, "inbox", "worker-moved")
+	swapped := false
+	originalBeforeArchive := daemonSubmitPopBeforeArchive
+	daemonSubmitPopBeforeArchive = func(_ *daemonSubmitPopInbox, gotFilename string, gotData []byte) error {
+		if gotFilename != filename {
+			return fmt.Errorf("hook filename = %q, want %q", gotFilename, filename)
+		}
+		if string(gotData) != originalContent {
+			return fmt.Errorf("hook data = %q, want original content", gotData)
+		}
+		if err := os.Rename(inboxDir, movedDir); err != nil {
+			return fmt.Errorf("rename original inbox: %w", err)
+		}
+		if err := os.Symlink(externalDir, inboxDir); err != nil {
+			return fmt.Errorf("symlink external inbox: %w", err)
+		}
+		swapped = true
+		return nil
+	}
+	t.Cleanup(func() { daemonSubmitPopBeforeArchive = originalBeforeArchive })
+
+	response, cleanup, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-swap",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("handleDaemonSubmitPop(): %v", err)
+	}
+	if !swapped {
+		t.Fatal("test hook did not swap inbox directory")
+	}
+	if response.Filename != filename || response.Content != originalContent {
+		t.Fatalf("response filename/content = %q/%q, want %q/original content", response.Filename, response.Content, filename)
+	}
+	if cleanup == nil {
+		t.Fatal("cleanup is nil")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	assertFileContentForDaemonTest(t, filepath.Join(sessionDir, "read", filename), originalContent)
+	assertFileContentForDaemonTest(t, filepath.Join(externalDir, filename), externalContent)
+	assertNoArchiveBindingLeftForDaemonTest(t, movedDir)
+	if _, err := os.Lstat(filepath.Join(movedDir, filename)); !os.IsNotExist(err) {
+		t.Fatalf("moved original source = %v, want archived away", err)
+	}
+}
+
 func TestDispatchPendingDaemonSubmitRequestsCompletesMissedPopBeforeBlockedArchiveCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
 

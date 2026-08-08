@@ -107,6 +107,72 @@ func openBoundArchiveSource(sourcePath string, data []byte) (*boundArchiveSource
 	}, nil
 }
 
+func openBoundArchiveSourceAt(sourceDir *os.File, sourcePath, base string, data []byte) (*boundArchiveSource, error) {
+	if sourceDir == nil {
+		return nil, fmt.Errorf("opening archive source directory descriptor: nil descriptor")
+	}
+	if base == "" || base != filepath.Base(base) {
+		return nil, fmt.Errorf("opening archive source descriptor: invalid base name %q", base)
+	}
+	sourceDirInfo, err := sourceDir.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stating archive source directory descriptor: %w", err)
+	}
+	if !sourceDirInfo.IsDir() {
+		return nil, fmt.Errorf("checking archive source directory descriptor: refusing non-directory %s", filepath.Dir(sourcePath))
+	}
+	parentFD, err := unix.Dup(int(sourceDir.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("duplicating archive source directory descriptor: %w", err)
+	}
+	parent := os.NewFile(uintptr(parentFD), filepath.Dir(sourcePath))
+	if parent == nil {
+		_ = unix.Close(parentFD)
+		return nil, fmt.Errorf("duplicating archive source directory descriptor: invalid file descriptor")
+	}
+	keepParent := false
+	defer func() {
+		if !keepParent {
+			_ = parent.Close()
+		}
+	}()
+	fd, err := unix.Openat(int(parent.Fd()), base, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening archive source descriptor: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), sourcePath)
+	defer file.Close()
+	sourceInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stating archive source descriptor: %w", err)
+	}
+	if !sourceInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("checking archive source descriptor: refusing non-regular file %s", sourcePath)
+	}
+	current, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading archive source descriptor for verification: %w", err)
+	}
+	if !bytes.Equal(current, data) {
+		return nil, fmt.Errorf("checking archive source: source bytes changed for %s", sourcePath)
+	}
+	currentInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("checking archive source descriptor after read: %w", err)
+	}
+	if !os.SameFile(sourceInfo, currentInfo) {
+		return nil, fmt.Errorf("checking archive source descriptor after read: source object changed for %s", sourcePath)
+	}
+	keepParent = true
+	return &boundArchiveSource{
+		sourcePath: sourcePath,
+		baseName:   base,
+		want:       append([]byte(nil), data...),
+		parent:     parent,
+		sourceInfo: sourceInfo,
+	}, nil
+}
+
 func (s *boundArchiveSource) Close() error {
 	if s == nil || s.parent == nil {
 		return nil

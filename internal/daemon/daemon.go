@@ -324,7 +324,10 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 			return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("reading pop message: %w", err)
 		}
 	}
-	readPath, cleanup, err := store.BeginArchiveInboxMessageVerified(abs, msgs[0].Filename, data)
+	if err := daemonSubmitPopBeforeArchive(inbox, msgs[0].Filename, data); err != nil {
+		return projection.DaemonSubmitResponse{}, nil, err
+	}
+	readPath, cleanup, err := store.BeginArchiveInboxMessageVerifiedAt(inbox.dir, abs, msgs[0].Filename, data)
 	if err != nil {
 		return projection.DaemonSubmitResponse{}, nil, err
 	}
@@ -358,7 +361,10 @@ func (inbox *daemonSubmitPopInbox) Close() error {
 	return inbox.dir.Close()
 }
 
-var daemonSubmitPopScanInboxMessages = scanDaemonSubmitPopInboxMessages
+var (
+	daemonSubmitPopScanInboxMessages = scanDaemonSubmitPopInboxMessages
+	daemonSubmitPopBeforeArchive     = func(*daemonSubmitPopInbox, string, []byte) error { return nil }
+)
 
 func openDaemonSubmitPopInbox(sessionDir, node string) (*daemonSubmitPopInbox, error) {
 	if filepath.IsAbs(node) || node == "." || node == ".." || node != filepath.Base(node) || strings.ContainsAny(node, `/\`) {
