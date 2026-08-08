@@ -81,6 +81,7 @@ type PaneCaptureState struct {
 	LastCompactionDeliveredIdentity string    // Identity confirmed delivered to the node
 	LastCompactionDeliveryPending   bool
 	LastCompactionLifecycleIdentity string // Verified pane lifecycle discriminator
+	LastCompactionPaneID            string // Structural pane identity for retained compaction memory
 	LastCompactionHash              uint32 // Scanned compaction content hash for the most recent compaction marker state
 	LastCompactionMarkers           int    // Marker occurrences in scanned content for the most recent compaction state
 	LastCompactionMarkerHash        uint32 // Hash of the normalized latest marker line, independent of capture scope
@@ -557,6 +558,7 @@ func applyCompactionMemory(state *PaneCaptureState, memory PaneCaptureState) {
 	state.LastCompactionDeliveredIdentity = memory.LastCompactionDeliveredIdentity
 	state.LastCompactionDeliveryPending = memory.LastCompactionDeliveryPending
 	state.LastCompactionLifecycleIdentity = memory.LastCompactionLifecycleIdentity
+	state.LastCompactionPaneID = memory.LastCompactionPaneID
 	state.LastCompactionHash = memory.LastCompactionHash
 	state.LastCompactionMarkers = memory.LastCompactionMarkers
 	state.LastCompactionMarkerHash = memory.LastCompactionMarkerHash
@@ -592,6 +594,7 @@ func (t *IdleTracker) rememberNodeCompaction(nodeKey string, state PaneCaptureSt
 		LastCompactionDeliveredIdentity: state.LastCompactionDeliveredIdentity,
 		LastCompactionDeliveryPending:   state.LastCompactionDeliveryPending,
 		LastCompactionLifecycleIdentity: state.LastCompactionLifecycleIdentity,
+		LastCompactionPaneID:            state.LastCompactionPaneID,
 		LastCompactionHash:              state.LastCompactionHash,
 		LastCompactionMarkers:           state.LastCompactionMarkers,
 		LastCompactionMarkerHash:        state.LastCompactionMarkerHash,
@@ -622,7 +625,7 @@ func (t *IdleTracker) clearOtherNodeCompactionMemoryForPane(nodeKey, paneID stri
 		if memoryNodeKey == nodeKey {
 			continue
 		}
-		if compactionLifecyclePaneID(memory.LastCompactionLifecycleIdentity) == paneID {
+		if memory.LastCompactionPaneID == paneID {
 			delete(t.nodeCompactionMemory, memoryNodeKey)
 		}
 	}
@@ -636,12 +639,12 @@ func (t *IdleTracker) pruneNodeCompactionMemory(now time.Time) {
 	}
 }
 
-func (t *IdleTracker) nodeCompactionMemoryFor(nodeKey string, now time.Time) (PaneCaptureState, bool) {
+func (t *IdleTracker) nodeCompactionMemoryFor(nodeKey, paneID string, now time.Time) (PaneCaptureState, bool) {
 	memory, ok := t.nodeCompactionMemory[nodeKey]
 	if !ok {
 		return PaneCaptureState{}, false
 	}
-	if memory.LastCompactionPingAt.IsZero() || now.Sub(memory.LastCompactionPingAt) > compactionMemoryRetention {
+	if memory.LastCompactionPaneID != paneID || memory.LastCompactionPingAt.IsZero() || now.Sub(memory.LastCompactionPingAt) > compactionMemoryRetention {
 		delete(t.nodeCompactionMemory, nodeKey)
 		return PaneCaptureState{}, false
 	}
@@ -680,14 +683,6 @@ func compactionLifecycleIdentity(nodeKey, paneID, paneProcessGeneration string) 
 
 func compactionEndpointIdentity(nodeKey, paneID string) string {
 	return nodeKey + "|" + paneID
-}
-
-func compactionLifecyclePaneID(identity string) string {
-	parts := strings.Split(identity, "|")
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
 }
 
 func sameCompactionEndpoint(identity, nodeKey, paneID string) bool {
@@ -803,8 +798,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				LastCaptureAt: now,
 			}
 			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+				state.LastCompactionPaneID = paneID
 				t.clearOtherNodeCompactionMemoryForPane(nodeKey, paneID)
-				memory, hasMemory := t.nodeCompactionMemoryFor(nodeKey, now)
+				memory, hasMemory := t.nodeCompactionMemoryFor(nodeKey, paneID, now)
 				lifecycle := compactionLifecycleIdentityForNewPane(nodeKey, paneID, paneProcessGenerations[paneID], memory, hasMemory)
 				if hasMemory {
 					if memory.LastCompactionLifecycleIdentity == lifecycle {
@@ -855,6 +851,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+			state.LastCompactionPaneID = paneID
 			t.clearOtherNodeCompactionMemoryForPane(nodeKey, paneID)
 			lifecycle, lifecycleChanged := compactionLifecycleIdentityForExistingPane(nodeKey, paneID, paneProcessGenerations[paneID], state.LastCompactionLifecycleIdentity)
 			if lifecycleChanged {
