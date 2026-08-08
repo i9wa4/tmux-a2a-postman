@@ -74,13 +74,7 @@ func TestRunStop_StopsDaemonOwningManagedSession(t *testing.T) {
 		waitCh <- child.Wait()
 	}()
 	t.Cleanup(func() {
-		if child.ProcessState == nil || !child.ProcessState.Exited() {
-			_ = child.Process.Kill()
-		}
-		select {
-		case <-waitCh:
-		case <-time.After(2 * time.Second):
-		}
+		cleanupStartedTestProcess(t, child, waitCh)
 	})
 
 	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), child.Process.Pid); err != nil {
@@ -135,13 +129,7 @@ func TestRunStop_StopsDaemonOwnerSession(t *testing.T) {
 		waitCh <- child.Wait()
 	}()
 	t.Cleanup(func() {
-		if child.ProcessState == nil || !child.ProcessState.Exited() {
-			_ = child.Process.Kill()
-		}
-		select {
-		case <-waitCh:
-		case <-time.After(2 * time.Second):
-		}
+		cleanupStartedTestProcess(t, child, waitCh)
 	})
 
 	if err := config.WriteSessionPIDFile(filepath.Join(pidDir, "postman.pid"), child.Process.Pid); err != nil {
@@ -171,6 +159,18 @@ func TestRunStop_StopsDaemonOwnerSession(t *testing.T) {
 	}
 	if payload.PID != child.Process.Pid {
 		t.Fatalf("payload.PID = %d, want %d", payload.PID, child.Process.Pid)
+	}
+}
+
+func cleanupStartedTestProcess(t *testing.T, child *exec.Cmd, waitCh <-chan error) {
+	t.Helper()
+	if child.Process != nil {
+		_ = child.Process.Kill()
+	}
+	select {
+	case <-waitCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for test process cleanup")
 	}
 }
 
