@@ -2926,6 +2926,133 @@ func TestCheckPaneCapture_CompactionMarkersRemainIndependentPerNode(t *testing.T
 	}
 }
 
+func TestCheckPaneCapture_CompactionTriggerRepeatsWhenSamePaneRemapsToDifferentNodeWithKnownPID(t *testing.T) {
+	scriptDir := t.TempDir()
+	pidPath := filepath.Join(scriptDir, "pane-pid")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tcodex'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'display-message' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '#{pane_pid}' ]; then\n" +
+		"  cat \"$TMUX_A2A_TEST_PANE_PID\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  printf '%s\\n' '• Context compacted'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_PANE_PID", pidPath)
+	if err := os.WriteFile(pidPath, []byte("100\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid): %v", err)
+	}
+
+	now := time.Date(2026, time.August, 8, 23, 25, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{ActivityWindowSeconds: 120, NodeStaleSeconds: 600}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	firstTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:first": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+	if firstTargets[0].LifecycleIdentity != "review:first|%11|pid:100" {
+		t.Fatalf("first lifecycle identity = %q, want first node PID lifecycle", firstTargets[0].LifecycleIdentity)
+	}
+	tracker.MarkCompactionPingDelivered(firstTargets[0].NodeKey, firstTargets[0].LifecycleIdentity, firstTargets[0].MarkerIdentity)
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	secondTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(secondTargets) != 1 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 after node remap", len(secondTargets))
+	}
+	if secondTargets[0].NodeKey != "review:second" {
+		t.Fatalf("second target node = %q, want review:second", secondTargets[0].NodeKey)
+	}
+	if secondTargets[0].LifecycleIdentity != "review:second|%11|pid:100" {
+		t.Fatalf("second lifecycle identity = %q, want second node PID lifecycle", secondTargets[0].LifecycleIdentity)
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerRepeatsWhenSamePaneRemapsToDifferentNodeWithUnknownPID(t *testing.T) {
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tcodex'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'display-message' ]; then\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  printf '%s\\n' '• Context compacted'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	now := time.Date(2026, time.August, 8, 23, 30, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{ActivityWindowSeconds: 120, NodeStaleSeconds: 600}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	firstTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:first": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+	if firstTargets[0].LifecycleIdentity != "review:first|%11" {
+		t.Fatalf("first lifecycle identity = %q, want first node legacy lifecycle", firstTargets[0].LifecycleIdentity)
+	}
+	tracker.MarkCompactionPingDelivered(firstTargets[0].NodeKey, firstTargets[0].LifecycleIdentity, firstTargets[0].MarkerIdentity)
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	secondTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(secondTargets) != 1 {
+		t.Fatalf("second checkPaneCapture() returned %d targets, want 1 after node remap", len(secondTargets))
+	}
+	if secondTargets[0].NodeKey != "review:second" {
+		t.Fatalf("second target node = %q, want review:second", secondTargets[0].NodeKey)
+	}
+	if secondTargets[0].LifecycleIdentity != "review:second|%11" {
+		t.Fatalf("second lifecycle identity = %q, want second node legacy lifecycle", secondTargets[0].LifecycleIdentity)
+	}
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	memory := tracker.nodeCompactionMemory["review:second"]
+	tracker.mu.Unlock()
+	if state.LastCompactionLifecycleIdentity != "review:second|%11" {
+		t.Fatalf("state lifecycle identity = %q, want second node legacy lifecycle", state.LastCompactionLifecycleIdentity)
+	}
+	if memory.LastCompactionLifecycleIdentity != "review:second|%11" {
+		t.Fatalf("memory lifecycle identity = %q, want second node legacy lifecycle", memory.LastCompactionLifecycleIdentity)
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameCaptureAfterMarkerClears(t *testing.T) {
 	scriptDir := t.TempDir()
 	capturePath := filepath.Join(scriptDir, "capture.txt")

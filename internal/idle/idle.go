@@ -656,8 +656,17 @@ func compactionLifecycleIdentity(nodeKey, paneID, paneProcessGeneration string) 
 	return nodeKey + "|" + paneID + "|pid:" + paneProcessGeneration
 }
 
+func compactionEndpointIdentity(nodeKey, paneID string) string {
+	return nodeKey + "|" + paneID
+}
+
+func sameCompactionEndpoint(identity, nodeKey, paneID string) bool {
+	endpoint := compactionEndpointIdentity(nodeKey, paneID)
+	return identity == endpoint || strings.HasPrefix(identity, endpoint+"|")
+}
+
 func pidQualifiedCompactionLifecycle(identity, nodeKey, paneID string) bool {
-	return strings.HasPrefix(identity, nodeKey+"|"+paneID+"|pid:")
+	return strings.HasPrefix(identity, compactionEndpointIdentity(nodeKey, paneID)+"|pid:")
 }
 
 func compactionLifecycleIdentityForNewPane(nodeKey, paneID string, generation paneProcessGeneration, memory PaneCaptureState, hasMemory bool) string {
@@ -671,6 +680,9 @@ func compactionLifecycleIdentityForNewPane(nodeKey, paneID string, generation pa
 }
 
 func compactionLifecycleIdentityForExistingPane(nodeKey, paneID string, generation paneProcessGeneration, previous string) (string, bool) {
+	if previous != "" && !sameCompactionEndpoint(previous, nodeKey, paneID) {
+		return compactionLifecycleIdentity(nodeKey, paneID, generation.Value), true
+	}
 	if generation.Known {
 		lifecycle := compactionLifecycleIdentity(nodeKey, paneID, generation.Value)
 		return lifecycle, pidQualifiedCompactionLifecycle(previous, nodeKey, paneID) && previous != lifecycle
