@@ -606,6 +606,17 @@ func (t *IdleTracker) clearNodeCompactionMemory(nodeKey string) {
 	delete(t.nodeCompactionMemory, nodeKey)
 }
 
+func (t *IdleTracker) clearNodeCompactionMemoryForLifecycle(lifecycleIdentity string) {
+	if lifecycleIdentity == "" {
+		return
+	}
+	for nodeKey, memory := range t.nodeCompactionMemory {
+		if memory.LastCompactionLifecycleIdentity == lifecycleIdentity {
+			delete(t.nodeCompactionMemory, nodeKey)
+		}
+	}
+}
+
 func (t *IdleTracker) pruneNodeCompactionMemory(now time.Time) {
 	for nodeKey, memory := range t.nodeCompactionMemory {
 		if memory.LastCompactionPingAt.IsZero() || now.Sub(memory.LastCompactionPingAt) > compactionMemoryRetention {
@@ -826,6 +837,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 			lifecycle, lifecycleChanged := compactionLifecycleIdentityForExistingPane(nodeKey, paneID, paneProcessGenerations[paneID], state.LastCompactionLifecycleIdentity)
 			if lifecycleChanged {
+				t.clearNodeCompactionMemoryForLifecycle(state.LastCompactionLifecycleIdentity)
 				clearCompactionState(&state)
 			}
 			state.LastCompactionLifecycleIdentity = lifecycle
