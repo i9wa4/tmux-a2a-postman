@@ -43,6 +43,45 @@ func TestRecoverArchiveBindingsRemovesCompletedStage(t *testing.T) {
 	assertMissing(t, filepath.Join(filepath.Dir(inboxPath), archiveBindingManifestName(stageName)))
 }
 
+func TestRecoverArchiveBindingsToleratesConcurrentStageCleanup(t *testing.T) {
+	sessionDir, inboxPath, filename, content := writeArchiveBindingSource(t)
+	stageName := stageArchiveBindingSource(t, inboxPath, content)
+	stagePath := filepath.Join(filepath.Dir(inboxPath), stageName)
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile read: %v", err)
+	}
+
+	removedByCleanup := false
+	restore := beforeRecoverArchiveStageRemove
+	beforeRecoverArchiveStageRemove = func(path string) {
+		if path != stagePath || removedByCleanup {
+			return
+		}
+		removedByCleanup = true
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("Remove concurrent stage: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		beforeRecoverArchiveStageRemove = restore
+	})
+
+	if err := RecoverArchiveBindings(sessionDir); err != nil {
+		t.Fatalf("RecoverArchiveBindings() error = %v", err)
+	}
+	if !removedByCleanup {
+		t.Fatal("test hook did not force concurrent stage removal")
+	}
+	assertFileContent(t, readPath, content)
+	assertMissing(t, inboxPath)
+	assertMissing(t, stagePath)
+	assertMissing(t, filepath.Join(filepath.Dir(inboxPath), archiveBindingManifestName(stageName)))
+}
+
 func TestBeginArchiveInboxMessageVerifiedReturnsBeforeCleanup(t *testing.T) {
 	sessionDir, inboxPath, filename, content := writeArchiveBindingSource(t)
 	readPath, cleanup, err := BeginArchiveInboxMessageVerified(inboxPath, filename, []byte(content))

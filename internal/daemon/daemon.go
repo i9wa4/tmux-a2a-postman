@@ -275,10 +275,13 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	if request.Node == "" {
 		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("daemon submit pop missing node")
 	}
+	inboxDir, err := daemonSubmitPopInboxDir(sessionDir, request.Node)
+	if err != nil {
+		return projection.DaemonSubmitResponse{}, nil, err
+	}
 	if err := store.RecoverArchiveBindings(sessionDir); err != nil {
 		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("recovering daemon pop archive binding: %w", err)
 	}
-	inboxDir := filepath.Join(sessionDir, "inbox", request.Node)
 	msgs := message.ScanInboxMessages(inboxDir)
 	if len(msgs) == 0 {
 		return projection.DaemonSubmitResponse{
@@ -338,6 +341,28 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		UnreadBefore: len(msgs),
 		StaleBacklog: popnotice.BuildStaleBacklogNotice(msgs[0], msgs[1:]),
 	}, cleanup, nil
+}
+
+func daemonSubmitPopInboxDir(sessionDir, node string) (string, error) {
+	if filepath.IsAbs(node) || node == "." || node == ".." || node != filepath.Base(node) || strings.ContainsAny(node, `/\`) {
+		return "", fmt.Errorf("daemon submit pop invalid node %q", node)
+	}
+	inboxRoot, err := filepath.Abs(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		return "", fmt.Errorf("resolving daemon pop inbox root: %w", err)
+	}
+	inboxDir, err := filepath.Abs(filepath.Join(inboxRoot, node))
+	if err != nil {
+		return "", fmt.Errorf("resolving daemon pop inbox path: %w", err)
+	}
+	rel, err := filepath.Rel(inboxRoot, inboxDir)
+	if err != nil {
+		return "", fmt.Errorf("checking daemon pop inbox path: %w", err)
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("daemon submit pop invalid node %q: inbox path escapes inbox root", node)
+	}
+	return inboxDir, nil
 }
 
 func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {

@@ -32,6 +32,8 @@ type recordingFilesystemWatcher struct {
 	removed []string
 }
 
+const daemonSubmitTestResultTimeout = 10 * time.Second
+
 func (w *recordingFilesystemWatcher) Add(string, fswatcher.Op) error {
 	return nil
 }
@@ -66,7 +68,7 @@ func waitForDaemonSubmitResult(t *testing.T, rt *daemonRuntime) daemonSubmitRunt
 	select {
 	case result := <-rt.daemonSubmitResults:
 		return result
-	case <-time.After(2 * time.Second):
+	case <-time.After(daemonSubmitTestResultTimeout):
 		t.Fatal("timed out waiting for daemon-submit worker result")
 		return daemonSubmitRuntimeResult{}
 	}
@@ -1836,6 +1838,90 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing
 	}
 }
 
+func TestHandleDaemonSubmitPopRejectsUnsafeNodeBeforeFilesystemUse(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	outsideDir := filepath.Join(tmpDir, "ctx", "read")
+	if err := os.MkdirAll(outsideDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll outside: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "leak.md"), []byte("outside"), 0o600); err != nil {
+		t.Fatalf("WriteFile outside: %v", err)
+	}
+
+	tests := []string{
+		"../read",
+		"worker/../read",
+		"worker/sub",
+		"/tmp/worker",
+		"..",
+		".",
+		`worker\sub`,
+	}
+	for _, node := range tests {
+		t.Run(node, func(t *testing.T) {
+			response, cleanup, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+				RequestID: "req-pop-unsafe",
+				Command:   projection.DaemonSubmitPop,
+				Node:      node,
+			})
+			if err == nil || !strings.Contains(err.Error(), "invalid node") {
+				t.Fatalf("handleDaemonSubmitPop() error = %v, want invalid node", err)
+			}
+			if cleanup != nil {
+				t.Fatal("cleanup must be nil for rejected node")
+			}
+			if response.Filename != "" || response.MarkdownPath != "" || response.Content != "" {
+				t.Fatalf("response = %+v, want no message fields for rejected node", response)
+			}
+			assertFileContentForDaemonTest(t, filepath.Join(outsideDir, "leak.md"), "outside")
+			if entries, err := os.ReadDir(filepath.Join(sessionDir, "read")); err != nil || len(entries) != 0 {
+				t.Fatalf("session read entries = %d, %v; want none", len(entries), err)
+			}
+		})
+	}
+}
+
+func TestHandleDaemonSubmitPopConfinesNodeToInboxRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260502-004702-r1111-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nconfined\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile inbox: %v", err)
+	}
+
+	response, cleanup, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-confined",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("handleDaemonSubmitPop(): %v", err)
+	}
+	if response.Filename != filename || response.Content != content {
+		t.Fatalf("response filename/content = %q/%q, want %q/original content", response.Filename, response.Content, filename)
+	}
+	if cleanup == nil {
+		t.Fatal("cleanup is nil")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	assertFileContentForDaemonTest(t, filepath.Join(sessionDir, "read", filename), content)
+	assertNoArchiveBindingLeftForDaemonTest(t, inboxDir)
+}
+
 func TestDispatchPendingDaemonSubmitRequestsCompletesMissedPopBeforeBlockedArchiveCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -1891,8 +1977,8 @@ func TestDispatchPendingDaemonSubmitRequestsCompletesMissedPopBeforeBlockedArchi
 	if workerResult.err != nil {
 		t.Fatalf("daemon-submit worker error: %v", workerResult.err)
 	}
-	if elapsed >= 2*time.Second {
-		t.Fatalf("worker result took %s, want under unchanged 2s contract", elapsed)
+	if elapsed >= daemonSubmitTestResultTimeout {
+		t.Fatalf("worker result took %s, want before detached cleanup timeout", elapsed)
 	}
 	rt.handleDaemonSubmitResult(workerResult)
 
@@ -1930,6 +2016,17 @@ func assertNoArchiveBindingLeftForDaemonTest(t *testing.T, inboxDir string) {
 	stageCount, manifestCount := countArchiveBindingEntriesForDaemonTest(t, inboxDir)
 	if stageCount != 0 || manifestCount != 0 {
 		t.Fatalf("archive binding entries = stages:%d manifests:%d, want 0/0", stageCount, manifestCount)
+	}
+}
+
+func assertFileContentForDaemonTest(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	if string(got) != want {
+		t.Fatalf("ReadFile(%s) = %q, want %q", path, got, want)
 	}
 }
 

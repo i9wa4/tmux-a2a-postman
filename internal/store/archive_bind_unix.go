@@ -41,6 +41,8 @@ var syncArchiveBindingDirectory = func(dir *os.File) error {
 	return dir.Sync()
 }
 
+var beforeRecoverArchiveStageRemove = func(string) {}
+
 func openBoundArchiveSource(sourcePath string, data []byte) (*boundArchiveSource, error) {
 	dir := filepath.Dir(sourcePath)
 	base := filepath.Base(sourcePath)
@@ -372,7 +374,8 @@ func recoverArchiveBinding(manifestPath, readDir string) error {
 		if !bytes.Equal(readData, stageData) {
 			return fmt.Errorf("recovering archive binding: read archive content differs for %s", manifest.BaseName)
 		}
-		if err := os.Remove(stagePath); err != nil {
+		beforeRecoverArchiveStageRemove(stagePath)
+		if err := os.Remove(stagePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing recovered archive stage: %w", err)
 		}
 		if err := syncDirectory(inboxDir); err != nil {
