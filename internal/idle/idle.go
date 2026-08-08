@@ -55,10 +55,11 @@ type PaneActivityExport struct {
 }
 
 type CompactionPingTarget struct {
-	NodeKey        string
-	Runtime        string
-	Trigger        string
-	MarkerIdentity string
+	NodeKey           string
+	Runtime           string
+	Trigger           string
+	MarkerIdentity    string
+	LifecycleIdentity string
 }
 
 type compactionSuffixIdentity struct {
@@ -78,10 +79,11 @@ type PaneCaptureState struct {
 	LastCompactionTrigger           string    // Non-empty while a compaction marker remains in scanned content
 	LastCompactionMarkerIdentity    string    // Stable trigger/marker/count identity handled for this node
 	LastCompactionDeliveredIdentity string    // Identity confirmed delivered to the node
-	LastCompactionLifecycleIdentity string    // Verified pane lifecycle discriminator
-	LastCompactionHash              uint32    // Scanned compaction content hash for the most recent compaction marker state
-	LastCompactionMarkers           int       // Marker occurrences in scanned content for the most recent compaction state
-	LastCompactionMarkerHash        uint32    // Hash of the normalized latest marker line, independent of capture scope
+	LastCompactionDeliveryPending   bool
+	LastCompactionLifecycleIdentity string // Verified pane lifecycle discriminator
+	LastCompactionHash              uint32 // Scanned compaction content hash for the most recent compaction marker state
+	LastCompactionMarkers           int    // Marker occurrences in scanned content for the most recent compaction state
+	LastCompactionMarkerHash        uint32 // Hash of the normalized latest marker line, independent of capture scope
 	LastCompactionScope             compactionCaptureScope
 	LastCompactionSuffix            compactionSuffixIdentity
 	LastCompactionPrefixHash        uint32 // Hash of scanned content through the latest marker occurrence
@@ -464,10 +466,14 @@ func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, com
 	if !state.LastCompactionPingAt.IsZero() && now.Sub(state.LastCompactionPingAt) < compactionPingCooldown {
 		return false
 	}
-	if state.LastCompactionDeliveredIdentity != "" {
-		if compactionMarkerIdentity(scan) == state.LastCompactionDeliveredIdentity {
-			return false
-		}
+	identity := compactionMarkerIdentity(scan)
+	if identity == state.LastCompactionDeliveredIdentity && identity != "" {
+		return false
+	}
+	// A matching observed marker that has not been positively delivered is retryable;
+	// do not fall through to legacy same-marker suppression.
+	if identity == state.LastCompactionMarkerIdentity && identity != "" {
+		return !state.LastCompactionDeliveryPending
 	}
 	if state.LastCompactionTrigger != "" {
 		if scan.Trigger == state.LastCompactionTrigger &&
@@ -490,21 +496,39 @@ func recordCompactionPing(state *PaneCaptureState, scan compactionMarkerScan, co
 	state.LastCompactionPrefixHash = scan.MarkerPrefixHash
 	state.LastCompactionPrefixLines = scan.MarkerPrefixLines
 	state.LastCompactionMarkerIdentity = compactionMarkerIdentity(scan)
+	state.LastCompactionDeliveryPending = true
 }
 
 // MarkCompactionPingDelivered promotes a pending marker only after the delivery
 // boundary positively acknowledges it. Failed or unconfirmed sends remain retryable.
-func (t *IdleTracker) MarkCompactionPingDelivered(nodeKey, markerIdentity string) {
+func (t *IdleTracker) MarkCompactionPingDelivered(nodeKey, lifecycleIdentity, markerIdentity string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for paneID, state := range t.paneCaptureState {
-		if state.LastCompactionMarkerIdentity == markerIdentity {
+		if state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
 			state.LastCompactionDeliveredIdentity = markerIdentity
+			state.LastCompactionDeliveryPending = false
 			t.paneCaptureState[paneID] = state
 		}
 	}
-	if state, ok := t.nodeCompactionMemory[nodeKey]; ok && state.LastCompactionMarkerIdentity == markerIdentity {
+	if state, ok := t.nodeCompactionMemory[nodeKey]; ok && state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
 		state.LastCompactionDeliveredIdentity = markerIdentity
+		state.LastCompactionDeliveryPending = false
+		t.nodeCompactionMemory[nodeKey] = state
+	}
+}
+
+func (t *IdleTracker) MarkCompactionPingDeliveryFailed(nodeKey, lifecycleIdentity, markerIdentity string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for paneID, state := range t.paneCaptureState {
+		if state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
+			state.LastCompactionDeliveryPending = false
+			t.paneCaptureState[paneID] = state
+		}
+	}
+	if state, ok := t.nodeCompactionMemory[nodeKey]; ok && state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
+		state.LastCompactionDeliveryPending = false
 		t.nodeCompactionMemory[nodeKey] = state
 	}
 }
@@ -531,6 +555,7 @@ func applyCompactionMemory(state *PaneCaptureState, memory PaneCaptureState) {
 	state.LastCompactionTrigger = memory.LastCompactionTrigger
 	state.LastCompactionMarkerIdentity = memory.LastCompactionMarkerIdentity
 	state.LastCompactionDeliveredIdentity = memory.LastCompactionDeliveredIdentity
+	state.LastCompactionDeliveryPending = memory.LastCompactionDeliveryPending
 	state.LastCompactionLifecycleIdentity = memory.LastCompactionLifecycleIdentity
 	state.LastCompactionHash = memory.LastCompactionHash
 	state.LastCompactionMarkers = memory.LastCompactionMarkers
@@ -550,6 +575,7 @@ func (t *IdleTracker) rememberNodeCompaction(nodeKey string, state PaneCaptureSt
 		LastCompactionTrigger:           state.LastCompactionTrigger,
 		LastCompactionMarkerIdentity:    state.LastCompactionMarkerIdentity,
 		LastCompactionDeliveredIdentity: state.LastCompactionDeliveredIdentity,
+		LastCompactionDeliveryPending:   state.LastCompactionDeliveryPending,
 		LastCompactionLifecycleIdentity: state.LastCompactionLifecycleIdentity,
 		LastCompactionHash:              state.LastCompactionHash,
 		LastCompactionMarkers:           state.LastCompactionMarkers,
@@ -680,10 +706,11 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 					if shouldPingCompaction(state, scan, compactionHash, compactionScope, now) {
 						recordCompactionPing(&state, scan, compactionHash, compactionScope, now)
 						compactionTargets[nodeKey] = CompactionPingTarget{
-							NodeKey:        nodeKey,
-							Runtime:        runtime,
-							Trigger:        scan.Trigger,
-							MarkerIdentity: compactionMarkerIdentity(scan),
+							NodeKey:           nodeKey,
+							Runtime:           runtime,
+							Trigger:           scan.Trigger,
+							MarkerIdentity:    compactionMarkerIdentity(scan),
+							LifecycleIdentity: state.LastCompactionLifecycleIdentity,
 						}
 					} else {
 						refreshSameCompactionMarker(&state, scan, compactionHash, compactionScope)
@@ -722,10 +749,11 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				if shouldPingCompaction(state, scan, compactionHash, compactionScope, now) {
 					recordCompactionPing(&state, scan, compactionHash, compactionScope, now)
 					compactionTargets[nodeKey] = CompactionPingTarget{
-						NodeKey:        nodeKey,
-						Runtime:        runtime,
-						Trigger:        scan.Trigger,
-						MarkerIdentity: compactionMarkerIdentity(scan),
+						NodeKey:           nodeKey,
+						Runtime:           runtime,
+						Trigger:           scan.Trigger,
+						MarkerIdentity:    compactionMarkerIdentity(scan),
+						LifecycleIdentity: state.LastCompactionLifecycleIdentity,
 					}
 				} else {
 					refreshSameCompactionMarker(&state, scan, compactionHash, compactionScope)
