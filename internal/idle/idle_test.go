@@ -2289,7 +2289,11 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsAfterSamePaneProcessGeneration
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = 'display-message' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '#{pane_pid}' ]; then\n" +
-		"  cat \"$TMUX_A2A_TEST_PANE_PID\"\n" +
+		"  pid=$(cat \"$TMUX_A2A_TEST_PANE_PID\")\n" +
+		"  if [ \"$pid\" = 'fail' ]; then\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"  printf '%s\\n' \"$pid\"\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
@@ -2339,6 +2343,30 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsAfterSamePaneProcessGeneration
 		t.Fatalf("same-generation checkPaneCapture() returned %d targets, want 0", len(sameGenerationTargets))
 	}
 
+	if err := os.WriteFile(pidPath, []byte("fail\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid lookup failure): %v", err)
+	}
+	now = now.Add(compactionPingCooldown + time.Second)
+	unknownGenerationTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(unknownGenerationTargets) != 0 {
+		t.Fatalf("unknown-generation checkPaneCapture() returned %d targets, want 0", len(unknownGenerationTargets))
+	}
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if state.LastCompactionLifecycleIdentity != "review:worker|%11|pid:100" {
+		t.Fatalf("unknown-generation lifecycle identity = %q, want retained pid-qualified identity", state.LastCompactionLifecycleIdentity)
+	}
+
+	if err := os.WriteFile(pidPath, []byte("100\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid restored): %v", err)
+	}
+	now = now.Add(compactionPingCooldown + time.Second)
+	restoredGenerationTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(restoredGenerationTargets) != 0 {
+		t.Fatalf("restored-generation checkPaneCapture() returned %d targets, want 0", len(restoredGenerationTargets))
+	}
+
 	if err := os.WriteFile(pidPath, []byte("200\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(pid second): %v", err)
 	}
@@ -2349,6 +2377,93 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsAfterSamePaneProcessGeneration
 	}
 	if newGenerationTargets[0].LifecycleIdentity != "review:worker|%11|pid:200" {
 		t.Fatalf("new lifecycle identity = %q, want updated pid-qualified identity", newGenerationTargets[0].LifecycleIdentity)
+	}
+}
+
+func TestCheckPaneCapture_CompactionTriggerPreservesRetainedPIDLifecycleAcrossLookupFailureStateRecreation(t *testing.T) {
+	scriptDir := t.TempDir()
+	pidPath := filepath.Join(scriptDir, "pane-pid")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ] && [ \"$2\" = '-a' ] && [ \"$3\" = '-F' ] && [ \"$4\" = '#{pane_id}\t#{pane_current_command}' ]; then\n" +
+		"  printf '%s\\n' '%11\tcodex'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'display-message' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ] && [ \"$5\" = '#{pane_pid}' ]; then\n" +
+		"  pid=$(cat \"$TMUX_A2A_TEST_PANE_PID\")\n" +
+		"  if [ \"$pid\" = 'fail' ]; then\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"  printf '%s\\n' \"$pid\"\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = 'capture-pane' ] && [ \"$2\" = '-p' ] && [ \"$3\" = '-t' ] && [ \"$4\" = '%11' ]; then\n" +
+		"  printf '%s\\n' '• Context compacted'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_PANE_PID", pidPath)
+
+	now := time.Date(2026, time.August, 8, 22, 45, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	cfg := &config.Config{
+		ActivityWindowSeconds: 120,
+		NodeStaleSeconds:      600,
+	}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {
+			PaneID:      "%11",
+			SessionName: "review",
+			SessionDir:  sessionDir,
+		},
+	}
+
+	if err := os.WriteFile(pidPath, []byte("100\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid first): %v", err)
+	}
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first checkPaneCapture() returned %d targets, want 1", len(firstTargets))
+	}
+	if firstTargets[0].LifecycleIdentity != "review:worker|%11|pid:100" {
+		t.Fatalf("first lifecycle identity = %q, want pid-qualified identity", firstTargets[0].LifecycleIdentity)
+	}
+	tracker.MarkCompactionPingDelivered(firstTargets[0].NodeKey, firstTargets[0].LifecycleIdentity, firstTargets[0].MarkerIdentity)
+
+	tracker.mu.Lock()
+	delete(tracker.paneCaptureState, "%11")
+	tracker.mu.Unlock()
+
+	if err := os.WriteFile(pidPath, []byte("fail\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid lookup failure): %v", err)
+	}
+	now = now.Add(compactionPingCooldown + time.Second)
+	recreatedTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(recreatedTargets) != 0 {
+		t.Fatalf("recreated-state checkPaneCapture() returned %d targets, want 0", len(recreatedTargets))
+	}
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	tracker.mu.Unlock()
+	if state.LastCompactionLifecycleIdentity != "review:worker|%11|pid:100" {
+		t.Fatalf("recreated lifecycle identity = %q, want retained pid-qualified identity", state.LastCompactionLifecycleIdentity)
+	}
+
+	if err := os.WriteFile(pidPath, []byte("100\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pid restored): %v", err)
+	}
+	now = now.Add(compactionPingCooldown + time.Second)
+	restoredTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(restoredTargets) != 0 {
+		t.Fatalf("restored checkPaneCapture() returned %d targets, want 0", len(restoredTargets))
 	}
 }
 

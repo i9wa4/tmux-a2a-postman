@@ -630,15 +630,20 @@ func compactionAbsenceAuthoritative(state PaneCaptureState, scope compactionCapt
 	return state.LastCompactionTrigger != "" && scope == compactionScopeHistory
 }
 
-func queryPaneProcessGenerations(paneIDs []string) map[string]string {
-	generations := make(map[string]string)
+type paneProcessGeneration struct {
+	Value string
+	Known bool
+}
+
+func queryPaneProcessGenerations(paneIDs []string) map[string]paneProcessGeneration {
+	generations := make(map[string]paneProcessGeneration)
 	for _, paneID := range paneIDs {
 		output, err := exec.Command("tmux", "display-message", "-p", "-t", paneID, "#{pane_pid}").CombinedOutput()
 		if err != nil {
 			continue
 		}
 		if pid := strings.TrimSpace(string(output)); pid != "" {
-			generations[paneID] = pid
+			generations[paneID] = paneProcessGeneration{Value: pid, Known: true}
 		}
 	}
 	return generations
@@ -649,6 +654,31 @@ func compactionLifecycleIdentity(nodeKey, paneID, paneProcessGeneration string) 
 		return nodeKey + "|" + paneID
 	}
 	return nodeKey + "|" + paneID + "|pid:" + paneProcessGeneration
+}
+
+func pidQualifiedCompactionLifecycle(identity, nodeKey, paneID string) bool {
+	return strings.HasPrefix(identity, nodeKey+"|"+paneID+"|pid:")
+}
+
+func compactionLifecycleIdentityForNewPane(nodeKey, paneID string, generation paneProcessGeneration, memory PaneCaptureState, hasMemory bool) string {
+	if generation.Known {
+		return compactionLifecycleIdentity(nodeKey, paneID, generation.Value)
+	}
+	if hasMemory && pidQualifiedCompactionLifecycle(memory.LastCompactionLifecycleIdentity, nodeKey, paneID) {
+		return memory.LastCompactionLifecycleIdentity
+	}
+	return compactionLifecycleIdentity(nodeKey, paneID, "")
+}
+
+func compactionLifecycleIdentityForExistingPane(nodeKey, paneID string, generation paneProcessGeneration, previous string) (string, bool) {
+	if generation.Known {
+		lifecycle := compactionLifecycleIdentity(nodeKey, paneID, generation.Value)
+		return lifecycle, pidQualifiedCompactionLifecycle(previous, nodeKey, paneID) && previous != lifecycle
+	}
+	if previous != "" {
+		return previous, false
+	}
+	return compactionLifecycleIdentity(nodeKey, paneID, ""), false
 }
 
 // checkPaneCapture performs pane content capture and updates NodeActivity on consecutive changes.
@@ -731,8 +761,9 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				LastCaptureAt: now,
 			}
 			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
-				lifecycle := compactionLifecycleIdentity(nodeKey, paneID, paneProcessGenerations[paneID])
-				if memory, ok := t.nodeCompactionMemoryFor(nodeKey, now); ok {
+				memory, hasMemory := t.nodeCompactionMemoryFor(nodeKey, now)
+				lifecycle := compactionLifecycleIdentityForNewPane(nodeKey, paneID, paneProcessGenerations[paneID], memory, hasMemory)
+				if hasMemory {
 					if memory.LastCompactionLifecycleIdentity == lifecycle {
 						applyCompactionMemory(&state, memory)
 					}
@@ -781,8 +812,8 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
-			lifecycle := compactionLifecycleIdentity(nodeKey, paneID, paneProcessGenerations[paneID])
-			if state.LastCompactionLifecycleIdentity != "" && state.LastCompactionLifecycleIdentity != lifecycle {
+			lifecycle, lifecycleChanged := compactionLifecycleIdentityForExistingPane(nodeKey, paneID, paneProcessGenerations[paneID], state.LastCompactionLifecycleIdentity)
+			if lifecycleChanged {
 				clearCompactionState(&state)
 			}
 			state.LastCompactionLifecycleIdentity = lifecycle
