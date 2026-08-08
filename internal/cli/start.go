@@ -120,6 +120,7 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 				return
 			}
 			if result.Delivered {
+				idleTracker.MarkCompactionPingDelivered(target.NodeKey, target.MarkerIdentity)
 				recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
 			}
 			log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
