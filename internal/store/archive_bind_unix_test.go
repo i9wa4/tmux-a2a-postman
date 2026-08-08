@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestRecoverArchiveBindingsRestoresInterruptedStage(t *testing.T) {
@@ -136,6 +138,32 @@ func TestBeginArchiveInboxMessageVerifiedCleanupFailureRetainsManifest(t *testin
 	}
 	assertFileContent(t, readPath, content)
 	assertMissing(t, manifestPath)
+}
+
+func TestOpenBoundArchiveSourceAtDuplicatesParentCloseOnExec(t *testing.T) {
+	_, inboxPath, _, content := writeArchiveBindingSource(t)
+	sourceDir, err := os.Open(filepath.Dir(inboxPath))
+	if err != nil {
+		t.Fatalf("Open source dir: %v", err)
+	}
+	defer sourceDir.Close()
+
+	source, err := openBoundArchiveSourceAt(sourceDir, inboxPath, filepath.Base(inboxPath), []byte(content))
+	if err != nil {
+		t.Fatalf("openBoundArchiveSourceAt: %v", err)
+	}
+	defer source.Close()
+
+	if source.parent.Fd() == sourceDir.Fd() {
+		t.Fatalf("archive parent fd = source dir fd %d, want retained duplicate", source.parent.Fd())
+	}
+	flags, err := unix.FcntlInt(source.parent.Fd(), unix.F_GETFD, 0)
+	if err != nil {
+		t.Fatalf("F_GETFD duplicate archive parent: %v", err)
+	}
+	if flags&unix.FD_CLOEXEC == 0 {
+		t.Fatalf("archive parent duplicate flags = %#x, want FD_CLOEXEC", flags)
+	}
 }
 
 func TestRecoverArchiveBindingsCompletesPreRenameCrash(t *testing.T) {

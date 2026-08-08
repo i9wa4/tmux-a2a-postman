@@ -1984,17 +1984,29 @@ func TestHandleDaemonSubmitPopArchivesOriginalDirectoryAfterMoveAndSymlinkSwap(t
 		t.Fatalf("MkdirAll inbox: %v", err)
 	}
 	filename := "20260502-004702-r1111-from-orchestrator-to-worker.md"
-	originalContent := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\noriginal\n"
-	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(originalContent), 0o600); err != nil {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nidentical bytes\n"
+	originalPath := filepath.Join(inboxDir, filename)
+	if err := os.WriteFile(originalPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile inbox: %v", err)
 	}
 	externalDir := filepath.Join(tmpDir, "external-inbox")
 	if err := os.MkdirAll(externalDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll external: %v", err)
 	}
-	externalContent := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nexternal\n"
-	if err := os.WriteFile(filepath.Join(externalDir, filename), []byte(externalContent), 0o600); err != nil {
+	externalPath := filepath.Join(externalDir, filename)
+	if err := os.WriteFile(externalPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile external: %v", err)
+	}
+	originalInfo, err := os.Lstat(originalPath)
+	if err != nil {
+		t.Fatalf("Lstat original: %v", err)
+	}
+	externalInfo, err := os.Lstat(externalPath)
+	if err != nil {
+		t.Fatalf("Lstat external: %v", err)
+	}
+	if os.SameFile(originalInfo, externalInfo) {
+		t.Fatal("original and external test messages share object identity, want distinct files")
 	}
 	movedDir := filepath.Join(sessionDir, "inbox", "worker-moved")
 	swapped := false
@@ -2003,7 +2015,7 @@ func TestHandleDaemonSubmitPopArchivesOriginalDirectoryAfterMoveAndSymlinkSwap(t
 		if gotFilename != filename {
 			return fmt.Errorf("hook filename = %q, want %q", gotFilename, filename)
 		}
-		if string(gotData) != originalContent {
+		if string(gotData) != content {
 			return fmt.Errorf("hook data = %q, want original content", gotData)
 		}
 		if err := os.Rename(inboxDir, movedDir); err != nil {
@@ -2028,7 +2040,7 @@ func TestHandleDaemonSubmitPopArchivesOriginalDirectoryAfterMoveAndSymlinkSwap(t
 	if !swapped {
 		t.Fatal("test hook did not swap inbox directory")
 	}
-	if response.Filename != filename || response.Content != originalContent {
+	if response.Filename != filename || response.Content != content {
 		t.Fatalf("response filename/content = %q/%q, want %q/original content", response.Filename, response.Content, filename)
 	}
 	if cleanup == nil {
@@ -2037,8 +2049,15 @@ func TestHandleDaemonSubmitPopArchivesOriginalDirectoryAfterMoveAndSymlinkSwap(t
 	if err := cleanup(); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	assertFileContentForDaemonTest(t, filepath.Join(sessionDir, "read", filename), originalContent)
-	assertFileContentForDaemonTest(t, filepath.Join(externalDir, filename), externalContent)
+	assertFileContentForDaemonTest(t, filepath.Join(sessionDir, "read", filename), content)
+	assertFileContentForDaemonTest(t, externalPath, content)
+	externalInfoAfter, err := os.Lstat(externalPath)
+	if err != nil {
+		t.Fatalf("Lstat external after pop: %v", err)
+	}
+	if !os.SameFile(externalInfo, externalInfoAfter) {
+		t.Fatal("external replacement object identity changed, want untouched external file")
+	}
 	assertNoArchiveBindingLeftForDaemonTest(t, movedDir)
 	if _, err := os.Lstat(filepath.Join(movedDir, filename)); !os.IsNotExist(err) {
 		t.Fatalf("moved original source = %v, want archived away", err)

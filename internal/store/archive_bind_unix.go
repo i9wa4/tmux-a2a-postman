@@ -121,7 +121,7 @@ func openBoundArchiveSourceAt(sourceDir *os.File, sourcePath, base string, data 
 	if !sourceDirInfo.IsDir() {
 		return nil, fmt.Errorf("checking archive source directory descriptor: refusing non-directory %s", filepath.Dir(sourcePath))
 	}
-	parentFD, err := unix.Dup(int(sourceDir.Fd()))
+	parentFD, err := dupFileDescriptorCloseOnExec(sourceDir)
 	if err != nil {
 		return nil, fmt.Errorf("duplicating archive source directory descriptor: %w", err)
 	}
@@ -171,6 +171,10 @@ func openBoundArchiveSourceAt(sourceDir *os.File, sourcePath, base string, data 
 		parent:     parent,
 		sourceInfo: sourceInfo,
 	}, nil
+}
+
+func dupFileDescriptorCloseOnExec(file *os.File) (int, error) {
+	return unix.FcntlInt(file.Fd(), unix.F_DUPFD_CLOEXEC, 0)
 }
 
 func (s *boundArchiveSource) Close() error {
