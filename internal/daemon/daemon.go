@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -31,6 +32,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -275,14 +277,15 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	if request.Node == "" {
 		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("daemon submit pop missing node")
 	}
-	inboxDir, err := daemonSubmitPopInboxDir(sessionDir, request.Node)
+	inbox, err := openDaemonSubmitPopInbox(sessionDir, request.Node)
 	if err != nil {
 		return projection.DaemonSubmitResponse{}, nil, err
 	}
+	defer inbox.Close()
 	if err := store.RecoverArchiveBindings(sessionDir); err != nil {
 		return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("recovering daemon pop archive binding: %w", err)
 	}
-	msgs := message.ScanInboxMessages(inboxDir)
+	msgs := daemonSubmitPopScanInboxMessages(inbox)
 	if len(msgs) == 0 {
 		return projection.DaemonSubmitResponse{
 			RequestID:    request.RequestID,
@@ -296,13 +299,13 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		return msgs[i].Filename < msgs[j].Filename
 	})
 
-	abs := filepath.Join(inboxDir, msgs[0].Filename)
-	data, err := os.ReadFile(abs)
+	abs := filepath.Join(inbox.path, msgs[0].Filename)
+	data, err := daemonSubmitPopReadMessage(inbox, msgs[0].Filename)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("reading pop message: %w", err)
 		}
-		msgs = message.ScanInboxMessages(inboxDir)
+		msgs = daemonSubmitPopScanInboxMessages(inbox)
 		if len(msgs) == 0 {
 			return projection.DaemonSubmitResponse{
 				RequestID:    request.RequestID,
@@ -315,8 +318,8 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		sort.Slice(msgs, func(i, j int) bool {
 			return msgs[i].Filename < msgs[j].Filename
 		})
-		abs = filepath.Join(inboxDir, msgs[0].Filename)
-		data, err = os.ReadFile(abs)
+		abs = filepath.Join(inbox.path, msgs[0].Filename)
+		data, err = daemonSubmitPopReadMessage(inbox, msgs[0].Filename)
 		if err != nil {
 			return projection.DaemonSubmitResponse{}, nil, fmt.Errorf("reading pop message: %w", err)
 		}
@@ -343,26 +346,135 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	}, cleanup, nil
 }
 
-func daemonSubmitPopInboxDir(sessionDir, node string) (string, error) {
+type daemonSubmitPopInbox struct {
+	path string
+	dir  *os.File
+}
+
+func (inbox *daemonSubmitPopInbox) Close() error {
+	if inbox == nil || inbox.dir == nil {
+		return nil
+	}
+	return inbox.dir.Close()
+}
+
+var daemonSubmitPopScanInboxMessages = scanDaemonSubmitPopInboxMessages
+
+func openDaemonSubmitPopInbox(sessionDir, node string) (*daemonSubmitPopInbox, error) {
 	if filepath.IsAbs(node) || node == "." || node == ".." || node != filepath.Base(node) || strings.ContainsAny(node, `/\`) {
-		return "", fmt.Errorf("daemon submit pop invalid node %q", node)
+		return nil, fmt.Errorf("daemon submit pop invalid node %q", node)
 	}
 	inboxRoot, err := filepath.Abs(filepath.Join(sessionDir, "inbox"))
 	if err != nil {
-		return "", fmt.Errorf("resolving daemon pop inbox root: %w", err)
+		return nil, fmt.Errorf("resolving daemon pop inbox root: %w", err)
 	}
 	inboxDir, err := filepath.Abs(filepath.Join(inboxRoot, node))
 	if err != nil {
-		return "", fmt.Errorf("resolving daemon pop inbox path: %w", err)
+		return nil, fmt.Errorf("resolving daemon pop inbox path: %w", err)
 	}
 	rel, err := filepath.Rel(inboxRoot, inboxDir)
 	if err != nil {
-		return "", fmt.Errorf("checking daemon pop inbox path: %w", err)
+		return nil, fmt.Errorf("checking daemon pop inbox path: %w", err)
 	}
 	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("daemon submit pop invalid node %q: inbox path escapes inbox root", node)
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: inbox path escapes inbox root", node)
 	}
-	return inboxDir, nil
+	rootInfo, err := os.Lstat(inboxRoot)
+	if err != nil {
+		return nil, fmt.Errorf("checking daemon pop inbox root: %w", err)
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return nil, fmt.Errorf("daemon submit pop invalid inbox root")
+	}
+	nodeInfo, err := os.Lstat(inboxDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &daemonSubmitPopInbox{path: inboxDir}, nil
+		}
+		return nil, fmt.Errorf("checking daemon pop inbox path: %w", err)
+	}
+	if nodeInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: inbox directory is symlink", node)
+	}
+	if !nodeInfo.IsDir() {
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: inbox path is not a directory", node)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(inboxRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolving daemon pop inbox root symlinks: %w", err)
+	}
+	resolvedDir, err := filepath.EvalSymlinks(inboxDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving daemon pop inbox path symlinks: %w", err)
+	}
+	resolvedRel, err := filepath.Rel(resolvedRoot, resolvedDir)
+	if err != nil {
+		return nil, fmt.Errorf("checking resolved daemon pop inbox path: %w", err)
+	}
+	if resolvedRel == "." || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: resolved inbox path escapes inbox root", node)
+	}
+	dir, err := os.Open(inboxDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening daemon pop inbox directory: %w", err)
+	}
+	dirInfo, err := dir.Stat()
+	if err != nil {
+		_ = dir.Close()
+		return nil, fmt.Errorf("checking daemon pop inbox directory handle: %w", err)
+	}
+	if !os.SameFile(nodeInfo, dirInfo) {
+		_ = dir.Close()
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: inbox directory changed during validation", node)
+	}
+	if !dirInfo.IsDir() {
+		_ = dir.Close()
+		return nil, fmt.Errorf("daemon submit pop invalid node %q: inbox path is not a directory", node)
+	}
+	return &daemonSubmitPopInbox{path: inboxDir, dir: dir}, nil
+}
+
+func scanDaemonSubmitPopInboxMessages(inbox *daemonSubmitPopInbox) []message.MessageInfo {
+	var messages []message.MessageInfo
+	if inbox == nil || inbox.dir == nil {
+		return messages
+	}
+	if _, err := inbox.dir.Seek(0, 0); err != nil {
+		return messages
+	}
+	entries, err := inbox.dir.ReadDir(-1)
+	if err != nil {
+		return messages
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		info, err := message.ParseMessageFilename(entry.Name())
+		if err != nil {
+			continue
+		}
+		info.Filename = entry.Name()
+		messages = append(messages, *info)
+	}
+	return messages
+}
+
+func daemonSubmitPopReadMessage(inbox *daemonSubmitPopInbox, filename string) ([]byte, error) {
+	if inbox == nil || inbox.dir == nil {
+		return nil, os.ErrNotExist
+	}
+	fd, err := unix.Openat(int(inbox.dir.Fd()), filename, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), filename)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("opening pop message: invalid file descriptor")
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {

@@ -22,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -1882,6 +1883,56 @@ func TestHandleDaemonSubmitPopRejectsUnsafeNodeBeforeFilesystemUse(t *testing.T)
 				t.Fatalf("session read entries = %d, %v; want none", len(entries), err)
 			}
 		})
+	}
+}
+
+func TestHandleDaemonSubmitPopRejectsSymlinkNodeBeforeScan(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	externalDir := filepath.Join(tmpDir, "external-inbox")
+	if err := os.MkdirAll(externalDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll external: %v", err)
+	}
+	filename := "20260502-004702-r1111-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nexternal\n"
+	if err := os.WriteFile(filepath.Join(externalDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile external message: %v", err)
+	}
+	if err := os.Symlink(externalDir, filepath.Join(sessionDir, "inbox", "worker")); err != nil {
+		t.Fatalf("Symlink inbox node: %v", err)
+	}
+
+	scanCalled := false
+	originalScan := daemonSubmitPopScanInboxMessages
+	daemonSubmitPopScanInboxMessages = func(inbox *daemonSubmitPopInbox) []message.MessageInfo {
+		scanCalled = true
+		return originalScan(inbox)
+	}
+	t.Cleanup(func() { daemonSubmitPopScanInboxMessages = originalScan })
+
+	response, cleanup, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-symlink",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid node") {
+		t.Fatalf("handleDaemonSubmitPop() error = %v, want invalid node", err)
+	}
+	if cleanup != nil {
+		t.Fatal("cleanup must be nil for rejected symlink node")
+	}
+	if response.Filename != "" || response.MarkdownPath != "" || response.Content != "" {
+		t.Fatalf("response = %+v, want no message fields for rejected symlink node", response)
+	}
+	if scanCalled {
+		t.Fatal("scan called for rejected symlink node")
+	}
+	assertFileContentForDaemonTest(t, filepath.Join(externalDir, filename), content)
+	if entries, err := os.ReadDir(filepath.Join(sessionDir, "read")); err != nil || len(entries) != 0 {
+		t.Fatalf("session read entries = %d, %v; want none", len(entries), err)
 	}
 }
 
