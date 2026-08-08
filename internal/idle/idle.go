@@ -617,6 +617,17 @@ func (t *IdleTracker) clearNodeCompactionMemoryForLifecycle(lifecycleIdentity st
 	}
 }
 
+func (t *IdleTracker) clearOtherNodeCompactionMemoryForPane(nodeKey, paneID string) {
+	for memoryNodeKey, memory := range t.nodeCompactionMemory {
+		if memoryNodeKey == nodeKey {
+			continue
+		}
+		if compactionLifecyclePaneID(memory.LastCompactionLifecycleIdentity) == paneID {
+			delete(t.nodeCompactionMemory, memoryNodeKey)
+		}
+	}
+}
+
 func (t *IdleTracker) pruneNodeCompactionMemory(now time.Time) {
 	for nodeKey, memory := range t.nodeCompactionMemory {
 		if memory.LastCompactionPingAt.IsZero() || now.Sub(memory.LastCompactionPingAt) > compactionMemoryRetention {
@@ -669,6 +680,14 @@ func compactionLifecycleIdentity(nodeKey, paneID, paneProcessGeneration string) 
 
 func compactionEndpointIdentity(nodeKey, paneID string) string {
 	return nodeKey + "|" + paneID
+}
+
+func compactionLifecyclePaneID(identity string) string {
+	parts := strings.Split(identity, "|")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 func sameCompactionEndpoint(identity, nodeKey, paneID string) bool {
@@ -784,6 +803,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				LastCaptureAt: now,
 			}
 			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+				t.clearOtherNodeCompactionMemoryForPane(nodeKey, paneID)
 				memory, hasMemory := t.nodeCompactionMemoryFor(nodeKey, now)
 				lifecycle := compactionLifecycleIdentityForNewPane(nodeKey, paneID, paneProcessGenerations[paneID], memory, hasMemory)
 				if hasMemory {
@@ -835,6 +855,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		// Update last capture time
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
+			t.clearOtherNodeCompactionMemoryForPane(nodeKey, paneID)
 			lifecycle, lifecycleChanged := compactionLifecycleIdentityForExistingPane(nodeKey, paneID, paneProcessGenerations[paneID], state.LastCompactionLifecycleIdentity)
 			if lifecycleChanged {
 				t.clearNodeCompactionMemoryForLifecycle(state.LastCompactionLifecycleIdentity)

@@ -3061,9 +3061,42 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotReuseStaleNodeMemoryWhenSamePa
 	}
 	tracker.MarkCompactionPingDelivered(thirdTargets[0].NodeKey, thirdTargets[0].LifecycleIdentity, thirdTargets[0].MarkerIdentity)
 
+	tracker.mu.Lock()
+	if stale := tracker.nodeCompactionMemory["review:second"].LastCompactionLifecycleIdentity; stale != "" {
+		t.Fatalf("stale second-node memory lifecycle = %q, want cleared after remap back", stale)
+	}
+	delete(tracker.paneCaptureState, "%11")
+	tracker.mu.Unlock()
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	fourthTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(fourthTargets) != 1 {
+		t.Fatalf("fourth checkPaneCapture() returned %d targets, want 1 after second remap and state recreation", len(fourthTargets))
+	}
+	if fourthTargets[0].NodeKey != "review:second" {
+		t.Fatalf("fourth target node = %q, want review:second", fourthTargets[0].NodeKey)
+	}
+	if fourthTargets[0].LifecycleIdentity != "review:second|%11|pid:100" {
+		t.Fatalf("fourth lifecycle identity = %q, want second node PID lifecycle", fourthTargets[0].LifecycleIdentity)
+	}
+	tracker.MarkCompactionPingDelivered(fourthTargets[0].NodeKey, fourthTargets[0].LifecycleIdentity, fourthTargets[0].MarkerIdentity)
+
+	tracker.mu.Lock()
+	state := tracker.paneCaptureState["%11"]
+	memory := tracker.nodeCompactionMemory["review:second"]
+	tracker.mu.Unlock()
+	if state.LastCompactionLifecycleIdentity != "review:second|%11|pid:100" {
+		t.Fatalf("state lifecycle identity = %q, want second node PID lifecycle", state.LastCompactionLifecycleIdentity)
+	}
+	if memory.LastCompactionLifecycleIdentity != "review:second|%11|pid:100" {
+		t.Fatalf("memory lifecycle identity = %q, want second node PID lifecycle", memory.LastCompactionLifecycleIdentity)
+	}
+
 	now = now.Add(compactionPingCooldown + time.Second)
 	repeatTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
-		"review:first": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
 	})
 	if len(repeatTargets) != 0 {
 		t.Fatalf("repeat checkPaneCapture() returned %d targets, want 0 after delivery", len(repeatTargets))
@@ -3215,12 +3248,74 @@ func TestCheckPaneCapture_CompactionTriggerDoesNotReuseStaleNodeMemoryWhenSamePa
 		t.Fatalf("memory lifecycle identity = %q, want first node legacy lifecycle", memory.LastCompactionLifecycleIdentity)
 	}
 
+	tracker.mu.Lock()
+	if stale := tracker.nodeCompactionMemory["review:second"].LastCompactionLifecycleIdentity; stale != "" {
+		t.Fatalf("stale second-node memory lifecycle = %q, want cleared after remap back", stale)
+	}
+	delete(tracker.paneCaptureState, "%11")
+	tracker.mu.Unlock()
+
+	now = now.Add(compactionPingCooldown + time.Second)
+	fourthTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	})
+	if len(fourthTargets) != 1 {
+		t.Fatalf("fourth checkPaneCapture() returned %d targets, want 1 after second remap and state recreation", len(fourthTargets))
+	}
+	if fourthTargets[0].NodeKey != "review:second" {
+		t.Fatalf("fourth target node = %q, want review:second", fourthTargets[0].NodeKey)
+	}
+	if fourthTargets[0].LifecycleIdentity != "review:second|%11" {
+		t.Fatalf("fourth lifecycle identity = %q, want second node legacy lifecycle", fourthTargets[0].LifecycleIdentity)
+	}
+	tracker.MarkCompactionPingDelivered(fourthTargets[0].NodeKey, fourthTargets[0].LifecycleIdentity, fourthTargets[0].MarkerIdentity)
+
+	tracker.mu.Lock()
+	state = tracker.paneCaptureState["%11"]
+	memory = tracker.nodeCompactionMemory["review:second"]
+	tracker.mu.Unlock()
+	if state.LastCompactionLifecycleIdentity != "review:second|%11" {
+		t.Fatalf("state lifecycle identity = %q, want second node legacy lifecycle", state.LastCompactionLifecycleIdentity)
+	}
+	if memory.LastCompactionLifecycleIdentity != "review:second|%11" {
+		t.Fatalf("memory lifecycle identity = %q, want second node legacy lifecycle", memory.LastCompactionLifecycleIdentity)
+	}
+
 	now = now.Add(compactionPingCooldown + time.Second)
 	repeatTargets := tracker.checkPaneCapture(cfg, map[string]discovery.NodeInfo{
-		"review:first": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+		"review:second": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
 	})
 	if len(repeatTargets) != 0 {
 		t.Fatalf("repeat checkPaneCapture() returned %d targets, want 0 after delivery", len(repeatTargets))
+	}
+}
+
+func TestIdleTracker_ClearOtherNodeCompactionMemoryForPaneKeepsCurrentAndOtherPanes(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 0, 5, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	tracker.nodeCompactionMemory["review:first"] = PaneCaptureState{
+		LastCompactionPingAt:            now,
+		LastCompactionLifecycleIdentity: "review:first|%11|pid:100",
+	}
+	tracker.nodeCompactionMemory["review:second"] = PaneCaptureState{
+		LastCompactionPingAt:            now,
+		LastCompactionLifecycleIdentity: "review:second|%11|pid:100",
+	}
+	tracker.nodeCompactionMemory["review:other"] = PaneCaptureState{
+		LastCompactionPingAt:            now,
+		LastCompactionLifecycleIdentity: "review:other|%12|pid:200",
+	}
+
+	tracker.clearOtherNodeCompactionMemoryForPane("review:second", "%11")
+
+	if _, ok := tracker.nodeCompactionMemory["review:first"]; ok {
+		t.Fatal("stale first-node memory still exists, want cleared")
+	}
+	if _, ok := tracker.nodeCompactionMemory["review:second"]; !ok {
+		t.Fatal("current second-node memory was cleared, want retained")
+	}
+	if _, ok := tracker.nodeCompactionMemory["review:other"]; !ok {
+		t.Fatal("other-pane memory was cleared, want retained")
 	}
 }
 
