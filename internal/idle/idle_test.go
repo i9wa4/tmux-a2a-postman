@@ -2703,9 +2703,11 @@ func TestCheckPaneCapture_CompactionMarkerIdentitySurvivesPaneStateRecreation(t 
 	if err := os.WriteFile(capturePath, []byte("• Context compacted"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := tracker.checkPaneCapture(cfg, nodes); len(got) != 1 {
-		t.Fatalf("first targets = %d, want 1", len(got))
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 {
+		t.Fatalf("first targets = %d, want 1", len(firstTargets))
 	}
+	tracker.MarkCompactionPingDelivered(firstTargets[0].NodeKey, firstTargets[0].LifecycleIdentity, firstTargets[0].MarkerIdentity)
 	tracker.mu.Lock()
 	delete(tracker.paneCaptureState, "%11")
 	tracker.mu.Unlock()
