@@ -1626,6 +1626,17 @@ func TestShouldPingCompaction_SuppressesDeliveredSuffixRefreshAfterCooldown(t *t
 	}
 }
 
+func TestShouldPingCompaction_DeliveredKeyDoesNotCollapseDistinctHistoryWindows(t *testing.T) {
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	first := codexCompactionTriggerScan("prefix one\n• Context compacted\noutput")
+	distinct := codexCompactionTriggerScan("prefix two\n• Context compacted\noutput")
+	state := PaneCaptureState{LastCompactionTrigger: first.Trigger, LastCompactionMarkerHash: first.MarkerLineHash, LastCompactionMarkers: first.MarkerCount, LastCompactionPrefixHash: first.MarkerPrefixHash, LastCompactionPrefixLines: first.MarkerPrefixLines, LastCompactionScope: compactionScopeHistory, LastCompactionHash: hashContentCRC32("window one"), LastCompactionPingAt: now.Add(-compactionPingCooldown - time.Second)}
+	state.LastCompactionDeliveredKey = compactionStateDeliveryKey(state)
+	if !shouldPingCompaction(state, distinct, hashContentCRC32("window two"), compactionScopeHistory, now) {
+		t.Fatal("distinct history window was suppressed by a collapsed delivered key")
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameMarkerAfterStalePrune(t *testing.T) {
 	scriptDir := t.TempDir()
 	listPath := filepath.Join(scriptDir, "list.txt")

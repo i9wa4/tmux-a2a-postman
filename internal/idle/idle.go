@@ -473,7 +473,7 @@ func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, com
 	if identity == state.LastCompactionDeliveredIdentity && identity != "" {
 		return false
 	}
-	if key := compactionMarkerDeliveryKey(scan); key != "" && key == state.LastCompactionDeliveredKey {
+	if key := compactionMarkerDeliveryKey(scan); key != "" && key == state.LastCompactionDeliveredKey && sameCompactionMarker(state, scan, compactionHash, scope) {
 		return false
 	}
 	// A matching observed marker that has not been positively delivered is retryable;
