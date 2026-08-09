@@ -15,9 +15,15 @@
 
 - Implementation: PASS (`8b15709`), with commit-time hooks and `nix flake check`
   passing.
-- Publication: BLOCKED. The audited push request is
+- Original checklist: PASS (local implementation and validation scope).
+- Remaining blockers: none (local implementation and validation scope).
+
+### 1.1. Publication: BLOCKED
+
+The audited push request is
   `command-approval-6d6aecef3e1ebe86`; approval is absent and the configured
   approver is unresolved. No bypass was attempted.
+
 - CI evidence: historical runs 30165305510 and 29293497938 remain failed; no
   fresh clean run was available without a pushed change.
 - Fresh blocking push request: label `push-issue-677-v2`, thread
