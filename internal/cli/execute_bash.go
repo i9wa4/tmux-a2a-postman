@@ -173,7 +173,9 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
-		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
+		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
+			evaluation.Reason = err.Error()
+		}
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)

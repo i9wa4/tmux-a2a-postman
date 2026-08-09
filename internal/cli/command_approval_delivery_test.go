@@ -43,7 +43,9 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
 	threadID := "command-approval-aabbccdd11223344"
 
-	deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", threadID, "sha256:deadbeef", "verify release build", false, now)
+	if err := deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", threadID, "sha256:deadbeef", "verify release build", false, now); err != nil {
+		t.Fatalf("deliverCommandApprovalRequest() error = %v", err)
+	}
 
 	draftEntries, err := os.ReadDir(filepath.Join(reviewerSessionDir, "draft"))
 	if err != nil {
@@ -90,12 +92,11 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 	}
 }
 
-// TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort guards the
-// no-op-not-crash behavior when the command_approver_node isn't currently
-// discoverable: delivery must log and return without writing anything or
-// panicking, since the approval request has already been journaled by the
-// caller regardless of delivery outcome.
-func TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort(t *testing.T) {
+// TestDeliverCommandApprovalRequest_UnknownNodeReturnsError guards #680:
+// when the configured command_approver_node is not currently discoverable,
+// delivery must report that fact so blocking mode can fail closed after the
+// approval request is journaled.
+func TestDeliverCommandApprovalRequest_UnknownNodeReturnsError(t *testing.T) {
 	baseDir := t.TempDir()
 
 	original := discoverNodesForCommandApprovalDeliveryFn
@@ -105,7 +106,13 @@ func TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort(t *testing.T) {
 	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = original })
 
 	policy := resolvedCommandApprovalPolicy{Requester: "worker", Mode: "blocking", Label: "protected"}
-	deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", "command-approval-x", "sha256:x", "", false, time.Now())
+	err := deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", "command-approval-x", "sha256:x", "", false, time.Now())
+	if err == nil {
+		t.Fatal("deliverCommandApprovalRequest() error = nil, want missing approver error")
+	}
+	if !strings.Contains(err.Error(), `command_approver_node "orchestrator" not found among discovered nodes`) {
+		t.Fatalf("deliverCommandApprovalRequest() error = %v", err)
+	}
 	// No panic and no filesystem assertion needed: absence of a reviewer
 	// session directory under baseDir is itself proof nothing was written.
 	if _, err := os.Stat(filepath.Join(baseDir, "ctx-626")); !os.IsNotExist(err) {

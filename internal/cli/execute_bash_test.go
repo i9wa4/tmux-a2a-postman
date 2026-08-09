@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
@@ -26,6 +27,7 @@ type executeBashFixture struct {
 	policies            []config.CommandApprovalPolicy
 	commandApproverNode string
 	nodes               map[string]config.NodeConfig
+	discoveredNodes     map[string]discovery.NodeInfo
 	stdout              bytes.Buffer
 	stderr              bytes.Buffer
 	runCount            int
@@ -40,7 +42,7 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 	baseDir := t.TempDir()
 	contextID := "ctx-484"
 	sessionName := "test-session"
-	return &executeBashFixture{
+	fixture := &executeBashFixture{
 		baseDir:     baseDir,
 		contextID:   contextID,
 		sessionName: sessionName,
@@ -56,7 +58,19 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 		// itself override commandApproverNode/nodes before calling context().
 		commandApproverNode: "orchestrator",
 		nodes:               map[string]config.NodeConfig{"orchestrator": {}},
+		discoveredNodes: map[string]discovery.NodeInfo{
+			"orchestrator": {
+				SessionName: "orchestrator-session",
+				SessionDir:  filepath.Join(baseDir, contextID, "orchestrator-session"),
+			},
+		},
 	}
+	originalDiscover := discoverNodesForCommandApprovalDeliveryFn
+	discoverNodesForCommandApprovalDeliveryFn = func(baseDir, contextID, selfSession string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return fixture.discoveredNodes, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = originalDiscover })
+	return fixture
 }
 
 func (f *executeBashFixture) context() commandContext {
@@ -608,6 +622,7 @@ func TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeUnresolvable(t 
 	fixture := newExecuteBashFixture(t, policyConfig)
 	fixture.commandApproverNode = "typo-reviewer"
 	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	fixture.discoveredNodes = nil
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "protected",
@@ -616,6 +631,37 @@ func TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeUnresolvable(t 
 	))
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want unresolved approver block")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != "blocked" {
+		t.Fatalf("decision = %q, want blocked", decision.Decision)
+	}
+}
+
+func TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeNotDiscovered(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf missing-discovery",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want delivery failure block")
+	}
+	if !strings.Contains(err.Error(), `command_approver_node "orchestrator" not found among discovered nodes`) {
+		t.Fatalf("error = %v, want missing discovered approver reason", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0", fixture.runCount)

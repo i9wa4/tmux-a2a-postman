@@ -20,12 +20,10 @@ import (
 var discoverNodesForCommandApprovalDeliveryFn = discovery.DiscoverNodesWithCollisions
 
 // deliverCommandApprovalRequest sends a reply-required postman message to
-// the resolved command_approver_node when a command needs approval (#626). This is
-// best-effort: a delivery failure is logged, not returned as an error — the
-// approval request has already been journaled by the caller regardless, so
-// a failed delivery only means the reviewer must be notified some other way
-// (e.g. inspect-command-approvals), never that anything blocks or that the
-// request goes unrecorded.
+// the resolved command_approver_node when a command needs approval (#626).
+// The approval request has already been journaled by the caller regardless;
+// returning an error lets blocking mode fail closed when a configured
+// approver cannot be reached through live discovery (#680).
 //
 // The reviewer's reply is matched back to this request by thread_id (the
 // same content-level correlation the daemon already uses for the
@@ -35,30 +33,30 @@ var discoverNodesForCommandApprovalDeliveryFn = discovery.DiscoverNodesWithColli
 // for the reviewer, reusing the existing fill-tracking UX; the reviewer's
 // reply must preserve the given thread_id in its own frontmatter for the
 // decision to be recorded automatically.
-func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, requesterSessionName string, policy resolvedCommandApprovalPolicy, commandApproverNode, threadID, commandHash, reason string, storeCommandText bool, now time.Time) {
+func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, requesterSessionName string, policy resolvedCommandApprovalPolicy, commandApproverNode, threadID, commandHash, reason string, storeCommandText bool, now time.Time) error {
 	nodes, _, err := discoverNodesForCommandApprovalDeliveryFn(baseDir, contextID, requesterSessionName)
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: discovering nodes: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: discovering nodes: %w", err)
 	}
 	reviewerInfo, ok := nodes[commandApproverNode]
 	if !ok {
 		log.Printf("postman: WARNING: command approval delivery: command_approver_node %q not found among discovered nodes; falling back to inspect-command-approvals\n", commandApproverNode)
-		return
+		return fmt.Errorf("command approval delivery failed: command_approver_node %q not found among discovered nodes", commandApproverNode)
 	}
 	if err := config.CreateSessionDirs(reviewerInfo.SessionDir); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: creating reviewer session directories: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: creating reviewer session directories: %w", err)
 	}
 	inputRequestID, err := generateInputRequestID()
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: generating input request id: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: generating input request id: %w", err)
 	}
 	filename, err := message.GenerateFilename(now.Format("20060102-150405"), policy.Requester, commandApproverNode, reviewerInfo.SessionName)
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: generating filename: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: generating filename: %w", err)
 	}
 
 	var body strings.Builder
@@ -84,19 +82,21 @@ func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, reque
 	draftDir := filepath.Join(reviewerInfo.SessionDir, "draft")
 	if err := os.MkdirAll(draftDir, 0o700); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: creating draft directory: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: creating draft directory: %w", err)
 	}
 	draftPath := filepath.Join(draftDir, filename)
 	if err := os.WriteFile(draftPath, []byte(content), 0o600); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: writing draft: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: writing draft: %w", err)
 	}
 	postDir := filepath.Join(reviewerInfo.SessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: creating post directory: %v\n", err)
-		return
+		return fmt.Errorf("command approval delivery failed: creating post directory: %w", err)
 	}
 	if err := os.Rename(draftPath, filepath.Join(postDir, filename)); err != nil {
 		log.Printf("postman: WARNING: command approval delivery: moving message into post: %v\n", err)
+		return fmt.Errorf("command approval delivery failed: moving message into post: %w", err)
 	}
+	return nil
 }
