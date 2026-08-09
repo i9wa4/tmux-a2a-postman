@@ -445,12 +445,14 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 	if state.LastCompactionTrigger == "" || scan.Trigger != state.LastCompactionTrigger {
 		return false
 	}
+	sameLineAndCount := state.LastCompactionMarkerHash != 0 &&
+		state.LastCompactionMarkerHash == scan.MarkerLineHash &&
+		scan.MarkerCount == state.LastCompactionMarkers
+	sameSuffixContinuation := sameLineAndCount &&
+		compactionSuffixContinues(state.LastCompactionSuffix, scan.LatestMarkerSuffix)
 	if scope == compactionScopeHistory &&
 		state.LastCompactionScope != compactionScopeHistory &&
-		state.LastCompactionMarkerHash != 0 &&
-		state.LastCompactionMarkerHash == scan.MarkerLineHash &&
-		scan.MarkerCount == state.LastCompactionMarkers &&
-		compactionSuffixContinues(state.LastCompactionSuffix, scan.LatestMarkerSuffix) {
+		sameSuffixContinuation {
 		return true
 	}
 	if state.LastCompactionPrefixLines <= 0 {
@@ -458,7 +460,7 @@ func sameCompactionMarker(state PaneCaptureState, scan compactionMarkerScan, com
 	}
 	if state.LastCompactionPrefixHash == scan.MarkerPrefixHash {
 		if scan.MarkerPrefixLines <= 1 {
-			return state.LastCompactionHash == compactionHash
+			return state.LastCompactionHash == compactionHash || sameSuffixContinuation
 		}
 		return true
 	}
