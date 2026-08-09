@@ -72,6 +72,7 @@
           commonDevPackages = with pkgs; [
             gh
             go126
+            pre-commit
           ];
           goDevPackages = with pkgs; [
             gopls
