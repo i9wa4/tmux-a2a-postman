@@ -79,6 +79,7 @@ type PaneCaptureState struct {
 	LastCompactionTrigger           string    // Non-empty while a compaction marker remains in scanned content
 	LastCompactionMarkerIdentity    string    // Stable trigger/marker/count identity handled for this node
 	LastCompactionDeliveredIdentity string    // Identity confirmed delivered to the node
+	LastCompactionDeliveredKey      string    // Stable marker key confirmed delivered
 	LastCompactionDeliveryPending   bool
 	LastCompactionLifecycleIdentity string // Verified pane lifecycle discriminator
 	LastCompactionPaneID            string // Structural pane identity for retained compaction memory
@@ -472,6 +473,9 @@ func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, com
 	if identity == state.LastCompactionDeliveredIdentity && identity != "" {
 		return false
 	}
+	if key := compactionMarkerDeliveryKey(scan); key != "" && key == state.LastCompactionDeliveredKey {
+		return false
+	}
 	// A matching observed marker that has not been positively delivered is retryable;
 	// do not fall through to legacy same-marker suppression.
 	if identity == state.LastCompactionMarkerIdentity && identity != "" {
@@ -509,12 +513,14 @@ func (t *IdleTracker) MarkCompactionPingDelivered(nodeKey, lifecycleIdentity, ma
 	for paneID, state := range t.paneCaptureState {
 		if state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
 			state.LastCompactionDeliveredIdentity = markerIdentity
+			state.LastCompactionDeliveredKey = compactionStateDeliveryKey(state)
 			state.LastCompactionDeliveryPending = false
 			t.paneCaptureState[paneID] = state
 		}
 	}
 	if state, ok := t.nodeCompactionMemory[nodeKey]; ok && state.LastCompactionLifecycleIdentity == lifecycleIdentity && state.LastCompactionMarkerIdentity == markerIdentity {
 		state.LastCompactionDeliveredIdentity = markerIdentity
+		state.LastCompactionDeliveredKey = compactionStateDeliveryKey(state)
 		state.LastCompactionDeliveryPending = false
 		t.nodeCompactionMemory[nodeKey] = state
 	}
@@ -540,6 +546,14 @@ func compactionMarkerIdentity(scan compactionMarkerScan) string {
 	return fmt.Sprintf("%s:%08x:%d:%08x:%d:%d:%x:%s:%s", scan.Trigger, scan.MarkerLineHash, scan.MarkerCount, scan.MarkerPrefixHash, scan.MarkerPrefixLines, suffix.Length, suffix.Hash, suffix.Head, suffix.Tail)
 }
 
+func compactionMarkerDeliveryKey(scan compactionMarkerScan) string {
+	return fmt.Sprintf("%s:%08x:%d:%08x:%d", scan.Trigger, scan.MarkerLineHash, scan.MarkerCount, scan.MarkerPrefixHash, scan.MarkerPrefixLines)
+}
+
+func compactionStateDeliveryKey(state PaneCaptureState) string {
+	return fmt.Sprintf("%s:%08x:%d:%08x:%d", state.LastCompactionTrigger, state.LastCompactionMarkerHash, state.LastCompactionMarkers, state.LastCompactionPrefixHash, state.LastCompactionPrefixLines)
+}
+
 func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, scope compactionCaptureScope) {
 	if sameCompactionMarker(*state, scan, compactionHash, scope) {
 		state.LastCompactionMarkers = scan.MarkerCount
@@ -557,6 +571,7 @@ func applyCompactionMemory(state *PaneCaptureState, memory PaneCaptureState) {
 	state.LastCompactionTrigger = memory.LastCompactionTrigger
 	state.LastCompactionMarkerIdentity = memory.LastCompactionMarkerIdentity
 	state.LastCompactionDeliveredIdentity = memory.LastCompactionDeliveredIdentity
+	state.LastCompactionDeliveredKey = memory.LastCompactionDeliveredKey
 	state.LastCompactionDeliveryPending = memory.LastCompactionDeliveryPending
 	state.LastCompactionLifecycleIdentity = memory.LastCompactionLifecycleIdentity
 	state.LastCompactionPaneID = memory.LastCompactionPaneID
@@ -574,6 +589,7 @@ func clearCompactionState(state *PaneCaptureState) {
 	state.LastCompactionTrigger = ""
 	state.LastCompactionMarkerIdentity = ""
 	state.LastCompactionDeliveredIdentity = ""
+	state.LastCompactionDeliveredKey = ""
 	state.LastCompactionDeliveryPending = false
 	state.LastCompactionHash = 0
 	state.LastCompactionMarkers = 0

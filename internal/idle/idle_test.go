@@ -1607,6 +1607,25 @@ func TestCheckPaneCapture_RetriesFullHistoryAfterTransientCaptureFailure(t *test
 	}
 }
 
+func TestShouldPingCompaction_SuppressesDeliveredSuffixRefreshAfterCooldown(t *testing.T) {
+	now := time.Date(2026, time.May, 21, 4, 0, 0, 0, time.UTC)
+	first := codexCompactionTriggerScan("older context\n• Context compacted\nfirst output")
+	second := codexCompactionTriggerScan("older context\n• Context compacted\nfirst output\nsecond output")
+	state := PaneCaptureState{}
+	if !shouldPingCompaction(state, first, hashContentCRC32("first"), compactionScopeHistory, now) {
+		t.Fatal("initial marker was not emitted")
+	}
+	recordCompactionPing(&state, first, hashContentCRC32("first"), compactionScopeHistory, now)
+	state.LastCompactionDeliveredIdentity = state.LastCompactionMarkerIdentity
+	state.LastCompactionDeliveredKey = compactionStateDeliveryKey(state)
+	now = now.Add(compactionPingCooldown + time.Second)
+	state.LastCompactionMarkerIdentity = compactionMarkerIdentity(second)
+	state.LastCompactionSuffix = second.LatestMarkerSuffixID
+	if shouldPingCompaction(state, second, hashContentCRC32("second"), compactionScopeHistory, now) {
+		t.Fatal("suffix-only refresh of a delivered marker emitted a duplicate after cooldown")
+	}
+}
+
 func TestCheckPaneCapture_CompactionTriggerDoesNotRepeatSameMarkerAfterStalePrune(t *testing.T) {
 	scriptDir := t.TempDir()
 	listPath := filepath.Join(scriptDir, "list.txt")
