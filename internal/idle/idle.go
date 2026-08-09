@@ -82,6 +82,7 @@ type PaneCaptureState struct {
 	LastCompactionDeliveryPending   bool
 	LastCompactionLifecycleIdentity string // Verified pane lifecycle discriminator
 	LastCompactionPaneID            string // Structural pane identity for retained compaction memory
+	FullHistoryRetry                bool   // Retry history after a transient capture failure
 	LastCompactionHash              uint32 // Scanned compaction content hash for the most recent compaction marker state
 	LastCompactionMarkers           int    // Marker occurrences in scanned content for the most recent compaction state
 	LastCompactionMarkerHash        uint32 // Hash of the normalized latest marker line, independent of capture scope
@@ -787,15 +788,19 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 
 		// Get previous state
 		state, exists := t.paneCaptureState[paneID]
-		allowFullHistory := supportsCompactionRuntime(runtime) && (!exists || currentHash != state.LastHash)
+		allowFullHistory := supportsCompactionRuntime(runtime) && (!exists || currentHash != state.LastHash || state.FullHistoryRetry)
 		compactionContent, compactionHash, compactionScope := captureCompactionContent(paneID, runtime, content, currentHash, cfg.PaneCaptureTailLines, allowFullHistory)
+		if allowFullHistory && supportsCompactionRuntime(runtime) {
+			state.FullHistoryRetry = compactionScope != compactionScopeHistory
+		}
 		if !exists {
 			// First time seeing this pane - initialize state
 			state = PaneCaptureState{
-				LastHash:      currentHash,
-				LastChangeAt:  now,
-				ChangeCount:   0,
-				LastCaptureAt: now,
+				LastHash:         currentHash,
+				LastChangeAt:     now,
+				ChangeCount:      0,
+				LastCaptureAt:    now,
+				FullHistoryRetry: allowFullHistory && supportsCompactionRuntime(runtime) && compactionScope != compactionScopeHistory,
 			}
 			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 				state.LastCompactionPaneID = paneID
