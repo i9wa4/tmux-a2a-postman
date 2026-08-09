@@ -547,11 +547,11 @@ func compactionMarkerIdentity(scan compactionMarkerScan) string {
 }
 
 func compactionMarkerDeliveryKey(scan compactionMarkerScan) string {
-	return fmt.Sprintf("%s:%08x:%d:%08x:%d", scan.Trigger, scan.MarkerLineHash, scan.MarkerCount, scan.MarkerPrefixHash, scan.MarkerPrefixLines)
+	return fmt.Sprintf("%s:%08x:%d", scan.Trigger, scan.MarkerLineHash, scan.MarkerCount)
 }
 
 func compactionStateDeliveryKey(state PaneCaptureState) string {
-	return fmt.Sprintf("%s:%08x:%d:%08x:%d", state.LastCompactionTrigger, state.LastCompactionMarkerHash, state.LastCompactionMarkers, state.LastCompactionPrefixHash, state.LastCompactionPrefixLines)
+	return fmt.Sprintf("%s:%08x:%d", state.LastCompactionTrigger, state.LastCompactionMarkerHash, state.LastCompactionMarkers)
 }
 
 func refreshSameCompactionMarker(state *PaneCaptureState, scan compactionMarkerScan, compactionHash uint32, scope compactionCaptureScope) {
@@ -609,6 +609,7 @@ func (t *IdleTracker) rememberNodeCompaction(nodeKey string, state PaneCaptureSt
 		LastCompactionTrigger:           state.LastCompactionTrigger,
 		LastCompactionMarkerIdentity:    state.LastCompactionMarkerIdentity,
 		LastCompactionDeliveredIdentity: state.LastCompactionDeliveredIdentity,
+		LastCompactionDeliveredKey:      state.LastCompactionDeliveredKey,
 		LastCompactionDeliveryPending:   state.LastCompactionDeliveryPending,
 		LastCompactionLifecycleIdentity: state.LastCompactionLifecycleIdentity,
 		LastCompactionPaneID:            state.LastCompactionPaneID,
