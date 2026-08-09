@@ -470,7 +470,7 @@ func shouldPingCompaction(state PaneCaptureState, scan compactionMarkerScan, com
 		return false
 	}
 	identity := compactionMarkerIdentity(scan)
-	if identity == state.LastCompactionDeliveredIdentity && identity != "" {
+	if identity == state.LastCompactionDeliveredIdentity && identity != "" && sameCompactionMarker(state, scan, compactionHash, scope) {
 		return false
 	}
 	if key := compactionMarkerDeliveryKey(scan); key != "" && key == state.LastCompactionDeliveredKey && sameCompactionMarker(state, scan, compactionHash, scope) {
