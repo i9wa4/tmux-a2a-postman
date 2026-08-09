@@ -10,3 +10,13 @@
   treefmt hit a transient cache-database-busy timeout. `nix flake check` passes.
 - Push: blocked by local policy hook (`pushing is denied`); branch is
   `issue-677-two-phase-replacement`.
+
+## 1. Terminal checklist
+
+- Implementation: PASS (`8b15709`), with commit-time hooks and `nix flake check`
+  passing.
+- Publication: BLOCKED. The audited push request is
+  `command-approval-6d6aecef3e1ebe86`; approval is absent and the configured
+  approver is unresolved. No bypass was attempted.
+- CI evidence: historical runs 30165305510 and 29293497938 remain failed; no
+  fresh clean run was available without a pushed change.
