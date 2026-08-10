@@ -114,6 +114,7 @@ func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, v
 }
 
 func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	// Keep the error helper in the PR branch so synthetic PR merges use this implementation.
 	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
 		return err
 	}
