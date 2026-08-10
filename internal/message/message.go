@@ -1063,18 +1063,6 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	}
 }
 
-// parseEnvelopeFromTo extracts the from and to fields from the YAML frontmatter
-// of a message file. Frontmatter is the block between the first two "---" delimiters.
-// from and to must appear as indented fields under the params: top-level key.
-// Returns an error if the frontmatter block is absent or if either field is missing.
-func parseEnvelopeFromTo(content string) (from, to string, err error) {
-	metadata, err := ParseEnvelopeMetadata(content)
-	if err != nil {
-		return "", "", err
-	}
-	return metadata.From, metadata.To, nil
-}
-
 // ParseEnvelopeMetadata extracts selected fields from the params block inside
 // a message frontmatter envelope.
 func ParseEnvelopeMetadata(content string) (EnvelopeMetadata, error) {
