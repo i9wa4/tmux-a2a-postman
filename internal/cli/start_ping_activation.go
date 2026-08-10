@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -12,7 +11,6 @@ import (
 	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
-	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 var errPingSessionOwned = errors.New("session owned by another daemon")
@@ -132,7 +130,6 @@ func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes
 	}
 
 	preClaimed := 0
-	tmuxBackend := multiplexer.TmuxBackend{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) != 2 {
@@ -143,7 +140,7 @@ func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes
 		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}
-		if err := tmuxBackend.SetPaneOwnerMarker(context.Background(), multiplexer.TmuxPaneID(parts[0]), contextID); err != nil {
+		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
 			log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
 			continue
 		}

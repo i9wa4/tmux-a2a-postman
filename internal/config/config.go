@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	_ "embed"
 	"fmt"
 	"log"
@@ -9,11 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
-	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 const (
@@ -1195,10 +1194,11 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 	if sessionName == "" {
 		return ""
 	}
-	value, err := (multiplexer.TmuxBackend{}).SessionOwnerMarker(context.Background(), sessionName)
+	out, err := exec.Command("tmux", "show-options", "-gqv", "@a2a_session_on_"+sessionName).Output()
 	if err != nil {
 		return ""
 	}
+	value := strings.TrimSpace(string(out))
 	if value == "" {
 		return ""
 	}
@@ -1318,10 +1318,15 @@ func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error 
 	if sessionName == "" {
 		return fmt.Errorf("session name is empty")
 	}
+	key := "@a2a_session_on_" + sessionName
 	if enabled {
-		return (multiplexer.TmuxBackend{}).SetSessionOwnerMarker(context.Background(), contextID, sessionName, os.Getpid())
+		if contextID == "" {
+			return fmt.Errorf("context ID is empty")
+		}
+		value := contextID + ":" + strconv.Itoa(os.Getpid())
+		return exec.Command("tmux", "set-option", "-g", key, value).Run()
 	}
-	return (multiplexer.TmuxBackend{}).ClearSessionOwnerMarker(context.Background(), sessionName)
+	return exec.Command("tmux", "set-option", "-gu", key).Run()
 }
 
 // GetTmuxSessionName extracts the tmux session name using tmux command.
