@@ -22,6 +22,42 @@ func TestSchemaVersionIsV4StatusContract(t *testing.T) {
 	}
 }
 
+func TestSessionStatusLayoutGroupsSerializeAsAdditiveContract(t *testing.T) {
+	payload, err := json.Marshal(SessionStatus{
+		SchemaVersion: SchemaVersion,
+		SessionName:   "review",
+		Nodes:         []NodeStatus{{Name: "worker", PaneID: "%11", VisibleState: "ready"}},
+		LayoutGroups: []LayoutGroup{{
+			Kind:    "window",
+			ID:      "0",
+			Index:   "0",
+			Backend: "tmux",
+			Nodes: []LayoutNode{{
+				Name:    "worker",
+				PaneID:  "%11",
+				Backend: "tmux",
+			}},
+		}},
+		Windows: []SessionWindow{{Index: "0", Nodes: []WindowNode{{Name: "worker"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal SessionStatus: %v", err)
+	}
+
+	got := string(payload)
+	for _, want := range []string{
+		`"layout_groups":[`,
+		`"kind":"window"`,
+		`"backend":"tmux"`,
+		`"windows":[`,
+		`"compact":"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SessionStatus JSON = %s, want %s", got, want)
+		}
+	}
+}
+
 func TestRequestSatisfactionSummarySerializesZeroTimingMetrics(t *testing.T) {
 	payload, err := json.Marshal(RequestSatisfactionSummary{
 		OpenedCount:              1,
