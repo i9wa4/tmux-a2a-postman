@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,6 +23,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -327,9 +329,10 @@ func (rt *daemonRuntime) bootstrap() {
 
 func (rt *daemonRuntime) handleContextDone() {
 	rt.daemonState.enabledSessionsMu.RLock()
+	tmuxBackend := multiplexer.TmuxBackend{}
 	for sessionName, enabled := range rt.daemonState.enabledSessions {
 		if enabled {
-			_ = exec.Command("tmux", "set-option", "-gu", "@a2a_session_on_"+sessionName).Run()
+			_ = tmuxBackend.ClearSessionOwnerMarker(context.Background(), sessionName)
 		}
 	}
 	rt.daemonState.enabledSessionsMu.RUnlock()
@@ -1469,6 +1472,7 @@ func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candida
 	}
 
 	preClaimed := 0
+	tmuxBackend := multiplexer.TmuxBackend{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) != 2 {
@@ -1479,7 +1483,7 @@ func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candida
 		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}
-		if err := exec.Command("tmux", "set-option", "-p", "-t", parts[0], "@a2a_context_id", contextID).Run(); err != nil {
+		if err := tmuxBackend.SetPaneOwnerMarker(context.Background(), multiplexer.TmuxPaneID(parts[0]), contextID); err != nil {
 			log.Printf("postman: WARNING: failed to pre-claim pane %s (%s): %v\n", parts[0], parts[1], err)
 			continue
 		}
@@ -1691,15 +1695,12 @@ func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeI
 }
 
 func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo) {
+	tmuxBackend := multiplexer.TmuxBackend{}
 	for _, nodeInfo := range freshNodes {
 		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
 			continue
 		}
-		claimCmd := exec.Command(
-			"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
-			"@a2a_context_id", rt.contextID,
-		)
-		if err := claimCmd.Run(); err != nil {
+		if err := tmuxBackend.SetPaneOwnerMarker(context.Background(), multiplexer.TmuxPaneID(nodeInfo.PaneID), rt.contextID); err != nil {
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}

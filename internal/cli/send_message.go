@@ -199,7 +199,11 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	}
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 
-	sender := ctx.getTmuxPaneName()
+	identity, err := ctx.currentIdentity()
+	if err != nil {
+		return fmt.Errorf("current identity lookup failed: %w", err)
+	}
+	sender := identity.NodeName
 	if sender == "" {
 		return fmt.Errorf("sender auto-detection failed: set tmux pane title")
 	}
@@ -207,7 +211,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 
-	sessionName := ctx.getTmuxSessionName()
+	sessionName := identity.SessionName
 	if sessionName == "" {
 		return fmt.Errorf("tmux session name required (run inside tmux)")
 	}
@@ -337,7 +341,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		MessageID:   filename,
 		TmuxSession: sessionName,
 		Node:        sender,
-		PaneID:      ctx.getTmuxPaneID(),
+		PaneID:      identity.Pane.Native,
 	})
 	savedRuntimeContext, err := runtimecontext.SaveSnapshot(sessionDir, runtimeSnapshot)
 	if err != nil {
@@ -363,7 +367,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"required_reply_completion_gate": "",
 		"template":                       envelope.MarkdownSectionContent(getNodeTemplate(cfg, recipient)),
 		"session_name":                   sessionName,
-		"sender_pane_id":                 ctx.getTmuxPaneID(),
+		"sender_pane_id":                 identity.Pane.Native,
 		"sender_runtime_context":         runtimecontext.RenderSenderMarkdown(savedRuntimeContext.Snapshot),
 		"runtime_context_id":             savedRuntimeContext.Snapshot.SnapshotID,
 		"runtime_context_scope":          savedRuntimeContext.Snapshot.Scope,
