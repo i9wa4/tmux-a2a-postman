@@ -1,10 +1,10 @@
 package controlplane
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +12,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -110,6 +111,7 @@ type HandAdapter interface {
 type TmuxHandAdapter struct {
 	ProbeRuntime func(paneID string) (string, error)
 	SendToPane   func(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error
+	Backend      multiplexer.PaneBackend
 }
 
 func (TmuxHandAdapter) Kind() HandKind {
@@ -123,9 +125,12 @@ func (a TmuxHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
 
 	probeRuntime := a.ProbeRuntime
 	if probeRuntime == nil {
+		backend := a.Backend
+		if backend == nil {
+			backend = multiplexer.TmuxBackend{}
+		}
 		probeRuntime = func(paneID string) (string, error) {
-			out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_current_command}").Output()
-			return strings.TrimSpace(string(out)), err
+			return backend.PaneCurrentCommand(context.Background(), multiplexer.TmuxPaneID(paneID))
 		}
 	}
 	sendToPane := a.SendToPane

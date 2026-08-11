@@ -28,6 +28,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
@@ -325,6 +326,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	defer func() { _ = watcher.Close() }()
 
 	// Reclaim panes from dead daemon contexts (#272)
+	tmuxBackend := multiplexer.TmuxBackend{}
 	if out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").CombinedOutput(); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if line == "" {
@@ -335,16 +337,15 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				continue
 			}
 			paneID, paneSessionName := parts[0], parts[1]
-			claimedOut, claimedErr := exec.Command("tmux", "show-options", "-p", "-v", "-t", paneID, "@a2a_context_id").Output()
+			claimedContext, claimedErr := tmuxBackend.PaneOwnerMarker(ctx, multiplexer.TmuxPaneID(paneID))
 			if claimedErr != nil {
 				continue
 			}
-			claimedContext := strings.TrimSpace(string(claimedOut))
 			if claimedContext == "" || claimedContext == contextID {
 				continue
 			}
 			if !config.ContextOwnsSession(baseDir, claimedContext, paneSessionName) {
-				_ = exec.Command("tmux", "set-option", "-p", "-u", "-t", paneID, "@a2a_context_id").Run()
+				_ = tmuxBackend.ClearPaneOwnerMarker(ctx, multiplexer.TmuxPaneID(paneID))
 			}
 		}
 	}
@@ -361,11 +362,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {
-		claimCmd := exec.Command(
-			"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
-			"@a2a_context_id", contextID,
-		)
-		if err := claimCmd.Run(); err != nil {
+		if err := tmuxBackend.SetPaneOwnerMarker(ctx, multiplexer.TmuxPaneID(nodeInfo.PaneID), contextID); err != nil {
 			log.Printf(
 				"postman: WARNING: failed to claim pane %s: %v\n",
 				nodeInfo.PaneID, err,

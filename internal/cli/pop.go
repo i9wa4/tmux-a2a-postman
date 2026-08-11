@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
@@ -83,9 +84,10 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
 		}
 		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
-			ContextID:   resolvedContextID,
-			SessionName: sessionName,
-			Node:        nodeName,
+			ContextID:       resolvedContextID,
+			SessionName:     sessionName,
+			Node:            nodeName,
+			CurrentIdentity: ctx.currentIdentity,
 		})
 	}
 
@@ -129,9 +131,10 @@ func runPopWithContext(ctx commandContext, args []string) error {
 	}
 	remaining--
 	return writePopMessageOutput(ctx.stdout, string(data), msgs[0].Filename, readPath, intPtr(len(msgs)), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathPost, popReceiverContextOptions{
-		ContextID:   resolvedContextID,
-		SessionName: sessionName,
-		Node:        nodeName,
+		ContextID:       resolvedContextID,
+		SessionName:     sessionName,
+		Node:            nodeName,
+		CurrentIdentity: ctx.currentIdentity,
 	})
 }
 
@@ -176,9 +179,10 @@ type popMessageOutput struct {
 }
 
 type popReceiverContextOptions struct {
-	ContextID   string
-	SessionName string
-	Node        string
+	ContextID       string
+	SessionName     string
+	Node            string
+	CurrentIdentity func() (multiplexer.CurrentIdentity, error)
 }
 
 type popSessionDiagnostics struct {
@@ -372,16 +376,23 @@ func receiverRuntimeContextSummaryForPop(sessionDir, messageID string, opts popR
 		return nil, "receiver_runtime_context_unavailable: archived message path unavailable"
 	}
 	now := time.Now()
-	paneID := config.GetTmuxPaneID()
+	currentIdentity := opts.CurrentIdentity
+	if currentIdentity == nil {
+		currentIdentity = config.CurrentTmuxIdentity
+	}
+	identity, err := currentIdentity()
+	if err != nil {
+		return nil, "receiver_runtime_context_unavailable: current identity lookup failed"
+	}
 	snapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
 		Now:                        now,
 		Scope:                      "receiver",
 		ContextID:                  opts.ContextID,
 		MessageID:                  messageID,
-		TmuxSession:                opts.SessionName,
-		Node:                       opts.Node,
-		PaneID:                     paneID,
-		Runtime:                    runtimecontext.CollectLaunchCommandMetadata(paneID),
+		TmuxSession:                identity.SessionName,
+		Node:                       identity.NodeName,
+		PaneID:                     identity.Pane.Native,
+		Runtime:                    runtimecontext.CollectLaunchCommandMetadata(identity.Pane.Native),
 		SuppressRuntimeAutoCollect: true,
 	})
 	saved, err := runtimecontext.SaveSnapshot(sessionDir, snapshot)
