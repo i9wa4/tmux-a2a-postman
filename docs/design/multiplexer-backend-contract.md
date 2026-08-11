@@ -4,10 +4,7 @@ Issue: #653.
 
 ## 1. Purpose
 
-This contract defines the first behavior-preserving backend seam for the
-existing tmux implementation. The current product still supports only tmux; the
-new types keep backend identity, native resource IDs, pane capture, and runtime
-probing from spreading backend-specific parsing into higher-level call sites.
+This contract defines the first behavior-preserving backend seam for the existing tmux implementation. The current product supports only tmux; the new types keep backend identity, native resource IDs, pane capture, and runtime probing from spreading backend-specific parsing into higher-level call sites.
 
 ## 2. Current Backend
 
@@ -17,108 +14,26 @@ probing from spreading backend-specific parsing into higher-level call sites.
 
 ## 3. Backend-Neutral IDs
 
-Backend-neutral code should pass `multiplexer.ResourceID` values rather than
-parse native IDs directly.
-
-- `Backend`: the multiplexer implementation, currently `tmux`.
-- `Kind`: resource category such as `pane`, `session`, or `node`.
-- `Native`: the backend-owned identifier, such as a tmux `%NN` pane ID.
-
-Existing `discovery.NodeInfo.PaneID` and `TMUX_PANE` values remain strings for
-compatibility in this issue. Backend-facing identity code converts them at the
-tmux compatibility boundary with `multiplexer.TmuxPaneID` and passes
-`multiplexer.IdentityTarget` values rather than raw native strings.
+Backend-neutral code should pass `multiplexer.ResourceID` values rather than parse native IDs directly. `Backend` is currently `tmux`; `Kind` identifies pane, session, window, or node; and `Native` is the backend-owned identifier. Existing discovery and `TMUX_PANE` values remain strings at the compatibility boundary, where they become `TmuxPaneID` or `IdentityTarget` values.
 
 ## 4. Capture Boundary
 
-Pane capture is represented by `multiplexer.PaneBackend.CapturePane`.
-
-The tmux backend preserves existing capture forms:
-
-- visible pane: `tmux capture-pane -p -t <pane>`
-- recent scrollback: `tmux capture-pane -p -t <pane> -S -<tailLines>`
-- retained history: `tmux capture-pane -p -t <pane> -S -`
-
-The public `paneutil.Capture*` functions remain unchanged and delegate to the
-tmux backend.
+`multiplexer.PaneBackend.CapturePane` preserves visible capture (`capture-pane -p -t <pane>`), recent scrollback (`-S -<tailLines>`), and retained history (`-S -`). Public `paneutil.Capture*` functions remain unchanged.
 
 ## 5. Current Identity Boundary
 
-Current identity is represented by `multiplexer.CurrentIdentity`:
-
-- `Backend`: the source backend, currently `tmux`.
-- `SessionName`: the logical postman session scope.
-- `NodeName`: the logical postman node name.
-- `Pane`: the backend-neutral pane resource ID.
-- `NativeIDs`: backend-native evidence, such as tmux pane ID, session name, and
-  pane title.
-
-The tmux backend preserves existing lookup behavior:
-
-- `TMUX_PANE` targets session-name and pane-title lookups only when it is a
-  canonical tmux pane ID token, `%[0-9]+`.
-- Untargeted `display-message` remains the fallback when `TMUX_PANE` is absent.
-- `TMUX_PANE` itself remains the current pane ID when present.
-- Invalid `TMUX_PANE` values fail closed with identity lookup errors instead of
-  falling back to focused-pane discovery; this prevents generic tmux `-t` target
-  expressions from forging sender or receiver runtime identity.
-- Lookup failures are explicit `IdentityError` values at the backend boundary.
-  Blank `pane_id`, `session_name`, and `pane_title` outputs are lookup failures.
-  Compatibility wrappers still return empty strings to preserve existing CLI
-  behavior.
-- Production runtime-context send/pop paths consume one `CurrentIdentity`
-  resolver so pane, session, and node fields do not drift across independent
-  tmux lookups. CLI tests may still inject legacy tmux-named hooks; that seam is
-  compatibility-only and should not be used for new backend code.
-
-Herdr support should keep the same logical `session:node` address shape while
-resolving internally through Herdr named session, workspace ID, tab ID, and pane
-ID. Herdr labels are display/fallback information, not authoritative identity.
+`multiplexer.CurrentIdentity` carries backend, session name, node name, pane resource ID, and native evidence. The tmux resolver preserves canonical `%[0-9]+` `TMUX_PANE` validation, explicit lookup failures, compatibility wrappers, and one production runtime-context resolver so pane/session/node fields cannot drift. Herdr labels remain display/fallback information rather than authoritative identity.
 
 ## 6. Current Context Boundary
 
-Current context resolution must stay separated from current identity lookup:
-
-- current identity lookup: backend kind, pane ID, session ID/name, node name;
-- ownership/context checks: `ContextOwnsSession`, `FindSessionOwner`, and
-  canonical status ownership.
-
-Ownership-dependent behavior belongs to #656 before #654 generalizes current
-context resolution.
+Current identity lookup remains separate from ownership/context checks (`ContextOwnsSession`, `FindSessionOwner`, and canonical status ownership). Ownership-dependent behavior belongs to #656 before #654 generalizes current context resolution.
 
 ## 7. Layout And Status Boundary
 
-Issue #655 owns structural layout/status projection. This issue only records
-that backend-neutral status should not require callers to parse tmux window or
-pane command output directly.
+Issue #655 owns structural layout/status projection. Backend-neutral status must not require callers to parse tmux window or pane command output directly. Existing status JSON, `SessionStatus.Compact`, and `get-status-oneline` semantics remain compatible.
 
-Compatibility requirements for #655 include existing status JSON,
-`SessionStatus.Compact`, and `get-status-oneline`.
-
-Issue #655 adds a backend-owned `SessionLayout` contract with ordered layout
-groups and items. For tmux, those groups are tmux windows and the items are
-panes. The public status payload keeps the legacy `windows` projection for
-existing tmux JSON/TUI consumers and adds `layout_groups` as the backend-neutral
-structural view. `SessionStatus.Compact` and `get-status-oneline` continue to
-derive from the same ordered tmux-compatible pane projection, so their semantics
-do not change here.
-
-First-phase Herdr support should omit tmux-style `windows` as an authoritative
-native shape. After #660 allows Herdr reads, #658 may populate
-`layout_groups` from Herdr workspace/tab/pane layout data and may optionally
-derive compatibility `windows` groups for existing UI consumers. That projection
-must stay clearly marked as compatibility output and must not introduce pane
-state precedence changes before #639 resolves the semantic model.
+The #655 `SessionLayout` contract exposes ordered layout groups and items; for tmux, groups are windows and items are panes. The public payload retains legacy `windows` for existing consumers and adds backend-neutral `layout_groups`. Compact and one-line status derive from the same ordered tmux-compatible pane projection. Herdr may populate `layout_groups` after #660 allows reads and may derive compatibility windows, without making tmux windows authoritative or changing pane precedence before #639 resolves the semantic model.
 
 ## 8. Herdr Gates
 
-Herdr access remains blocked:
-
-- #660 must define read/write security gates, allowlists, protocol/schema
-  checks, no-server error normalization, and licensing/compliance decisions.
-- #658 may add read-only Herdr behavior only after the #660 read gate.
-- #659 may add Herdr write/mutation only after #658 and #660.
-
-Herdr read/write paths should include a pre-flight guard or equivalent
-mechanical check so explicit issue-body blockers are enforced in code or local
-workflow before activation.
+Herdr access remains blocked. #660 must define read/write security gates, allowlists, protocol/schema checks, no-server error normalization, and licensing/compliance decisions. #658 may add read-only behavior only after the #660 read gate; #659 may add writes only after #658 and #660. Herdr paths require a pre-flight guard or equivalent mechanical check before activation.
