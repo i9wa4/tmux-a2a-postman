@@ -186,21 +186,11 @@ The current accepted-path test records the official Herdr LICENSE permalink
 inputs only. This records source provenance without asserting legal
 compatibility.
 
-<<<<<<< HEAD
 The normative freshness boundary is 24 hours after `RevalidatedAt`, inclusive:
 the write gate accepts a record when `now - RevalidatedAt <= 24h` and rejects
 records older than 24 hours or whose revalidation timestamp is in the future.
 The runtime supplies the current time through an injectable policy time source;
 production uses the system clock and tests use a fixed clock.
-||||||| parent of 50c8645 (fix(multiplexer): complete herdr production runtime wiring (#659))
-- `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
-- `commercial`: a commercial license covers the integration shape;
-- `review-only`: no distributable/generated/write integration may be shipped.
-
-CLI or socket use alone does not resolve licensing obligations. A future issue
-must record the exact integration shape before changing dependency, vendoring,
-generated code, or distribution behavior.
-=======
 - `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
 - `commercial`: a commercial license covers the integration shape;
 - `review-only`: no distributable/generated/write integration may be shipped.
@@ -208,7 +198,6 @@ generated code, or distribution behavior.
 CLI or socket use alone does not resolve licensing obligations. Any future
 change that adds dependency, vendoring, generated code, or broader distribution
 behavior must record the exact integration shape before implementation.
->>>>>>> 50c8645 (fix(multiplexer): complete herdr production runtime wiring (#659))
 
 ## 10. Out Of Scope
 
