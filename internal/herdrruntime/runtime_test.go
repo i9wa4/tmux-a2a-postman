@@ -339,7 +339,7 @@ func validRuntimeHerdrConfig() config.HerdrConfig {
 		ReadEnabled:                 true,
 		WriteEnabled:                true,
 		InputSanitizerReady:         true,
-		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionAGPL),
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
 		ComplianceAuthorizedBy:      "test-authority",
 		ComplianceDecisionID:        "test-decision",
 		ComplianceDecidedAt:         "2026-08-12T00:00:00Z",
