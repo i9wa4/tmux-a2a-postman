@@ -233,9 +233,17 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 		return func() {}
 	}
 	token := herdrHandAdapterToken.Add(1)
+	var displaced []struct {
+		key     herdrHandAdapterKey
+		current *registeredHerdrHandAdapter
+	}
 	registeredHerdrHandAdaptersMu.Lock()
 	for key, current := range registeredHerdrHandAdapters {
 		if current.owner == owner {
+			displaced = append(displaced, struct {
+				key     herdrHandAdapterKey
+				current *registeredHerdrHandAdapter
+			}{key: key, current: current})
 			delete(registeredHerdrHandAdapters, key)
 		}
 	}
@@ -245,6 +253,11 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 		}
 	}
 	registeredHerdrHandAdaptersMu.Unlock()
+	for _, item := range displaced {
+		if herdrHandAdapterCleanupHook != nil {
+			herdrHandAdapterCleanupHook(item.key, item.current)
+		}
+	}
 	return func() {
 		var observed []struct {
 			key     herdrHandAdapterKey
@@ -452,6 +465,8 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	case HandKindTmux:
 		return TmuxHandAdapter{}, nil
 	case HandKindHerdr:
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
 		registeredHerdrHandAdaptersMu.RLock()
 		defer registeredHerdrHandAdaptersMu.RUnlock()
 		for _, key := range herdrHandAdapterKeysForTarget(target) {

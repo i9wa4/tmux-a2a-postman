@@ -148,16 +148,15 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 }
 
 func publishFreshHerdrNodes(herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
-	publish := func() error {
+	commit := func() {
 		if sharedNodes != nil {
 			sharedNodes.Store(&fresh)
 		}
-		return nil
 	}
 	if herdrRuntime != nil {
-		return herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrToken, fresh, publish) == nil
+		return herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, nil, commit) == nil
 	}
-	_ = publish()
+	commit()
 	return true
 }
 
@@ -454,14 +453,24 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
-	publishStartupNodes := func() error {
-		if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
+	prepareStartupNodes := func(publication *herdrruntime.FinalPublication) error {
+		if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
+			if err := publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true); err != nil {
+				return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
+			}
+		} else if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
 			return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 		}
 		// Claim discovered panes with this daemon's context ID.
 		for _, nodeInfo := range nodes {
 			backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
-			backend, backendErr := multiplexer.OwnershipBackendForKind(backendKind)
+			var backend multiplexer.OwnershipBackend
+			var backendErr error
+			if backendKind == multiplexer.BackendKindHerdr && publication != nil {
+				backend = publication
+			} else {
+				backend, backendErr = multiplexer.OwnershipBackendForKind(backendKind)
+			}
 			if backendErr != nil {
 				log.Printf(
 					"postman: WARNING: failed to select ownership backend for pane %s: %v\n",
@@ -486,15 +495,19 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				)
 			}
 		}
-		sharedNodes.Store(&nodes)
 		return nil
 	}
+	commitStartupNodes := func() {
+		sharedNodes.Store(&nodes)
+	}
 	if herdrRuntime != nil {
-		if err := herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrStartupToken, nodes, publishStartupNodes); err != nil {
+		if err := herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes, prepareStartupNodes, commitStartupNodes); err != nil {
 			return fmt.Errorf("publishing Herdr startup snapshot: %w", err)
 		}
-	} else if err := publishStartupNodes(); err != nil {
+	} else if err := prepareStartupNodes(nil); err != nil {
 		return err
+	} else {
+		commitStartupNodes()
 	}
 	// Shared node snapshot for background periodic refresh (Issue #139)
 
@@ -706,6 +719,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				// Issue #47: Handle TUI commands
 				switch cmd.Type {
 				case "send_ping":
+					multiplexer.LockHerdrPublicationRead()
 					cachedPtr := sharedNodes.Load()
 					var freshNodes map[string]discovery.NodeInfo
 					if cachedPtr != nil {
@@ -715,6 +729,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 							freshNodes[k] = v
 						}
 					}
+					multiplexer.UnlockHerdrPublicationRead()
 					// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
 					activationNodesFilter := activationNodeNames(cfg)
 					targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
@@ -738,7 +753,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 							case activationErr == nil:
 								daemonState.SetSessionEnabled(cmd.Target, true)
 								freshNodes = activatedNodes
+								multiplexer.LockHerdrPublicationWrite()
 								sharedNodes.Store(&freshNodes)
+								multiplexer.UnlockHerdrPublicationWrite()
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",

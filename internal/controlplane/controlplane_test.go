@@ -436,6 +436,57 @@ func TestReplaceHerdrHandAdaptersForOwnerAtomicallySwapsVisibleSet(t *testing.T)
 	}
 }
 
+func TestReplaceHerdrHandAdaptersForOwnerRunsDisplacedCleanupOutsideLockOnce(t *testing.T) {
+	owner := "runtime-owner-cleanup"
+	paneID := "pane-cleanup-old"
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.PaneID = paneID
+	firstCleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		paneID: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+			},
+		},
+	})
+	t.Cleanup(firstCleanup)
+
+	expected := make(map[herdrHandAdapterKey]bool)
+	for _, key := range herdrHandAdapterKeysForRegistration(firstConfig.Runtime, paneID) {
+		expected[key] = true
+	}
+	seen := make(map[herdrHandAdapterKey]int)
+	herdrHandAdapterCleanupHook = func(key herdrHandAdapterKey, _ *registeredHerdrHandAdapter) {
+		if !registeredHerdrHandAdaptersMu.TryLock() {
+			t.Fatalf("cleanup hook for %#v ran while registry lock was held", key)
+		}
+		registeredHerdrHandAdaptersMu.Unlock()
+		seen[key]++
+	}
+	t.Cleanup(func() {
+		herdrHandAdapterCleanupHook = nil
+	})
+
+	nextConfig := firstConfig
+	nextConfig.Runtime.PaneID = "pane-cleanup-new"
+	nextCleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		nextConfig.Runtime.PaneID: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: nextConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+			},
+		},
+	})
+	t.Cleanup(nextCleanup)
+
+	if len(seen) != len(expected) {
+		t.Fatalf("cleanup hook count = %d, want %d (%#v)", len(seen), len(expected), seen)
+	}
+	for key := range expected {
+		if seen[key] != 1 {
+			t.Fatalf("cleanup hook for %#v ran %d times, want exactly once", key, seen[key])
+		}
+	}
+}
+
 func TestDefaultHandAdapterReverseCleanupKeepsOlderOverlappingHerdrRuntime(t *testing.T) {
 	paneID := "shared-native-pane-reverse"
 	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}

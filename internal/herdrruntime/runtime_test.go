@@ -722,6 +722,150 @@ func TestRuntimeFinalReconcilePublishesBeforeCompetingDiscoveryCanAdvance(t *tes
 	close(releaseCompeting)
 }
 
+func TestRuntimeFinalReconcileFailureKeepsPriorGenerationAuthoritative(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldNodes, _, oldToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile(old) error = %v", err)
+	}
+	if err := rt.ReconcileFinalNodesForTokenAndCommit(oldToken, oldNodes, nil, nil); err != nil {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit(old) error = %v", err)
+	}
+	oldNode := oldNodes[sessionName+":worker"]
+	oldTarget := controlplane.TargetForNode(sessionName+":worker", oldNode)
+	if _, err := controlplane.DefaultHandAdapter(oldTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(old) error = %v", err)
+	}
+
+	next := validRuntimeHerdrSnapshot()
+	next.Panes[0].ID = "workspace-1:pane-2"
+	client.snapshot = next
+	newNodes, _, newToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile(new) error = %v", err)
+	}
+	newNode := newNodes[sessionName+":worker"]
+	newTarget := controlplane.TargetForNode(sessionName+":worker", newNode)
+	publishErr := errors.New("publish failed")
+	err = rt.ReconcileFinalNodesForTokenAndCommit(newToken, newNodes, func(*herdrruntime.FinalPublication) error {
+		if _, adapterErr := controlplane.DefaultHandAdapter(oldTarget); adapterErr != nil {
+			t.Fatalf("old adapter disappeared during failed prepare: %v", adapterErr)
+		}
+		if _, adapterErr := controlplane.DefaultHandAdapter(newTarget); adapterErr == nil {
+			t.Fatal("new adapter became visible before failed publication committed")
+		}
+		return publishErr
+	}, func() {
+		t.Fatal("commit callback ran after prepare failure")
+	})
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit(new) error = %v, want %v", err, publishErr)
+	}
+	if _, err := controlplane.DefaultHandAdapter(oldTarget); err != nil {
+		t.Fatalf("old adapter after failed publication error = %v", err)
+	}
+	if _, err := controlplane.DefaultHandAdapter(newTarget); err == nil {
+		t.Fatal("new adapter escaped after failed publication")
+	}
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(newNode.PaneID), contextID); err == nil {
+		t.Fatal("new ownership route escaped after failed publication")
+	}
+	client.snapshot = validRuntimeHerdrSnapshot()
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(oldNode.PaneID), contextID); err != nil {
+		t.Fatalf("old ownership route after failed publication error = %v", err)
+	}
+}
+
+func TestRuntimeFinalReconcileBlocksExternalReadersDuringPublicCommit(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldNodes, _, oldToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile(old) error = %v", err)
+	}
+	if err := rt.ReconcileFinalNodesForTokenAndCommit(oldToken, oldNodes, nil, nil); err != nil {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit(old) error = %v", err)
+	}
+
+	next := validRuntimeHerdrSnapshot()
+	next.Panes[0].ID = "workspace-1:pane-2"
+	client.snapshot = next
+	newNodes, _, newToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile(new) error = %v", err)
+	}
+	newNode := newNodes[sessionName+":worker"]
+	newTarget := controlplane.TargetForNode(sessionName+":worker", newNode)
+	readerDone := make(chan error, 1)
+	err = rt.ReconcileFinalNodesForTokenAndCommit(newToken, newNodes, nil, func() {
+		go func() {
+			if _, adapterErr := controlplane.DefaultHandAdapter(newTarget); adapterErr != nil {
+				readerDone <- adapterErr
+				return
+			}
+			ownershipBackend, backendErr := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+			if backendErr != nil {
+				readerDone <- backendErr
+				return
+			}
+			readerDone <- ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(newNode.PaneID), contextID)
+		}()
+		select {
+		case err := <-readerDone:
+			t.Fatalf("external Herdr reader completed inside public commit with %v; want blocked until generation commit releases", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+	if err != nil {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit(new) error = %v", err)
+	}
+	select {
+	case err := <-readerDone:
+		if err != nil {
+			t.Fatalf("external Herdr reader after commit error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("external Herdr reader remained blocked after public commit")
+	}
+}
+
 func TestRuntimeCloseWhileDiscoverBlockedDoesNotRegisterRoutes(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"

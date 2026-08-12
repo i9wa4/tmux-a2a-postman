@@ -1062,9 +1062,12 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			// mutated afterward, so it is safe to read directly here.
 			var retryNodes map[string]discovery.NodeInfo
 			if rt.sharedNodes != nil {
-				if cached := rt.sharedNodes.Load(); cached != nil {
+				multiplexer.LockHerdrPublicationRead()
+				cached := rt.sharedNodes.Load()
+				if cached != nil {
 					retryNodes = *cached
 				}
+				multiplexer.UnlockHerdrPublicationRead()
 			}
 			if retryNodes == nil {
 				// Only reached when sharedNodes is unset (e.g. a
@@ -1589,10 +1592,9 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	if rt.herdrRuntime != nil {
-		if err := rt.herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrToken, freshNodes, func() error {
+		if err := rt.herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, freshNodes, nil, func() {
 			rt.nodes = freshNodes
-			rt.storeSharedNodes()
-			return nil
+			rt.storeSharedNodesLocked()
 		}); err != nil {
 			return nil, nil, err
 		}
@@ -1649,6 +1651,12 @@ func (rt *daemonRuntime) ownerForNodeSession(ctx context.Context, nodeInfo disco
 }
 
 func (rt *daemonRuntime) storeSharedNodes() {
+	multiplexer.LockHerdrPublicationWrite()
+	defer multiplexer.UnlockHerdrPublicationWrite()
+	rt.storeSharedNodesLocked()
+}
+
+func (rt *daemonRuntime) storeSharedNodesLocked() {
 	if rt.sharedNodes == nil {
 		return
 	}
