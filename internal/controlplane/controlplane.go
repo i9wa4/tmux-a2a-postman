@@ -202,7 +202,7 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 	if strings.TrimSpace(paneID) == "" {
 		return func() {}
 	}
-	keys := herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID)
+	keys := herdrHandAdapterKeysForRegistration(adapter.Backend.Config.Runtime, paneID)
 	token := herdrHandAdapterToken.Add(1)
 	registeredHerdrHandAdaptersMu.Lock()
 	for _, key := range keys {
@@ -254,7 +254,7 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 func ReplaceHerdrHandAdaptersForOwnerCollect(owner string, adapters map[string]HerdrHandAdapter) HerdrHandAdapterReplacement {
 	runtimeAdapters := make(map[multiplexer.HerdrRuntimeIdentity]HerdrHandAdapter, len(adapters))
 	for paneID, adapter := range adapters {
-		runtime := adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime
+		runtime := adapter.Backend.Config.Runtime
 		if runtime.PaneID == "" {
 			runtime.PaneID = paneID
 		}
@@ -295,7 +295,7 @@ func ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner string, adapters map[m
 	for runtime, adapter := range adapters {
 		paneID := runtime.PaneID
 		if paneID == "" {
-			paneID = adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime.PaneID
+			paneID = adapter.Backend.Config.Runtime.PaneID
 		}
 		for _, key := range herdrHandAdapterKeysForRegistration(runtime, paneID) {
 			registeredHerdrHandAdapters[key] = append(registeredHerdrHandAdapters[key], &registeredHerdrHandAdapter{owner: owner, token: token, adapter: adapter})

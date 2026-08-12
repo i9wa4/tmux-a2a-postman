@@ -2068,11 +2068,10 @@ func (f *fakeRuntimeHerdrClient) ClearPaneMetadata(_ context.Context, paneID str
 }
 
 type transactionOwnershipBackend struct {
-	kind           multiplexer.BackendKind
-	sessionMarkers map[string]string
-	paneMarkers    map[string]string
-	failSetFor     string
-	failSetErr     error
+	kind        multiplexer.BackendKind
+	paneMarkers map[string]string
+	failSetFor  string
+	failSetErr  error
 }
 
 func (b *transactionOwnershipBackend) Kind() multiplexer.BackendKind {

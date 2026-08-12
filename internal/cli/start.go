@@ -209,13 +209,6 @@ func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID
 	return pane
 }
 
-func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
-	if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
-		return herdrRuntime.SetSessionEnabledMarker(ctx, contextID, sessionName, enabled)
-	}
-	return config.SetSessionEnabledMarker(contextID, sessionName, enabled)
-}
-
 func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targets []idle.CompactionPingTarget) {
 	if len(targets) == 0 {
 		return
