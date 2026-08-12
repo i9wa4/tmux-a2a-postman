@@ -26,11 +26,11 @@ type Runtime struct {
 	client           multiplexer.HerdrReadClient
 	ownershipBackend *ownershipMux
 
-	mu             sync.Mutex
-	closed         bool
-	generation     uint64
-	cleanups       []func()
-	adapterCleanup func()
+	mu              sync.Mutex
+	closed          bool
+	generation      uint64
+	cleanups        []func()
+	adapterCleanups map[string]func()
 }
 
 type FinalPublication struct {
@@ -483,14 +483,16 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 		return ErrStaleFinalReconcileToken
 	}
 	multiplexer.LockHerdrPublicationWrite()
-	var displacedCleanup func()
+	var displacedCleanups []func()
 	unlockPublication := true
 	defer func() {
 		if unlockPublication {
 			multiplexer.UnlockHerdrPublicationWrite()
 		}
-		if displacedCleanup != nil {
-			displacedCleanup()
+		for _, cleanup := range displacedCleanups {
+			if cleanup != nil {
+				cleanup()
+			}
 		}
 	}()
 	publication := &FinalPublication{ownershipBackend: stagedOwnership, runtime: rt}
@@ -503,13 +505,33 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 		}
 	}
 	rt.ownershipBackend.replaceSnapshot(paneBackends, workspaceBackend)
-	replacement := controlplane.ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(rt.handAdapterOwnerID(), handAdapters)
-	rt.adapterCleanup = replacement.Cleanup
+	nextAdapterCleanups := make(map[string]func())
+	adapterGroups := rt.handAdapterGroupsByOwner(handAdapters)
+	owners := make([]string, 0, len(adapterGroups))
+	for owner := range adapterGroups {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+	for _, owner := range owners {
+		replacement := controlplane.ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner, adapterGroups[owner])
+		nextAdapterCleanups[owner] = replacement.Cleanup
+		if replacement.DisplacedCleanup != nil {
+			displacedCleanups = append(displacedCleanups, replacement.DisplacedCleanup)
+		}
+	}
+	for owner, cleanup := range rt.adapterCleanups {
+		if _, ok := nextAdapterCleanups[owner]; ok {
+			continue
+		}
+		if cleanup != nil {
+			displacedCleanups = append(displacedCleanups, cleanup)
+		}
+	}
+	rt.adapterCleanups = nextAdapterCleanups
 	if commit != nil {
 		commit()
 	}
 	multiplexer.AdvanceHerdrPublicationGenerationLocked()
-	displacedCleanup = replacement.DisplacedCleanup
 	multiplexer.UnlockHerdrPublicationWrite()
 	unlockPublication = false
 	return nil
@@ -537,17 +559,19 @@ func (rt *Runtime) Close() {
 	}
 	rt.closed = true
 	rt.generation++
-	var adapterCleanup func()
+	var adapterCleanups []func()
 	multiplexer.LockHerdrPublicationWrite()
-	if rt.adapterCleanup != nil {
-		adapterCleanup = rt.adapterCleanup
-		rt.adapterCleanup = nil
+	for owner, cleanup := range rt.adapterCleanups {
+		if cleanup != nil {
+			adapterCleanups = append(adapterCleanups, cleanup)
+		}
+		delete(rt.adapterCleanups, owner)
 	}
 	rt.ownershipBackend.clear()
 	multiplexer.AdvanceHerdrPublicationGenerationLocked()
 	multiplexer.UnlockHerdrPublicationWrite()
-	if adapterCleanup != nil {
-		adapterCleanup()
+	for _, cleanup := range adapterCleanups {
+		cleanup()
 	}
 	for i := len(rt.cleanups) - 1; i >= 0; i-- {
 		rt.cleanups[i]()
@@ -584,25 +608,59 @@ func (rt *Runtime) reconcilePaneBackends(generation uint64, livePanes map[string
 		return false
 	}
 	if livePanes == nil {
-		var adapterCleanup func()
+		var adapterCleanups []func()
 		multiplexer.LockHerdrPublicationWrite()
 		rt.ownershipBackend.replaceSnapshot(nil, multiplexer.HerdrBackend{})
-		if rt.adapterCleanup != nil {
-			adapterCleanup = rt.adapterCleanup
-			rt.adapterCleanup = nil
+		for owner, cleanup := range rt.adapterCleanups {
+			if cleanup != nil {
+				adapterCleanups = append(adapterCleanups, cleanup)
+			}
+			delete(rt.adapterCleanups, owner)
 		}
 		multiplexer.AdvanceHerdrPublicationGenerationLocked()
 		multiplexer.UnlockHerdrPublicationWrite()
-		if adapterCleanup != nil {
-			adapterCleanup()
+		for _, cleanup := range adapterCleanups {
+			cleanup()
 		}
 	}
 	return true
 }
 
-func (rt *Runtime) handAdapterOwnerID() string {
-	runtime := rt.cfg.ReadConfig().Runtime
-	return strings.TrimSpace(runtime.SocketPath) + "\x00" + strings.TrimSpace(runtime.SessionName) + "\x00" + strings.TrimSpace(runtime.WorkspaceID)
+func (rt *Runtime) handAdapterGroupsByOwner(adapters map[multiplexer.HerdrRuntimeIdentity]controlplane.HerdrHandAdapter) map[string]map[multiplexer.HerdrRuntimeIdentity]controlplane.HerdrHandAdapter {
+	groups := make(map[string]map[multiplexer.HerdrRuntimeIdentity]controlplane.HerdrHandAdapter)
+	for runtime, adapter := range adapters {
+		owner := rt.handAdapterOwnerIDForRuntime(runtime)
+		if owner == "" {
+			continue
+		}
+		group := groups[owner]
+		if group == nil {
+			group = make(map[multiplexer.HerdrRuntimeIdentity]controlplane.HerdrHandAdapter)
+			groups[owner] = group
+		}
+		group[runtime] = adapter
+	}
+	return groups
+}
+
+func (rt *Runtime) handAdapterOwnerIDForRuntime(runtime multiplexer.HerdrRuntimeIdentity) string {
+	configRuntime := rt.cfg.ReadConfig().Runtime
+	if runtime.SocketPath == "" {
+		runtime.SocketPath = configRuntime.SocketPath
+	}
+	if runtime.SessionName == "" {
+		runtime.SessionName = configRuntime.SessionName
+	}
+	if runtime.WorkspaceID == "" {
+		runtime.WorkspaceID = configRuntime.WorkspaceID
+	}
+	if runtime.TabID == "" {
+		runtime.TabID = configRuntime.TabID
+	}
+	return strings.TrimSpace(runtime.SocketPath) + "\x00" +
+		strings.TrimSpace(runtime.SessionName) + "\x00" +
+		strings.TrimSpace(runtime.WorkspaceID) + "\x00" +
+		strings.TrimSpace(runtime.TabID)
 }
 
 type ownershipSnapshot struct {

@@ -199,6 +199,88 @@ func TestRuntimeReconcileKeepsSamePaneIDInDifferentTabsRoutable(t *testing.T) {
 	}
 }
 
+func TestRuntimeReconcileKeepsIndependentTabRuntimeAdaptersIsolated(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	paneID := "workspace-1:pane-shared"
+	tabOne := "workspace-1:tab-1"
+	tabTwo := "workspace-1:tab-2"
+	firstClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor(sessionName, "workspace-1", tabOne, paneID, "")}
+	firstCfg := config.DefaultConfig()
+	firstCfg.Herdr = validRuntimeHerdrConfig()
+	firstRuntime, err := herdrruntime.New(firstCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return firstClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(first) error = %v", err)
+	}
+	t.Cleanup(firstRuntime.Close)
+
+	secondClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor(sessionName, "workspace-1", tabTwo, paneID, "")}
+	secondCfg := config.DefaultConfig()
+	secondCfg.Herdr = validRuntimeHerdrConfig()
+	secondRuntime, err := herdrruntime.New(secondCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return secondClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(second) error = %v", err)
+	}
+	t.Cleanup(secondRuntime.Close)
+
+	firstNodes, _, err := firstRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover(first) error = %v", err)
+	}
+	firstRuntime.ReconcileFinalNodes(firstNodes)
+	firstTarget := controlplane.TargetForNode(sessionName+":worker", firstNodes[sessionName+":worker"])
+	firstAdapter, err := controlplane.DefaultHandAdapter(firstTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(first after first reconcile) error = %v", err)
+	}
+	if err := firstAdapter.Deliver(firstTarget, controlplane.PaneDelivery{Content: "first-before"}); err != nil {
+		t.Fatalf("Deliver(first before second reconcile) error = %v", err)
+	}
+
+	secondNodes, _, err := secondRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover(second) error = %v", err)
+	}
+	secondRuntime.ReconcileFinalNodes(secondNodes)
+	secondTarget := controlplane.TargetForNode(sessionName+":worker", secondNodes[sessionName+":worker"])
+	secondAdapter, err := controlplane.DefaultHandAdapter(secondTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(second after second reconcile) error = %v", err)
+	}
+	if err := secondAdapter.Deliver(secondTarget, controlplane.PaneDelivery{Content: "second"}); err != nil {
+		t.Fatalf("Deliver(second) error = %v", err)
+	}
+	firstAdapter, err = controlplane.DefaultHandAdapter(firstTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(first after second reconcile) error = %v", err)
+	}
+	if err := firstAdapter.Deliver(firstTarget, controlplane.PaneDelivery{Content: "first-after"}); err != nil {
+		t.Fatalf("Deliver(first after second reconcile) error = %v", err)
+	}
+
+	firstRuntime.ReconcileFinalNodes(firstNodes)
+	if _, err := controlplane.DefaultHandAdapter(secondTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(second after first refresh) error = %v", err)
+	}
+
+	secondRuntime.Close()
+	if _, err := controlplane.DefaultHandAdapter(secondTarget); err == nil {
+		t.Fatal("closed second tab runtime adapter remained registered")
+	}
+	if _, err := controlplane.DefaultHandAdapter(firstTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(first after second close) error = %v", err)
+	}
+}
+
 func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"

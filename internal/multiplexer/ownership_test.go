@@ -382,17 +382,141 @@ func TestHerdrOwnershipCompositeSelectsPaneBackendByRuntimeIdentity(t *testing.T
 	}
 }
 
+func TestHerdrOwnershipCompositeKeepsTabDistinctPaneBackendsIsolated(t *testing.T) {
+	paneID := "pane-shared"
+	firstRuntime := HerdrRuntimeIdentity{
+		SocketPath:  "/tmp/herdr-tab.sock",
+		SessionName: "work",
+		WorkspaceID: "workspace-1",
+		TabID:       "workspace-1:tab-1",
+		PaneID:      paneID,
+	}
+	secondRuntime := firstRuntime
+	secondRuntime.TabID = "workspace-1:tab-2"
+	first := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime:     firstRuntime,
+		paneOwner:   "ctx-tab-1",
+	}
+	firstCleanup := RegisterOwnershipBackend(first)
+	t.Cleanup(firstCleanup)
+	second := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime:     secondRuntime,
+		paneOwner:   "ctx-tab-2",
+	}
+	secondCleanup := RegisterOwnershipBackend(second)
+	t.Cleanup(secondCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	secondPane := HerdrPaneIDForRuntime(secondRuntime, paneID)
+	if got, err := backend.PaneOwnerMarker(context.Background(), secondPane); err != nil || got != "ctx-tab-2" {
+		t.Fatalf("PaneOwnerMarker(second exact) = %q, %v; want ctx-tab-2", got, err)
+	}
+	if err := backend.SetPaneOwnerMarker(context.Background(), secondPane, "ctx-updated"); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(second exact) error = %v", err)
+	}
+	if second.paneSetCalls != 1 || second.paneOwner != "ctx-updated" || first.paneSetCalls != 0 || first.paneOwner != "ctx-tab-1" {
+		t.Fatalf("set calls/owners first=%d/%q second=%d/%q, want second only", first.paneSetCalls, first.paneOwner, second.paneSetCalls, second.paneOwner)
+	}
+	if err := backend.ClearPaneOwnerMarker(context.Background(), secondPane); err != nil {
+		t.Fatalf("ClearPaneOwnerMarker(second exact) error = %v", err)
+	}
+	if second.paneClearCalls != 1 || second.paneOwner != "" || first.paneClearCalls != 0 || first.paneOwner != "ctx-tab-1" {
+		t.Fatalf("clear calls/owners first=%d/%q second=%d/%q, want second only", first.paneClearCalls, first.paneOwner, second.paneClearCalls, second.paneOwner)
+	}
+}
+
+func TestHerdrOwnershipCompositeRejectsAmbiguousReducedPaneRuntime(t *testing.T) {
+	paneID := "pane-shared-reduced"
+	firstRuntime := HerdrRuntimeIdentity{
+		SocketPath:  "/tmp/herdr-reduced.sock",
+		SessionName: "work",
+		WorkspaceID: "workspace-1",
+		TabID:       "workspace-1:tab-1",
+		PaneID:      paneID,
+	}
+	secondRuntime := firstRuntime
+	secondRuntime.TabID = "workspace-1:tab-2"
+	first := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime:     firstRuntime,
+		paneOwner:   "ctx-tab-1",
+	}
+	firstCleanup := RegisterOwnershipBackend(first)
+	t.Cleanup(firstCleanup)
+	second := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime:     secondRuntime,
+		paneOwner:   "ctx-tab-2",
+	}
+	secondCleanup := RegisterOwnershipBackend(second)
+	t.Cleanup(secondCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	reducedPane := HerdrPaneIDForRuntime(HerdrRuntimeIdentity{
+		SocketPath:  firstRuntime.SocketPath,
+		SessionName: firstRuntime.SessionName,
+		WorkspaceID: firstRuntime.WorkspaceID,
+		PaneID:      paneID,
+	}, paneID)
+	if _, err := backend.PaneOwnerMarker(context.Background(), reducedPane); err == nil {
+		t.Fatal("PaneOwnerMarker(reduced ambiguous) error = nil, want fail-closed ambiguity")
+	}
+	if err := backend.SetPaneOwnerMarker(context.Background(), reducedPane, "ctx-new"); err == nil {
+		t.Fatal("SetPaneOwnerMarker(reduced ambiguous) error = nil, want fail-closed ambiguity")
+	}
+	if err := backend.ClearPaneOwnerMarker(context.Background(), reducedPane); err == nil {
+		t.Fatal("ClearPaneOwnerMarker(reduced ambiguous) error = nil, want fail-closed ambiguity")
+	}
+	if first.paneSetCalls != 0 || second.paneSetCalls != 0 || first.paneClearCalls != 0 || second.paneClearCalls != 0 {
+		t.Fatalf("ambiguous reduced mutation reached candidates: first set/clear=%d/%d second set/clear=%d/%d", first.paneSetCalls, first.paneClearCalls, second.paneSetCalls, second.paneClearCalls)
+	}
+
+	secondCleanup()
+	backend, err = OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr after unregister) error = %v", err)
+	}
+	if got, err := backend.PaneOwnerMarker(context.Background(), reducedPane); err != nil || got != "ctx-tab-1" {
+		t.Fatalf("PaneOwnerMarker(reduced unique) = %q, %v; want ctx-tab-1", got, err)
+	}
+	if err := backend.SetPaneOwnerMarker(context.Background(), reducedPane, "ctx-unique"); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(reduced unique) error = %v", err)
+	}
+	if first.paneSetCalls != 1 || first.paneOwner != "ctx-unique" {
+		t.Fatalf("unique reduced set calls=%d owner=%q, want first selected", first.paneSetCalls, first.paneOwner)
+	}
+	if err := backend.ClearPaneOwnerMarker(context.Background(), reducedPane); err != nil {
+		t.Fatalf("ClearPaneOwnerMarker(reduced unique) error = %v", err)
+	}
+	if first.paneClearCalls != 1 || first.paneOwner != "" {
+		t.Fatalf("unique reduced clear calls=%d owner=%q, want first cleared", first.paneClearCalls, first.paneOwner)
+	}
+}
+
 type testOwnershipBackend struct {
-	kind         BackendKind
-	sessionName  string
-	owner        string
-	runtime      HerdrRuntimeIdentity
-	paneOwner    string
-	setErr       error
-	clearErr     error
-	setCalls     int
-	clearCalls   int
-	paneSetCalls int
+	kind           BackendKind
+	sessionName    string
+	owner          string
+	runtime        HerdrRuntimeIdentity
+	paneOwner      string
+	setErr         error
+	clearErr       error
+	setCalls       int
+	clearCalls     int
+	paneSetCalls   int
+	paneClearCalls int
 }
 
 func (t *testOwnershipBackend) Kind() BackendKind {
@@ -438,6 +562,9 @@ func (t *testOwnershipBackend) PaneOwnerMarker(_ context.Context, pane ResourceI
 	if t.runtime.PaneID == "" || pane.Native != t.runtime.PaneID {
 		return "", fmt.Errorf("pane not owned")
 	}
+	if pane.HerdrRuntime.TabID != "" && pane.HerdrRuntime.TabID != t.runtime.TabID {
+		return "", fmt.Errorf("pane not owned")
+	}
 	return t.paneOwner, nil
 }
 
@@ -445,11 +572,22 @@ func (t *testOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane Resour
 	if t.runtime.PaneID == "" || pane.Native != t.runtime.PaneID {
 		return fmt.Errorf("pane not owned")
 	}
+	if pane.HerdrRuntime.TabID != "" && pane.HerdrRuntime.TabID != t.runtime.TabID {
+		return fmt.Errorf("pane not owned")
+	}
 	t.paneSetCalls++
 	t.paneOwner = contextID
 	return nil
 }
 
-func (t *testOwnershipBackend) ClearPaneOwnerMarker(context.Context, ResourceID) error {
-	return fmt.Errorf("pane not owned")
+func (t *testOwnershipBackend) ClearPaneOwnerMarker(_ context.Context, pane ResourceID) error {
+	if t.runtime.PaneID == "" || pane.Native != t.runtime.PaneID {
+		return fmt.Errorf("pane not owned")
+	}
+	if pane.HerdrRuntime.TabID != "" && pane.HerdrRuntime.TabID != t.runtime.TabID {
+		return fmt.Errorf("pane not owned")
+	}
+	t.paneClearCalls++
+	t.paneOwner = ""
+	return nil
 }
