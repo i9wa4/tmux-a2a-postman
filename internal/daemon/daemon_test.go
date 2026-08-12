@@ -196,13 +196,16 @@ func TestDaemonRuntimeClaimedPaneKeyIncludesBackendAndRuntimeIdentity(t *testing
 	}
 	herdrNodeB := herdrNodeA
 	herdrNodeB.HerdrSocketPath = "/tmp/herdr-b.sock"
+	herdrNodeC := herdrNodeA
+	herdrNodeC.HerdrTabID = "workspace-a:tab-2"
 
 	keys := map[string]bool{
 		claimedPaneKeyForNodeInfo(tmuxNode):   true,
 		claimedPaneKeyForNodeInfo(herdrNodeA): true,
 		claimedPaneKeyForNodeInfo(herdrNodeB): true,
+		claimedPaneKeyForNodeInfo(herdrNodeC): true,
 	}
-	if len(keys) != 3 {
+	if len(keys) != 4 {
 		t.Fatalf("claim keys collapsed across backend/runtime identities: %#v", keys)
 	}
 }
@@ -221,12 +224,16 @@ func TestDaemonRuntimePruneClaimedPanesUsesQualifiedIdentityForBackendTransition
 		HerdrWorkspaceID: "workspace-1",
 		HerdrTabID:       "workspace-1:tab-1",
 	}
+	herdrOtherTabNode := herdrNode
+	herdrOtherTabNode.HerdrTabID = "workspace-1:tab-2"
 	tmuxKey := claimedPaneKeyForNodeInfo(tmuxNode)
 	herdrKey := claimedPaneKeyForNodeInfo(herdrNode)
+	herdrOtherTabKey := claimedPaneKeyForNodeInfo(herdrOtherTabNode)
 	rt := &daemonRuntime{
 		claimedPanes: map[string]bool{
-			tmuxKey:  true,
-			herdrKey: true,
+			tmuxKey:          true,
+			herdrKey:         true,
+			herdrOtherTabKey: true,
 		},
 	}
 
@@ -237,6 +244,9 @@ func TestDaemonRuntimePruneClaimedPanesUsesQualifiedIdentityForBackendTransition
 	}
 	if !rt.claimedPanes[herdrKey] {
 		t.Fatalf("live Herdr claim was pruned: %#v", rt.claimedPanes)
+	}
+	if rt.claimedPanes[herdrOtherTabKey] {
+		t.Fatalf("stale Herdr claim from another tab survived prune: %#v", rt.claimedPanes)
 	}
 }
 
@@ -297,9 +307,15 @@ type fakeDaemonOwnershipBackend struct {
 	clearSessionCalls int
 	clearSessionName  string
 
-	setPaneCalls  int
-	pane          multiplexer.ResourceID
-	paneContextID string
+	setPaneCalls         int
+	pane                 multiplexer.ResourceID
+	paneContextID        string
+	paneMarkers          map[string]string
+	failSetByPaneContext map[string]error
+	failPaneNative       string
+	failSetFor           string
+	failSetErr           error
+	clearPaneErr         error
 }
 
 func (f *fakeDaemonOwnershipBackend) Kind() multiplexer.BackendKind {
@@ -323,7 +339,10 @@ func (f *fakeDaemonOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, 
 	return nil
 }
 
-func (f *fakeDaemonOwnershipBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+func (f *fakeDaemonOwnershipBackend) PaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) (string, error) {
+	if f.paneMarkers != nil {
+		return f.paneMarkers[pane.Native], nil
+	}
 	return "", nil
 }
 
@@ -331,10 +350,27 @@ func (f *fakeDaemonOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane 
 	f.setPaneCalls++
 	f.pane = pane
 	f.paneContextID = contextID
+	if f.paneMarkers != nil {
+		f.paneMarkers[pane.Native] = contextID
+	}
+	if f.failSetByPaneContext != nil {
+		if err := f.failSetByPaneContext[pane.Native+"\x00"+contextID]; err != nil {
+			return err
+		}
+	}
+	if f.failSetErr != nil && (f.failPaneNative == "" || f.failPaneNative == pane.Native) && (f.failSetFor == "" || f.failSetFor == contextID) {
+		return f.failSetErr
+	}
 	return nil
 }
 
-func (f *fakeDaemonOwnershipBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+func (f *fakeDaemonOwnershipBackend) ClearPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) error {
+	if f.clearPaneErr != nil {
+		return f.clearPaneErr
+	}
+	if f.paneMarkers != nil {
+		delete(f.paneMarkers, pane.Native)
+	}
 	return nil
 }
 

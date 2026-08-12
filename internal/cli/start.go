@@ -147,7 +147,15 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	return fresh, collisions, herdrToken, nil
 }
 
-func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
+type freshHerdrPublicationOutcome int
+
+const (
+	freshHerdrPublicationPublished freshHerdrPublicationOutcome = iota
+	freshHerdrPublicationStale
+	freshHerdrPublicationFailed
+)
+
+func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) (freshHerdrPublicationOutcome, error) {
 	prepare := func(publication *herdrruntime.FinalPublication) error {
 		for _, nodeInfo := range fresh {
 			if nodeInfo.PaneID == "" {
@@ -165,17 +173,25 @@ func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime 
 		}
 	}
 	if herdrRuntime != nil {
-		return herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, prepare, commit) == nil
+		err := herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, prepare, commit)
+		switch {
+		case err == nil:
+			return freshHerdrPublicationPublished, nil
+		case errors.Is(err, herdrruntime.ErrStaleFinalReconcileToken):
+			return freshHerdrPublicationStale, nil
+		default:
+			return freshHerdrPublicationFailed, err
+		}
 	}
 	publication := herdrruntime.NewFinalPublication()
 	if err := prepare(publication); err != nil {
 		if rollbackErr := publication.Rollback(); rollbackErr != nil {
-			log.Printf("postman: WARNING: failed to roll back fresh node ownership publication: %v\n", rollbackErr)
+			return freshHerdrPublicationFailed, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
 		}
-		return false
+		return freshHerdrPublicationFailed, err
 	}
 	commit()
-	return true
+	return freshHerdrPublicationPublished, nil
 }
 
 func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID {
@@ -536,7 +552,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		activationNodesLocal := activationNodeNames(cfg)
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
-		if !publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes) {
+		outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes)
+		switch {
+		case publishErr != nil:
+			log.Printf("postman: startup re-discovery failed to publish fresh nodes: %v\n", publishErr)
+			return
+		case outcome == freshHerdrPublicationStale:
 			log.Printf("postman: startup re-discovery skipped stale Herdr snapshot (%d nodes)\n", len(fresh))
 			return
 		}
@@ -750,9 +771,13 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
-							if publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes) {
+							outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes)
+							switch {
+							case publishErr != nil:
+								log.Printf("postman: PING refresh failed to publish fresh nodes: %v\n", publishErr)
+							case outcome == freshHerdrPublicationPublished:
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
-							} else {
+							case outcome == freshHerdrPublicationStale:
 								log.Printf("postman: PING refresh skipped stale Herdr snapshot (%d nodes)\n", len(freshNodes))
 							}
 						}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -2588,6 +2589,154 @@ func TestDiscoverNodesDoesNotPublishHerdrCollisionLoserDuringFinalization(t *tes
 	}
 	if err := herdrRuntime.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("daemon Herdr collision loser ownership route was addressable during finalization")
+	}
+}
+
+func TestDiscoverNodesRollsBackNonHerdrPrepareClaimOnLaterFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeDaemonHerdrClient{snapshot: daemonEmptyHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Nodes = map[string]config.NodeConfig{"alpha": {}, "zeta": {}}
+	cfg.Herdr = daemonHerdrConfig()
+	herdrRuntime, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("herdrruntime.New() error = %v", err)
+	}
+	t.Cleanup(herdrRuntime.Close)
+
+	claimErr := errors.New("claim failed")
+	backend := &fakeDaemonOwnershipBackend{
+		kind:           multiplexer.BackendKindTmux,
+		paneMarkers:    map[string]string{"%1": "ctx-old"},
+		failPaneNative: "%2",
+		failSetFor:     contextID,
+		failSetErr:     claimErr,
+	}
+	originalDiscover := discoverNodesWithCollisionsForRuntime
+	discoverNodesWithCollisionsForRuntime = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"work:alpha": {
+				PaneID:      "%1",
+				SessionName: sessionName,
+				SessionDir:  sessionDir,
+				Backend:     string(multiplexer.BackendKindTmux),
+			},
+			"work:zeta": {
+				PaneID:      "%2",
+				SessionName: sessionName,
+				SessionDir:  sessionDir,
+				Backend:     string(multiplexer.BackendKindTmux),
+			},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesWithCollisionsForRuntime = originalDiscover })
+
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		contextID:    contextID,
+		selfSession:  sessionName,
+		cfg:          cfg,
+		herdrRuntime: herdrRuntime,
+		daemonState: &DaemonState{
+			contextID:        contextID,
+			enabledSessions:  map[string]bool{sessionName: true},
+			ownershipBackend: backend,
+		},
+		claimedPanes: map[string]bool{},
+	}
+
+	if _, _, err := rt.discoverNodes(); !errors.Is(err, claimErr) {
+		t.Fatalf("discoverNodes() error = %v, want claim failure", err)
+	}
+	if got := backend.paneMarkers["%1"]; got != "ctx-old" {
+		t.Fatalf("marker for earlier pane = %q, want restored ctx-old", got)
+	}
+	if got := backend.paneMarkers["%2"]; got != "" {
+		t.Fatalf("marker for failed pane = %q, want cleared", got)
+	}
+	if len(rt.nodes) != 0 {
+		t.Fatalf("runtime nodes committed after failed prepare: %#v", rt.nodes)
+	}
+	if len(rt.claimedPanes) != 0 {
+		t.Fatalf("claimedPanes committed after failed prepare: %#v", rt.claimedPanes)
+	}
+}
+
+func TestDiscoverNodesPropagatesNonHerdrPrepareRollbackFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeDaemonHerdrClient{snapshot: daemonEmptyHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Nodes = map[string]config.NodeConfig{"alpha": {}, "zeta": {}}
+	cfg.Herdr = daemonHerdrConfig()
+	herdrRuntime, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("herdrruntime.New() error = %v", err)
+	}
+	t.Cleanup(herdrRuntime.Close)
+
+	claimErr := errors.New("claim failed")
+	rollbackErr := errors.New("rollback failed")
+	backend := &fakeDaemonOwnershipBackend{
+		kind:        multiplexer.BackendKindTmux,
+		paneMarkers: map[string]string{"%1": "ctx-old"},
+		failSetByPaneContext: map[string]error{
+			"%1\x00ctx-old":      rollbackErr,
+			"%2\x00" + contextID: claimErr,
+		},
+	}
+	originalDiscover := discoverNodesWithCollisionsForRuntime
+	discoverNodesWithCollisionsForRuntime = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"work:alpha": {
+				PaneID:      "%1",
+				SessionName: sessionName,
+				SessionDir:  sessionDir,
+				Backend:     string(multiplexer.BackendKindTmux),
+			},
+			"work:zeta": {
+				PaneID:      "%2",
+				SessionName: sessionName,
+				SessionDir:  sessionDir,
+				Backend:     string(multiplexer.BackendKindTmux),
+			},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesWithCollisionsForRuntime = originalDiscover })
+
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		contextID:    contextID,
+		selfSession:  sessionName,
+		cfg:          cfg,
+		herdrRuntime: herdrRuntime,
+		daemonState: &DaemonState{
+			contextID:        contextID,
+			enabledSessions:  map[string]bool{sessionName: true},
+			ownershipBackend: backend,
+		},
+		claimedPanes: map[string]bool{},
+	}
+
+	if _, _, err := rt.discoverNodes(); !errors.Is(err, claimErr) || !errors.Is(err, rollbackErr) {
+		t.Fatalf("discoverNodes() error = %v, want claim and rollback failures", err)
 	}
 }
 

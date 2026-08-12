@@ -1595,16 +1595,25 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	if rt.herdrRuntime != nil {
 		claimedPanes := make([]string, 0)
 		prepare := func(publication *herdrruntime.FinalPublication) error {
-			for _, nodeInfo := range freshNodes {
+			nodeKeys := make([]string, 0, len(freshNodes))
+			for nodeKey := range freshNodes {
+				nodeKeys = append(nodeKeys, nodeKey)
+			}
+			sort.Strings(nodeKeys)
+			for _, nodeKey := range nodeKeys {
+				nodeInfo := freshNodes[nodeKey]
 				claimKey := claimedPaneKeyForNodeInfo(nodeInfo)
 				if claimKey == "" || rt.claimedPanes[claimKey] {
 					continue
 				}
 				backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
-				var backend multiplexer.OwnershipBackend
+				paneResource := paneResourceForNodeInfo(nodeInfo)
 				if backendKind == multiplexer.BackendKindHerdr {
-					backend = publication
+					if err := publication.SetPaneOwnerMarker(context.Background(), paneResource, rt.contextID); err != nil {
+						return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+					}
 				} else {
+					var backend multiplexer.OwnershipBackend
 					if rt.daemonState != nil {
 						backend = rt.daemonState.ownershipBackendForSessionName(nodeInfo.SessionName)
 					} else {
@@ -1614,9 +1623,9 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 							return fmt.Errorf("selecting ownership backend for pane %s: %w", nodeInfo.PaneID, backendErr)
 						}
 					}
-				}
-				if err := backend.SetPaneOwnerMarker(context.Background(), paneResourceForNodeInfo(nodeInfo), rt.contextID); err != nil {
-					return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+					if err := publication.SetPaneOwnerMarkerWithBackend(context.Background(), backend, paneResource, rt.contextID); err != nil {
+						return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+					}
 				}
 				claimedPanes = append(claimedPanes, claimKey)
 			}
@@ -1845,13 +1854,14 @@ func claimedPaneKeyForNodeInfo(nodeInfo discovery.NodeInfo) string {
 		return ""
 	}
 	pane := paneResourceForNodeInfo(nodeInfo)
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
 		pane.Backend,
 		pane.Kind,
 		pane.Native,
 		pane.HerdrRuntime.SocketPath,
 		pane.HerdrRuntime.SessionName,
 		pane.HerdrRuntime.WorkspaceID,
+		pane.HerdrRuntime.TabID,
 		pane.HerdrRuntime.PaneID,
 	)
 }

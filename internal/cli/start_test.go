@@ -242,11 +242,13 @@ func TestPublishFreshHerdrNodesRejectsStaleCLIRefreshSnapshot(t *testing.T) {
 	}
 
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
-	if !publishFreshHerdrNodes(context.Background(), contextID, rt, newToken, newNodes, &sharedNodes) {
-		t.Fatal("publishFreshHerdrNodes(new) = false, want true")
+	outcome, err := publishFreshHerdrNodes(context.Background(), contextID, rt, newToken, newNodes, &sharedNodes)
+	if err != nil || outcome != freshHerdrPublicationPublished {
+		t.Fatalf("publishFreshHerdrNodes(new) = %v, %v; want published", outcome, err)
 	}
-	if publishFreshHerdrNodes(context.Background(), contextID, rt, oldToken, oldNodes, &sharedNodes) {
-		t.Fatal("publishFreshHerdrNodes(old) = true, want stale rejection")
+	outcome, err = publishFreshHerdrNodes(context.Background(), contextID, rt, oldToken, oldNodes, &sharedNodes)
+	if err != nil || outcome != freshHerdrPublicationStale {
+		t.Fatalf("publishFreshHerdrNodes(old) = %v, %v; want stale rejection", outcome, err)
 	}
 
 	loaded := sharedNodes.Load()
@@ -263,6 +265,84 @@ func TestPublishFreshHerdrNodesRejectsStaleCLIRefreshSnapshot(t *testing.T) {
 	newTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-new"}}
 	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
 		t.Fatalf("new CLI refresh route missing after stale publish attempt: %v", err)
+	}
+}
+
+func TestPublishFreshHerdrNodesNoRuntimeReturnsPrepareFailureAndKeepsSharedNodes(t *testing.T) {
+	claimErr := errors.New("claim failed")
+	backend := &fakeCLIOwnershipBackend{
+		kind:        multiplexer.BackendKindHerdr,
+		paneMarkers: map[string]string{"workspace-1:pane-1": "ctx-old"},
+		failSetFor:  "ctx-new",
+		failSetErr:  claimErr,
+	}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	oldNodes := map[string]discovery.NodeInfo{"work:worker": {PaneID: "workspace-old:pane-1"}}
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes.Store(&oldNodes)
+	fresh := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:           "workspace-1:pane-1",
+			SessionName:      "work",
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  "/tmp/herdr.sock",
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       "workspace-1:tab-1",
+		},
+	}
+
+	outcome, err := publishFreshHerdrNodes(context.Background(), "ctx-new", nil, 0, fresh, &sharedNodes)
+
+	if outcome != freshHerdrPublicationFailed {
+		t.Fatalf("publishFreshHerdrNodes() outcome = %v, want failed", outcome)
+	}
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want claim failure", err)
+	}
+	if got := backend.paneMarkers["workspace-1:pane-1"]; got != "ctx-old" {
+		t.Fatalf("pane marker after failed no-runtime publish = %q, want restored ctx-old", got)
+	}
+	if loaded := sharedNodes.Load(); loaded == nil || (*loaded)["work:worker"].PaneID != "workspace-old:pane-1" {
+		t.Fatalf("sharedNodes after failed no-runtime publish = %#v, want prior snapshot", loaded)
+	}
+}
+
+func TestPublishFreshHerdrNodesNoRuntimeReturnsRollbackFailure(t *testing.T) {
+	claimErr := errors.New("claim failed")
+	rollbackErr := errors.New("rollback failed")
+	backend := &fakeCLIOwnershipBackend{
+		kind:        multiplexer.BackendKindHerdr,
+		paneMarkers: map[string]string{},
+		failSetFor:  "ctx-new",
+		failSetErr:  claimErr,
+		clearErr:    rollbackErr,
+	}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	fresh := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:           "workspace-1:pane-1",
+			SessionName:      "work",
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  "/tmp/herdr.sock",
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       "workspace-1:tab-1",
+		},
+	}
+
+	outcome, err := publishFreshHerdrNodes(context.Background(), "ctx-new", nil, 0, fresh, nil)
+
+	if outcome != freshHerdrPublicationFailed {
+		t.Fatalf("publishFreshHerdrNodes() outcome = %v, want failed", outcome)
+	}
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want claim failure", err)
+	}
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want rollback failure", err)
 	}
 }
 
@@ -1090,6 +1170,53 @@ func (f *fakeCLIHerdrClient) SetPaneMetadata(context.Context, string, string, st
 
 func (f *fakeCLIHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+type fakeCLIOwnershipBackend struct {
+	kind        multiplexer.BackendKind
+	paneMarkers map[string]string
+	failSetFor  string
+	failSetErr  error
+	clearErr    error
+}
+
+func (f *fakeCLIOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeCLIOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeCLIOwnershipBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) PaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) (string, error) {
+	return f.paneMarkers[pane.Native], nil
+}
+
+func (f *fakeCLIOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID, contextID string) error {
+	if f.paneMarkers == nil {
+		f.paneMarkers = make(map[string]string)
+	}
+	f.paneMarkers[pane.Native] = contextID
+	if contextID == f.failSetFor {
+		return f.failSetErr
+	}
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) ClearPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) error {
+	if f.clearErr != nil {
+		return f.clearErr
+	}
+	delete(f.paneMarkers, pane.Native)
+	return nil
 }
 
 func validCLIHerdrConfig() config.HerdrConfig {

@@ -17,6 +17,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
 
+var ErrStaleFinalReconcileToken = errors.New("stale Herdr final reconcile token")
+
 type ClientFactory func(config.HerdrConfig) (multiplexer.HerdrReadClient, error)
 
 type Runtime struct {
@@ -103,6 +105,23 @@ func (p *FinalPublication) SetPaneOwnerMarker(ctx context.Context, pane multiple
 	backend, err := p.ownershipBackendForPane(pane)
 	if err != nil {
 		return err
+	}
+	return p.setPaneOwnerMarkerWithBackend(ctx, backend, pane, contextID)
+}
+
+func (p *FinalPublication) SetPaneOwnerMarkerWithBackend(ctx context.Context, backend multiplexer.OwnershipBackend, pane multiplexer.ResourceID, contextID string) error {
+	if p == nil {
+		if backend == nil {
+			return fmt.Errorf("ownership backend missing for pane %s", pane.Native)
+		}
+		return backend.SetPaneOwnerMarker(ctx, pane, contextID)
+	}
+	if backend == nil {
+		var err error
+		backend, err = p.ownershipBackendForPane(pane)
+		if err != nil {
+			return err
+		}
 	}
 	return p.setPaneOwnerMarkerWithBackend(ctx, backend, pane, contextID)
 }
@@ -460,7 +479,7 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.closed || (generation != 0 && rt.generation != generation) {
-		return fmt.Errorf("stale Herdr final reconcile token")
+		return ErrStaleFinalReconcileToken
 	}
 	multiplexer.LockHerdrPublicationWrite()
 	var displacedCleanup func()
