@@ -699,6 +699,21 @@ func (m *ownershipMux) HerdrRuntimeIdentity() multiplexer.HerdrRuntimeIdentity {
 	return m.runtime
 }
 
+func (m *ownershipMux) HerdrRuntimeOwnershipIdentities() []multiplexer.HerdrRuntimeIdentity {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	seen := map[multiplexer.HerdrRuntimeIdentity]bool{}
+	for key := range m.snapshot.byPane {
+		r := multiplexer.HerdrRuntimeIdentity{SocketPath: key.SocketPath, SessionName: key.SessionName, WorkspaceID: key.WorkspaceID, TabID: key.TabID, PaneID: key.PaneID}
+		seen[r] = true
+	}
+	out := make([]multiplexer.HerdrRuntimeIdentity, 0, len(seen))
+	for r := range seen {
+		out = append(out, r)
+	}
+	return out
+}
+
 func (m *ownershipMux) clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

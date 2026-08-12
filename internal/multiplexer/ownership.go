@@ -28,6 +28,7 @@ type HerdrRuntimeOwnershipBackend interface {
 	OwnershipBackend
 	HerdrRuntimeIdentity() HerdrRuntimeIdentity
 }
+type HerdrRuntimeOwnershipIdentitySet interface{ HerdrRuntimeOwnershipIdentities() []HerdrRuntimeIdentity }
 
 var (
 	registeredOwnershipBackends   sync.Map
@@ -253,14 +254,23 @@ func (h herdrOwnershipBackends) backendForPaneRuntime(pane ResourceID) (Ownershi
 		if !ok {
 			continue
 		}
-		if !matchesHerdrRuntimeIdentity(runtimeBackend.HerdrRuntimeIdentity(), runtime) {
-			continue
+		identities := []HerdrRuntimeIdentity{runtimeBackend.HerdrRuntimeIdentity()}
+		if set, ok := backend.(HerdrRuntimeOwnershipIdentitySet); ok {
+			identities = set.HerdrRuntimeOwnershipIdentities()
 		}
-		if found {
-			return nil, false, fmt.Errorf("ambiguous herdr ownership backend for pane %q", pane.Native)
+		if len(identities) == 0 {
+			identities = []HerdrRuntimeIdentity{runtimeBackend.HerdrRuntimeIdentity()}
 		}
-		selected = backend
-		found = true
+		for _, identity := range identities {
+			if !matchesHerdrRuntimeIdentity(identity, runtime) {
+				continue
+			}
+			if found {
+				return nil, false, fmt.Errorf("ambiguous herdr ownership backend for pane %q", pane.Native)
+			}
+			selected = backend
+			found = true
+		}
 	}
 	return selected, found, nil
 }
