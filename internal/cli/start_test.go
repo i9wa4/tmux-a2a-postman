@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -198,16 +199,70 @@ func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering
 	if firstFilter == -1 {
 		t.Fatal("startup rediscovery activation filter not found")
 	}
-	if !strings.Contains(source[firstFilter:], "herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh)") {
-		t.Fatal("startup rediscovery no longer reconciles Herdr routes after activation filtering")
+	if !strings.Contains(source[firstFilter:], "publishFreshHerdrNodes(herdrRuntime, herdrToken, fresh, &sharedNodes)") {
+		t.Fatal("startup rediscovery no longer publishes Herdr routes after activation filtering")
 	}
 
 	secondFilter := strings.Index(source, "freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)")
 	if secondFilter == -1 {
 		t.Fatal("on-demand refresh activation filter not found")
 	}
-	if !strings.Contains(source[secondFilter:], "herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)") {
-		t.Fatal("on-demand refresh no longer reconciles Herdr routes after activation filtering")
+	if !strings.Contains(source[secondFilter:], "publishFreshHerdrNodes(herdrRuntime, herdrToken, freshNodes, &sharedNodes)") {
+		t.Fatal("on-demand refresh no longer publishes Herdr routes after activation filtering")
+	}
+}
+
+func TestPublishFreshHerdrNodesRejectsStaleCLIRefreshSnapshot(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeCLIHerdrClient{snapshot: cliHerdrSnapshotFor("workspace-1:pane-old")}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldNodes, _, oldToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("old DiscoverForReconcile() error = %v", err)
+	}
+	client.snapshot = cliHerdrSnapshotFor("workspace-1:pane-new")
+	newNodes, _, newToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("new DiscoverForReconcile() error = %v", err)
+	}
+
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	if !publishFreshHerdrNodes(rt, newToken, newNodes, &sharedNodes) {
+		t.Fatal("publishFreshHerdrNodes(new) = false, want true")
+	}
+	if publishFreshHerdrNodes(rt, oldToken, oldNodes, &sharedNodes) {
+		t.Fatal("publishFreshHerdrNodes(old) = true, want stale rejection")
+	}
+
+	loaded := sharedNodes.Load()
+	if loaded == nil {
+		t.Fatal("sharedNodes.Load() = nil")
+	}
+	if got := (*loaded)["work:worker"].PaneID; got != "workspace-1:pane-new" {
+		t.Fatalf("sharedNodes work:worker pane = %q, want newest pane", got)
+	}
+	oldTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-old"}}
+	if _, err := controlplane.DefaultHandAdapter(oldTarget); err == nil {
+		t.Fatal("stale CLI refresh registered old Herdr route")
+	}
+	newTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-new"}}
+	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
+		t.Fatalf("new CLI refresh route missing after stale publish attempt: %v", err)
 	}
 }
 
@@ -1038,6 +1093,24 @@ func validCLIHerdrConfig() config.HerdrConfig {
 }
 
 func validCLIDuplicateHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
+	return cliHerdrSnapshotWithPanes("workspace-1:pane-1", "workspace-1:pane-2")
+}
+
+func cliHerdrSnapshotFor(paneID string) multiplexer.HerdrSessionSnapshot {
+	return cliHerdrSnapshotWithPanes(paneID)
+}
+
+func cliHerdrSnapshotWithPanes(paneIDs ...string) multiplexer.HerdrSessionSnapshot {
+	panes := make([]multiplexer.HerdrPaneSnapshot, 0, len(paneIDs))
+	for _, paneID := range paneIDs {
+		panes = append(panes, multiplexer.HerdrPaneSnapshot{
+			ID:          paneID,
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+			PostmanNode: "worker",
+			ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		})
+	}
 	return multiplexer.HerdrSessionSnapshot{
 		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
 		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
@@ -1049,21 +1122,6 @@ func validCLIDuplicateHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
 			WorkspaceID: "workspace-1",
 			Metadata:    map[string]string{},
 		}},
-		Panes: []multiplexer.HerdrPaneSnapshot{
-			{
-				ID:          "workspace-1:pane-1",
-				WorkspaceID: "workspace-1",
-				TabID:       "workspace-1:tab-1",
-				PostmanNode: "worker",
-				ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-			},
-			{
-				ID:          "workspace-1:pane-2",
-				WorkspaceID: "workspace-1",
-				TabID:       "workspace-1:tab-1",
-				PostmanNode: "worker",
-				ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-			},
-		},
+		Panes: panes,
 	}
 }

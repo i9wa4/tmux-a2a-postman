@@ -1588,8 +1588,8 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		}
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
-	if rt.herdrRuntime != nil {
-		rt.herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)
+	if rt.herdrRuntime != nil && !rt.herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes) {
+		return nil, nil, fmt.Errorf("stale Herdr final reconcile token")
 	}
 	return freshNodes, collisions, nil
 }

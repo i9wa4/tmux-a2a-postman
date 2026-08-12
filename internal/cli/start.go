@@ -147,6 +147,16 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	return fresh, collisions, herdrToken, nil
 }
 
+func publishFreshHerdrNodes(herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
+	if herdrRuntime != nil && !herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh) {
+		return false
+	}
+	if sharedNodes != nil {
+		sharedNodes.Store(&fresh)
+	}
+	return true
+}
+
 func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
 	if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
 		return herdrRuntime.SetSessionEnabledMarker(ctx, contextID, sessionName, enabled)
@@ -484,10 +494,10 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		activationNodesLocal := activationNodeNames(cfg)
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
-		if herdrRuntime != nil {
-			herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh)
+		if !publishFreshHerdrNodes(herdrRuntime, herdrToken, fresh, &sharedNodes) {
+			log.Printf("postman: startup re-discovery skipped stale Herdr snapshot (%d nodes)\n", len(fresh))
+			return
 		}
-		sharedNodes.Store(&fresh)
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
 	})
 
@@ -696,11 +706,11 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
-							if herdrRuntime != nil {
-								herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)
+							if publishFreshHerdrNodes(herdrRuntime, herdrToken, freshNodes, &sharedNodes) {
+								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
+							} else {
+								log.Printf("postman: PING refresh skipped stale Herdr snapshot (%d nodes)\n", len(freshNodes))
 							}
-							sharedNodes.Store(&freshNodes)
-							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 						}
 						if len(targetNodes) == 0 {
 							activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)

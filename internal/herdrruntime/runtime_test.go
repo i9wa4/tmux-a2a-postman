@@ -409,6 +409,16 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 	}
 
 	oldSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-old", "workspace-1:pane-old", "")
+	oldSnapshot.Panes = append(oldSnapshot.Panes, multiplexer.HerdrPaneSnapshot{
+		ID:             "workspace-1:pane-old-2",
+		WorkspaceID:    "workspace-1",
+		TabID:          "workspace-1:tab-old",
+		Metadata:       map[string]string{"postman.node": "worker-2"},
+		Env:            map[string]string{},
+		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		PostmanNode:    "worker-2",
+		PostmanSession: "work",
+	})
 	newSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-new", "workspace-1:pane-new", "")
 	oldCall := newControlledRuntimeSnapshot(oldSnapshot, nil)
 	newCall := newControlledRuntimeSnapshot(newSnapshot, nil)
@@ -447,7 +457,9 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 	if len(newer.collisions) != 0 {
 		t.Fatalf("newer collisions = %#v, want none", newer.collisions)
 	}
-	rt.ReconcileFinalNodesForToken(newer.token, newer.nodes)
+	if !rt.ReconcileFinalNodesForToken(newer.token, newer.nodes) {
+		t.Fatal("newer ReconcileFinalNodesForToken() accepted = false, want true")
+	}
 
 	newTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-new"}}
 	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
@@ -459,14 +471,92 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 	if older.err != nil {
 		t.Fatalf("older DiscoverForReconcile() error = %v", older.err)
 	}
-	rt.ReconcileFinalNodesForToken(older.token, older.nodes)
+	if rt.ReconcileFinalNodesForToken(older.token, older.nodes) {
+		t.Fatal("older ReconcileFinalNodesForToken() accepted = true, want stale rejection")
+	}
 
-	oldTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-old"}}
-	if _, err := controlplane.DefaultHandAdapter(oldTarget); err == nil {
-		t.Fatal("older successful discovery registered stale Herdr adapter")
+	for _, paneID := range []string{"workspace-1:pane-old", "workspace-1:pane-old-2"} {
+		oldTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: paneID}}
+		if _, err := controlplane.DefaultHandAdapter(oldTarget); err == nil {
+			t.Fatalf("older successful discovery registered stale Herdr adapter for %s", paneID)
+		}
 	}
 	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
 		t.Fatalf("newer Herdr adapter was removed by stale older reconcile: %v", err)
+	}
+}
+
+func TestRuntimeStaleZeroPaneReconcileDoesNotPruneNewerRoutesOrWorkspaceOwner(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	oldSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-old", "workspace-1:pane-old", "")
+	oldSnapshot.Panes = nil
+	newSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-new", "workspace-1:pane-new", "ctx-new:1")
+	oldCall := newControlledRuntimeSnapshot(oldSnapshot, nil)
+	newCall := newControlledRuntimeSnapshot(newSnapshot, nil)
+	client := &sequencedRuntimeHerdrClient{calls: make(chan *controlledRuntimeSnapshot, 2)}
+	client.calls <- oldCall
+	client.calls <- newCall
+
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldResult := make(chan runtimeDiscoverResult, 1)
+	go func() {
+		nodes, collisions, token, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+		oldResult <- runtimeDiscoverResult{nodes: nodes, collisions: collisions, token: token, err: err}
+	}()
+	<-oldCall.started
+
+	newResult := make(chan runtimeDiscoverResult, 1)
+	go func() {
+		nodes, collisions, token, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+		newResult <- runtimeDiscoverResult{nodes: nodes, collisions: collisions, token: token, err: err}
+	}()
+	<-newCall.started
+	close(newCall.release)
+	newer := <-newResult
+	if newer.err != nil {
+		t.Fatalf("newer DiscoverForReconcile() error = %v", newer.err)
+	}
+	if !rt.ReconcileFinalNodesForToken(newer.token, newer.nodes) {
+		t.Fatal("newer ReconcileFinalNodesForToken() accepted = false, want true")
+	}
+
+	close(oldCall.release)
+	older := <-oldResult
+	if older.err != nil {
+		t.Fatalf("older DiscoverForReconcile() error = %v", older.err)
+	}
+	if rt.ReconcileFinalNodesForToken(older.token, older.nodes) {
+		t.Fatal("older zero-pane ReconcileFinalNodesForToken() accepted = true, want stale rejection")
+	}
+
+	newTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-new"}}
+	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
+		t.Fatalf("newer Herdr adapter was removed by stale zero-pane reconcile: %v", err)
+	}
+	verifyCall := newControlledRuntimeSnapshot(newSnapshot, nil)
+	client.calls <- verifyCall
+	close(verifyCall.release)
+	owner, err := rt.OwnershipBackend().SessionOwnerMarker(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("SessionOwnerMarker(work) error = %v", err)
+	}
+	if owner != "ctx-new:1" {
+		t.Fatalf("SessionOwnerMarker(work) = %q, want newer owner", owner)
 	}
 }
 

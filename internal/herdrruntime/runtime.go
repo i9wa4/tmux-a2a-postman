@@ -187,13 +187,13 @@ func (rt *Runtime) discoverStillOpen() bool {
 	return !rt.closed
 }
 
-func (rt *Runtime) ReconcileFinalNodes(nodes map[string]discovery.NodeInfo) {
-	rt.ReconcileFinalNodesForToken(0, nodes)
+func (rt *Runtime) ReconcileFinalNodes(nodes map[string]discovery.NodeInfo) bool {
+	return rt.ReconcileFinalNodesForToken(0, nodes)
 }
 
-func (rt *Runtime) ReconcileFinalNodesForToken(generation uint64, nodes map[string]discovery.NodeInfo) {
+func (rt *Runtime) ReconcileFinalNodesForToken(generation uint64, nodes map[string]discovery.NodeInfo) bool {
 	if rt == nil {
-		return
+		return false
 	}
 	livePanes := make(map[string]bool)
 	paneBackends := make(map[string]multiplexer.HerdrBackend)
@@ -204,26 +204,27 @@ func (rt *Runtime) ReconcileFinalNodesForToken(generation uint64, nodes map[stri
 		livePanes[nodeInfo.PaneID] = true
 		paneBackends[nodeInfo.PaneID] = rt.backendForPane(nodeInfo.HerdrTabID, nodeInfo.PaneID)
 	}
-	if len(paneBackends) == 0 {
-		if !rt.reconcilePaneBackends(generation, livePanes) {
-			return
-		}
-		if !rt.setWorkspaceSessionBackend(generation, rt.backendForWorkspace()) {
-			return
-		}
-		return
-	}
 	paneIDs := make([]string, 0, len(paneBackends))
 	for paneID := range paneBackends {
 		paneIDs = append(paneIDs, paneID)
 	}
 	sort.Strings(paneIDs)
-	for _, paneID := range paneIDs {
-		if !rt.registerPaneBackend(generation, paneID, paneBackends[paneID]) {
-			return
-		}
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.closed || (generation != 0 && rt.generation != generation) {
+		return false
 	}
-	rt.reconcilePaneBackends(generation, livePanes)
+	if len(paneBackends) == 0 {
+		rt.prunePaneBackendsLocked(livePanes)
+		rt.ownershipBackend.setWorkspaceSessionBackend(rt.backendForWorkspace())
+		return true
+	}
+	for _, paneID := range paneIDs {
+		rt.registerPaneBackendLocked(paneID, paneBackends[paneID])
+	}
+	rt.prunePaneBackendsLocked(livePanes)
+	return true
 }
 
 func (rt *Runtime) ClearPaneRoutes() {
@@ -300,6 +301,11 @@ func (rt *Runtime) registerPaneBackend(generation uint64, paneID string, backend
 	if rt.closed || (generation != 0 && rt.generation != generation) {
 		return false
 	}
+	rt.registerPaneBackendLocked(paneID, backend)
+	return true
+}
+
+func (rt *Runtime) registerPaneBackendLocked(paneID string, backend multiplexer.HerdrBackend) {
 	rt.ownershipBackend.setPaneBackend(paneID, backend)
 	rt.registeredPanes[paneID] = true
 	if cleanup, ok := rt.paneCleanups[paneID]; ok {
@@ -311,7 +317,6 @@ func (rt *Runtime) registerPaneBackend(generation uint64, paneID string, backend
 			InputSanitizer: notification.PrepareInteractivePaneMessage,
 		},
 	})
-	return true
 }
 
 func (rt *Runtime) reconcilePaneBackends(generation uint64, livePanes map[string]bool) bool {
@@ -320,6 +325,11 @@ func (rt *Runtime) reconcilePaneBackends(generation uint64, livePanes map[string
 	if rt.closed || (generation != 0 && rt.generation != generation) {
 		return false
 	}
+	rt.prunePaneBackendsLocked(livePanes)
+	return true
+}
+
+func (rt *Runtime) prunePaneBackendsLocked(livePanes map[string]bool) {
 	for paneID := range rt.registeredPanes {
 		if livePanes[paneID] {
 			continue
@@ -331,7 +341,6 @@ func (rt *Runtime) reconcilePaneBackends(generation uint64, livePanes map[string
 		delete(rt.registeredPanes, paneID)
 		rt.ownershipBackend.deletePaneBackend(paneID)
 	}
-	return true
 }
 
 type ownershipMux struct {
