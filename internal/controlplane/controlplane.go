@@ -59,7 +59,7 @@ type herdrHandAdapterKey struct {
 }
 
 var (
-	registeredHerdrHandAdapters   = make(map[herdrHandAdapterKey]*registeredHerdrHandAdapter)
+	registeredHerdrHandAdapters   = make(map[herdrHandAdapterKey][]*registeredHerdrHandAdapter)
 	registeredHerdrHandAdaptersMu sync.RWMutex
 	herdrHandAdapterToken         atomic.Uint64
 	herdrHandAdapterCleanupHook   func(herdrHandAdapterKey, *registeredHerdrHandAdapter)
@@ -206,7 +206,7 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 	token := herdrHandAdapterToken.Add(1)
 	registeredHerdrHandAdaptersMu.Lock()
 	for _, key := range keys {
-		registeredHerdrHandAdapters[key] = &registeredHerdrHandAdapter{token: token, adapter: adapter}
+		registeredHerdrHandAdapters[key] = append(registeredHerdrHandAdapters[key], &registeredHerdrHandAdapter{token: token, adapter: adapter})
 	}
 	registeredHerdrHandAdaptersMu.Unlock()
 	return func() {
@@ -216,12 +216,22 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 		}
 		registeredHerdrHandAdaptersMu.Lock()
 		for _, key := range keys {
-			if current, ok := registeredHerdrHandAdapters[key]; ok && current.token == token {
+			current := registeredHerdrHandAdapters[key]
+			kept := current[:0]
+			for _, candidate := range current {
+				if candidate.token != token {
+					kept = append(kept, candidate)
+					continue
+				}
 				observed = append(observed, struct {
 					key     herdrHandAdapterKey
 					current *registeredHerdrHandAdapter
-				}{key: key, current: current})
+				}{key: key, current: candidate})
+			}
+			if len(kept) == 0 {
 				delete(registeredHerdrHandAdapters, key)
+			} else {
+				registeredHerdrHandAdapters[key] = kept
 			}
 		}
 		registeredHerdrHandAdaptersMu.Unlock()
@@ -265,12 +275,21 @@ func ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner string, adapters map[m
 	}
 	registeredHerdrHandAdaptersMu.Lock()
 	for key, current := range registeredHerdrHandAdapters {
-		if current.owner == owner {
+		kept := current[:0]
+		for _, candidate := range current {
+			if candidate.owner != owner {
+				kept = append(kept, candidate)
+				continue
+			}
 			displaced = append(displaced, struct {
 				key     herdrHandAdapterKey
 				current *registeredHerdrHandAdapter
-			}{key: key, current: current})
+			}{key: key, current: candidate})
+		}
+		if len(kept) == 0 {
 			delete(registeredHerdrHandAdapters, key)
+		} else {
+			registeredHerdrHandAdapters[key] = kept
 		}
 	}
 	for runtime, adapter := range adapters {
@@ -279,7 +298,7 @@ func ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner string, adapters map[m
 			paneID = adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime.PaneID
 		}
 		for _, key := range herdrHandAdapterKeysForRegistration(runtime, paneID) {
-			registeredHerdrHandAdapters[key] = &registeredHerdrHandAdapter{owner: owner, token: token, adapter: adapter}
+			registeredHerdrHandAdapters[key] = append(registeredHerdrHandAdapters[key], &registeredHerdrHandAdapter{owner: owner, token: token, adapter: adapter})
 		}
 	}
 	registeredHerdrHandAdaptersMu.Unlock()
@@ -297,12 +316,21 @@ func ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner string, adapters map[m
 		}
 		registeredHerdrHandAdaptersMu.Lock()
 		for key, current := range registeredHerdrHandAdapters {
-			if current.owner == owner && current.token == token {
+			kept := current[:0]
+			for _, candidate := range current {
+				if candidate.owner != owner || candidate.token != token {
+					kept = append(kept, candidate)
+					continue
+				}
 				observed = append(observed, struct {
 					key     herdrHandAdapterKey
 					current *registeredHerdrHandAdapter
-				}{key: key, current: current})
+				}{key: key, current: candidate})
+			}
+			if len(kept) == 0 {
 				delete(registeredHerdrHandAdapters, key)
+			} else {
+				registeredHerdrHandAdapters[key] = kept
 			}
 		}
 		registeredHerdrHandAdaptersMu.Unlock()
@@ -360,6 +388,18 @@ func herdrHandAdapterKeysForTarget(target Target) []herdrHandAdapterKey {
 		keys = append(keys, herdrHandAdapterKeyForRuntime(runtime, target.Hand.Address))
 	}
 	return keys
+}
+
+func registeredHerdrHandAdapterForKeyLocked(key herdrHandAdapterKey) (*registeredHerdrHandAdapter, bool, error) {
+	candidates := registeredHerdrHandAdapters[key]
+	switch len(candidates) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		return candidates[0], true, nil
+	default:
+		return nil, true, fmt.Errorf("ambiguous herdr hand adapter registration for pane %q", key.PaneID)
+	}
 }
 
 func (HerdrInteractiveDeliveryAdapter) Kind() HandKind {
@@ -531,7 +571,11 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 		registeredHerdrHandAdaptersMu.RLock()
 		defer registeredHerdrHandAdaptersMu.RUnlock()
 		for _, key := range herdrHandAdapterKeysForTarget(target) {
-			if registration, ok := registeredHerdrHandAdapters[key]; ok {
+			registration, ok, err := registeredHerdrHandAdapterForKeyLocked(key)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
 				return generationBoundHerdrHandAdapter{
 					generation: multiplexer.HerdrPublicationGenerationLocked(),
 					adapter:    registration.adapter,

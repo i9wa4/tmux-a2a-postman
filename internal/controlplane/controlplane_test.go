@@ -438,6 +438,96 @@ func TestDefaultHandAdapterKeepsOverlappingHerdrPaneIDsIsolatedByTab(t *testing.
 	}
 }
 
+func TestDefaultHandAdapterRejectsAmbiguousReducedHerdrTabFallback(t *testing.T) {
+	owner := "tab-ambiguous-owner"
+	paneID := "shared-native-pane-reduced"
+	tabOne := "workspace-1:tab-1"
+	tabTwo := "workspace-1:tab-2"
+
+	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.TabID = tabOne
+	firstConfig.Runtime.PaneID = paneID
+	firstClient.snapshot.Panes[0].ID = paneID
+	firstClient.snapshot.Panes[0].TabID = tabOne
+
+	secondClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	secondConfig := validHerdrControlplaneConfig()
+	secondConfig.Runtime.TabID = tabTwo
+	secondConfig.Runtime.PaneID = paneID
+	secondClient.snapshot.Tabs = append(secondClient.snapshot.Tabs, multiplexer.HerdrTabSnapshot{ID: tabTwo, WorkspaceID: "workspace-1"})
+	secondClient.snapshot.Panes[0].ID = paneID
+	secondClient.snapshot.Panes[0].TabID = tabTwo
+
+	replacement := ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner, map[multiplexer.HerdrRuntimeIdentity]HerdrHandAdapter{
+		firstConfig.Runtime: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+			},
+		},
+		secondConfig.Runtime: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: secondConfig, Client: secondClient},
+			},
+		},
+	})
+	replacement.DisplacedCleanup()
+	t.Cleanup(replacement.Cleanup)
+
+	firstTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: firstConfig.Runtime}}
+	firstAdapter, err := DefaultHandAdapter(firstTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(first exact) error = %v", err)
+	}
+	if err := firstAdapter.Deliver(firstTarget, PaneDelivery{Content: "first"}); err != nil {
+		t.Fatalf("Deliver(first exact) error = %v", err)
+	}
+
+	secondTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: secondConfig.Runtime}}
+	secondAdapter, err := DefaultHandAdapter(secondTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(second exact) error = %v", err)
+	}
+	if err := secondAdapter.Deliver(secondTarget, PaneDelivery{Content: "second"}); err != nil {
+		t.Fatalf("Deliver(second exact) error = %v", err)
+	}
+	if firstClient.writeTextCalls != 1 || secondClient.writeTextCalls != 1 {
+		t.Fatalf("exact write calls first=%d second=%d, want isolated deliveries", firstClient.writeTextCalls, secondClient.writeTextCalls)
+	}
+
+	reducedTarget := Target{
+		SessionName: firstConfig.Runtime.SessionName,
+		Hand:        HandAttachment{Kind: HandKindHerdr, Address: paneID},
+	}
+	if _, err := DefaultHandAdapter(reducedTarget); err == nil {
+		t.Fatal("DefaultHandAdapter(reduced ambiguous) succeeded, want fail-closed ambiguity")
+	}
+	if firstClient.writeTextCalls != 1 || secondClient.writeTextCalls != 1 {
+		t.Fatalf("ambiguous reduced lookup delivered unexpectedly: first=%d second=%d", firstClient.writeTextCalls, secondClient.writeTextCalls)
+	}
+
+	uniqueReplacement := ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner, map[multiplexer.HerdrRuntimeIdentity]HerdrHandAdapter{
+		firstConfig.Runtime: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+			},
+		},
+	})
+	uniqueReplacement.DisplacedCleanup()
+	t.Cleanup(uniqueReplacement.Cleanup)
+
+	uniqueAdapter, err := DefaultHandAdapter(reducedTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(reduced unique) error = %v", err)
+	}
+	if err := uniqueAdapter.Deliver(reducedTarget, PaneDelivery{Content: "unique"}); err != nil {
+		t.Fatalf("Deliver(reduced unique) error = %v", err)
+	}
+	if firstClient.writeTextCalls != 2 || secondClient.writeTextCalls != 1 {
+		t.Fatalf("unique fallback write calls first=%d second=%d, want first restored only", firstClient.writeTextCalls, secondClient.writeTextCalls)
+	}
+}
+
 func TestReplaceHerdrHandAdaptersForOwnerAtomicallySwapsVisibleSet(t *testing.T) {
 	owner := "runtime-owner"
 	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
