@@ -388,6 +388,54 @@ func TestDefaultHandAdapterKeepsOverlappingHerdrPaneIDsIsolatedByRuntime(t *test
 	}
 }
 
+func TestReplaceHerdrHandAdaptersForOwnerAtomicallySwapsVisibleSet(t *testing.T) {
+	owner := "runtime-owner"
+	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.PaneID = "pane-old"
+	firstClient.snapshot.Panes[0].ID = "pane-old"
+	firstCleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		"pane-old": {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+			},
+		},
+	})
+	t.Cleanup(firstCleanup)
+	oldTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: "pane-old", HerdrRuntimeID: firstConfig.Runtime}}
+	if _, err := DefaultHandAdapter(oldTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(old) error = %v", err)
+	}
+
+	secondClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	secondConfig := validHerdrControlplaneConfig()
+	secondConfig.Runtime.PaneID = "pane-new"
+	secondClient.snapshot.Panes[0].ID = "pane-new"
+	secondCleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		"pane-new": {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: secondConfig, Client: secondClient},
+			},
+		},
+	})
+	t.Cleanup(secondCleanup)
+
+	if _, err := DefaultHandAdapter(oldTarget); err == nil {
+		t.Fatal("old owner adapter remained visible after owner-scoped replacement")
+	}
+	newTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: "pane-new", HerdrRuntimeID: secondConfig.Runtime}}
+	adapter, err := DefaultHandAdapter(newTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(new) error = %v", err)
+	}
+	if err := adapter.Deliver(newTarget, PaneDelivery{Content: "new"}); err != nil {
+		t.Fatalf("Deliver(new) error = %v", err)
+	}
+	if secondClient.writeTextCalls != 1 {
+		t.Fatalf("new adapter write calls = %d, want visible replacement", secondClient.writeTextCalls)
+	}
+}
+
 func TestDefaultHandAdapterReverseCleanupKeepsOlderOverlappingHerdrRuntime(t *testing.T) {
 	paneID := "shared-native-pane-reverse"
 	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}

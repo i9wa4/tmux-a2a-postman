@@ -40,6 +40,7 @@ type HandAttachment struct {
 }
 
 type registeredHerdrHandAdapter struct {
+	owner   string
 	token   uint64
 	adapter HerdrHandAdapter
 }
@@ -52,9 +53,10 @@ type herdrHandAdapterKey struct {
 }
 
 var (
-	registeredHerdrHandAdapters sync.Map
-	herdrHandAdapterToken       atomic.Uint64
-	herdrHandAdapterCleanupHook func(herdrHandAdapterKey, *registeredHerdrHandAdapter)
+	registeredHerdrHandAdapters   = make(map[herdrHandAdapterKey]*registeredHerdrHandAdapter)
+	registeredHerdrHandAdaptersMu sync.RWMutex
+	herdrHandAdapterToken         atomic.Uint64
+	herdrHandAdapterCleanupHook   func(herdrHandAdapterKey, *registeredHerdrHandAdapter)
 )
 
 type Target struct {
@@ -196,19 +198,72 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 	}
 	keys := herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID)
 	token := herdrHandAdapterToken.Add(1)
+	registeredHerdrHandAdaptersMu.Lock()
 	for _, key := range keys {
-		registeredHerdrHandAdapters.Store(key, &registeredHerdrHandAdapter{token: token, adapter: adapter})
+		registeredHerdrHandAdapters[key] = &registeredHerdrHandAdapter{token: token, adapter: adapter}
 	}
+	registeredHerdrHandAdaptersMu.Unlock()
 	return func() {
+		var observed []struct {
+			key     herdrHandAdapterKey
+			current *registeredHerdrHandAdapter
+		}
+		registeredHerdrHandAdaptersMu.Lock()
 		for _, key := range keys {
-			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
-				current, ok := registered.(*registeredHerdrHandAdapter)
-				if ok && current.token == token {
-					if herdrHandAdapterCleanupHook != nil {
-						herdrHandAdapterCleanupHook(key, current)
-					}
-					registeredHerdrHandAdapters.CompareAndDelete(key, current)
-				}
+			if current, ok := registeredHerdrHandAdapters[key]; ok && current.token == token {
+				observed = append(observed, struct {
+					key     herdrHandAdapterKey
+					current *registeredHerdrHandAdapter
+				}{key: key, current: current})
+				delete(registeredHerdrHandAdapters, key)
+			}
+		}
+		registeredHerdrHandAdaptersMu.Unlock()
+		for _, item := range observed {
+			if herdrHandAdapterCleanupHook != nil {
+				herdrHandAdapterCleanupHook(item.key, item.current)
+			}
+		}
+	}
+}
+
+func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHandAdapter) func() {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return func() {}
+	}
+	token := herdrHandAdapterToken.Add(1)
+	registeredHerdrHandAdaptersMu.Lock()
+	for key, current := range registeredHerdrHandAdapters {
+		if current.owner == owner {
+			delete(registeredHerdrHandAdapters, key)
+		}
+	}
+	for paneID, adapter := range adapters {
+		for _, key := range herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID) {
+			registeredHerdrHandAdapters[key] = &registeredHerdrHandAdapter{owner: owner, token: token, adapter: adapter}
+		}
+	}
+	registeredHerdrHandAdaptersMu.Unlock()
+	return func() {
+		var observed []struct {
+			key     herdrHandAdapterKey
+			current *registeredHerdrHandAdapter
+		}
+		registeredHerdrHandAdaptersMu.Lock()
+		for key, current := range registeredHerdrHandAdapters {
+			if current.owner == owner && current.token == token {
+				observed = append(observed, struct {
+					key     herdrHandAdapterKey
+					current *registeredHerdrHandAdapter
+				}{key: key, current: current})
+				delete(registeredHerdrHandAdapters, key)
+			}
+		}
+		registeredHerdrHandAdaptersMu.Unlock()
+		for _, item := range observed {
+			if herdrHandAdapterCleanupHook != nil {
+				herdrHandAdapterCleanupHook(item.key, item.current)
 			}
 		}
 	}
@@ -397,11 +452,11 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	case HandKindTmux:
 		return TmuxHandAdapter{}, nil
 	case HandKindHerdr:
+		registeredHerdrHandAdaptersMu.RLock()
+		defer registeredHerdrHandAdaptersMu.RUnlock()
 		for _, key := range herdrHandAdapterKeysForTarget(target) {
-			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
-				if registration, ok := registered.(*registeredHerdrHandAdapter); ok {
-					return registration.adapter, nil
-				}
+			if registration, ok := registeredHerdrHandAdapters[key]; ok {
+				return registration.adapter, nil
 			}
 		}
 		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)

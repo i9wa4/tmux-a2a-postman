@@ -148,12 +148,16 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 }
 
 func publishFreshHerdrNodes(herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
-	if herdrRuntime != nil && !herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh) {
-		return false
+	publish := func() error {
+		if sharedNodes != nil {
+			sharedNodes.Store(&fresh)
+		}
+		return nil
 	}
-	if sharedNodes != nil {
-		sharedNodes.Store(&fresh)
+	if herdrRuntime != nil {
+		return herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrToken, fresh, publish) == nil
 	}
+	_ = publish()
 	return true
 }
 
@@ -449,34 +453,50 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	publishStartupNodes := func() error {
+		if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
+			return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
+		}
+		// Claim discovered panes with this daemon's context ID.
+		for _, nodeInfo := range nodes {
+			backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+			backend, backendErr := multiplexer.OwnershipBackendForKind(backendKind)
+			if backendErr != nil {
+				log.Printf(
+					"postman: WARNING: failed to select ownership backend for pane %s: %v\n",
+					nodeInfo.PaneID, backendErr,
+				)
+				continue
+			}
+			pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+			if backendKind == multiplexer.BackendKindHerdr && nodeInfo.HerdrSocketPath != "" && nodeInfo.HerdrWorkspaceID != "" {
+				pane = multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+					SocketPath:  nodeInfo.HerdrSocketPath,
+					SessionName: nodeInfo.SessionName,
+					WorkspaceID: nodeInfo.HerdrWorkspaceID,
+					TabID:       nodeInfo.HerdrTabID,
+					PaneID:      nodeInfo.PaneID,
+				}, nodeInfo.PaneID)
+			}
+			if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
+				log.Printf(
+					"postman: WARNING: failed to claim pane %s: %v\n",
+					nodeInfo.PaneID, err,
+				)
+			}
+		}
+		sharedNodes.Store(&nodes)
+		return nil
+	}
 	if herdrRuntime != nil {
-		herdrRuntime.ReconcileFinalNodesForToken(herdrStartupToken, nodes)
-	}
-	if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
-		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
-	}
-	// Claim discovered panes with this daemon's context ID.
-	for _, nodeInfo := range nodes {
-		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
-		backend, backendErr := multiplexer.OwnershipBackendForKind(backendKind)
-		if backendErr != nil {
-			log.Printf(
-				"postman: WARNING: failed to select ownership backend for pane %s: %v\n",
-				nodeInfo.PaneID, backendErr,
-			)
-			continue
+		if err := herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrStartupToken, nodes, publishStartupNodes); err != nil {
+			return fmt.Errorf("publishing Herdr startup snapshot: %w", err)
 		}
-		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
-		if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
-			log.Printf(
-				"postman: WARNING: failed to claim pane %s: %v\n",
-				nodeInfo.PaneID, err,
-			)
-		}
+	} else if err := publishStartupNodes(); err != nil {
+		return err
 	}
 	// Shared node snapshot for background periodic refresh (Issue #139)
-	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
-	sharedNodes.Store(&nodes)
 
 	// Post-startup background re-discovery: catches panes that set their titles
 	// slightly after daemon start (agent launch scripts run after daemon starts).

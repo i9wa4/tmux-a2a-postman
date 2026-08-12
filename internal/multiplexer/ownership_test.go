@@ -335,18 +335,72 @@ func TestHerdrOwnershipCompositeClearDoesNotFallThroughWhenAuthoritativeNonEmpty
 	}
 }
 
+func TestHerdrOwnershipCompositeSelectsPaneBackendByRuntimeIdentity(t *testing.T) {
+	first := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime: HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr-a.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-a",
+			PaneID:      "pane-1",
+		},
+	}
+	firstCleanup := RegisterOwnershipBackend(first)
+	t.Cleanup(firstCleanup)
+	second := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime: HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr-b.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-b",
+			PaneID:      "pane-1",
+		},
+	}
+	secondCleanup := RegisterOwnershipBackend(second)
+	t.Cleanup(secondCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	pane := HerdrPaneIDForRuntime(HerdrRuntimeIdentity{
+		SocketPath:  "/tmp/herdr-b.sock",
+		SessionName: "work",
+		WorkspaceID: "workspace-b",
+		PaneID:      "pane-1",
+	}, "pane-1")
+	if err := backend.SetPaneOwnerMarker(context.Background(), pane, "ctx-b"); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(runtime b) error = %v", err)
+	}
+	if first.paneSetCalls != 0 {
+		t.Fatalf("first runtime pane set calls = %d, want 0", first.paneSetCalls)
+	}
+	if second.paneSetCalls != 1 || second.paneOwner != "ctx-b" {
+		t.Fatalf("second runtime pane set calls=%d owner=%q, want selected runtime", second.paneSetCalls, second.paneOwner)
+	}
+}
+
 type testOwnershipBackend struct {
-	kind        BackendKind
-	sessionName string
-	owner       string
-	setErr      error
-	clearErr    error
-	setCalls    int
-	clearCalls  int
+	kind         BackendKind
+	sessionName  string
+	owner        string
+	runtime      HerdrRuntimeIdentity
+	paneOwner    string
+	setErr       error
+	clearErr     error
+	setCalls     int
+	clearCalls   int
+	paneSetCalls int
 }
 
 func (t *testOwnershipBackend) Kind() BackendKind {
 	return t.kind
+}
+
+func (t *testOwnershipBackend) HerdrRuntimeIdentity() HerdrRuntimeIdentity {
+	return t.runtime
 }
 
 func (t *testOwnershipBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
@@ -380,12 +434,20 @@ func (t *testOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessio
 	return nil
 }
 
-func (t *testOwnershipBackend) PaneOwnerMarker(context.Context, ResourceID) (string, error) {
-	return "", fmt.Errorf("pane not owned")
+func (t *testOwnershipBackend) PaneOwnerMarker(_ context.Context, pane ResourceID) (string, error) {
+	if t.runtime.PaneID == "" || pane.Native != t.runtime.PaneID {
+		return "", fmt.Errorf("pane not owned")
+	}
+	return t.paneOwner, nil
 }
 
-func (t *testOwnershipBackend) SetPaneOwnerMarker(context.Context, ResourceID, string) error {
-	return fmt.Errorf("pane not owned")
+func (t *testOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane ResourceID, contextID string) error {
+	if t.runtime.PaneID == "" || pane.Native != t.runtime.PaneID {
+		return fmt.Errorf("pane not owned")
+	}
+	t.paneSetCalls++
+	t.paneOwner = contextID
+	return nil
 }
 
 func (t *testOwnershipBackend) ClearPaneOwnerMarker(context.Context, ResourceID) error {

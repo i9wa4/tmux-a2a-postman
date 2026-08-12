@@ -1588,8 +1588,14 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		}
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
-	if rt.herdrRuntime != nil && !rt.herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes) {
-		return nil, nil, fmt.Errorf("stale Herdr final reconcile token")
+	if rt.herdrRuntime != nil {
+		if err := rt.herdrRuntime.ReconcileFinalNodesForTokenAndPublish(herdrToken, freshNodes, func() error {
+			rt.nodes = freshNodes
+			rt.storeSharedNodes()
+			return nil
+		}); err != nil {
+			return nil, nil, err
+		}
 	}
 	return freshNodes, collisions, nil
 }
@@ -1785,6 +1791,15 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 			continue
 		}
 		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+		if backendKind == multiplexer.BackendKindHerdr && nodeInfo.HerdrSocketPath != "" && nodeInfo.HerdrWorkspaceID != "" {
+			pane = multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+				SocketPath:  nodeInfo.HerdrSocketPath,
+				SessionName: nodeInfo.SessionName,
+				WorkspaceID: nodeInfo.HerdrWorkspaceID,
+				TabID:       nodeInfo.HerdrTabID,
+				PaneID:      nodeInfo.PaneID,
+			}, nodeInfo.PaneID)
+		}
 		if err := backend.SetPaneOwnerMarker(context.Background(), pane, rt.contextID); err != nil {
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue

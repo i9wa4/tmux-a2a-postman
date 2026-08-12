@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -618,6 +619,107 @@ func TestRuntimeDiscoveryErrorDoesNotClearNewerSuccessfulRoutes(t *testing.T) {
 	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
 		t.Fatalf("newer Herdr adapter was cleared by stale older error: %v", err)
 	}
+}
+
+func TestRuntimeTokenlessDiscoverFailsClosedWhenGenerationIsLost(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	oldCall := newControlledRuntimeSnapshot(runtimeHerdrSnapshotFor(sessionName, "workspace-1", "workspace-1:tab-1", "workspace-1:pane-old", ""), nil)
+	newCall := newControlledRuntimeSnapshot(runtimeHerdrSnapshotFor(sessionName, "workspace-1", "workspace-1:tab-1", "workspace-1:pane-new", ""), nil)
+	client := &sequencedRuntimeHerdrClient{calls: make(chan *controlledRuntimeSnapshot, 2)}
+	client.calls <- oldCall
+	client.calls <- newCall
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldDone := make(chan error, 1)
+	go func() {
+		_, _, err := rt.Discover(context.Background(), baseDir, contextID)
+		oldDone <- err
+	}()
+	<-oldCall.started
+
+	newDone := make(chan error, 1)
+	go func() {
+		_, _, err := rt.Discover(context.Background(), baseDir, contextID)
+		newDone <- err
+	}()
+	<-newCall.started
+	close(newCall.release)
+	if err := <-newDone; err != nil {
+		t.Fatalf("new Discover() error = %v", err)
+	}
+
+	close(oldCall.release)
+	if err := <-oldDone; err == nil || !strings.Contains(err.Error(), "stale Herdr discovery token") {
+		t.Fatalf("old Discover() error = %v, want stale token", err)
+	}
+}
+
+func TestRuntimeFinalReconcilePublishesBeforeCompetingDiscoveryCanAdvance(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, _, token, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile() error = %v", err)
+	}
+	competingStarted := make(chan struct{})
+	releaseCompeting := make(chan struct{})
+	published := false
+	err = rt.ReconcileFinalNodesForTokenAndPublish(token, nodes, func() error {
+		client.snapshotStarted = competingStarted
+		client.releaseSnapshot = releaseCompeting
+		go func() {
+			_, _, _, _ = rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+		}()
+		select {
+		case <-competingStarted:
+			t.Fatal("competing discovery advanced before final snapshot publication")
+		case <-time.After(20 * time.Millisecond):
+		}
+		published = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ReconcileFinalNodesForTokenAndPublish() error = %v", err)
+	}
+	if !published {
+		t.Fatal("publish callback was not called")
+	}
+	select {
+	case <-competingStarted:
+	case <-time.After(time.Second):
+		t.Fatal("competing discovery did not advance after final publication")
+	}
+	close(releaseCompeting)
 }
 
 func TestRuntimeCloseWhileDiscoverBlockedDoesNotRegisterRoutes(t *testing.T) {

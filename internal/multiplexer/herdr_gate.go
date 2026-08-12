@@ -278,6 +278,13 @@ func HerdrPaneID(paneID string) ResourceID {
 	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: paneID}
 }
 
+func HerdrPaneIDForRuntime(runtime HerdrRuntimeIdentity, paneID string) ResourceID {
+	if runtime.PaneID == "" {
+		runtime.PaneID = paneID
+	}
+	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: paneID, HerdrRuntime: runtime}
+}
+
 func HerdrWorkspaceID(workspaceID string) ResourceID {
 	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindWorkspace, Native: workspaceID}
 }

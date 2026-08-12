@@ -24,6 +24,11 @@ type OwnershipBackend interface {
 	ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error
 }
 
+type HerdrRuntimeOwnershipBackend interface {
+	OwnershipBackend
+	HerdrRuntimeIdentity() HerdrRuntimeIdentity
+}
+
 var (
 	registeredOwnershipBackends   sync.Map
 	registeredOwnershipBackendsMu sync.Mutex
@@ -175,6 +180,9 @@ func (h herdrOwnershipBackends) authoritativeSessionBackend(ctx context.Context,
 }
 
 func (h herdrOwnershipBackends) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {
+	if backend, ok := h.backendForPaneRuntime(pane); ok {
+		return backend.PaneOwnerMarker(ctx, pane)
+	}
 	var lastErr error
 	for _, backend := range h {
 		value, err := backend.PaneOwnerMarker(ctx, pane)
@@ -190,6 +198,9 @@ func (h herdrOwnershipBackends) PaneOwnerMarker(ctx context.Context, pane Resour
 }
 
 func (h herdrOwnershipBackends) SetPaneOwnerMarker(ctx context.Context, pane ResourceID, contextID string) error {
+	if backend, ok := h.backendForPaneRuntime(pane); ok {
+		return backend.SetPaneOwnerMarker(ctx, pane, contextID)
+	}
 	var lastErr error
 	for _, backend := range h {
 		if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err == nil {
@@ -205,6 +216,9 @@ func (h herdrOwnershipBackends) SetPaneOwnerMarker(ctx context.Context, pane Res
 }
 
 func (h herdrOwnershipBackends) ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error {
+	if backend, ok := h.backendForPaneRuntime(pane); ok {
+		return backend.ClearPaneOwnerMarker(ctx, pane)
+	}
 	var lastErr error
 	for _, backend := range h {
 		if err := backend.ClearPaneOwnerMarker(ctx, pane); err == nil {
@@ -217,6 +231,32 @@ func (h herdrOwnershipBackends) ClearPaneOwnerMarker(ctx context.Context, pane R
 		return lastErr
 	}
 	return fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) backendForPaneRuntime(pane ResourceID) (OwnershipBackend, bool) {
+	runtime := pane.HerdrRuntime
+	if strings.TrimSpace(runtime.SocketPath) == "" || strings.TrimSpace(runtime.SessionName) == "" || strings.TrimSpace(runtime.WorkspaceID) == "" {
+		return nil, false
+	}
+	if runtime.PaneID == "" {
+		runtime.PaneID = pane.Native
+	}
+	for _, backend := range h {
+		runtimeBackend, ok := backend.(HerdrRuntimeOwnershipBackend)
+		if !ok {
+			continue
+		}
+		if sameHerdrRuntimeIdentity(runtimeBackend.HerdrRuntimeIdentity(), runtime) {
+			return backend, true
+		}
+	}
+	return nil, false
+}
+
+func sameHerdrRuntimeIdentity(a, b HerdrRuntimeIdentity) bool {
+	return strings.TrimSpace(a.SocketPath) == strings.TrimSpace(b.SocketPath) &&
+		strings.TrimSpace(a.SessionName) == strings.TrimSpace(b.SessionName) &&
+		strings.TrimSpace(a.WorkspaceID) == strings.TrimSpace(b.WorkspaceID)
 }
 
 func (b TmuxBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
