@@ -1539,6 +1539,67 @@ func TestRuntimeHerdrOwnershipCompositeResolvesReducedUniquePaneIdentity(t *test
 	}
 }
 
+func TestRuntimeHerdrOwnershipSingleRuntimeResolvesReducedPaneIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs(%q) error = %v", sessionName, err)
+	}
+
+	const (
+		paneID      = "workspace-1:pane-single"
+		socketPath  = "/tmp/herdr-reduced-single.sock"
+		workspaceID = "workspace-1"
+		tabID       = "workspace-1:tab-1"
+	)
+	snapshot := runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, "")
+	snapshot.Panes[0].Metadata[multiplexer.HerdrPaneContextIDMetadataKey] = "ctx-pane-old"
+	client := &fakeRuntimeHerdrClient{snapshot: snapshot}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = runtimeHerdrConfigFor(sessionName, workspaceID)
+	cfg.Herdr.SocketPath = socketPath
+	cfg.Herdr.AllowedSocketPaths = []string{socketPath}
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	rt.ReconcileFinalNodes(nodes)
+
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	reducedPane := multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+		SocketPath:  socketPath,
+		SessionName: sessionName,
+		WorkspaceID: workspaceID,
+		PaneID:      paneID,
+	}, paneID)
+	if got, err := ownershipBackend.PaneOwnerMarker(context.Background(), reducedPane); err != nil || got != "ctx-pane-old" {
+		t.Fatalf("PaneOwnerMarker(reduced single runtime) = %q, %v; want ctx-pane-old", got, err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), reducedPane, "ctx-pane-new"); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(reduced single runtime) error = %v", err)
+	}
+	if client.setPaneMetadataPane != paneID || client.setPaneMetadataValue != "ctx-pane-new" {
+		t.Fatalf("SetPaneMetadata pane/value = %q/%q, want %q/ctx-pane-new", client.setPaneMetadataPane, client.setPaneMetadataValue, paneID)
+	}
+	if err := ownershipBackend.ClearPaneOwnerMarker(context.Background(), reducedPane); err != nil {
+		t.Fatalf("ClearPaneOwnerMarker(reduced single runtime) error = %v", err)
+	}
+	if client.clearPaneMetadataPane != paneID || client.clearPaneMetadataKey != multiplexer.HerdrPaneContextIDMetadataKey {
+		t.Fatalf("ClearPaneMetadata pane/key = %q/%q, want %q/%q", client.clearPaneMetadataPane, client.clearPaneMetadataKey, paneID, multiplexer.HerdrPaneContextIDMetadataKey)
+	}
+}
+
 func TestRuntimeHerdrOwnershipQualifiedPaneMissesFailClosed(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"

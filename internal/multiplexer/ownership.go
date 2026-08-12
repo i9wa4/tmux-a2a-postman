@@ -99,6 +99,12 @@ func OwnershipBackendForKind(backend BackendKind) (OwnershipBackend, error) {
 		case 0:
 			return nil, fmt.Errorf("herdr ownership backend not registered")
 		case 1:
+			if _, ok := backends[0].(HerdrRuntimeOwnershipBackend); ok {
+				return herdrOwnershipBackends(backends), nil
+			}
+			if _, ok := backends[0].(HerdrRuntimeOwnershipIdentitySet); ok {
+				return herdrOwnershipBackends(backends), nil
+			}
 			return backends[0], nil
 		default:
 			return herdrOwnershipBackends(backends), nil
