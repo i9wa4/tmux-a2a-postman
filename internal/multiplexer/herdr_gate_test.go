@@ -3,6 +3,7 @@ package multiplexer
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestValidateHerdrReadGatePassesWithAllowlistedRuntimeAndEnvelope(t *testing.T) {
@@ -138,6 +139,56 @@ func TestValidateHerdrWriteGateRequiresReadGate(t *testing.T) {
 }
 
 func TestValidateHerdrWriteGateRequiresWriteSpecificGates(t *testing.T) {
+	t.Run("legacy labels never authorize writes", func(t *testing.T) {
+		for _, decision := range []HerdrComplianceDecision{HerdrComplianceDecisionAGPL, HerdrComplianceDecisionCommercial} {
+			policy := validHerdrGatePolicy()
+			policy.ComplianceRecord.Decision = decision
+			err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+			assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+		}
+	})
+
+	t.Run("blank provenance fields never authorize writes", func(t *testing.T) {
+		cases := []struct {
+			name string
+			edit func(*HerdrComplianceRecord)
+		}{
+			{"whitespace-only authorizer", func(r *HerdrComplianceRecord) { r.AuthorizedBy = " \t" }},
+			{"whitespace-only decision ID", func(r *HerdrComplianceRecord) { r.DecisionID = " \n" }},
+			{"empty-string reference", func(r *HerdrComplianceRecord) { r.CurrentReferences = []string{""} }},
+			{"whitespace-only reference", func(r *HerdrComplianceRecord) { r.CurrentReferences = []string{" \t"} }},
+			{"all-blank reference list", func(r *HerdrComplianceRecord) { r.CurrentReferences = []string{"", " \n"} }},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				policy := validHerdrGatePolicy()
+				tc.edit(&policy.ComplianceRecord)
+				err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+				assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+			})
+		}
+	})
+
+	t.Run("freshness boundary", func(t *testing.T) {
+		base := validHerdrGatePolicy()
+		base.ComplianceNow = func() time.Time { return base.ComplianceRecord.RevalidatedAt.Add(HerdrComplianceMaxAge) }
+		if err := ValidateHerdrWriteGate(base, validHerdrRuntime(), validHerdrEnvelope()); err != nil {
+			t.Fatalf("exact freshness boundary rejected: %v", err)
+		}
+
+		expired := validHerdrGatePolicy()
+		expired.ComplianceNow = func() time.Time {
+			return expired.ComplianceRecord.RevalidatedAt.Add(HerdrComplianceMaxAge + time.Nanosecond)
+		}
+		err := ValidateHerdrWriteGate(expired, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+
+		future := validHerdrGatePolicy()
+		future.ComplianceNow = func() time.Time { return future.ComplianceRecord.RevalidatedAt.Add(-time.Nanosecond) }
+		err = ValidateHerdrWriteGate(future, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	})
+
 	t.Run("closed", func(t *testing.T) {
 		policy := validHerdrGatePolicy()
 		policy.WriteEnabled = false
@@ -156,7 +207,7 @@ func TestValidateHerdrWriteGateRequiresWriteSpecificGates(t *testing.T) {
 
 	t.Run("compliance", func(t *testing.T) {
 		policy := validHerdrGatePolicy()
-		policy.ComplianceDecision = HerdrComplianceDecisionUnset
+		policy.ComplianceRecord = HerdrComplianceRecord{}
 
 		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
 		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
@@ -164,8 +215,22 @@ func TestValidateHerdrWriteGateRequiresWriteSpecificGates(t *testing.T) {
 
 	t.Run("review-only compliance does not authorize writes", func(t *testing.T) {
 		policy := validHerdrGatePolicy()
-		policy.ComplianceDecision = HerdrComplianceDecisionReviewOnly
+		policy.ComplianceRecord.Decision = HerdrComplianceDecisionReviewOnly
 
+		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	})
+
+	t.Run("missing authority and revalidation is rejected", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ComplianceRecord.AuthorizedBy = ""
+		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	})
+
+	t.Run("stale record is rejected", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ComplianceRecord.RevalidatedAt = policy.ComplianceRecord.DecidedAt.Add(-time.Minute)
 		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
 		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	})
@@ -245,7 +310,15 @@ func validHerdrGatePolicy() HerdrGatePolicy {
 		AllowedProtocolVersions: []string{"1"},
 		AllowedSchemaVersions:   []int{1},
 		InputSanitizerReady:     true,
-		ComplianceDecision:      HerdrComplianceDecisionCommercial,
+		ComplianceRecord: HerdrComplianceRecord{
+			Decision:          HerdrComplianceDecisionRecorded,
+			AuthorizedBy:      "compliance-authority",
+			DecisionID:        "decision-001",
+			DecidedAt:         time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			RevalidatedAt:     time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
+			CurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
+		},
+		ComplianceNow: func() time.Time { return time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) },
 	}
 }
 

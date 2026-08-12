@@ -110,12 +110,6 @@ derive compatibility `windows` groups for existing UI consumers. That projection
 must stay clearly marked as compatibility output and must not introduce pane
 state precedence changes before #639 resolves the semantic model.
 
-Issue #658 adds a disabled-by-default Herdr read-only backend spike documented
-in [Herdr Read-Only Discovery Spike](herdr-readonly-discovery-spike.md). The
-spike uses backend-neutral `layout_groups` with Herdr tab groups and marks tmux
-`windows` as unsupported native evidence instead of treating tabs as tmux
-windows.
-
 ## 8. Interactive Delivery Boundary
 
 Issue #657 separates interactive pane input from filesystem mailbox delivery.
@@ -136,17 +130,13 @@ security gates and #658 validates read-only Herdr behavior.
 
 ## 9. Herdr Gates
 
-Herdr access remains blocked until the gates in
-[Herdr Security And Licensing Gates](herdr-security-licensing-gates.md) pass:
+Herdr access remains blocked:
 
-- #658 may add read-only Herdr behavior only after calling the #660 read gate
-  for socket/session/workspace allowlists and protocol/schema checks. Discovery
-  reads use the default discovery scope; pane-targeted reads must opt into the
-  pane scope and provide tab/pane identity.
-- #659 may add Herdr write/mutation only after #658 validates read-only behavior
-  and the #660 write gate composes the pane-targeted read gate, confirms input
-  sanitization, and confirms compliance decisions.
+- #660 must define read/write security gates, allowlists, protocol/schema
+  checks, no-server error normalization, and licensing/compliance decisions.
+- #658 may add read-only Herdr behavior only after the #660 read gate.
+- #659 may add Herdr write/mutation only after #658 and #660.
 
-Future Herdr read/write paths should use `multiplexer.ValidateHerdrReadGate` or
-`multiplexer.ValidateHerdrWriteGate` as their preflight guard before consuming
-Herdr data or issuing Herdr mutations.
+Herdr read/write paths should include a pre-flight guard or equivalent
+mechanical check so explicit issue-body blockers are enforced in code or local
+workflow before activation.

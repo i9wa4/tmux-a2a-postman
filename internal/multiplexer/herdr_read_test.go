@@ -87,8 +87,8 @@ func TestHerdrBackendDiscoveryProjectsReadOnlyLayout(t *testing.T) {
 	if group.Kind != LayoutGroupKindTab || group.ID != HerdrTabID("workspace-1:tab-1") {
 		t.Fatalf("group = %#v, want Herdr tab group", group)
 	}
-	if len(group.Items) != 2 {
-		t.Fatalf("len(group.Items) = %d, want 2", len(group.Items))
+	if len(group.Items) != 1 {
+		t.Fatalf("len(group.Items) = %d, want 1 authoritative item", len(group.Items))
 	}
 	if group.Items[0].LogicalName != "worker" || group.Items[0].ID != HerdrPaneID("workspace-1:pane-1") {
 		t.Fatalf("first item = %#v, want worker pane", group.Items[0])
@@ -96,12 +96,8 @@ func TestHerdrBackendDiscoveryProjectsReadOnlyLayout(t *testing.T) {
 	if group.Items[0].CurrentCommand != "codex" {
 		t.Fatalf("CurrentCommand = %q, want codex", group.Items[0].CurrentCommand)
 	}
-	if len(discovery.Collisions) != 1 {
-		t.Fatalf("Collisions = %#v, want one collision", discovery.Collisions)
-	}
-	wantCollisionPanes := []string{"workspace-1:pane-1", "workspace-1:pane-2"}
-	if !reflect.DeepEqual(discovery.Collisions[0].PaneIDs, wantCollisionPanes) {
-		t.Fatalf("collision panes = %#v, want %#v", discovery.Collisions[0].PaneIDs, wantCollisionPanes)
+	if len(discovery.Collisions) != 0 {
+		t.Fatalf("Collisions = %#v, want no stale-pane collision", discovery.Collisions)
 	}
 	if len(discovery.StalePanes) != 1 || discovery.StalePanes[0] != HerdrPaneID("workspace-1:pane-2") {
 		t.Fatalf("StalePanes = %#v, want pane-2", discovery.StalePanes)
@@ -122,6 +118,113 @@ func TestHerdrBackendDiscoveryRejectsUnsupportedSnapshotEnvelope(t *testing.T) {
 	assertHerdrGateError(t, err, HerdrAccessPhaseRead, "protocol_version", HerdrGateFailureUnsupportedProtocol)
 }
 
+func TestHerdrBackendPublicAPIsFailClosedOnUnavailableClient(t *testing.T) {
+	config := validHerdrReadConfig()
+	client := &fakeHerdrReadClient{
+		snapshotErr: net.ErrClosed,
+	}
+	backend := HerdrBackend{Config: config, Client: client}
+
+	if _, err := backend.Discover(context.Background(), config.Runtime.SessionName); !errors.Is(err, ErrHerdrBackendUnavailable) {
+		t.Fatalf("Discover() error = %v, want ErrHerdrBackendUnavailable", err)
+	}
+	client.snapshotErr = nil
+	client.snapshot = validHerdrSessionSnapshot()
+	client.readPaneErr = net.ErrClosed
+	if _, err := backend.CapturePane(context.Background(), ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: config.Runtime.PaneID}, CaptureOptions{}); !errors.Is(err, ErrHerdrBackendUnavailable) {
+		t.Fatalf("CapturePane() error = %v, want ErrHerdrBackendUnavailable", err)
+	}
+	if client.readPaneCalls != 1 {
+		t.Fatalf("readPaneCalls = %d, want 1", client.readPaneCalls)
+	}
+	client.readPaneErr = nil
+	client.processInfoErr = net.ErrClosed
+	if _, err := backend.PaneCurrentCommand(context.Background(), ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: config.Runtime.PaneID}); !errors.Is(err, ErrHerdrBackendUnavailable) {
+		t.Fatalf("PaneCurrentCommand() error = %v, want ErrHerdrBackendUnavailable", err)
+	}
+	if client.processInfoCalls != 1 {
+		t.Fatalf("processInfoCalls = %d, want 1", client.processInfoCalls)
+	}
+}
+
+func TestHerdrBackendPaneAPIsRejectUnsupportedEnvelopesBeforeReturningData(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	unsupported := HerdrResponseEnvelope{ProtocolVersion: "99", SchemaVersion: 1}
+	client := &fakeHerdrReadClient{
+		snapshot:    snapshot,
+		readPane:    HerdrPaneReadResult{Envelope: unsupported, Text: "secret\n"},
+		processInfo: HerdrPaneProcessInfoResult{Envelope: unsupported, ProcessInfo: HerdrPaneProcessInfo{ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}}}},
+	}
+	config := validHerdrReadConfig()
+	backend := HerdrBackend{Config: config, Client: client}
+	pane := ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: config.Runtime.PaneID}
+
+	if _, err := backend.CapturePane(context.Background(), pane, CaptureOptions{}); err == nil {
+		t.Fatal("CapturePane() error = nil, want unsupported envelope rejection")
+	} else {
+		assertHerdrGateError(t, err, HerdrAccessPhaseRead, "protocol_version", HerdrGateFailureUnsupportedProtocol)
+	}
+	if _, err := backend.PaneCurrentCommand(context.Background(), pane); err == nil {
+		t.Fatal("PaneCurrentCommand() error = nil, want unsupported envelope rejection")
+	} else {
+		assertHerdrGateError(t, err, HerdrAccessPhaseRead, "protocol_version", HerdrGateFailureUnsupportedProtocol)
+	}
+}
+
+func TestHerdrBackendPaneAPIsQuarantineStaleConfiguredPane(t *testing.T) {
+	config := validHerdrReadConfig()
+	config.Runtime.PaneID = "workspace-1:pane-2"
+	client := &fakeHerdrReadClient{snapshot: validHerdrSessionSnapshot()}
+	backend := HerdrBackend{Config: config, Client: client}
+	pane := ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: config.Runtime.PaneID}
+
+	if _, err := backend.CapturePane(context.Background(), pane, CaptureOptions{}); !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("CapturePane() error = %v, want stale configured-pane rejection", err)
+	}
+	if _, err := backend.PaneCurrentCommand(context.Background(), pane); !errors.Is(err, ErrHerdrSnapshotInvalid) {
+		t.Fatalf("PaneCurrentCommand() error = %v, want stale configured-pane rejection", err)
+	}
+	if client.readPaneCalls != 0 || client.processInfoCalls != 0 {
+		t.Fatalf("downstream calls = read:%d process:%d, want zero", client.readPaneCalls, client.processInfoCalls)
+	}
+}
+
+func TestHerdrBackendDiscoveryOmitsUnprovenFocusedIDs(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.FocusedWorkspaceID = "workspace-foreign"
+	snapshot.FocusedTabID = "workspace-foreign:tab-1"
+	snapshot.FocusedPaneID = "workspace-foreign:pane-1"
+	client := &fakeHerdrReadClient{ping: validHerdrEnvelope(), snapshot: snapshot}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if got := discovery.Layout.NativeIDs["focused_workspace_id"]; got != "" {
+		t.Fatalf("focused workspace = %q, want omitted", got)
+	}
+	if got := discovery.Layout.NativeIDs["focused_tab_id"]; got != "" {
+		t.Fatalf("focused tab = %q, want omitted", got)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want omitted", got)
+	}
+}
+
+func TestHerdrBackendDiscoveryOmitsStaleFocusedPane(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.FocusedPaneID = "workspace-1:pane-2"
+	client := &fakeHerdrReadClient{ping: validHerdrEnvelope(), snapshot: snapshot}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want omitted", got)
+	}
+}
+
 func TestHerdrBackendDiscoveryRejectsPaneWithMissingTab(t *testing.T) {
 	snapshot := validHerdrSessionSnapshot()
 	snapshot.Panes[0].TabID = "workspace-1:missing-tab"
@@ -135,6 +238,20 @@ func TestHerdrBackendDiscoveryRejectsPaneWithMissingTab(t *testing.T) {
 	_, err := backend.Discover(context.Background(), config.Runtime.SessionName)
 	if !errors.Is(err, ErrHerdrSnapshotInvalid) {
 		t.Fatalf("Discover() error = %v, want ErrHerdrSnapshotInvalid", err)
+	}
+}
+
+func TestHerdrBackendDiscoveryQuarantinesStalePaneWithMissingTab(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[1].TabID = "workspace-1:missing-tab"
+	client := &fakeHerdrReadClient{ping: validHerdrEnvelope(), snapshot: snapshot}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(discovery.StalePanes) != 1 || discovery.StalePanes[0] != HerdrPaneID("workspace-1:pane-2") {
+		t.Fatalf("StalePanes = %#v, want quarantined stale pane", discovery.StalePanes)
 	}
 }
 

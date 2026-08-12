@@ -64,8 +64,9 @@ The write gate composes the pane-targeted read gate and also requires:
 
 - write access is explicitly enabled by policy;
 - a Herdr-safe interactive input sanitization path is ready;
-- compliance has been resolved as either AGPL-3.0-or-later compatible or
-  commercial-license compatible.
+- compliance has been resolved by the authority-recorded, license-agnostic
+  decision described in Section 9, and that decision is within its freshness
+  boundary.
 
 `review-only` compliance status is not enough for writes. It may be used in
 planning artifacts to record that legal/compliance review is still pending.
@@ -144,22 +145,33 @@ return `sanitizer_missing`.
 
 ## 9. Licensing And Compliance
 
-As of the #660 check, Herdr's public repository states a dual license:
+The gate does not make a legal compatibility conclusion. A write-capable path
+requires an authority-backed `HerdrComplianceRecord` containing an explicit
+license-agnostic recorded decision, authorizer, decision identifier, decision
+timestamp, revalidation timestamp, and at least one current repository or
+license reference. The revalidation timestamp must not precede the decision
+timestamp. Unset, unresolved, stale/unrevalidated, and `review-only` records
+fail closed.
 
-- open source: GNU Affero General Public License v3.0 or later
-  (`AGPL-3.0-or-later`);
-- commercial licenses for organizations that cannot comply with AGPL.
+Current references are inputs for the active decision and must be recorded
+separately from historical references. Historical references provide provenance
+only and cannot satisfy current revalidation. The accepted decision is the
+license-agnostic `authority-recorded` label; legacy labels (`agpl-3.0-or-later`
+and `commercial`) are historical provenance only and are not accepted current
+decisions. CLI or socket use alone does not resolve
+licensing obligations.
 
-Before distribution, generated-protocol reuse, vendoring, linking, embedding, or
-Herdr write/mutation support, record one of:
+The current accepted-path test records the official Herdr LICENSE permalink
+`https://github.com/ogulcancelik/herdr/blob/master/LICENSE` as current evidence
+(retrieved 2026-08-12 UTC); older AGPL/commercial references remain historical
+inputs only. This records source provenance without asserting legal
+compatibility.
 
-- `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
-- `commercial`: a commercial license covers the integration shape;
-- `review-only`: no distributable/generated/write integration may be shipped.
-
-CLI or socket use alone does not resolve licensing obligations. A future issue
-must record the exact integration shape before changing dependency, vendoring,
-generated code, or distribution behavior.
+The normative freshness boundary is 24 hours after `RevalidatedAt`, inclusive:
+the write gate accepts a record when `now - RevalidatedAt <= 24h` and rejects
+records older than 24 hours or whose revalidation timestamp is in the future.
+The runtime supplies the current time through an injectable policy time source;
+production uses the system clock and tests use a fixed clock.
 
 ## 10. Out Of Scope
 
