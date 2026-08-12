@@ -88,27 +88,32 @@ func (rt *Runtime) SessionOwnerMarker(ctx context.Context, sessionName string) (
 }
 
 func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+	nodes, collisions, _, err := rt.DiscoverForReconcile(ctx, baseDir, contextID)
+	return nodes, collisions, err
+}
+
+func (rt *Runtime) DiscoverForReconcile(ctx context.Context, baseDir, contextID string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, uint64, error) {
 	if rt == nil {
-		return nil, nil, nil
+		return nil, nil, 0, nil
 	}
 	generation, closed := rt.beginDiscover()
 	if closed {
-		return nil, nil, fmt.Errorf("herdr runtime closed")
+		return nil, nil, generation, fmt.Errorf("herdr runtime closed")
 	}
 	readConfig := rt.cfg.ReadConfig()
 	readConfig.Policy.ReadScope = multiplexer.HerdrReadScopeDiscovery
 	backend, err := multiplexer.NewHerdrBackend(readConfig, rt.client)
 	if err != nil {
-		rt.ClearPaneRoutes()
-		return nil, nil, err
+		rt.ClearPaneRoutesForToken(generation)
+		return nil, nil, generation, err
 	}
 	result, err := backend.Discover(ctx, rt.cfg.SessionName)
 	if err != nil {
-		rt.ClearPaneRoutes()
-		return nil, nil, err
+		rt.ClearPaneRoutesForToken(generation)
+		return nil, nil, generation, err
 	}
-	if !rt.discoverStillCurrent(generation) {
-		return nil, nil, fmt.Errorf("herdr runtime closed")
+	if !rt.discoverStillOpen() {
+		return nil, nil, generation, fmt.Errorf("herdr runtime closed")
 	}
 	nodes := make(map[string]discovery.NodeInfo)
 	var collisions []discovery.CollisionReport
@@ -142,10 +147,6 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 				continue
 			}
 			nodeKey := rt.cfg.SessionName + ":" + item.LogicalName
-			paneBackend := rt.backendForPane(tabID, item.ID.Native)
-			if !rt.setClearBackend(generation, paneBackend) {
-				return nil, nil, fmt.Errorf("herdr runtime closed")
-			}
 			if collidedNodeKeys[nodeKey] {
 				continue
 			}
@@ -161,12 +162,16 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			}
 		}
 	}
-	return nodes, collisions, nil
+	return nodes, collisions, generation, nil
 }
 
 func (rt *Runtime) beginDiscover() (uint64, bool) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if rt.closed {
+		return rt.generation, true
+	}
+	rt.generation++
 	return rt.generation, rt.closed
 }
 
@@ -176,28 +181,60 @@ func (rt *Runtime) discoverStillCurrent(generation uint64) bool {
 	return !rt.closed && rt.generation == generation
 }
 
+func (rt *Runtime) discoverStillOpen() bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return !rt.closed
+}
+
 func (rt *Runtime) ReconcileFinalNodes(nodes map[string]discovery.NodeInfo) {
+	rt.ReconcileFinalNodesForToken(0, nodes)
+}
+
+func (rt *Runtime) ReconcileFinalNodesForToken(generation uint64, nodes map[string]discovery.NodeInfo) {
 	if rt == nil {
 		return
 	}
 	livePanes := make(map[string]bool)
+	paneBackends := make(map[string]multiplexer.HerdrBackend)
 	for _, nodeInfo := range nodes {
 		if multiplexer.BackendKindFromString(nodeInfo.Backend) != multiplexer.BackendKindHerdr || nodeInfo.PaneID == "" {
 			continue
 		}
 		livePanes[nodeInfo.PaneID] = true
-		if !rt.registerPaneBackend(0, nodeInfo.PaneID, rt.backendForPane(nodeInfo.HerdrTabID, nodeInfo.PaneID)) {
+		paneBackends[nodeInfo.PaneID] = rt.backendForPane(nodeInfo.HerdrTabID, nodeInfo.PaneID)
+	}
+	if len(paneBackends) == 0 {
+		if !rt.reconcilePaneBackends(generation, livePanes) {
+			return
+		}
+		if !rt.setWorkspaceSessionBackend(generation, rt.backendForWorkspace()) {
+			return
+		}
+		return
+	}
+	paneIDs := make([]string, 0, len(paneBackends))
+	for paneID := range paneBackends {
+		paneIDs = append(paneIDs, paneID)
+	}
+	sort.Strings(paneIDs)
+	for _, paneID := range paneIDs {
+		if !rt.registerPaneBackend(generation, paneID, paneBackends[paneID]) {
 			return
 		}
 	}
-	rt.reconcilePaneBackends(0, livePanes)
+	rt.reconcilePaneBackends(generation, livePanes)
 }
 
 func (rt *Runtime) ClearPaneRoutes() {
+	rt.ClearPaneRoutesForToken(0)
+}
+
+func (rt *Runtime) ClearPaneRoutesForToken(generation uint64) {
 	if rt == nil {
 		return
 	}
-	rt.reconcilePaneBackends(0, nil)
+	rt.reconcilePaneBackends(generation, nil)
 }
 
 func (rt *Runtime) Close() {
@@ -237,6 +274,26 @@ func (rt *Runtime) backendForPane(tabID, paneID string) multiplexer.HerdrBackend
 	}
 }
 
+func (rt *Runtime) backendForWorkspace() multiplexer.HerdrBackend {
+	readConfig := rt.cfg.ReadConfig()
+	readConfig.Policy.ReadScope = multiplexer.HerdrReadScopeDiscovery
+	return multiplexer.HerdrBackend{
+		Config:         readConfig,
+		Client:         rt.client,
+		InputSanitizer: notification.PrepareInteractivePaneMessage,
+	}
+}
+
+func (rt *Runtime) setWorkspaceSessionBackend(generation uint64, backend multiplexer.HerdrBackend) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.closed || (generation != 0 && rt.generation != generation) {
+		return false
+	}
+	rt.ownershipBackend.setWorkspaceSessionBackend(backend)
+	return true
+}
+
 func (rt *Runtime) registerPaneBackend(generation uint64, paneID string, backend multiplexer.HerdrBackend) bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -254,16 +311,6 @@ func (rt *Runtime) registerPaneBackend(generation uint64, paneID string, backend
 			InputSanitizer: notification.PrepareInteractivePaneMessage,
 		},
 	})
-	return true
-}
-
-func (rt *Runtime) setClearBackend(generation uint64, backend multiplexer.HerdrBackend) bool {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if rt.closed || (generation != 0 && rt.generation != generation) {
-		return false
-	}
-	rt.ownershipBackend.setClearBackend(backend)
 	return true
 }
 
@@ -311,9 +358,10 @@ func (m *ownershipMux) setPaneBackend(paneID string, backend multiplexer.HerdrBa
 	m.setClearBackendLocked(backend)
 }
 
-func (m *ownershipMux) setClearBackend(backend multiplexer.HerdrBackend) {
+func (m *ownershipMux) setWorkspaceSessionBackend(backend multiplexer.HerdrBackend) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.setSessionBackendLocked(backend)
 	m.setClearBackendLocked(backend)
 }
 

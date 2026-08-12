@@ -1571,13 +1571,17 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		freshNodes = make(map[string]discovery.NodeInfo)
 		collisions = nil
 	}
+	var herdrToken uint64
 	if rt.herdrRuntime != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		herdrNodes, herdrCollisions, herdrErr := rt.herdrRuntime.Discover(ctx, rt.baseDir, rt.contextID)
+		var herdrNodes map[string]discovery.NodeInfo
+		var herdrCollisions []discovery.CollisionReport
+		var herdrErr error
+		herdrNodes, herdrCollisions, herdrToken, herdrErr = rt.herdrRuntime.DiscoverForReconcile(ctx, rt.baseDir, rt.contextID)
 		cancel()
 		if herdrErr != nil {
 			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
-			rt.herdrRuntime.ClearPaneRoutes()
+			rt.herdrRuntime.ClearPaneRoutesForToken(herdrToken)
 		} else {
 			collisions = append(collisions, mergeRuntimeDiscoveredNodes(freshNodes, herdrNodes)...)
 			collisions = append(collisions, herdrCollisions...)
@@ -1585,7 +1589,7 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	if rt.herdrRuntime != nil {
-		rt.herdrRuntime.ReconcileFinalNodes(freshNodes)
+		rt.herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)
 	}
 	return freshNodes, collisions, nil
 }

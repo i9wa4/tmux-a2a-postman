@@ -124,71 +124,33 @@ func (h herdrOwnershipBackends) Kind() BackendKind {
 }
 
 func (h herdrOwnershipBackends) SessionOwnerMarker(ctx context.Context, sessionName string) (string, error) {
-	var lastErr error
-	foundEmpty := false
-	for _, backend := range h {
-		value, err := backend.SessionOwnerMarker(ctx, sessionName)
-		if err == nil {
-			if value != "" {
-				return value, nil
-			}
-			foundEmpty = true
-			continue
-		}
-		lastErr = err
+	_, value, err := h.authoritativeSessionBackend(ctx, sessionName)
+	if err != nil {
+		return "", err
 	}
-	if foundEmpty {
-		return "", nil
-	}
-	if lastErr != nil {
-		return "", lastErr
-	}
-	return "", fmt.Errorf("herdr ownership backend not registered")
+	return value, nil
 }
 
 func (h herdrOwnershipBackends) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
-	backends, err := h.sessionMutationBackends(ctx, sessionName)
+	backend, _, err := h.authoritativeSessionBackend(ctx, sessionName)
 	if err != nil {
 		return err
 	}
-	var lastErr error
-	for _, backend := range backends {
-		if err := backend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return fmt.Errorf("herdr ownership backend not registered")
+	return backend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid)
 }
 
 func (h herdrOwnershipBackends) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
-	backends, err := h.sessionMutationBackends(ctx, sessionName)
+	backend, _, err := h.authoritativeSessionBackend(ctx, sessionName)
 	if err != nil {
 		return err
 	}
-	var lastErr error
-	for _, backend := range backends {
-		if err := backend.ClearSessionOwnerMarker(ctx, sessionName); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return fmt.Errorf("herdr ownership backend not registered")
+	return backend.ClearSessionOwnerMarker(ctx, sessionName)
 }
 
-func (h herdrOwnershipBackends) sessionMutationBackends(ctx context.Context, sessionName string) ([]OwnershipBackend, error) {
+func (h herdrOwnershipBackends) authoritativeSessionBackend(ctx context.Context, sessionName string) (OwnershipBackend, string, error) {
 	var (
-		nonEmpty []OwnershipBackend
-		empty    []OwnershipBackend
-		lastErr  error
+		emptyBackend OwnershipBackend
+		lastErr      error
 	)
 	for _, backend := range h {
 		value, err := backend.SessionOwnerMarker(ctx, sessionName)
@@ -197,21 +159,19 @@ func (h herdrOwnershipBackends) sessionMutationBackends(ctx context.Context, ses
 			continue
 		}
 		if value != "" {
-			nonEmpty = append(nonEmpty, backend)
-			continue
+			return backend, value, nil
 		}
-		empty = append(empty, backend)
+		if emptyBackend == nil {
+			emptyBackend = backend
+		}
 	}
-	switch {
-	case len(nonEmpty) > 0:
-		return nonEmpty, nil
-	case len(empty) > 0:
-		return empty, nil
-	case lastErr != nil:
-		return nil, lastErr
-	default:
-		return nil, fmt.Errorf("herdr ownership backend not registered")
+	if emptyBackend != nil {
+		return emptyBackend, "", nil
 	}
+	if lastErr != nil {
+		return nil, "", lastErr
+	}
+	return nil, "", fmt.Errorf("herdr ownership backend not registered")
 }
 
 func (h herdrOwnershipBackends) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {

@@ -2,6 +2,7 @@ package multiplexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -268,10 +269,78 @@ func TestHerdrOwnershipCompositeClearFallsBackToEmptySurvivor(t *testing.T) {
 	}
 }
 
+func TestHerdrOwnershipCompositeSetDoesNotFallThroughWhenAuthoritativeNonEmptyFails(t *testing.T) {
+	mutationErr := errors.New("authoritative set rejected")
+	authoritative := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-authoritative:1",
+		setErr:      mutationErr,
+	}
+	authoritativeCleanup := RegisterOwnershipBackend(authoritative)
+	t.Cleanup(authoritativeCleanup)
+	fallback := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-fallback:1",
+	}
+	fallbackCleanup := RegisterOwnershipBackend(fallback)
+	t.Cleanup(fallbackCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := backend.SetSessionOwnerMarker(context.Background(), "ctx-new", "work", 1234); !errors.Is(err, mutationErr) {
+		t.Fatalf("SetSessionOwnerMarker(work) error = %v, want authoritative mutation error", err)
+	}
+	if authoritative.setCalls != 1 || authoritative.owner != "ctx-authoritative:1" {
+		t.Fatalf("authoritative set calls=%d owner=%q, want failed mutation only on read winner", authoritative.setCalls, authoritative.owner)
+	}
+	if fallback.setCalls != 0 || fallback.owner != "ctx-fallback:1" {
+		t.Fatalf("fallback set calls=%d owner=%q, want no fallthrough mutation", fallback.setCalls, fallback.owner)
+	}
+}
+
+func TestHerdrOwnershipCompositeClearDoesNotFallThroughWhenAuthoritativeNonEmptyFails(t *testing.T) {
+	mutationErr := errors.New("authoritative clear rejected")
+	authoritative := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-authoritative:1",
+		clearErr:    mutationErr,
+	}
+	authoritativeCleanup := RegisterOwnershipBackend(authoritative)
+	t.Cleanup(authoritativeCleanup)
+	fallback := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-fallback:1",
+	}
+	fallbackCleanup := RegisterOwnershipBackend(fallback)
+	t.Cleanup(fallbackCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := backend.ClearSessionOwnerMarker(context.Background(), "work"); !errors.Is(err, mutationErr) {
+		t.Fatalf("ClearSessionOwnerMarker(work) error = %v, want authoritative mutation error", err)
+	}
+	if authoritative.clearCalls != 1 || authoritative.owner != "ctx-authoritative:1" {
+		t.Fatalf("authoritative clear calls=%d owner=%q, want failed mutation only on read winner", authoritative.clearCalls, authoritative.owner)
+	}
+	if fallback.clearCalls != 0 || fallback.owner != "ctx-fallback:1" {
+		t.Fatalf("fallback clear calls=%d owner=%q, want no fallthrough mutation", fallback.clearCalls, fallback.owner)
+	}
+}
+
 type testOwnershipBackend struct {
 	kind        BackendKind
 	sessionName string
 	owner       string
+	setErr      error
+	clearErr    error
 	setCalls    int
 	clearCalls  int
 }
@@ -292,6 +361,9 @@ func (t *testOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextI
 		return fmt.Errorf("session %q not owned", sessionName)
 	}
 	t.setCalls++
+	if t.setErr != nil {
+		return t.setErr
+	}
 	t.owner = contextID + ":" + strconv.Itoa(pid)
 	return nil
 }
@@ -301,6 +373,9 @@ func (t *testOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessio
 		return fmt.Errorf("session %q not owned", sessionName)
 	}
 	t.clearCalls++
+	if t.clearErr != nil {
+		return t.clearErr
+	}
 	t.owner = ""
 	return nil
 }

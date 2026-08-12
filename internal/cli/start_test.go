@@ -118,7 +118,7 @@ func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryE
 	}
 	t.Cleanup(rt.Close)
 
-	nodes, collisions, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	nodes, collisions, _, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
 	if err != nil {
 		t.Fatalf("discoverFreshNodesWithHerdr() error = %v", err)
 	}
@@ -163,7 +163,7 @@ func TestDiscoverFreshNodesWithHerdrReturnsErrorWhenTmuxAndHerdrDiscoveryFail(t 
 	}
 	t.Cleanup(rt.Close)
 
-	nodes, collisions, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	nodes, collisions, _, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
 	if err == nil {
 		t.Fatal("discoverFreshNodesWithHerdr() error = nil, want combined tmux+Herdr discovery error")
 	}
@@ -198,7 +198,7 @@ func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering
 	if firstFilter == -1 {
 		t.Fatal("startup rediscovery activation filter not found")
 	}
-	if !strings.Contains(source[firstFilter:], "herdrRuntime.ReconcileFinalNodes(fresh)") {
+	if !strings.Contains(source[firstFilter:], "herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh)") {
 		t.Fatal("startup rediscovery no longer reconciles Herdr routes after activation filtering")
 	}
 
@@ -206,7 +206,7 @@ func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering
 	if secondFilter == -1 {
 		t.Fatal("on-demand refresh activation filter not found")
 	}
-	if !strings.Contains(source[secondFilter:], "herdrRuntime.ReconcileFinalNodes(freshNodes)") {
+	if !strings.Contains(source[secondFilter:], "herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)") {
 		t.Fatal("on-demand refresh no longer reconciles Herdr routes after activation filtering")
 	}
 }
@@ -808,7 +808,7 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	markerIndex := strings.Index(source, `setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true)`)
 	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
 	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
-	reconcileIndex := strings.Index(source, "herdrRuntime.ReconcileFinalNodes(nodes)")
+	reconcileIndex := strings.Index(source, "herdrRuntime.ReconcileFinalNodesForToken(herdrStartupToken, nodes)")
 	claimIndex := strings.Index(source, "// Claim discovered panes with this daemon's context ID.")
 	if markerIndex == -1 {
 		t.Fatal("start.go no longer publishes the enabled-session marker during cold start")

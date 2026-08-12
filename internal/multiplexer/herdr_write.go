@@ -107,7 +107,7 @@ func (b HerdrBackend) SessionOwnerMarker(ctx context.Context, sessionName string
 }
 
 func (b HerdrBackend) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
-	if err := b.authorizeWritePath(); err != nil {
+	if err := b.authorizeWorkspaceWritePath(); err != nil {
 		return err
 	}
 	if sessionName != b.Config.Runtime.SessionName {
@@ -139,11 +139,11 @@ func (b HerdrBackend) SetSessionOwnerMarker(ctx context.Context, contextID, sess
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
-	return b.validateWriteEnvelope(result.Envelope)
+	return b.validateWorkspaceWriteEnvelope(result.Envelope)
 }
 
 func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
-	if err := b.authorizeWritePath(); err != nil {
+	if err := b.authorizeWorkspaceWritePath(); err != nil {
 		return err
 	}
 	if sessionName != b.Config.Runtime.SessionName {
@@ -164,7 +164,7 @@ func (b HerdrBackend) ClearSessionOwnerMarker(ctx context.Context, sessionName s
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
-	return b.validateWriteEnvelope(result.Envelope)
+	return b.validateWorkspaceWriteEnvelope(result.Envelope)
 }
 
 func (b HerdrBackend) validateConfiguredWorkspaceInSnapshot(ctx context.Context) error {
@@ -271,8 +271,23 @@ func (b HerdrBackend) authorizeWritePath() error {
 	return ValidateHerdrWriteGate(b.Config.Policy, b.Config.Runtime, envelope)
 }
 
+func (b HerdrBackend) authorizeWorkspaceWritePath() error {
+	if !b.Config.Enabled {
+		return ErrHerdrReadDisabled
+	}
+	if b.Client == nil {
+		return ErrHerdrReadClientMissing
+	}
+	envelope := b.localReadGateEnvelope()
+	return validateHerdrWorkspaceWriteGate(b.Config.Policy, b.Config.Runtime, envelope)
+}
+
 func (b HerdrBackend) validateWriteEnvelope(envelope HerdrResponseEnvelope) error {
 	return ValidateHerdrWriteGate(b.Config.Policy, b.Config.Runtime, envelope)
+}
+
+func (b HerdrBackend) validateWorkspaceWriteEnvelope(envelope HerdrResponseEnvelope) error {
+	return validateHerdrWorkspaceWriteGate(b.Config.Policy, b.Config.Runtime, envelope)
 }
 
 func (b HerdrBackend) writeClient() (HerdrWriteClient, error) {

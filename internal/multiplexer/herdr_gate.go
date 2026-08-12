@@ -140,6 +140,27 @@ func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity
 	return nil
 }
 
+func validateHerdrWorkspaceWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
+	if !policy.WriteEnabled {
+		return herdrGateError(HerdrAccessPhaseWrite, "", HerdrGateFailureClosed)
+	}
+	writePolicy := policy
+	writePolicy.ReadScope = HerdrReadScopeDiscovery
+	if err := validateHerdrReadGateForPhase(HerdrAccessPhaseWrite, writePolicy, runtime, envelope); err != nil {
+		return err
+	}
+	if !policy.InputSanitizerReady {
+		return herdrGateError(HerdrAccessPhaseWrite, "input_sanitizer", HerdrGateFailureSanitizerMissing)
+	}
+	if policy.ComplianceDecision != HerdrComplianceDecisionUnset && policy.ComplianceDecision != policy.ComplianceRecord.Decision {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
+	if !isCurrentHerdrComplianceRecord(policy.ComplianceRecord, policy.ComplianceNow) {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
+	return nil
+}
+
 func validateHerdrReadGateForPhase(phase HerdrAccessPhase, policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
 	if !policy.ReadEnabled {
 		return herdrGateError(phase, "read_enabled", HerdrGateFailureClosed)

@@ -120,31 +120,31 @@ func logDiscoveredCollisions(collisions []discovery.CollisionReport, activationN
 	}
 }
 
-func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessionName string, herdrRuntime *herdrruntime.Runtime) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessionName string, herdrRuntime *herdrruntime.Runtime) (map[string]discovery.NodeInfo, []discovery.CollisionReport, uint64, error) {
 	fresh, collisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
 	if err != nil {
 		if herdrRuntime == nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 		log.Printf("⚠️  postman: tmux discovery failed before Herdr refresh: %v\n", err)
 		fresh = make(map[string]discovery.NodeInfo)
 		collisions = nil
 	}
 	if herdrRuntime == nil {
-		return fresh, collisions, nil
+		return fresh, collisions, 0, nil
 	}
-	herdrNodes, herdrCollisions, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)
+	herdrNodes, herdrCollisions, herdrToken, herdrErr := herdrRuntime.DiscoverForReconcile(ctx, baseDir, contextID)
 	if herdrErr != nil {
 		log.Printf("⚠️  postman: herdr discovery failed: %v\n", herdrErr)
-		herdrRuntime.ClearPaneRoutes()
+		herdrRuntime.ClearPaneRoutesForToken(herdrToken)
 		if err != nil {
-			return nil, nil, fmt.Errorf("tmux discovery failed: %w; herdr discovery failed: %v", err, herdrErr)
+			return nil, nil, herdrToken, fmt.Errorf("tmux discovery failed: %w; herdr discovery failed: %v", err, herdrErr)
 		}
-		return fresh, collisions, nil
+		return fresh, collisions, herdrToken, nil
 	}
 	collisions = append(collisions, mergeDiscoveredNodes(fresh, herdrNodes)...)
 	collisions = append(collisions, herdrCollisions...)
-	return fresh, collisions, nil
+	return fresh, collisions, herdrToken, nil
 }
 
 func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
@@ -357,8 +357,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	defer herdrRuntime.Close()
 	var herdrStartupNodes map[string]discovery.NodeInfo
 	var herdrStartupCollisions []discovery.CollisionReport
+	var herdrStartupToken uint64
 	if herdrRuntime != nil {
-		herdrStartupNodes, herdrStartupCollisions, err = herdrRuntime.Discover(ctx, baseDir, contextID)
+		herdrStartupNodes, herdrStartupCollisions, herdrStartupToken, err = herdrRuntime.DiscoverForReconcile(ctx, baseDir, contextID)
 		if err != nil {
 			return fmt.Errorf("discovering herdr runtime: %w", err)
 		}
@@ -439,7 +440,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	if herdrRuntime != nil {
-		herdrRuntime.ReconcileFinalNodes(nodes)
+		herdrRuntime.ReconcileFinalNodesForToken(herdrStartupToken, nodes)
 	}
 	if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
 		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
@@ -475,7 +476,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				log.Printf("🚨 startup-rediscovery panic: %v\n", r)
 			}
 		}()
-		fresh, freshCollisions, err := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
+		fresh, freshCollisions, herdrToken, err := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
 		if err != nil {
 			log.Printf("⚠️  postman: startup re-discovery failed: %v\n", err)
 			return
@@ -484,7 +485,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
 		if herdrRuntime != nil {
-			herdrRuntime.ReconcileFinalNodes(fresh)
+			herdrRuntime.ReconcileFinalNodesForToken(herdrToken, fresh)
 		}
 		sharedNodes.Store(&fresh)
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
@@ -691,12 +692,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						activationBlocked := false
 						// Attempt a fresh discovery before giving up (catches panes
 						// that set titles after startup or after the last scan).
-						freshDiscovered, freshCollisions, discErr := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
+						freshDiscovered, freshCollisions, herdrToken, discErr := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
 							if herdrRuntime != nil {
-								herdrRuntime.ReconcileFinalNodes(freshNodes)
+								herdrRuntime.ReconcileFinalNodesForToken(herdrToken, freshNodes)
 							}
 							sharedNodes.Store(&freshNodes)
 							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
