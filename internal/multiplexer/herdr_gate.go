@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type HerdrAccessPhase string
@@ -21,6 +22,7 @@ const (
 	HerdrComplianceDecisionAGPL       HerdrComplianceDecision = "agpl-3.0-or-later"
 	HerdrComplianceDecisionCommercial HerdrComplianceDecision = "commercial"
 	HerdrComplianceDecisionReviewOnly HerdrComplianceDecision = "review-only"
+	HerdrComplianceDecisionRecorded   HerdrComplianceDecision = "authority-recorded"
 )
 
 type HerdrGateFailure string
@@ -75,6 +77,24 @@ type HerdrGatePolicy struct {
 	AllowedSchemaVersions   []int
 	InputSanitizerReady     bool
 	ComplianceDecision      HerdrComplianceDecision
+	ComplianceRecord        HerdrComplianceRecord
+	// ComplianceNow makes freshness deterministic in tests and injectable at runtime.
+	ComplianceNow func() time.Time
+}
+
+// HerdrComplianceMaxAge is the inclusive freshness window for a recorded decision.
+const HerdrComplianceMaxAge = 24 * time.Hour
+
+// HerdrComplianceRecord is an authority-backed, time-bounded decision record.
+// It records evidence without asserting a legal compatibility conclusion.
+type HerdrComplianceRecord struct {
+	Decision             HerdrComplianceDecision
+	AuthorizedBy         string
+	DecisionID           string
+	DecidedAt            time.Time
+	RevalidatedAt        time.Time
+	CurrentReferences    []string
+	HistoricalReferences []string
 }
 
 type HerdrResponseEnvelope struct {
@@ -111,7 +131,7 @@ func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity
 	if !policy.InputSanitizerReady {
 		return herdrGateError(HerdrAccessPhaseWrite, "input_sanitizer", HerdrGateFailureSanitizerMissing)
 	}
-	if !isAcceptedHerdrComplianceDecision(policy.ComplianceDecision) {
+	if !isCurrentHerdrComplianceRecord(policy.ComplianceRecord, policy.ComplianceNow) {
 		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	}
 	return nil
@@ -189,13 +209,33 @@ func validateHerdrEnvelope(phase HerdrAccessPhase, policy HerdrGatePolicy, envel
 	return nil
 }
 
-func isAcceptedHerdrComplianceDecision(decision HerdrComplianceDecision) bool {
-	switch decision {
-	case HerdrComplianceDecisionAGPL, HerdrComplianceDecisionCommercial:
-		return true
-	default:
+func isCurrentHerdrComplianceRecord(record HerdrComplianceRecord, nowFn func() time.Time) bool {
+	if record.Decision != HerdrComplianceDecisionRecorded {
 		return false
 	}
+	if strings.TrimSpace(record.AuthorizedBy) == "" || strings.TrimSpace(record.DecisionID) == "" || record.DecidedAt.IsZero() || record.RevalidatedAt.IsZero() {
+		return false
+	}
+	if record.RevalidatedAt.Before(record.DecidedAt) || !hasNonBlankReference(record.CurrentReferences) {
+		return false
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn()
+	if now.Before(record.RevalidatedAt) || now.Sub(record.RevalidatedAt) > HerdrComplianceMaxAge {
+		return false
+	}
+	return true
+}
+
+func hasNonBlankReference(references []string) bool {
+	for _, reference := range references {
+		if strings.TrimSpace(reference) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func herdrGateError(phase HerdrAccessPhase, field string, failure HerdrGateFailure) HerdrGateError {
