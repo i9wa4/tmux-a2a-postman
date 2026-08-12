@@ -112,22 +112,29 @@ type DeprecatedCommandApproverNode struct {
 }
 
 type HerdrConfig struct {
-	Enabled                 bool     `toml:"enabled"`
-	SocketPath              string   `toml:"socket_path"`
-	SessionName             string   `toml:"session_name"`
-	WorkspaceID             string   `toml:"workspace_id"`
-	AllowedSocketPaths      []string `toml:"allowed_socket_paths"`
-	AllowedSessions         []string `toml:"allowed_sessions"`
-	AllowedWorkspaceIDs     []string `toml:"allowed_workspace_ids"`
-	AllowedProtocolVersions []string `toml:"allowed_protocol_versions"`
-	AllowedSchemaVersions   []int    `toml:"allowed_schema_versions"`
-	ReadEnabled             bool     `toml:"read_enabled"`
-	WriteEnabled            bool     `toml:"write_enabled"`
-	InputSanitizerReady     bool     `toml:"input_sanitizer_ready"`
-	ComplianceDecision      string   `toml:"compliance_decision"`
+	Enabled                     bool     `toml:"enabled"`
+	SocketPath                  string   `toml:"socket_path"`
+	SessionName                 string   `toml:"session_name"`
+	WorkspaceID                 string   `toml:"workspace_id"`
+	AllowedSocketPaths          []string `toml:"allowed_socket_paths"`
+	AllowedSessions             []string `toml:"allowed_sessions"`
+	AllowedWorkspaceIDs         []string `toml:"allowed_workspace_ids"`
+	AllowedProtocolVersions     []string `toml:"allowed_protocol_versions"`
+	AllowedSchemaVersions       []int    `toml:"allowed_schema_versions"`
+	ReadEnabled                 bool     `toml:"read_enabled"`
+	WriteEnabled                bool     `toml:"write_enabled"`
+	InputSanitizerReady         bool     `toml:"input_sanitizer_ready"`
+	ComplianceDecision          string   `toml:"compliance_decision"`
+	ComplianceAuthorizedBy      string   `toml:"compliance_authorized_by"`
+	ComplianceDecisionID        string   `toml:"compliance_decision_id"`
+	ComplianceDecidedAt         string   `toml:"compliance_decided_at"`
+	ComplianceRevalidatedAt     string   `toml:"compliance_revalidated_at"`
+	ComplianceCurrentReferences []string `toml:"compliance_current_references"`
 }
 
 func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
+	decidedAt, _ := time.Parse(time.RFC3339, h.ComplianceDecidedAt)
+	revalidatedAt, _ := time.Parse(time.RFC3339, h.ComplianceRevalidatedAt)
 	return multiplexer.HerdrReadConfig{
 		Enabled: h.Enabled,
 		Runtime: multiplexer.HerdrRuntimeIdentity{
@@ -145,7 +152,7 @@ func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
 			AllowedSchemaVersions:   h.AllowedSchemaVersions,
 			InputSanitizerReady:     h.InputSanitizerReady,
 			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
-			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "config", DecisionID: "config", DecidedAt: time.Now(), RevalidatedAt: time.Now(), CurrentReferences: []string{"config"}},
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecision(h.ComplianceDecision), AuthorizedBy: h.ComplianceAuthorizedBy, DecisionID: h.ComplianceDecisionID, DecidedAt: decidedAt, RevalidatedAt: revalidatedAt, CurrentReferences: append([]string(nil), h.ComplianceCurrentReferences...)},
 		},
 	}
 }
