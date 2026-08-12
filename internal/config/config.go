@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -131,34 +130,22 @@ type HerdrConfig struct {
 	ComplianceDecidedAt         string   `toml:"compliance_decided_at"`
 	ComplianceRevalidatedAt     string   `toml:"compliance_revalidated_at"`
 	ComplianceCurrentReferences []string `toml:"compliance_current_references"`
+
+	complianceNow func() time.Time `toml:"-"`
 }
 
-var (
-	herdrComplianceNowMu sync.Mutex
-	herdrComplianceNow   = time.Now
-)
-
-func SetHerdrComplianceNowForTest(now func() time.Time) func() {
-	herdrComplianceNowMu.Lock()
-	previous := herdrComplianceNow
-	if now == nil {
-		now = time.Now
-	}
-	herdrComplianceNow = now
-	herdrComplianceNowMu.Unlock()
-	return func() {
-		herdrComplianceNowMu.Lock()
-		herdrComplianceNow = previous
-		herdrComplianceNowMu.Unlock()
-	}
+func (h HerdrConfig) withComplianceNow(now func() time.Time) HerdrConfig {
+	h.complianceNow = now
+	return h
 }
 
 func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
 	decidedAt, _ := time.Parse(time.RFC3339, h.ComplianceDecidedAt)
 	revalidatedAt, _ := time.Parse(time.RFC3339, h.ComplianceRevalidatedAt)
-	herdrComplianceNowMu.Lock()
-	complianceNow := herdrComplianceNow
-	herdrComplianceNowMu.Unlock()
+	complianceNow := h.complianceNow
+	if complianceNow == nil {
+		complianceNow = time.Now
+	}
 	return multiplexer.HerdrReadConfig{
 		Enabled: h.Enabled,
 		Runtime: multiplexer.HerdrRuntimeIdentity{

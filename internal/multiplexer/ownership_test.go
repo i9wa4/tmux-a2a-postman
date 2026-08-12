@@ -137,6 +137,46 @@ func TestRegisterOwnershipBackendKeepsConcurrentHerdrBackendsAddressable(t *test
 	}
 }
 
+func TestHerdrOwnershipCompositeSkipsEmptySessionMarker(t *testing.T) {
+	emptyCleanup := RegisterOwnershipBackend(&testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "",
+	})
+	t.Cleanup(emptyCleanup)
+	healthyCleanup := RegisterOwnershipBackend(&testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-work:1",
+	})
+	t.Cleanup(healthyCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	got, err := backend.SessionOwnerMarker(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("SessionOwnerMarker(work) error = %v", err)
+	}
+	if got != "ctx-work:1" {
+		t.Fatalf("SessionOwnerMarker(work) = %q, want later healthy backend marker", got)
+	}
+
+	healthyCleanup()
+	backend, err = OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr after healthy cleanup) error = %v", err)
+	}
+	got, err = backend.SessionOwnerMarker(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("SessionOwnerMarker(work after healthy cleanup) error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("SessionOwnerMarker(work after healthy cleanup) = %q, want empty marker", got)
+	}
+}
+
 type testOwnershipBackend struct {
 	kind        BackendKind
 	sessionName string

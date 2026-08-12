@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
@@ -2443,6 +2445,167 @@ func TestMergeRuntimeDiscoveredNodesReportsCrossBackendCollisionWithoutOverwrite
 	}
 	if collisions[0].NodeKey != "work:worker" || collisions[0].WinnerPaneID != "%1" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
 		t.Fatalf("collision = %#v, want tmux winner and Herdr loser", collisions[0])
+	}
+}
+
+func TestDiscoverNodesContinuesHerdrReconciliationWhenTmuxDiscoveryFails(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeDaemonHerdrClient{snapshot: daemonHerdrSnapshot("ctx-work:1")}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = daemonHerdrConfig()
+	herdrRuntime, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("herdrruntime.New() error = %v", err)
+	}
+	t.Cleanup(herdrRuntime.Close)
+	if _, _, err := herdrRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("initial Herdr Discover() error = %v", err)
+	}
+	target := controlplane.TargetForNode("work:worker", discovery.NodeInfo{
+		PaneID:           "workspace-1:pane-1",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr-daemon.sock",
+		HerdrWorkspaceID: "workspace-1",
+		HerdrTabID:       "workspace-1:tab-1",
+	})
+	if _, err := controlplane.DefaultHandAdapter(target); err != nil {
+		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
+	}
+
+	originalDiscover := discoverNodesWithCollisionsForRuntime
+	discoverNodesWithCollisionsForRuntime = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return nil, nil, fmt.Errorf("tmux temporarily unavailable")
+	}
+	t.Cleanup(func() { discoverNodesWithCollisionsForRuntime = originalDiscover })
+	client.snapshot = daemonEmptyHerdrSnapshot()
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		contextID:    contextID,
+		selfSession:  sessionName,
+		cfg:          cfg,
+		herdrRuntime: herdrRuntime,
+	}
+
+	nodes, collisions, err := rt.discoverNodes()
+	if err != nil {
+		t.Fatalf("discoverNodes() error = %v", err)
+	}
+	if len(nodes) != 0 || len(collisions) != 0 {
+		t.Fatalf("discoverNodes() nodes=%#v collisions=%#v, want empty after tmux failure and empty Herdr", nodes, collisions)
+	}
+	if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+		t.Fatal("stale Herdr adapter remained registered after tmux failure plus Herdr reconciliation")
+	}
+	if err := herdrRuntime.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("stale Herdr ownership route remained after tmux failure plus Herdr reconciliation")
+	}
+}
+
+type fakeDaemonHerdrClient struct {
+	snapshot multiplexer.HerdrSessionSnapshot
+}
+
+func (f *fakeDaemonHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}, nil
+}
+
+func (f *fakeDaemonHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeDaemonHerdrClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {
+	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) SendPaneKey(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) SetPaneMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeDaemonHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func daemonHerdrConfig() config.HerdrConfig {
+	now := time.Now().UTC().Truncate(time.Second)
+	return config.HerdrConfig{
+		Enabled:                     true,
+		SocketPath:                  "/tmp/herdr-daemon.sock",
+		SessionName:                 "work",
+		WorkspaceID:                 "workspace-1",
+		AllowedSocketPaths:          []string{"/tmp/herdr-daemon.sock"},
+		AllowedSessions:             []string{"work"},
+		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedProtocolVersions:     []string{"1"},
+		AllowedSchemaVersions:       []int{1},
+		ReadEnabled:                 true,
+		WriteEnabled:                true,
+		InputSanitizerReady:         true,
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
+		ComplianceAuthorizedBy:      "test-authority",
+		ComplianceDecisionID:        "test-decision",
+		ComplianceDecidedAt:         now.Add(-2 * time.Hour).Format(time.RFC3339),
+		ComplianceRevalidatedAt:     now.Add(-time.Hour).Format(time.RFC3339),
+		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
+	}
+}
+
+func daemonHerdrSnapshot(sessionOwner string) multiplexer.HerdrSessionSnapshot {
+	snapshot := daemonEmptyHerdrSnapshot()
+	if sessionOwner != "" {
+		snapshot.Workspaces[0].Metadata["postman.session_owner.work"] = sessionOwner
+	}
+	snapshot.Panes = []multiplexer.HerdrPaneSnapshot{{
+		ID:             "workspace-1:pane-1",
+		WorkspaceID:    "workspace-1",
+		TabID:          "workspace-1:tab-1",
+		Metadata:       map[string]string{"postman.node": "worker"},
+		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		PostmanNode:    "worker",
+		PostmanSession: "work",
+	}}
+	return snapshot
+}
+
+func daemonEmptyHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
+	return multiplexer.HerdrSessionSnapshot{
+		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
+			ID:       "workspace-1",
+			Metadata: map[string]string{},
+		}},
+		Tabs: []multiplexer.HerdrTabSnapshot{{
+			ID:          "workspace-1:tab-1",
+			WorkspaceID: "workspace-1",
+		}},
 	}
 }
 

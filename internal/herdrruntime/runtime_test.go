@@ -282,6 +282,58 @@ func TestRuntimeDiscoverErrorClearsStalePaneRegistrations(t *testing.T) {
 	}
 }
 
+func TestRuntimeCloseWhileDiscoverBlockedDoesNotRegisterRoutes(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	snapshotStarted := make(chan struct{})
+	releaseSnapshot := make(chan struct{})
+	client := &fakeRuntimeHerdrClient{
+		snapshot:        validRuntimeHerdrSnapshot(),
+		snapshotStarted: snapshotStarted,
+		releaseSnapshot: releaseSnapshot,
+	}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	discoverDone := make(chan error, 1)
+	go func() {
+		_, _, err := rt.Discover(context.Background(), baseDir, contextID)
+		discoverDone <- err
+	}()
+	<-snapshotStarted
+	rt.Close()
+	close(releaseSnapshot)
+	if err := <-discoverDone; err == nil {
+		t.Fatal("Discover() error = nil after Close, want terminal closed error")
+	}
+
+	target := controlplane.TargetForNode("work:worker", discovery.NodeInfo{
+		PaneID:           "workspace-1:pane-1",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr.sock",
+		HerdrWorkspaceID: "workspace-1",
+		HerdrTabID:       "workspace-1:tab-1",
+	})
+	if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+		t.Fatal("Herdr adapter registered after runtime Close")
+	}
+	if err := rt.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("Herdr ownership route registered after runtime Close")
+	}
+}
+
 func TestRuntimeClearSessionOwnerMarkerSurvivesZeroPaneRediscovery(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
@@ -468,6 +520,64 @@ func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 	}
 	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "ctx-work:1" {
 		t.Fatalf("SessionOwnerMarker(work after other close) = %q, %v; want ctx-work:1", got, err)
+	}
+}
+
+func TestRuntimeHerdrOwnershipRegistrySkipsEmptyDuplicateAndTeardown(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs(%q) error = %v", sessionName, err)
+	}
+
+	emptyClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-1", "workspace-1:pane-empty", "")}
+	emptyCfg := config.DefaultConfig()
+	emptyCfg.Herdr = runtimeHerdrConfigFor("work", "workspace-1")
+	emptyCfg.Herdr.SocketPath = "/tmp/herdr-empty.sock"
+	emptyCfg.Herdr.AllowedSocketPaths = []string{"/tmp/herdr-empty.sock"}
+	emptyRuntime, err := herdrruntime.New(emptyCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return emptyClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(empty) error = %v", err)
+	}
+	t.Cleanup(emptyRuntime.Close)
+
+	healthyClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-2", "workspace-1:pane-healthy", "ctx-work:1")}
+	healthyCfg := config.DefaultConfig()
+	healthyCfg.Herdr = runtimeHerdrConfigFor("work", "workspace-1")
+	healthyCfg.Herdr.SocketPath = "/tmp/herdr-healthy.sock"
+	healthyCfg.Herdr.AllowedSocketPaths = []string{"/tmp/herdr-healthy.sock"}
+	healthyRuntime, err := herdrruntime.New(healthyCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return healthyClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(healthy) error = %v", err)
+	}
+
+	if _, _, err := emptyRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(empty) error = %v", err)
+	}
+	if _, _, err := healthyRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(healthy) error = %v", err)
+	}
+
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "ctx-work:1" {
+		t.Fatalf("SessionOwnerMarker(work) = %q, %v; want ctx-work:1", got, err)
+	}
+
+	healthyRuntime.Close()
+	ownershipBackend, err = multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr after healthy close) error = %v", err)
+	}
+	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "" {
+		t.Fatalf("SessionOwnerMarker(work after healthy close) = %q, %v; want empty surviving duplicate marker", got, err)
 	}
 }
 
@@ -684,8 +794,10 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 }
 
 type fakeRuntimeHerdrClient struct {
-	snapshot    multiplexer.HerdrSessionSnapshot
-	snapshotErr error
+	snapshot        multiplexer.HerdrSessionSnapshot
+	snapshotErr     error
+	snapshotStarted chan struct{}
+	releaseSnapshot chan struct{}
 
 	writeTextCalls int
 	writeTextPane  string
@@ -707,6 +819,13 @@ func (f *fakeRuntimeHerdrClient) Ping(context.Context) (multiplexer.HerdrRespons
 }
 
 func (f *fakeRuntimeHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	if f.snapshotStarted != nil {
+		close(f.snapshotStarted)
+		f.snapshotStarted = nil
+	}
+	if f.releaseSnapshot != nil {
+		<-f.releaseSnapshot
+	}
 	if f.snapshotErr != nil {
 		return multiplexer.HerdrSessionSnapshot{}, f.snapshotErr
 	}

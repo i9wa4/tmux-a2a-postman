@@ -36,6 +36,8 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 )
 
+var discoverNodesWithCollisionsForRuntime = discovery.DiscoverNodesWithCollisions
+
 type daemonRuntime struct {
 	baseDir     string
 	sessionDir  string
@@ -1560,9 +1562,14 @@ func (rt *daemonRuntime) handleInboxCheckTick() {
 }
 
 func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
-	freshNodes, collisions, err := discovery.DiscoverNodesWithCollisions(rt.baseDir, rt.contextID, rt.selfSession)
+	freshNodes, collisions, err := discoverNodesWithCollisionsForRuntime(rt.baseDir, rt.contextID, rt.selfSession)
 	if err != nil {
-		return nil, nil, err
+		if rt.herdrRuntime == nil {
+			return nil, nil, err
+		}
+		log.Printf("postman: WARNING: tmux node discovery failed; continuing Herdr reconciliation: %v\n", err)
+		freshNodes = make(map[string]discovery.NodeInfo)
+		collisions = nil
 	}
 	if rt.herdrRuntime != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

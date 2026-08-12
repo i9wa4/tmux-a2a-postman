@@ -241,9 +241,8 @@ edges = [
 
 func TestHerdrConfigReadConfigUsesInjectedCurrentTimeWithoutSelfValidatingStaleRecords(t *testing.T) {
 	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
-	t.Cleanup(SetHerdrComplianceNowForTest(func() time.Time { return now }))
 
-	fresh := validHerdrGateConfigFor(now)
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
 	freshConfig := fresh.ReadConfig()
 	freshConfig.Runtime.TabID = "workspace-1:tab-1"
 	freshConfig.Runtime.PaneID = "workspace-1:pane-1"
@@ -251,12 +250,52 @@ func TestHerdrConfigReadConfigUsesInjectedCurrentTimeWithoutSelfValidatingStaleR
 		t.Fatalf("ValidateHerdrWriteGate(fresh) error = %v", err)
 	}
 
-	stale := validHerdrGateConfigFor(now.Add(-25 * time.Hour))
+	stale := validHerdrGateConfigFor(now.Add(-25 * time.Hour)).withComplianceNow(func() time.Time { return now })
 	staleConfig := stale.ReadConfig()
 	staleConfig.Runtime.TabID = "workspace-1:tab-1"
 	staleConfig.Runtime.PaneID = "workspace-1:pane-1"
 	if err := multiplexer.ValidateHerdrWriteGate(staleConfig.Policy, staleConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err == nil {
 		t.Fatal("ValidateHerdrWriteGate(stale) error = nil, want stale config record to fail closed")
+	}
+}
+
+func TestHerdrConfigReadConfigClockInjectionIsPerConfigAndConcurrent(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
+	stale := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now.Add(25 * time.Hour) })
+
+	validate := func(cfg HerdrConfig) error {
+		readConfig := cfg.ReadConfig()
+		readConfig.Runtime.TabID = "workspace-1:tab-1"
+		readConfig.Runtime.PaneID = "workspace-1:pane-1"
+		return multiplexer.ValidateHerdrWriteGate(readConfig.Policy, readConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1})
+	}
+
+	type result struct {
+		fresh bool
+		err   error
+	}
+	results := make(chan result, 200)
+	for range 100 {
+		go func() { results <- result{fresh: true, err: validate(fresh)} }()
+		go func() { results <- result{err: validate(stale)} }()
+	}
+	var freshPass, staleFail int
+	for range 200 {
+		got := <-results
+		switch {
+		case got.fresh && got.err == nil:
+			freshPass++
+		case !got.fresh && got.err != nil:
+			staleFail++
+		case got.fresh:
+			t.Fatalf("fresh config validation error = %v", got.err)
+		default:
+			t.Fatal("stale config validation passed, want fail-closed")
+		}
+	}
+	if freshPass != 100 || staleFail != 100 {
+		t.Fatalf("concurrent validation freshPass=%d staleFail=%d, want 100/100", freshPass, staleFail)
 	}
 }
 

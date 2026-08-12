@@ -312,6 +312,123 @@ func TestDefaultHandAdapterSelectsRegisteredHerdrAdapter(t *testing.T) {
 	}
 }
 
+func TestDefaultHandAdapterKeepsOverlappingHerdrPaneIDsIsolatedByRuntime(t *testing.T) {
+	paneID := "shared-native-pane"
+	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.SocketPath = "/tmp/herdr-first.sock"
+	firstConfig.Runtime.WorkspaceID = "workspace-first"
+	firstConfig.Runtime.PaneID = paneID
+	firstConfig.Policy.AllowedSocketPaths = []string{"/tmp/herdr-first.sock"}
+	firstConfig.Policy.AllowedWorkspaceIDs = []string{"workspace-first"}
+	firstClient.snapshot.Workspaces[0].ID = "workspace-first"
+	firstClient.snapshot.Tabs[0].WorkspaceID = "workspace-first"
+	firstClient.snapshot.Panes[0].WorkspaceID = "workspace-first"
+	firstClient.snapshot.Panes[0].ID = paneID
+	firstUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+		},
+	})
+	t.Cleanup(firstUnregister)
+
+	secondClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	secondConfig := validHerdrControlplaneConfig()
+	secondConfig.Runtime.SocketPath = "/tmp/herdr-second.sock"
+	secondConfig.Runtime.WorkspaceID = "workspace-second"
+	secondConfig.Runtime.PaneID = paneID
+	secondConfig.Policy.AllowedSocketPaths = []string{"/tmp/herdr-second.sock"}
+	secondConfig.Policy.AllowedWorkspaceIDs = []string{"workspace-second"}
+	secondClient.snapshot.Workspaces[0].ID = "workspace-second"
+	secondClient.snapshot.Tabs[0].WorkspaceID = "workspace-second"
+	secondClient.snapshot.Panes[0].WorkspaceID = "workspace-second"
+	secondClient.snapshot.Panes[0].ID = paneID
+	secondUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: secondConfig, Client: secondClient},
+		},
+	})
+	t.Cleanup(secondUnregister)
+
+	firstTarget := Target{
+		Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: firstConfig.Runtime},
+	}
+	secondTarget := Target{
+		Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: secondConfig.Runtime},
+	}
+	firstAdapter, err := DefaultHandAdapter(firstTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(first) error = %v", err)
+	}
+	if err := firstAdapter.Deliver(firstTarget, PaneDelivery{Content: "first"}); err != nil {
+		t.Fatalf("Deliver(first) error = %v", err)
+	}
+	secondAdapter, err := DefaultHandAdapter(secondTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(second) error = %v", err)
+	}
+	if err := secondAdapter.Deliver(secondTarget, PaneDelivery{Content: "second"}); err != nil {
+		t.Fatalf("Deliver(second) error = %v", err)
+	}
+	if firstClient.writeTextCalls != 1 || secondClient.writeTextCalls != 1 {
+		t.Fatalf("write calls first=%d second=%d, want isolated deliveries", firstClient.writeTextCalls, secondClient.writeTextCalls)
+	}
+
+	firstUnregister()
+	if _, err := DefaultHandAdapter(firstTarget); err == nil {
+		t.Fatal("first runtime adapter remained registered after cleanup")
+	}
+	if _, err := DefaultHandAdapter(secondTarget); err != nil {
+		t.Fatalf("second runtime adapter was removed by stale first cleanup: %v", err)
+	}
+
+	secondUnregister()
+	if _, err := DefaultHandAdapter(secondTarget); err == nil {
+		t.Fatal("second runtime adapter remained registered after cleanup")
+	}
+}
+
+func TestDefaultHandAdapterReverseCleanupKeepsOlderOverlappingHerdrRuntime(t *testing.T) {
+	paneID := "shared-native-pane-reverse"
+	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.SocketPath = "/tmp/herdr-reverse-first.sock"
+	firstConfig.Runtime.WorkspaceID = "workspace-reverse-first"
+	firstConfig.Runtime.PaneID = paneID
+	firstConfig.Policy.AllowedSocketPaths = []string{"/tmp/herdr-reverse-first.sock"}
+	firstConfig.Policy.AllowedWorkspaceIDs = []string{"workspace-reverse-first"}
+	firstClient.snapshot.Workspaces[0].ID = "workspace-reverse-first"
+	firstClient.snapshot.Tabs[0].WorkspaceID = "workspace-reverse-first"
+	firstClient.snapshot.Panes[0].WorkspaceID = "workspace-reverse-first"
+	firstClient.snapshot.Panes[0].ID = paneID
+	firstUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+		},
+	})
+	t.Cleanup(firstUnregister)
+
+	secondConfig := firstConfig
+	secondConfig.Runtime.SocketPath = "/tmp/herdr-reverse-second.sock"
+	secondConfig.Runtime.WorkspaceID = "workspace-reverse-second"
+	secondConfig.Policy.AllowedSocketPaths = []string{"/tmp/herdr-reverse-second.sock"}
+	secondConfig.Policy.AllowedWorkspaceIDs = []string{"workspace-reverse-second"}
+	secondUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: secondConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+		},
+	})
+	t.Cleanup(secondUnregister)
+
+	secondUnregister()
+	firstTarget := Target{
+		Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: firstConfig.Runtime},
+	}
+	if _, err := DefaultHandAdapter(firstTarget); err != nil {
+		t.Fatalf("first runtime adapter was removed by newer cleanup: %v", err)
+	}
+}
+
 func TestHerdrInteractiveDeliveryAdapterRejectsWrongHandKind(t *testing.T) {
 	client := &fakeHerdrControlplaneWriteClient{
 		snapshot: validHerdrControlplaneSnapshot(),

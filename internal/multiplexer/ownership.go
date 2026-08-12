@@ -125,12 +125,20 @@ func (h herdrOwnershipBackends) Kind() BackendKind {
 
 func (h herdrOwnershipBackends) SessionOwnerMarker(ctx context.Context, sessionName string) (string, error) {
 	var lastErr error
+	foundEmpty := false
 	for _, backend := range h {
 		value, err := backend.SessionOwnerMarker(ctx, sessionName)
 		if err == nil {
-			return value, nil
+			if value != "" {
+				return value, nil
+			}
+			foundEmpty = true
+			continue
 		}
 		lastErr = err
+	}
+	if foundEmpty {
+		return "", nil
 	}
 	if lastErr != nil {
 		return "", lastErr

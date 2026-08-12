@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
@@ -33,11 +34,27 @@ type Brain struct {
 }
 
 type HandAttachment struct {
-	Kind    HandKind
-	Address string
+	Kind           HandKind
+	Address        string
+	HerdrRuntimeID multiplexer.HerdrRuntimeIdentity
 }
 
-var registeredHerdrHandAdapters sync.Map
+type registeredHerdrHandAdapter struct {
+	token   uint64
+	adapter HerdrHandAdapter
+}
+
+type herdrHandAdapterKey struct {
+	SocketPath  string
+	SessionName string
+	WorkspaceID string
+	PaneID      string
+}
+
+var (
+	registeredHerdrHandAdapters sync.Map
+	herdrHandAdapterToken       atomic.Uint64
+)
 
 type Target struct {
 	ActorID     string
@@ -78,6 +95,13 @@ func TargetForNode(nodeName string, nodeInfo discovery.NodeInfo) Target {
 		Hand: HandAttachment{
 			Kind:    handKind,
 			Address: nodeInfo.PaneID,
+			HerdrRuntimeID: multiplexer.HerdrRuntimeIdentity{
+				SocketPath:  nodeInfo.HerdrSocketPath,
+				SessionName: nodeInfo.SessionName,
+				WorkspaceID: nodeInfo.HerdrWorkspaceID,
+				TabID:       nodeInfo.HerdrTabID,
+				PaneID:      nodeInfo.PaneID,
+			},
 		},
 		SessionName: nodeInfo.SessionName,
 		SessionDir:  nodeInfo.SessionDir,
@@ -169,10 +193,67 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 	if strings.TrimSpace(paneID) == "" {
 		return func() {}
 	}
-	registeredHerdrHandAdapters.Store(paneID, adapter)
-	return func() {
-		registeredHerdrHandAdapters.Delete(paneID)
+	keys := herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID)
+	token := herdrHandAdapterToken.Add(1)
+	for _, key := range keys {
+		registeredHerdrHandAdapters.Store(key, registeredHerdrHandAdapter{token: token, adapter: adapter})
 	}
+	return func() {
+		for _, key := range keys {
+			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
+				current, ok := registered.(registeredHerdrHandAdapter)
+				if ok && current.token == token {
+					registeredHerdrHandAdapters.Delete(key)
+				}
+			}
+		}
+	}
+}
+
+func herdrHandAdapterKeysForRegistration(runtime multiplexer.HerdrRuntimeIdentity, paneID string) []herdrHandAdapterKey {
+	key := herdrHandAdapterKeyForRuntime(runtime, paneID)
+	keys := []herdrHandAdapterKey{key}
+	if key.SocketPath != "" || key.WorkspaceID != "" {
+		keys = append(keys, herdrHandAdapterKey{
+			SessionName: key.SessionName,
+			PaneID:      key.PaneID,
+		})
+	}
+	if key.SessionName != "" {
+		keys = append(keys, herdrHandAdapterKey{PaneID: key.PaneID})
+	}
+	return keys
+}
+
+func herdrHandAdapterKeyForRuntime(runtime multiplexer.HerdrRuntimeIdentity, paneID string) herdrHandAdapterKey {
+	if runtime.PaneID == "" {
+		runtime.PaneID = paneID
+	}
+	return herdrHandAdapterKey{
+		SocketPath:  strings.TrimSpace(runtime.SocketPath),
+		SessionName: strings.TrimSpace(runtime.SessionName),
+		WorkspaceID: strings.TrimSpace(runtime.WorkspaceID),
+		PaneID:      strings.TrimSpace(runtime.PaneID),
+	}
+}
+
+func herdrHandAdapterKeysForTarget(target Target) []herdrHandAdapterKey {
+	runtime := target.Hand.HerdrRuntimeID
+	if runtime.SessionName == "" {
+		runtime.SessionName = target.SessionName
+	}
+	if runtime.PaneID == "" {
+		runtime.PaneID = target.Hand.Address
+	}
+	keys := []herdrHandAdapterKey{herdrHandAdapterKeyForRuntime(runtime, target.Hand.Address)}
+	if runtime.SocketPath != "" && runtime.WorkspaceID != "" {
+		return keys
+	}
+	if runtime.SessionName != "" {
+		runtime.SessionName = ""
+		keys = append(keys, herdrHandAdapterKeyForRuntime(runtime, target.Hand.Address))
+	}
+	return keys
 }
 
 func (HerdrInteractiveDeliveryAdapter) Kind() HandKind {
@@ -312,9 +393,11 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	case HandKindTmux:
 		return TmuxHandAdapter{}, nil
 	case HandKindHerdr:
-		if registered, ok := registeredHerdrHandAdapters.Load(target.Hand.Address); ok {
-			if adapter, ok := registered.(HerdrHandAdapter); ok {
-				return adapter, nil
+		for _, key := range herdrHandAdapterKeysForTarget(target) {
+			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
+				if registration, ok := registered.(registeredHerdrHandAdapter); ok {
+					return registration.adapter, nil
+				}
 			}
 		}
 		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)
