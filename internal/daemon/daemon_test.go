@@ -119,16 +119,26 @@ func TestDaemonRuntimeClaimNewPanesUsesRegisteredHerdrOwnershipBackend(t *testin
 	}
 	rt.claimNewPanes(map[string]discovery.NodeInfo{
 		"work:worker": {
-			PaneID:      "workspace-1:pane-1",
-			SessionName: "work",
-			Backend:     string(multiplexer.BackendKindHerdr),
+			PaneID:           "workspace-1:pane-1",
+			SessionName:      "work",
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  "/tmp/herdr.sock",
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       "workspace-1:tab-1",
 		},
 	})
 
 	if backend.setPaneCalls != 1 {
 		t.Fatalf("set pane calls = %d, want 1", backend.setPaneCalls)
 	}
-	if backend.pane != multiplexer.HerdrPaneID("workspace-1:pane-1") {
+	wantPane := multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+		SocketPath:  "/tmp/herdr.sock",
+		SessionName: "work",
+		WorkspaceID: "workspace-1",
+		TabID:       "workspace-1:tab-1",
+		PaneID:      "workspace-1:pane-1",
+	}, "workspace-1:pane-1")
+	if backend.pane != wantPane {
 		t.Fatalf("pane = %#v, want Herdr pane resource", backend.pane)
 	}
 	if backend.paneContextID != "ctx-main" {

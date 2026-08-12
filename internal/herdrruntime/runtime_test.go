@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -764,12 +765,23 @@ func TestRuntimeFinalReconcileFailureKeepsPriorGenerationAuthoritative(t *testin
 	newNode := newNodes[sessionName+":worker"]
 	newTarget := controlplane.TargetForNode(sessionName+":worker", newNode)
 	publishErr := errors.New("publish failed")
+	readerStarted := make(chan struct{})
+	readerDone := make(chan error, 1)
 	err = rt.ReconcileFinalNodesForTokenAndCommit(newToken, newNodes, func(*herdrruntime.FinalPublication) error {
-		if _, adapterErr := controlplane.DefaultHandAdapter(oldTarget); adapterErr != nil {
-			t.Fatalf("old adapter disappeared during failed prepare: %v", adapterErr)
-		}
-		if _, adapterErr := controlplane.DefaultHandAdapter(newTarget); adapterErr == nil {
-			t.Fatal("new adapter became visible before failed publication committed")
+		go func() {
+			close(readerStarted)
+			_, adapterErr := controlplane.DefaultHandAdapter(oldTarget)
+			if adapterErr != nil {
+				readerDone <- fmt.Errorf("old adapter lookup during failed prepare: %w", adapterErr)
+				return
+			}
+			readerDone <- nil
+		}()
+		<-readerStarted
+		select {
+		case err := <-readerDone:
+			t.Fatalf("reader completed during failed prepare with %v; want blocked until publication gate releases", err)
+		case <-time.After(20 * time.Millisecond):
 		}
 		return publishErr
 	}, func() {
@@ -778,8 +790,24 @@ func TestRuntimeFinalReconcileFailureKeepsPriorGenerationAuthoritative(t *testin
 	if !errors.Is(err, publishErr) {
 		t.Fatalf("ReconcileFinalNodesForTokenAndCommit(new) error = %v, want %v", err, publishErr)
 	}
+	select {
+	case err := <-readerDone:
+		if err != nil {
+			t.Fatalf("old reader after failed prepare error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("old reader remained blocked after failed prepare rollback")
+	}
 	if _, err := controlplane.DefaultHandAdapter(oldTarget); err != nil {
 		t.Fatalf("old adapter after failed publication error = %v", err)
+	}
+	client.snapshot = validRuntimeHerdrSnapshot()
+	oldAdapter, err := controlplane.DefaultHandAdapter(oldTarget)
+	if err != nil {
+		t.Fatalf("old adapter after failed publication lookup error = %v", err)
+	}
+	if err := oldAdapter.Deliver(oldTarget, controlplane.PaneDelivery{Content: "old generation"}); err != nil {
+		t.Fatalf("old adapter after failed publication delivery error = %v", err)
 	}
 	if _, err := controlplane.DefaultHandAdapter(newTarget); err == nil {
 		t.Fatal("new adapter escaped after failed publication")
@@ -791,9 +819,65 @@ func TestRuntimeFinalReconcileFailureKeepsPriorGenerationAuthoritative(t *testin
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(newNode.PaneID), contextID); err == nil {
 		t.Fatal("new ownership route escaped after failed publication")
 	}
-	client.snapshot = validRuntimeHerdrSnapshot()
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(oldNode.PaneID), contextID); err != nil {
 		t.Fatalf("old ownership route after failed publication error = %v", err)
+	}
+}
+
+func TestRuntimeFinalReconcileRollsBackPreparedExternalMarkersOnFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	publishErr := errors.New("pane claim failed")
+	client := &fakeRuntimeHerdrClient{
+		snapshot:            validRuntimeHerdrSnapshot(),
+		setPaneMetadataErr:  publishErr,
+		setPaneMetadataPane: "",
+	}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, _, token, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile() error = %v", err)
+	}
+	err = rt.ReconcileFinalNodesForTokenAndCommit(token, nodes, func(publication *herdrruntime.FinalPublication) error {
+		if err := publication.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err != nil {
+			return err
+		}
+		nodeInfo := nodes[sessionName+":worker"]
+		return publication.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  nodeInfo.HerdrSocketPath,
+			SessionName: nodeInfo.SessionName,
+			WorkspaceID: nodeInfo.HerdrWorkspaceID,
+			TabID:       nodeInfo.HerdrTabID,
+			PaneID:      nodeInfo.PaneID,
+		}, nodeInfo.PaneID), contextID)
+	}, func() {
+		t.Fatal("commit callback ran after failed pane claim")
+	})
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit() error = %v, want %v", err, publishErr)
+	}
+	if client.clearWorkspaceMetadataWorkspace != "workspace-1" {
+		t.Fatalf("rollback clear workspace = %q, want workspace-1", client.clearWorkspaceMetadataWorkspace)
+	}
+	if _, err := controlplane.DefaultHandAdapter(controlplane.TargetForNode(sessionName+":worker", nodes[sessionName+":worker"])); err == nil {
+		t.Fatal("adapter escaped after prepared marker rollback")
+	}
+	if err := rt.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("ownership route escaped after prepared marker rollback")
 	}
 }
 
@@ -1401,6 +1485,7 @@ type fakeRuntimeHerdrClient struct {
 	setPaneMetadataPane  string
 	setPaneMetadataKey   string
 	setPaneMetadataValue string
+	setPaneMetadataErr   error
 
 	setWorkspaceMetadataWorkspace   string
 	setWorkspaceMetadataValue       string
@@ -1465,6 +1550,9 @@ func (f *fakeRuntimeHerdrClient) SetPaneMetadata(_ context.Context, paneID strin
 	f.setPaneMetadataPane = paneID
 	f.setPaneMetadataKey = key
 	f.setPaneMetadataValue = value
+	if f.setPaneMetadataErr != nil {
+		return multiplexer.HerdrWriteResult{}, f.setPaneMetadataErr
+	}
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 

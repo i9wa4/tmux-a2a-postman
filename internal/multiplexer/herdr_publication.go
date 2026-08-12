@@ -2,7 +2,10 @@ package multiplexer
 
 import "sync"
 
-var herdrPublicationMu sync.RWMutex
+var (
+	herdrPublicationMu         sync.RWMutex
+	herdrPublicationGeneration uint64
+)
 
 func LockHerdrPublicationRead() {
 	herdrPublicationMu.RLock()
@@ -18,4 +21,13 @@ func LockHerdrPublicationWrite() {
 
 func UnlockHerdrPublicationWrite() {
 	herdrPublicationMu.Unlock()
+}
+
+func HerdrPublicationGenerationLocked() uint64 {
+	return herdrPublicationGeneration
+}
+
+func AdvanceHerdrPublicationGenerationLocked() uint64 {
+	herdrPublicationGeneration++
+	return herdrPublicationGeneration
 }

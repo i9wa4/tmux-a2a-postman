@@ -45,6 +45,11 @@ type registeredHerdrHandAdapter struct {
 	adapter HerdrHandAdapter
 }
 
+type HerdrHandAdapterReplacement struct {
+	Cleanup          func()
+	DisplacedCleanup func()
+}
+
 type herdrHandAdapterKey struct {
 	SocketPath  string
 	SessionName string
@@ -228,9 +233,17 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 }
 
 func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHandAdapter) func() {
+	replacement := ReplaceHerdrHandAdaptersForOwnerCollect(owner, adapters)
+	if replacement.DisplacedCleanup != nil {
+		replacement.DisplacedCleanup()
+	}
+	return replacement.Cleanup
+}
+
+func ReplaceHerdrHandAdaptersForOwnerCollect(owner string, adapters map[string]HerdrHandAdapter) HerdrHandAdapterReplacement {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
-		return func() {}
+		return HerdrHandAdapterReplacement{Cleanup: func() {}, DisplacedCleanup: func() {}}
 	}
 	token := herdrHandAdapterToken.Add(1)
 	var displaced []struct {
@@ -253,12 +266,14 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 		}
 	}
 	registeredHerdrHandAdaptersMu.Unlock()
-	for _, item := range displaced {
-		if herdrHandAdapterCleanupHook != nil {
-			herdrHandAdapterCleanupHook(item.key, item.current)
+	displacedCleanup := func() {
+		for _, item := range displaced {
+			if herdrHandAdapterCleanupHook != nil {
+				herdrHandAdapterCleanupHook(item.key, item.current)
+			}
 		}
 	}
-	return func() {
+	cleanup := func() {
 		var observed []struct {
 			key     herdrHandAdapterKey
 			current *registeredHerdrHandAdapter
@@ -280,6 +295,7 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 			}
 		}
 	}
+	return HerdrHandAdapterReplacement{Cleanup: cleanup, DisplacedCleanup: displacedCleanup}
 }
 
 func herdrHandAdapterKeysForRegistration(runtime multiplexer.HerdrRuntimeIdentity, paneID string) []herdrHandAdapterKey {
@@ -369,6 +385,33 @@ func (a HerdrHandAdapter) DeliverSystemMessage(target Target, delivery SystemMes
 		adapter = FilesystemSystemMessageAdapter{}
 	}
 	return adapter.DeliverSystemMessage(target, delivery)
+}
+
+type generationBoundHerdrHandAdapter struct {
+	generation uint64
+	adapter    HerdrHandAdapter
+}
+
+func (a generationBoundHerdrHandAdapter) Kind() HandKind {
+	return HandKindHerdr
+}
+
+func (a generationBoundHerdrHandAdapter) Deliver(target Target, delivery PaneDelivery) error {
+	multiplexer.LockHerdrPublicationRead()
+	defer multiplexer.UnlockHerdrPublicationRead()
+	if multiplexer.HerdrPublicationGenerationLocked() != a.generation {
+		return fmt.Errorf("stale herdr hand adapter generation")
+	}
+	return a.adapter.Deliver(target, delivery)
+}
+
+func (a generationBoundHerdrHandAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
+	multiplexer.LockHerdrPublicationRead()
+	defer multiplexer.UnlockHerdrPublicationRead()
+	if multiplexer.HerdrPublicationGenerationLocked() != a.generation {
+		return SystemMessageResult{}, fmt.Errorf("stale herdr hand adapter generation")
+	}
+	return a.adapter.DeliverSystemMessage(target, delivery)
 }
 
 func (TmuxInteractiveDeliveryAdapter) Kind() HandKind {
@@ -471,7 +514,10 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 		defer registeredHerdrHandAdaptersMu.RUnlock()
 		for _, key := range herdrHandAdapterKeysForTarget(target) {
 			if registration, ok := registeredHerdrHandAdapters[key]; ok {
-				return registration.adapter, nil
+				return generationBoundHerdrHandAdapter{
+					generation: multiplexer.HerdrPublicationGenerationLocked(),
+					adapter:    registration.adapter,
+				}, nil
 			}
 		}
 		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)

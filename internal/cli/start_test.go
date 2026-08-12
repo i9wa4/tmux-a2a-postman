@@ -199,7 +199,7 @@ func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering
 	if firstFilter == -1 {
 		t.Fatal("startup rediscovery activation filter not found")
 	}
-	if !strings.Contains(source[firstFilter:], "publishFreshHerdrNodes(herdrRuntime, herdrToken, fresh, &sharedNodes)") {
+	if !strings.Contains(source[firstFilter:], "publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes)") {
 		t.Fatal("startup rediscovery no longer publishes Herdr routes after activation filtering")
 	}
 
@@ -207,7 +207,7 @@ func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering
 	if secondFilter == -1 {
 		t.Fatal("on-demand refresh activation filter not found")
 	}
-	if !strings.Contains(source[secondFilter:], "publishFreshHerdrNodes(herdrRuntime, herdrToken, freshNodes, &sharedNodes)") {
+	if !strings.Contains(source[secondFilter:], "publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes)") {
 		t.Fatal("on-demand refresh no longer publishes Herdr routes after activation filtering")
 	}
 }
@@ -242,10 +242,10 @@ func TestPublishFreshHerdrNodesRejectsStaleCLIRefreshSnapshot(t *testing.T) {
 	}
 
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
-	if !publishFreshHerdrNodes(rt, newToken, newNodes, &sharedNodes) {
+	if !publishFreshHerdrNodes(context.Background(), contextID, rt, newToken, newNodes, &sharedNodes) {
 		t.Fatal("publishFreshHerdrNodes(new) = false, want true")
 	}
-	if publishFreshHerdrNodes(rt, oldToken, oldNodes, &sharedNodes) {
+	if publishFreshHerdrNodes(context.Background(), contextID, rt, oldToken, oldNodes, &sharedNodes) {
 		t.Fatal("publishFreshHerdrNodes(old) = true, want stale rejection")
 	}
 
@@ -1063,6 +1063,30 @@ func (f *fakeCLIHerdrClient) ReadPane(context.Context, string, multiplexer.Herdr
 
 func (f *fakeCLIHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
 	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SendPaneKey(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SetPaneMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
 func validCLIHerdrConfig() config.HerdrConfig {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestOwnershipMuxReplaceSnapshotBuildsClearBackendFromDeterministicLiveSurvivor(t *testing.T) {
-	mux := newOwnershipMux("work")
+	mux := newOwnershipMux("work", true)
 	later := multiplexer.HerdrBackend{Config: multiplexer.HerdrReadConfig{Runtime: multiplexer.HerdrRuntimeIdentity{
 		SessionName: "work",
 		PaneID:      "workspace-1:pane-z",

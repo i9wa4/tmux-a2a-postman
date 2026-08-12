@@ -32,6 +32,8 @@ type Runtime struct {
 type FinalPublication struct {
 	ownershipBackend *ownershipMux
 	runtime          *Runtime
+	rollbacks        []func()
+	rolledBack       bool
 }
 
 func (p *FinalPublication) Kind() multiplexer.BackendKind {
@@ -50,23 +52,23 @@ func (p *FinalPublication) SetSessionEnabledMarker(ctx context.Context, contextI
 		return config.SetSessionEnabledMarker(contextID, sessionName, enabled)
 	}
 	if enabled {
-		return p.ownershipBackend.SetSessionOwnerMarker(ctx, contextID, sessionName, 0)
+		return p.setSessionOwnerMarker(ctx, contextID, sessionName, 0)
 	}
-	return p.ownershipBackend.ClearSessionOwnerMarker(ctx, sessionName)
+	return p.clearSessionOwnerMarker(ctx, sessionName)
 }
 
 func (p *FinalPublication) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
 	if p == nil || p.ownershipBackend == nil {
 		return fmt.Errorf("herdr final publication missing")
 	}
-	return p.ownershipBackend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid)
+	return p.setSessionOwnerMarker(ctx, contextID, sessionName, pid)
 }
 
 func (p *FinalPublication) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
 	if p == nil || p.ownershipBackend == nil {
 		return fmt.Errorf("herdr final publication missing")
 	}
-	return p.ownershipBackend.ClearSessionOwnerMarker(ctx, sessionName)
+	return p.clearSessionOwnerMarker(ctx, sessionName)
 }
 
 func (p *FinalPublication) PaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID) (string, error) {
@@ -82,16 +84,119 @@ func (p *FinalPublication) SetPaneOwnerMarker(ctx context.Context, pane multiple
 		if err != nil {
 			return err
 		}
-		return backend.SetPaneOwnerMarker(ctx, pane, contextID)
+		if p == nil {
+			return backend.SetPaneOwnerMarker(ctx, pane, contextID)
+		}
+		return p.setPaneOwnerMarkerWithBackend(ctx, backend, pane, contextID)
 	}
-	return p.ownershipBackend.SetPaneOwnerMarker(ctx, pane, contextID)
+	return p.setPaneOwnerMarkerWithBackend(ctx, p.ownershipBackend, pane, contextID)
 }
 
 func (p *FinalPublication) ClearPaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID) error {
 	if p == nil || p.ownershipBackend == nil {
 		return fmt.Errorf("herdr final publication missing")
 	}
-	return p.ownershipBackend.ClearPaneOwnerMarker(ctx, pane)
+	backend := multiplexer.OwnershipBackend(p.ownershipBackend)
+	if pane.Backend != multiplexer.BackendKindHerdr {
+		var err error
+		backend, err = multiplexer.OwnershipBackendForKind(pane.Backend)
+		if err != nil {
+			return err
+		}
+	}
+	return p.clearPaneOwnerMarkerWithBackend(ctx, backend, pane)
+}
+
+func (p *FinalPublication) setSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
+	previous, readErr := p.ownershipBackend.SessionOwnerMarker(ctx, sessionName)
+	if readErr != nil {
+		return readErr
+	}
+	if err := p.ownershipBackend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid); err != nil {
+		return err
+	}
+	p.rollbacks = append(p.rollbacks, func() {
+		rollbackCtx := context.Background()
+		if previous == "" {
+			_ = p.ownershipBackend.ClearSessionOwnerMarker(rollbackCtx, sessionName)
+			return
+		}
+		previousContext, previousPIDText, _ := strings.Cut(previous, ":")
+		previousPID := 0
+		if previousPIDText != "" {
+			_, _ = fmt.Sscanf(previousPIDText, "%d", &previousPID)
+		}
+		_ = p.ownershipBackend.SetSessionOwnerMarker(rollbackCtx, previousContext, sessionName, previousPID)
+	})
+	return nil
+}
+
+func (p *FinalPublication) clearSessionOwnerMarker(ctx context.Context, sessionName string) error {
+	previous, readErr := p.ownershipBackend.SessionOwnerMarker(ctx, sessionName)
+	if readErr != nil {
+		return readErr
+	}
+	if err := p.ownershipBackend.ClearSessionOwnerMarker(ctx, sessionName); err != nil {
+		return err
+	}
+	p.rollbacks = append(p.rollbacks, func() {
+		if previous == "" {
+			return
+		}
+		previousContext, previousPIDText, _ := strings.Cut(previous, ":")
+		previousPID := 0
+		if previousPIDText != "" {
+			_, _ = fmt.Sscanf(previousPIDText, "%d", &previousPID)
+		}
+		_ = p.ownershipBackend.SetSessionOwnerMarker(context.Background(), previousContext, sessionName, previousPID)
+	})
+	return nil
+}
+
+func (p *FinalPublication) setPaneOwnerMarkerWithBackend(ctx context.Context, backend multiplexer.OwnershipBackend, pane multiplexer.ResourceID, contextID string) error {
+	previous, readErr := backend.PaneOwnerMarker(ctx, pane)
+	if readErr != nil {
+		return readErr
+	}
+	if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
+		return err
+	}
+	p.rollbacks = append(p.rollbacks, func() {
+		rollbackCtx := context.Background()
+		if previous == "" {
+			_ = backend.ClearPaneOwnerMarker(rollbackCtx, pane)
+			return
+		}
+		_ = backend.SetPaneOwnerMarker(rollbackCtx, pane, previous)
+	})
+	return nil
+}
+
+func (p *FinalPublication) clearPaneOwnerMarkerWithBackend(ctx context.Context, backend multiplexer.OwnershipBackend, pane multiplexer.ResourceID) error {
+	previous, readErr := backend.PaneOwnerMarker(ctx, pane)
+	if readErr != nil {
+		return readErr
+	}
+	if err := backend.ClearPaneOwnerMarker(ctx, pane); err != nil {
+		return err
+	}
+	p.rollbacks = append(p.rollbacks, func() {
+		if previous == "" {
+			return
+		}
+		_ = backend.SetPaneOwnerMarker(context.Background(), pane, previous)
+	})
+	return nil
+}
+
+func (p *FinalPublication) rollback() {
+	if p == nil || p.rolledBack {
+		return
+	}
+	p.rolledBack = true
+	for i := len(p.rollbacks) - 1; i >= 0; i-- {
+		p.rollbacks[i]()
+	}
 }
 
 func New(cfg *config.Config, factory ClientFactory) (*Runtime, error) {
@@ -111,7 +216,7 @@ func New(cfg *config.Config, factory ClientFactory) (*Runtime, error) {
 	rt := &Runtime{
 		cfg:              cfg.Herdr,
 		client:           client,
-		ownershipBackend: newOwnershipMux(cfg.Herdr.SessionName),
+		ownershipBackend: newOwnershipMux(cfg.Herdr.SessionName, true),
 	}
 	rt.cleanups = append(rt.cleanups, multiplexer.RegisterOwnershipBackend(rt.ownershipBackend))
 	return rt, nil
@@ -290,7 +395,7 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 		}
 	}
 	workspaceBackend := rt.backendForWorkspace()
-	stagedOwnership := newOwnershipMux(rt.cfg.SessionName)
+	stagedOwnership := newOwnershipMux(rt.cfg.SessionName, false)
 	stagedOwnership.replaceSnapshot(paneBackends, workspaceBackend)
 
 	rt.mu.Lock()
@@ -298,18 +403,34 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 	if rt.closed || (generation != 0 && rt.generation != generation) {
 		return fmt.Errorf("stale Herdr final reconcile token")
 	}
+	multiplexer.LockHerdrPublicationWrite()
+	var displacedCleanup func()
+	unlockPublication := true
+	defer func() {
+		if unlockPublication {
+			multiplexer.UnlockHerdrPublicationWrite()
+		}
+		if displacedCleanup != nil {
+			displacedCleanup()
+		}
+	}()
+	publication := &FinalPublication{ownershipBackend: stagedOwnership, runtime: rt}
 	if prepare != nil {
-		if err := prepare(&FinalPublication{ownershipBackend: stagedOwnership, runtime: rt}); err != nil {
+		if err := prepare(publication); err != nil {
+			publication.rollback()
 			return err
 		}
 	}
-	multiplexer.LockHerdrPublicationWrite()
-	defer multiplexer.UnlockHerdrPublicationWrite()
 	rt.ownershipBackend.replaceSnapshot(paneBackends, workspaceBackend)
-	rt.adapterCleanup = controlplane.ReplaceHerdrHandAdaptersForOwner(rt.handAdapterOwnerID(), handAdapters)
+	replacement := controlplane.ReplaceHerdrHandAdaptersForOwnerCollect(rt.handAdapterOwnerID(), handAdapters)
+	rt.adapterCleanup = replacement.Cleanup
 	if commit != nil {
 		commit()
 	}
+	multiplexer.AdvanceHerdrPublicationGenerationLocked()
+	displacedCleanup = replacement.DisplacedCleanup
+	multiplexer.UnlockHerdrPublicationWrite()
+	unlockPublication = false
 	return nil
 }
 
@@ -335,13 +456,18 @@ func (rt *Runtime) Close() {
 	}
 	rt.closed = true
 	rt.generation++
+	var adapterCleanup func()
 	multiplexer.LockHerdrPublicationWrite()
-	defer multiplexer.UnlockHerdrPublicationWrite()
 	if rt.adapterCleanup != nil {
-		rt.adapterCleanup()
+		adapterCleanup = rt.adapterCleanup
 		rt.adapterCleanup = nil
 	}
 	rt.ownershipBackend.clear()
+	multiplexer.AdvanceHerdrPublicationGenerationLocked()
+	multiplexer.UnlockHerdrPublicationWrite()
+	if adapterCleanup != nil {
+		adapterCleanup()
+	}
 	for i := len(rt.cleanups) - 1; i >= 0; i-- {
 		rt.cleanups[i]()
 	}
@@ -377,12 +503,17 @@ func (rt *Runtime) reconcilePaneBackends(generation uint64, livePanes map[string
 		return false
 	}
 	if livePanes == nil {
+		var adapterCleanup func()
 		multiplexer.LockHerdrPublicationWrite()
-		defer multiplexer.UnlockHerdrPublicationWrite()
 		rt.ownershipBackend.replaceSnapshot(nil, multiplexer.HerdrBackend{})
 		if rt.adapterCleanup != nil {
-			rt.adapterCleanup()
+			adapterCleanup = rt.adapterCleanup
 			rt.adapterCleanup = nil
+		}
+		multiplexer.AdvanceHerdrPublicationGenerationLocked()
+		multiplexer.UnlockHerdrPublicationWrite()
+		if adapterCleanup != nil {
+			adapterCleanup()
 		}
 	}
 	return true
@@ -408,13 +539,14 @@ type herdrOwnershipKey struct {
 
 type ownershipMux struct {
 	sessionName string
+	gateReads   bool
 	runtime     multiplexer.HerdrRuntimeIdentity
 	mu          sync.RWMutex
 	snapshot    ownershipSnapshot
 }
 
-func newOwnershipMux(sessionName string) *ownershipMux {
-	return &ownershipMux{sessionName: sessionName}
+func newOwnershipMux(sessionName string, gateReads bool) *ownershipMux {
+	return &ownershipMux{sessionName: sessionName, gateReads: gateReads}
 }
 
 func (m *ownershipMux) Kind() multiplexer.BackendKind {
@@ -469,8 +601,6 @@ func (m *ownershipMux) backendForSession(sessionName string) (multiplexer.HerdrB
 	if strings.TrimSpace(sessionName) != strings.TrimSpace(m.sessionName) {
 		return multiplexer.HerdrBackend{}, multiplexer.ErrHerdrSessionNameMismatch
 	}
-	multiplexer.LockHerdrPublicationRead()
-	defer multiplexer.UnlockHerdrPublicationRead()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.snapshot.sessionBackend != nil {
@@ -483,8 +613,6 @@ func (m *ownershipMux) backendForSessionClear(sessionName string) (multiplexer.H
 	if strings.TrimSpace(sessionName) != strings.TrimSpace(m.sessionName) {
 		return multiplexer.HerdrBackend{}, multiplexer.ErrHerdrSessionNameMismatch
 	}
-	multiplexer.LockHerdrPublicationRead()
-	defer multiplexer.UnlockHerdrPublicationRead()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.snapshot.clearBackend != nil {
@@ -497,8 +625,6 @@ func (m *ownershipMux) backendForPane(pane multiplexer.ResourceID) (multiplexer.
 	if pane.Backend != multiplexer.BackendKindHerdr {
 		return multiplexer.HerdrBackend{}, fmt.Errorf("herdr ownership requires herdr pane resource: %#v", pane)
 	}
-	multiplexer.LockHerdrPublicationRead()
-	defer multiplexer.UnlockHerdrPublicationRead()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	backend, ok := m.snapshot.byPane[herdrOwnershipKeyForResource(pane)]
@@ -556,6 +682,10 @@ func herdrOwnershipKeyForResource(pane multiplexer.ResourceID) herdrOwnershipKey
 }
 
 func (m *ownershipMux) SessionOwnerMarker(ctx context.Context, sessionName string) (string, error) {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForSession(sessionName)
 	if err != nil {
 		return "", err
@@ -564,6 +694,10 @@ func (m *ownershipMux) SessionOwnerMarker(ctx context.Context, sessionName strin
 }
 
 func (m *ownershipMux) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForSession(sessionName)
 	if err != nil {
 		return err
@@ -572,6 +706,10 @@ func (m *ownershipMux) SetSessionOwnerMarker(ctx context.Context, contextID, ses
 }
 
 func (m *ownershipMux) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForSessionClear(sessionName)
 	if err != nil {
 		return err
@@ -580,6 +718,10 @@ func (m *ownershipMux) ClearSessionOwnerMarker(ctx context.Context, sessionName 
 }
 
 func (m *ownershipMux) PaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID) (string, error) {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForPane(pane)
 	if err != nil {
 		return "", err
@@ -588,6 +730,10 @@ func (m *ownershipMux) PaneOwnerMarker(ctx context.Context, pane multiplexer.Res
 }
 
 func (m *ownershipMux) SetPaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID, contextID string) error {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForPane(pane)
 	if err != nil {
 		return err
@@ -596,6 +742,10 @@ func (m *ownershipMux) SetPaneOwnerMarker(ctx context.Context, pane multiplexer.
 }
 
 func (m *ownershipMux) ClearPaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID) error {
+	if m.gateReads {
+		multiplexer.LockHerdrPublicationRead()
+		defer multiplexer.UnlockHerdrPublicationRead()
+	}
 	backend, err := m.backendForPane(pane)
 	if err != nil {
 		return err

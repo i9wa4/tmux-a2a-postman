@@ -147,17 +147,57 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	return fresh, collisions, herdrToken, nil
 }
 
-func publishFreshHerdrNodes(herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
+func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) bool {
+	prepare := func(publication *herdrruntime.FinalPublication) error {
+		for _, nodeInfo := range fresh {
+			if nodeInfo.PaneID == "" {
+				continue
+			}
+			backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+			var backend multiplexer.OwnershipBackend
+			var err error
+			if backendKind == multiplexer.BackendKindHerdr && publication != nil {
+				backend = publication
+			} else {
+				backend, err = multiplexer.OwnershipBackendForKind(backendKind)
+				if err != nil {
+					return fmt.Errorf("selecting ownership backend for pane %s: %w", nodeInfo.PaneID, err)
+				}
+			}
+			if err := backend.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
+				return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+			}
+		}
+		return nil
+	}
 	commit := func() {
 		if sharedNodes != nil {
 			sharedNodes.Store(&fresh)
 		}
 	}
 	if herdrRuntime != nil {
-		return herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, nil, commit) == nil
+		return herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, prepare, commit) == nil
+	}
+	if err := prepare(nil); err != nil {
+		return false
 	}
 	commit()
 	return true
+}
+
+func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID {
+	backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+	pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+	if backendKind == multiplexer.BackendKindHerdr {
+		return multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  nodeInfo.HerdrSocketPath,
+			SessionName: nodeInfo.SessionName,
+			WorkspaceID: nodeInfo.HerdrWorkspaceID,
+			TabID:       nodeInfo.HerdrTabID,
+			PaneID:      nodeInfo.PaneID,
+		}, nodeInfo.PaneID)
+	}
+	return pane
 }
 
 func setSessionEnabledMarkerWithRuntime(ctx context.Context, herdrRuntime *herdrruntime.Runtime, contextID, sessionName string, enabled bool) error {
@@ -478,17 +518,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				)
 				continue
 			}
-			pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
-			if backendKind == multiplexer.BackendKindHerdr && nodeInfo.HerdrSocketPath != "" && nodeInfo.HerdrWorkspaceID != "" {
-				pane = multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
-					SocketPath:  nodeInfo.HerdrSocketPath,
-					SessionName: nodeInfo.SessionName,
-					WorkspaceID: nodeInfo.HerdrWorkspaceID,
-					TabID:       nodeInfo.HerdrTabID,
-					PaneID:      nodeInfo.PaneID,
-				}, nodeInfo.PaneID)
-			}
-			if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
+			if err := backend.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
 				log.Printf(
 					"postman: WARNING: failed to claim pane %s: %v\n",
 					nodeInfo.PaneID, err,
@@ -527,7 +557,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		activationNodesLocal := activationNodeNames(cfg)
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
-		if !publishFreshHerdrNodes(herdrRuntime, herdrToken, fresh, &sharedNodes) {
+		if !publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes) {
 			log.Printf("postman: startup re-discovery skipped stale Herdr snapshot (%d nodes)\n", len(fresh))
 			return
 		}
@@ -741,7 +771,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
-							if publishFreshHerdrNodes(herdrRuntime, herdrToken, freshNodes, &sharedNodes) {
+							if publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes) {
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 							} else {
 								log.Printf("postman: PING refresh skipped stale Herdr snapshot (%d nodes)\n", len(freshNodes))

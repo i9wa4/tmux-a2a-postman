@@ -1592,9 +1592,43 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
 	if rt.herdrRuntime != nil {
-		if err := rt.herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, freshNodes, nil, func() {
+		claimedPanes := make([]string, 0)
+		prepare := func(publication *herdrruntime.FinalPublication) error {
+			for _, nodeInfo := range freshNodes {
+				if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
+					continue
+				}
+				backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+				var backend multiplexer.OwnershipBackend
+				if backendKind == multiplexer.BackendKindHerdr {
+					backend = publication
+				} else {
+					if rt.daemonState != nil {
+						backend = rt.daemonState.ownershipBackendForSessionName(nodeInfo.SessionName)
+					} else {
+						var backendErr error
+						backend, backendErr = multiplexer.OwnershipBackendForKind(backendKind)
+						if backendErr != nil {
+							return fmt.Errorf("selecting ownership backend for pane %s: %w", nodeInfo.PaneID, backendErr)
+						}
+					}
+				}
+				if err := backend.SetPaneOwnerMarker(context.Background(), paneResourceForNodeInfo(nodeInfo), rt.contextID); err != nil {
+					return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+				}
+				claimedPanes = append(claimedPanes, nodeInfo.PaneID)
+			}
+			return nil
+		}
+		if err := rt.herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, freshNodes, prepare, func() {
 			rt.nodes = freshNodes
 			rt.storeSharedNodesLocked()
+			if rt.claimedPanes == nil {
+				rt.claimedPanes = make(map[string]bool)
+			}
+			for _, paneID := range claimedPanes {
+				rt.claimedPanes[paneID] = true
+			}
 		}); err != nil {
 			return nil, nil, err
 		}
@@ -1787,6 +1821,20 @@ func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeI
 	}
 }
 
+func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID {
+	backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+	if backendKind == multiplexer.BackendKindHerdr {
+		return multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  nodeInfo.HerdrSocketPath,
+			SessionName: nodeInfo.SessionName,
+			WorkspaceID: nodeInfo.HerdrWorkspaceID,
+			TabID:       nodeInfo.HerdrTabID,
+			PaneID:      nodeInfo.PaneID,
+		}, nodeInfo.PaneID)
+	}
+	return multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+}
+
 func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo) {
 	for _, nodeInfo := range freshNodes {
 		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
@@ -1798,17 +1846,7 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 			log.Printf("postman: WARNING: failed to select ownership backend for pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}
-		pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
-		if backendKind == multiplexer.BackendKindHerdr && nodeInfo.HerdrSocketPath != "" && nodeInfo.HerdrWorkspaceID != "" {
-			pane = multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
-				SocketPath:  nodeInfo.HerdrSocketPath,
-				SessionName: nodeInfo.SessionName,
-				WorkspaceID: nodeInfo.HerdrWorkspaceID,
-				TabID:       nodeInfo.HerdrTabID,
-				PaneID:      nodeInfo.PaneID,
-			}, nodeInfo.PaneID)
-		}
-		if err := backend.SetPaneOwnerMarker(context.Background(), pane, rt.contextID); err != nil {
+		if err := backend.SetPaneOwnerMarker(context.Background(), paneResourceForNodeInfo(nodeInfo), rt.contextID); err != nil {
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}

@@ -2495,6 +2495,12 @@ func TestDiscoverNodesContinuesHerdrReconciliationWhenTmuxDiscoveryFails(t *test
 		selfSession:  sessionName,
 		cfg:          cfg,
 		herdrRuntime: herdrRuntime,
+		daemonState: &DaemonState{
+			contextID:        contextID,
+			enabledSessions:  map[string]bool{sessionName: true},
+			ownershipBackend: &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindTmux},
+		},
+		claimedPanes: map[string]bool{},
 	}
 
 	nodes, collisions, err := rt.discoverNodes()
@@ -2551,6 +2557,12 @@ func TestDiscoverNodesDoesNotPublishHerdrCollisionLoserDuringFinalization(t *tes
 		selfSession:  sessionName,
 		cfg:          cfg,
 		herdrRuntime: herdrRuntime,
+		daemonState: &DaemonState{
+			contextID:        contextID,
+			enabledSessions:  map[string]bool{sessionName: true},
+			ownershipBackend: &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindTmux},
+		},
+		claimedPanes: map[string]bool{},
 	}
 
 	nodes, collisions, err := rt.discoverNodes()
@@ -2679,7 +2691,9 @@ func newControlledDaemonSnapshot(snapshot multiplexer.HerdrSessionSnapshot, err 
 }
 
 type sequencedDaemonHerdrClient struct {
-	calls chan *controlledDaemonSnapshot
+	calls  chan *controlledDaemonSnapshot
+	mu     sync.Mutex
+	latest multiplexer.HerdrSessionSnapshot
 }
 
 func (s *sequencedDaemonHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
@@ -2687,13 +2701,22 @@ func (s *sequencedDaemonHerdrClient) Ping(context.Context) (multiplexer.HerdrRes
 }
 
 func (s *sequencedDaemonHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
-	call := <-s.calls
-	close(call.started)
-	<-call.release
-	if call.err != nil {
-		return multiplexer.HerdrSessionSnapshot{}, call.err
+	select {
+	case call := <-s.calls:
+		close(call.started)
+		<-call.release
+		if call.err != nil {
+			return multiplexer.HerdrSessionSnapshot{}, call.err
+		}
+		s.mu.Lock()
+		s.latest = call.snapshot
+		s.mu.Unlock()
+		return call.snapshot, nil
+	default:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.latest, nil
 	}
-	return call.snapshot, nil
 }
 
 func (s *sequencedDaemonHerdrClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {

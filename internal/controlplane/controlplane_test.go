@@ -487,6 +487,92 @@ func TestReplaceHerdrHandAdaptersForOwnerRunsDisplacedCleanupOutsideLockOnce(t *
 	}
 }
 
+func TestDefaultHandAdapterRejectsGenerationStaleHandleBeforeWrite(t *testing.T) {
+	owner := "runtime-owner-stale-handle"
+	paneID := "pane-stale-handle"
+	client := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	cfg := validHerdrControlplaneConfig()
+	cfg.Runtime.PaneID = paneID
+	client.snapshot.Panes[0].ID = paneID
+	cleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		paneID: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: cfg, Client: client},
+			},
+		},
+	})
+	t.Cleanup(cleanup)
+	target := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: cfg.Runtime}}
+	adapter, err := DefaultHandAdapter(target)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter() error = %v", err)
+	}
+
+	multiplexer.LockHerdrPublicationWrite()
+	multiplexer.AdvanceHerdrPublicationGenerationLocked()
+	multiplexer.UnlockHerdrPublicationWrite()
+
+	err = adapter.Deliver(target, PaneDelivery{Content: "stale"})
+	if err == nil || !strings.Contains(err.Error(), "stale herdr hand adapter generation") {
+		t.Fatalf("Deliver(stale handle) error = %v, want stale generation error", err)
+	}
+	if client.writeTextCalls != 0 || client.sendKeyCalls != 0 {
+		t.Fatalf("stale handle wrote to Herdr: write=%d key=%d", client.writeTextCalls, client.sendKeyCalls)
+	}
+}
+
+func TestOwnerReplacementCleanupHookCanReenterAdapterLookupAfterPublicationUnlock(t *testing.T) {
+	owner := "runtime-owner-reentrant-cleanup"
+	oldPaneID := "pane-reentrant-old"
+	oldConfig := validHerdrControlplaneConfig()
+	oldConfig.Runtime.PaneID = oldPaneID
+	firstCleanup := ReplaceHerdrHandAdaptersForOwner(owner, map[string]HerdrHandAdapter{
+		oldPaneID: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: oldConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+			},
+		},
+	})
+	t.Cleanup(firstCleanup)
+
+	newPaneID := "pane-reentrant-new"
+	newConfig := oldConfig
+	newConfig.Runtime.PaneID = newPaneID
+	newClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	newClient.snapshot.Panes[0].ID = newPaneID
+	newTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: newPaneID, HerdrRuntimeID: newConfig.Runtime}}
+	hookDone := make(chan error, 8)
+	herdrHandAdapterCleanupHook = func(herdrHandAdapterKey, *registeredHerdrHandAdapter) {
+		_, err := DefaultHandAdapter(newTarget)
+		hookDone <- err
+	}
+	t.Cleanup(func() {
+		herdrHandAdapterCleanupHook = nil
+	})
+
+	multiplexer.LockHerdrPublicationWrite()
+	replacement := ReplaceHerdrHandAdaptersForOwnerCollect(owner, map[string]HerdrHandAdapter{
+		newPaneID: {
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: newConfig, Client: newClient},
+			},
+		},
+	})
+	multiplexer.AdvanceHerdrPublicationGenerationLocked()
+	multiplexer.UnlockHerdrPublicationWrite()
+	t.Cleanup(replacement.Cleanup)
+	replacement.DisplacedCleanup()
+
+	select {
+	case err := <-hookDone:
+		if err != nil {
+			t.Fatalf("cleanup hook reentrant DefaultHandAdapter() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cleanup hook reentrant adapter lookup deadlocked")
+	}
+}
+
 func TestDefaultHandAdapterReverseCleanupKeepsOlderOverlappingHerdrRuntime(t *testing.T) {
 	paneID := "shared-native-pane-reverse"
 	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
