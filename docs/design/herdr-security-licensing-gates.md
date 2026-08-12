@@ -191,6 +191,7 @@ the write gate accepts a record when `now - RevalidatedAt <= 24h` and rejects
 records older than 24 hours or whose revalidation timestamp is in the future.
 The runtime supplies the current time through an injectable policy time source;
 production uses the system clock and tests use a fixed clock.
+
 - `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
 - `commercial`: a commercial license covers the integration shape;
 - `review-only`: no distributable/generated/write integration may be shipped.
