@@ -136,6 +136,7 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	herdrNodes, herdrCollisions, herdrErr := herdrRuntime.Discover(ctx, baseDir, contextID)
 	if herdrErr != nil {
 		log.Printf("⚠️  postman: herdr discovery failed: %v\n", herdrErr)
+		herdrRuntime.ClearPaneRoutes()
 		if err != nil {
 			return nil, nil, fmt.Errorf("tmux discovery failed: %w; herdr discovery failed: %v", err, herdrErr)
 		}
@@ -143,6 +144,7 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	}
 	collisions = append(collisions, mergeDiscoveredNodes(fresh, herdrNodes)...)
 	collisions = append(collisions, herdrCollisions...)
+	herdrRuntime.ReconcileFinalNodes(fresh)
 	return fresh, collisions, nil
 }
 
@@ -440,6 +442,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
+	if herdrRuntime != nil {
+		herdrRuntime.ReconcileFinalNodes(nodes)
+	}
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {
 		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)

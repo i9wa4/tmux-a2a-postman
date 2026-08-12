@@ -142,6 +142,96 @@ func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	}
 }
 
+func TestRuntimeReconcileFinalNodesPrunesCrossBackendCollisionLoser(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(initial) error = %v", err)
+	}
+	loserTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
+	if _, err := controlplane.DefaultHandAdapter(loserTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
+	}
+
+	rt.ReconcileFinalNodes(map[string]discovery.NodeInfo{
+		sessionName + ":worker": {
+			PaneID:      "%tmux-winner",
+			SessionName: sessionName,
+			Backend:     string(multiplexer.BackendKindTmux),
+		},
+	})
+
+	if _, err := controlplane.DefaultHandAdapter(loserTarget); err == nil {
+		t.Fatal("cross-backend collision loser Herdr adapter remained registered")
+	}
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("cross-backend collision loser Herdr ownership route remained available")
+	}
+}
+
+func TestRuntimeDiscoverErrorClearsStalePaneRegistrations(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(initial) error = %v", err)
+	}
+	staleTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
+	if _, err := controlplane.DefaultHandAdapter(staleTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
+	}
+
+	client.snapshotErr = errors.New("socket snapshot failed")
+	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err == nil {
+		t.Fatal("Discover(error) error = nil, want discovery failure")
+	}
+	if _, err := controlplane.DefaultHandAdapter(staleTarget); err == nil {
+		t.Fatal("stale Herdr adapter remained registered after discovery error")
+	}
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("stale Herdr pane ownership route remained available after discovery error")
+	}
+}
+
 func TestRuntimeClearSessionOwnerMarkerSurvivesZeroPaneRediscovery(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
@@ -433,7 +523,8 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 }
 
 type fakeRuntimeHerdrClient struct {
-	snapshot multiplexer.HerdrSessionSnapshot
+	snapshot    multiplexer.HerdrSessionSnapshot
+	snapshotErr error
 
 	writeTextCalls int
 	writeTextPane  string
@@ -455,6 +546,9 @@ func (f *fakeRuntimeHerdrClient) Ping(context.Context) (multiplexer.HerdrRespons
 }
 
 func (f *fakeRuntimeHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	if f.snapshotErr != nil {
+		return multiplexer.HerdrSessionSnapshot{}, f.snapshotErr
+	}
 	return f.snapshot, nil
 }
 

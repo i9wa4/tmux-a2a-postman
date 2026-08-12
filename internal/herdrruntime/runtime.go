@@ -93,10 +93,12 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 	readConfig.Policy.ReadScope = multiplexer.HerdrReadScopeDiscovery
 	backend, err := multiplexer.NewHerdrBackend(readConfig, rt.client)
 	if err != nil {
+		rt.ClearPaneRoutes()
 		return nil, nil, err
 	}
 	result, err := backend.Discover(ctx, rt.cfg.SessionName)
 	if err != nil {
+		rt.ClearPaneRoutes()
 		return nil, nil, err
 	}
 	nodes := make(map[string]discovery.NodeInfo)
@@ -150,6 +152,27 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 	}
 	rt.reconcilePaneBackends(livePanes)
 	return nodes, collisions, nil
+}
+
+func (rt *Runtime) ReconcileFinalNodes(nodes map[string]discovery.NodeInfo) {
+	if rt == nil {
+		return
+	}
+	livePanes := make(map[string]bool)
+	for _, nodeInfo := range nodes {
+		if multiplexer.BackendKindFromString(nodeInfo.Backend) != multiplexer.BackendKindHerdr || nodeInfo.PaneID == "" {
+			continue
+		}
+		livePanes[nodeInfo.PaneID] = true
+	}
+	rt.reconcilePaneBackends(livePanes)
+}
+
+func (rt *Runtime) ClearPaneRoutes() {
+	if rt == nil {
+		return
+	}
+	rt.reconcilePaneBackends(nil)
 }
 
 func (rt *Runtime) Close() {

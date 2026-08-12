@@ -1242,7 +1242,24 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 	if sessionName == "" {
 		return ""
 	}
-	value, err := (multiplexer.TmuxBackend{}).SessionOwnerMarker(context.Background(), sessionName)
+	for _, backend := range sessionOwnershipBackends() {
+		if owner := enabledSessionOwnerFromBackend(baseDir, sessionName, backend); owner != "" {
+			return owner
+		}
+	}
+	return ""
+}
+
+func sessionOwnershipBackends() []multiplexer.OwnershipBackend {
+	backends := []multiplexer.OwnershipBackend{multiplexer.TmuxBackend{}}
+	if backend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr); err == nil && backend != nil {
+		backends = append(backends, backend)
+	}
+	return backends
+}
+
+func enabledSessionOwnerFromBackend(baseDir, sessionName string, backend multiplexer.OwnershipBackend) string {
+	value, err := backend.SessionOwnerMarker(context.Background(), sessionName)
 	if err != nil {
 		return ""
 	}

@@ -1570,12 +1570,16 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		cancel()
 		if herdrErr != nil {
 			log.Printf("postman: WARNING: herdr node discovery failed: %v\n", herdrErr)
+			rt.herdrRuntime.ClearPaneRoutes()
 		} else {
 			collisions = append(collisions, mergeRuntimeDiscoveredNodes(freshNodes, herdrNodes)...)
 			collisions = append(collisions, herdrCollisions...)
 		}
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
+	if rt.herdrRuntime != nil {
+		rt.herdrRuntime.ReconcileFinalNodes(freshNodes)
+	}
 	return freshNodes, collisions, nil
 }
 

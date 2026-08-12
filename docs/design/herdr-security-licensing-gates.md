@@ -192,9 +192,13 @@ records older than 24 hours or whose revalidation timestamp is in the future.
 The runtime supplies the current time through an injectable policy time source;
 production uses the system clock and tests use a fixed clock.
 
-- `agpl-3.0-or-later`: the integration shape is AGPL-compatible;
-- `commercial`: a commercial license covers the integration shape;
-- `review-only`: no distributable/generated/write integration may be shipped.
+Historical decision labels are audit provenance only and are not accepted by
+the current write gate:
+
+- `agpl-3.0-or-later`: historical AGPL-compatible interpretation;
+- `commercial`: historical commercial-license interpretation;
+- `review-only`: pending-review marker; no distributable/generated/write
+  integration may be shipped.
 
 CLI or socket use alone does not resolve licensing obligations. Any future
 change that adds dependency, vendoring, generated code, or broader distribution
@@ -202,6 +206,7 @@ behavior must record the exact integration shape before implementation.
 
 ## 10. Out Of Scope
 
-Issue #660 does not implement Herdr discovery, capture, status, interactive
-delivery, ownership mutation, socket clients, generated protocol clients, or
-packaging changes.
+This document does not authorize generated protocol clients, vendoring,
+packaging changes, or broader distribution behavior. Discovery, capture,
+status, interactive delivery, ownership mutation, and socket-client paths must
+remain behind the gates above.
