@@ -1988,6 +1988,7 @@ func validHerdrMessageConfig() multiplexer.HerdrReadConfig {
 			AllowedSchemaVersions:   []int{1},
 			InputSanitizerReady:     true,
 			ComplianceDecision:      multiplexer.HerdrComplianceDecisionCommercial,
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionCommercial, AuthorizedBy: "test", DecisionID: "test", DecidedAt: time.Now(), RevalidatedAt: time.Now()},
 		},
 	}
 }
