@@ -938,6 +938,7 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
+		rt.pruneClaimedPanes(freshNodes)
 		rt.pruneWatchedDirs(freshNodes)
 		rt.claimNewPanes(freshNodes)
 		rt.pruneKnownNodes(freshNodes)
@@ -1595,7 +1596,8 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		claimedPanes := make([]string, 0)
 		prepare := func(publication *herdrruntime.FinalPublication) error {
 			for _, nodeInfo := range freshNodes {
-				if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
+				claimKey := claimedPaneKeyForNodeInfo(nodeInfo)
+				if claimKey == "" || rt.claimedPanes[claimKey] {
 					continue
 				}
 				backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
@@ -1616,7 +1618,7 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 				if err := backend.SetPaneOwnerMarker(context.Background(), paneResourceForNodeInfo(nodeInfo), rt.contextID); err != nil {
 					return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
 				}
-				claimedPanes = append(claimedPanes, nodeInfo.PaneID)
+				claimedPanes = append(claimedPanes, claimKey)
 			}
 			return nil
 		}
@@ -1626,8 +1628,8 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 			if rt.claimedPanes == nil {
 				rt.claimedPanes = make(map[string]bool)
 			}
-			for _, paneID := range claimedPanes {
-				rt.claimedPanes[paneID] = true
+			for _, claimKey := range claimedPanes {
+				rt.claimedPanes[claimKey] = true
 			}
 		}); err != nil {
 			return nil, nil, err
@@ -1808,15 +1810,18 @@ func (rt *daemonRuntime) pruneKnownNodes(freshNodes map[string]discovery.NodeInf
 }
 
 func (rt *daemonRuntime) pruneClaimedPanes(freshNodes map[string]discovery.NodeInfo) {
-	livePaneIDs := make(map[string]bool, len(freshNodes))
+	if rt.claimedPanes == nil {
+		return
+	}
+	liveClaimKeys := make(map[string]bool, len(freshNodes))
 	for _, nodeInfo := range freshNodes {
-		if nodeInfo.PaneID != "" {
-			livePaneIDs[nodeInfo.PaneID] = true
+		if claimKey := claimedPaneKeyForNodeInfo(nodeInfo); claimKey != "" {
+			liveClaimKeys[claimKey] = true
 		}
 	}
-	for paneID := range rt.claimedPanes {
-		if !livePaneIDs[paneID] {
-			delete(rt.claimedPanes, paneID)
+	for claimKey := range rt.claimedPanes {
+		if !liveClaimKeys[claimKey] {
+			delete(rt.claimedPanes, claimKey)
 		}
 	}
 }
@@ -1835,9 +1840,29 @@ func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID
 	return multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
 }
 
+func claimedPaneKeyForNodeInfo(nodeInfo discovery.NodeInfo) string {
+	if nodeInfo.PaneID == "" {
+		return ""
+	}
+	pane := paneResourceForNodeInfo(nodeInfo)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+		pane.Backend,
+		pane.Kind,
+		pane.Native,
+		pane.HerdrRuntime.SocketPath,
+		pane.HerdrRuntime.SessionName,
+		pane.HerdrRuntime.WorkspaceID,
+		pane.HerdrRuntime.PaneID,
+	)
+}
+
 func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo) {
+	if rt.claimedPanes == nil {
+		rt.claimedPanes = make(map[string]bool)
+	}
 	for _, nodeInfo := range freshNodes {
-		if nodeInfo.PaneID == "" || rt.claimedPanes[nodeInfo.PaneID] {
+		claimKey := claimedPaneKeyForNodeInfo(nodeInfo)
+		if claimKey == "" || rt.claimedPanes[claimKey] {
 			continue
 		}
 		backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
@@ -1850,7 +1875,7 @@ func (rt *daemonRuntime) claimNewPanes(freshNodes map[string]discovery.NodeInfo)
 			log.Printf("postman: WARNING: failed to claim pane %s: %v\n", nodeInfo.PaneID, err)
 			continue
 		}
-		rt.claimedPanes[nodeInfo.PaneID] = true
+		rt.claimedPanes[claimKey] = true
 	}
 }
 

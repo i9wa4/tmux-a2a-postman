@@ -860,7 +860,7 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName)") {
 		t.Fatal("start.go still clears foreign pane claims from a raw PID check")
 	}
-	markerIndex := strings.Index(source, `setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true)`)
+	markerIndex := strings.Index(source, `publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true)`)
 	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
 	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
 	reconcileIndex := strings.Index(source, "herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes")
@@ -882,6 +882,9 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	}
 	if markerIndex > claimIndex {
 		t.Fatal("start.go publishes the enabled-session marker after pane ownership claims")
+	}
+	if strings.Contains(source[claimIndex:reconcileIndex], "failed to claim pane") {
+		t.Fatal("startup pane ownership claims still log and continue instead of rejecting prepare")
 	}
 }
 

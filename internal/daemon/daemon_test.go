@@ -144,8 +144,99 @@ func TestDaemonRuntimeClaimNewPanesUsesRegisteredHerdrOwnershipBackend(t *testin
 	if backend.paneContextID != "ctx-main" {
 		t.Fatalf("pane context = %q, want ctx-main", backend.paneContextID)
 	}
-	if !rt.claimedPanes["workspace-1:pane-1"] {
+	if !rt.claimedPanes[claimedPaneKeyForNodeInfo(discovery.NodeInfo{
+		PaneID:           "workspace-1:pane-1",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr.sock",
+		HerdrWorkspaceID: "workspace-1",
+		HerdrTabID:       "workspace-1:tab-1",
+	})] {
 		t.Fatal("Herdr pane was not recorded as claimed")
+	}
+}
+
+func TestDaemonRuntimeClaimNewPanesInitializesNilClaimMap(t *testing.T) {
+	backend := &fakeDaemonOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	rt := &daemonRuntime{contextID: "ctx-main"}
+	nodeInfo := discovery.NodeInfo{
+		PaneID:           "workspace-1:pane-1",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr.sock",
+		HerdrWorkspaceID: "workspace-1",
+		HerdrTabID:       "workspace-1:tab-1",
+	}
+	rt.claimNewPanes(map[string]discovery.NodeInfo{"work:worker": nodeInfo})
+
+	if backend.setPaneCalls != 1 {
+		t.Fatalf("set pane calls = %d, want 1", backend.setPaneCalls)
+	}
+	if rt.claimedPanes == nil || !rt.claimedPanes[claimedPaneKeyForNodeInfo(nodeInfo)] {
+		t.Fatalf("claimedPanes = %#v, want initialized qualified claim", rt.claimedPanes)
+	}
+}
+
+func TestDaemonRuntimeClaimedPaneKeyIncludesBackendAndRuntimeIdentity(t *testing.T) {
+	tmuxNode := discovery.NodeInfo{
+		PaneID:      "%42",
+		SessionName: "work",
+		Backend:     string(multiplexer.BackendKindTmux),
+	}
+	herdrNodeA := discovery.NodeInfo{
+		PaneID:           "%42",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr-a.sock",
+		HerdrWorkspaceID: "workspace-a",
+		HerdrTabID:       "workspace-a:tab-1",
+	}
+	herdrNodeB := herdrNodeA
+	herdrNodeB.HerdrSocketPath = "/tmp/herdr-b.sock"
+
+	keys := map[string]bool{
+		claimedPaneKeyForNodeInfo(tmuxNode):   true,
+		claimedPaneKeyForNodeInfo(herdrNodeA): true,
+		claimedPaneKeyForNodeInfo(herdrNodeB): true,
+	}
+	if len(keys) != 3 {
+		t.Fatalf("claim keys collapsed across backend/runtime identities: %#v", keys)
+	}
+}
+
+func TestDaemonRuntimePruneClaimedPanesUsesQualifiedIdentityForBackendTransition(t *testing.T) {
+	tmuxNode := discovery.NodeInfo{
+		PaneID:      "%42",
+		SessionName: "work",
+		Backend:     string(multiplexer.BackendKindTmux),
+	}
+	herdrNode := discovery.NodeInfo{
+		PaneID:           "%42",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  "/tmp/herdr.sock",
+		HerdrWorkspaceID: "workspace-1",
+		HerdrTabID:       "workspace-1:tab-1",
+	}
+	tmuxKey := claimedPaneKeyForNodeInfo(tmuxNode)
+	herdrKey := claimedPaneKeyForNodeInfo(herdrNode)
+	rt := &daemonRuntime{
+		claimedPanes: map[string]bool{
+			tmuxKey:  true,
+			herdrKey: true,
+		},
+	}
+
+	rt.pruneClaimedPanes(map[string]discovery.NodeInfo{"work:worker": herdrNode})
+
+	if rt.claimedPanes[tmuxKey] {
+		t.Fatalf("stale tmux claim survived backend transition: %#v", rt.claimedPanes)
+	}
+	if !rt.claimedPanes[herdrKey] {
+		t.Fatalf("live Herdr claim was pruned: %#v", rt.claimedPanes)
 	}
 }
 

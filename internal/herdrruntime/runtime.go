@@ -2,7 +2,9 @@ package herdrruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -32,8 +34,16 @@ type Runtime struct {
 type FinalPublication struct {
 	ownershipBackend *ownershipMux
 	runtime          *Runtime
-	rollbacks        []func()
+	rollbacks        []func(context.Context) error
 	rolledBack       bool
+}
+
+func NewFinalPublication() *FinalPublication {
+	return &FinalPublication{}
+}
+
+func (p *FinalPublication) Rollback() error {
+	return p.rollback()
 }
 
 func (p *FinalPublication) Kind() multiplexer.BackendKind {
@@ -48,13 +58,17 @@ func (p *FinalPublication) SessionOwnerMarker(ctx context.Context, sessionName s
 }
 
 func (p *FinalPublication) SetSessionEnabledMarker(ctx context.Context, contextID, sessionName string, enabled bool) error {
-	if p == nil || p.ownershipBackend == nil || p.runtime == nil || !p.runtime.OwnsSession(sessionName) {
+	if p == nil {
 		return config.SetSessionEnabledMarker(contextID, sessionName, enabled)
 	}
-	if enabled {
-		return p.setSessionOwnerMarker(ctx, contextID, sessionName, 0)
+	backend := multiplexer.OwnershipBackend(multiplexer.TmuxBackend{})
+	if p.ownershipBackend != nil && p.runtime != nil && p.runtime.OwnsSession(sessionName) {
+		backend = p.ownershipBackend
 	}
-	return p.clearSessionOwnerMarker(ctx, sessionName)
+	if enabled {
+		return p.setSessionOwnerMarkerWithBackend(ctx, backend, contextID, sessionName, os.Getpid())
+	}
+	return p.clearSessionOwnerMarkerWithBackend(ctx, backend, sessionName)
 }
 
 func (p *FinalPublication) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
@@ -79,76 +93,76 @@ func (p *FinalPublication) PaneOwnerMarker(ctx context.Context, pane multiplexer
 }
 
 func (p *FinalPublication) SetPaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID, contextID string) error {
-	if p == nil || p.ownershipBackend == nil || pane.Backend != multiplexer.BackendKindHerdr {
+	if p == nil {
 		backend, err := multiplexer.OwnershipBackendForKind(pane.Backend)
 		if err != nil {
 			return err
 		}
-		if p == nil {
-			return backend.SetPaneOwnerMarker(ctx, pane, contextID)
-		}
-		return p.setPaneOwnerMarkerWithBackend(ctx, backend, pane, contextID)
+		return backend.SetPaneOwnerMarker(ctx, pane, contextID)
 	}
-	return p.setPaneOwnerMarkerWithBackend(ctx, p.ownershipBackend, pane, contextID)
+	backend, err := p.ownershipBackendForPane(pane)
+	if err != nil {
+		return err
+	}
+	return p.setPaneOwnerMarkerWithBackend(ctx, backend, pane, contextID)
 }
 
 func (p *FinalPublication) ClearPaneOwnerMarker(ctx context.Context, pane multiplexer.ResourceID) error {
-	if p == nil || p.ownershipBackend == nil {
+	if p == nil {
 		return fmt.Errorf("herdr final publication missing")
 	}
-	backend := multiplexer.OwnershipBackend(p.ownershipBackend)
-	if pane.Backend != multiplexer.BackendKindHerdr {
-		var err error
-		backend, err = multiplexer.OwnershipBackendForKind(pane.Backend)
-		if err != nil {
-			return err
-		}
+	backend, err := p.ownershipBackendForPane(pane)
+	if err != nil {
+		return err
 	}
 	return p.clearPaneOwnerMarkerWithBackend(ctx, backend, pane)
 }
 
+func (p *FinalPublication) ownershipBackendForPane(pane multiplexer.ResourceID) (multiplexer.OwnershipBackend, error) {
+	if pane.Backend == multiplexer.BackendKindHerdr && p.ownershipBackend != nil {
+		return p.ownershipBackend, nil
+	}
+	return multiplexer.OwnershipBackendForKind(pane.Backend)
+}
+
 func (p *FinalPublication) setSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
-	previous, readErr := p.ownershipBackend.SessionOwnerMarker(ctx, sessionName)
+	return p.setSessionOwnerMarkerWithBackend(ctx, p.ownershipBackend, contextID, sessionName, pid)
+}
+
+func (p *FinalPublication) setSessionOwnerMarkerWithBackend(ctx context.Context, backend multiplexer.OwnershipBackend, contextID, sessionName string, pid int) error {
+	previous, readErr := backend.SessionOwnerMarker(ctx, sessionName)
 	if readErr != nil {
 		return readErr
 	}
-	if err := p.ownershipBackend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid); err != nil {
+	if err := backend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid); err != nil {
+		if rollbackErr := restoreSessionOwnerMarker(context.Background(), backend, sessionName, previous); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback after failed session owner marker write: %w", rollbackErr))
+		}
 		return err
 	}
-	p.rollbacks = append(p.rollbacks, func() {
-		rollbackCtx := context.Background()
-		if previous == "" {
-			_ = p.ownershipBackend.ClearSessionOwnerMarker(rollbackCtx, sessionName)
-			return
-		}
-		previousContext, previousPIDText, _ := strings.Cut(previous, ":")
-		previousPID := 0
-		if previousPIDText != "" {
-			_, _ = fmt.Sscanf(previousPIDText, "%d", &previousPID)
-		}
-		_ = p.ownershipBackend.SetSessionOwnerMarker(rollbackCtx, previousContext, sessionName, previousPID)
+	p.rollbacks = append(p.rollbacks, func(rollbackCtx context.Context) error {
+		return restoreSessionOwnerMarker(rollbackCtx, backend, sessionName, previous)
 	})
 	return nil
 }
 
 func (p *FinalPublication) clearSessionOwnerMarker(ctx context.Context, sessionName string) error {
-	previous, readErr := p.ownershipBackend.SessionOwnerMarker(ctx, sessionName)
+	return p.clearSessionOwnerMarkerWithBackend(ctx, p.ownershipBackend, sessionName)
+}
+
+func (p *FinalPublication) clearSessionOwnerMarkerWithBackend(ctx context.Context, backend multiplexer.OwnershipBackend, sessionName string) error {
+	previous, readErr := backend.SessionOwnerMarker(ctx, sessionName)
 	if readErr != nil {
 		return readErr
 	}
-	if err := p.ownershipBackend.ClearSessionOwnerMarker(ctx, sessionName); err != nil {
+	if err := backend.ClearSessionOwnerMarker(ctx, sessionName); err != nil {
+		if rollbackErr := restoreSessionOwnerMarker(context.Background(), backend, sessionName, previous); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback after failed session owner marker clear: %w", rollbackErr))
+		}
 		return err
 	}
-	p.rollbacks = append(p.rollbacks, func() {
-		if previous == "" {
-			return
-		}
-		previousContext, previousPIDText, _ := strings.Cut(previous, ":")
-		previousPID := 0
-		if previousPIDText != "" {
-			_, _ = fmt.Sscanf(previousPIDText, "%d", &previousPID)
-		}
-		_ = p.ownershipBackend.SetSessionOwnerMarker(context.Background(), previousContext, sessionName, previousPID)
+	p.rollbacks = append(p.rollbacks, func(rollbackCtx context.Context) error {
+		return restoreSessionOwnerMarker(rollbackCtx, backend, sessionName, previous)
 	})
 	return nil
 }
@@ -159,15 +173,13 @@ func (p *FinalPublication) setPaneOwnerMarkerWithBackend(ctx context.Context, ba
 		return readErr
 	}
 	if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err != nil {
+		if rollbackErr := restorePaneOwnerMarker(context.Background(), backend, pane, previous); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback after failed pane owner marker write: %w", rollbackErr))
+		}
 		return err
 	}
-	p.rollbacks = append(p.rollbacks, func() {
-		rollbackCtx := context.Background()
-		if previous == "" {
-			_ = backend.ClearPaneOwnerMarker(rollbackCtx, pane)
-			return
-		}
-		_ = backend.SetPaneOwnerMarker(rollbackCtx, pane, previous)
+	p.rollbacks = append(p.rollbacks, func(rollbackCtx context.Context) error {
+		return restorePaneOwnerMarker(rollbackCtx, backend, pane, previous)
 	})
 	return nil
 }
@@ -178,25 +190,72 @@ func (p *FinalPublication) clearPaneOwnerMarkerWithBackend(ctx context.Context, 
 		return readErr
 	}
 	if err := backend.ClearPaneOwnerMarker(ctx, pane); err != nil {
+		if rollbackErr := restorePaneOwnerMarker(context.Background(), backend, pane, previous); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback after failed pane owner marker clear: %w", rollbackErr))
+		}
 		return err
 	}
-	p.rollbacks = append(p.rollbacks, func() {
-		if previous == "" {
-			return
-		}
-		_ = backend.SetPaneOwnerMarker(context.Background(), pane, previous)
+	p.rollbacks = append(p.rollbacks, func(rollbackCtx context.Context) error {
+		return restorePaneOwnerMarker(rollbackCtx, backend, pane, previous)
 	})
 	return nil
 }
 
-func (p *FinalPublication) rollback() {
+func restoreSessionOwnerMarker(ctx context.Context, backend multiplexer.OwnershipBackend, sessionName, previous string) error {
+	if previous == "" {
+		if err := backend.ClearSessionOwnerMarker(ctx, sessionName); err != nil {
+			return err
+		}
+	} else {
+		previousContext, previousPIDText, _ := strings.Cut(previous, ":")
+		previousPID := 0
+		if previousPIDText != "" {
+			_, _ = fmt.Sscanf(previousPIDText, "%d", &previousPID)
+		}
+		if err := backend.SetSessionOwnerMarker(ctx, previousContext, sessionName, previousPID); err != nil {
+			return err
+		}
+	}
+	current, err := backend.SessionOwnerMarker(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	if current != previous {
+		return fmt.Errorf("session owner marker rollback verification failed for %s: got %q want %q", sessionName, current, previous)
+	}
+	return nil
+}
+
+func restorePaneOwnerMarker(ctx context.Context, backend multiplexer.OwnershipBackend, pane multiplexer.ResourceID, previous string) error {
+	if previous == "" {
+		if err := backend.ClearPaneOwnerMarker(ctx, pane); err != nil {
+			return err
+		}
+	} else if err := backend.SetPaneOwnerMarker(ctx, pane, previous); err != nil {
+		return err
+	}
+	current, err := backend.PaneOwnerMarker(ctx, pane)
+	if err != nil {
+		return err
+	}
+	if current != previous {
+		return fmt.Errorf("pane owner marker rollback verification failed for %s: got %q want %q", pane.Native, current, previous)
+	}
+	return nil
+}
+
+func (p *FinalPublication) rollback() error {
 	if p == nil || p.rolledBack {
-		return
+		return nil
 	}
 	p.rolledBack = true
+	var rollbackErr error
 	for i := len(p.rollbacks) - 1; i >= 0; i-- {
-		p.rollbacks[i]()
+		if err := p.rollbacks[i](context.Background()); err != nil {
+			rollbackErr = errors.Join(rollbackErr, err)
+		}
 	}
+	return rollbackErr
 }
 
 func New(cfg *config.Config, factory ClientFactory) (*Runtime, error) {
@@ -417,7 +476,9 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 	publication := &FinalPublication{ownershipBackend: stagedOwnership, runtime: rt}
 	if prepare != nil {
 		if err := prepare(publication); err != nil {
-			publication.rollback()
+			if rollbackErr := publication.rollback(); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+			}
 			return err
 		}
 	}

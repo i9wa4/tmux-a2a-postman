@@ -881,6 +881,78 @@ func TestRuntimeFinalReconcileRollsBackPreparedExternalMarkersOnFailure(t *testi
 	}
 }
 
+func TestRuntimeFinalReconcileReturnsRollbackFailure(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	publishErr := errors.New("pane claim failed")
+	rollbackErr := errors.New("workspace clear failed")
+	client := &fakeRuntimeHerdrClient{
+		snapshot:                  validRuntimeHerdrSnapshot(),
+		setPaneMetadataErr:        publishErr,
+		clearWorkspaceMetadataErr: rollbackErr,
+	}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, _, token, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("DiscoverForReconcile() error = %v", err)
+	}
+	err = rt.ReconcileFinalNodesForTokenAndCommit(token, nodes, func(publication *herdrruntime.FinalPublication) error {
+		if err := publication.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err != nil {
+			return err
+		}
+		nodeInfo := nodes[sessionName+":worker"]
+		return publication.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  nodeInfo.HerdrSocketPath,
+			SessionName: nodeInfo.SessionName,
+			WorkspaceID: nodeInfo.HerdrWorkspaceID,
+			TabID:       nodeInfo.HerdrTabID,
+			PaneID:      nodeInfo.PaneID,
+		}, nodeInfo.PaneID), contextID)
+	}, func() {
+		t.Fatal("commit callback ran after failed pane claim")
+	})
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit() error = %v, want publish failure", err)
+	}
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("ReconcileFinalNodesForTokenAndCommit() error = %v, want rollback failure", err)
+	}
+}
+
+func TestFinalPublicationRestoresPaneMarkerAfterAmbiguousWriteFailure(t *testing.T) {
+	backend := &transactionOwnershipBackend{
+		kind:        multiplexer.BackendKindHerdr,
+		paneMarkers: map[string]string{"%42": "ctx-old"},
+		failSetFor:  "ctx-new",
+		failSetErr:  errors.New("remote write returned failure after mutation"),
+	}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	publication := herdrruntime.NewFinalPublication()
+	err := publication.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("%42"), "ctx-new")
+	if !errors.Is(err, backend.failSetErr) {
+		t.Fatalf("SetPaneOwnerMarker() error = %v, want ambiguous write failure", err)
+	}
+	if got := backend.paneMarkers["%42"]; got != "ctx-old" {
+		t.Fatalf("pane marker after failed write = %q, want restored ctx-old", got)
+	}
+}
+
 func TestRuntimeFinalReconcileBlocksExternalReadersDuringPublicCommit(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
@@ -1491,6 +1563,7 @@ type fakeRuntimeHerdrClient struct {
 	setWorkspaceMetadataValue       string
 	clearWorkspaceMetadataWorkspace string
 	clearWorkspaceMetadataKey       string
+	clearWorkspaceMetadataErr       error
 }
 
 func (f *fakeRuntimeHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
@@ -1543,6 +1616,9 @@ func (f *fakeRuntimeHerdrClient) SetWorkspaceMetadata(_ context.Context, workspa
 func (f *fakeRuntimeHerdrClient) ClearWorkspaceMetadata(_ context.Context, workspaceID string, key string) (multiplexer.HerdrWriteResult, error) {
 	f.clearWorkspaceMetadataWorkspace = workspaceID
 	f.clearWorkspaceMetadataKey = key
+	if f.clearWorkspaceMetadataErr != nil {
+		return multiplexer.HerdrWriteResult{}, f.clearWorkspaceMetadataErr
+	}
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
@@ -1558,6 +1634,50 @@ func (f *fakeRuntimeHerdrClient) SetPaneMetadata(_ context.Context, paneID strin
 
 func (f *fakeRuntimeHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+type transactionOwnershipBackend struct {
+	kind           multiplexer.BackendKind
+	sessionMarkers map[string]string
+	paneMarkers    map[string]string
+	failSetFor     string
+	failSetErr     error
+}
+
+func (b *transactionOwnershipBackend) Kind() multiplexer.BackendKind {
+	return b.kind
+}
+
+func (b *transactionOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (b *transactionOwnershipBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (b *transactionOwnershipBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (b *transactionOwnershipBackend) PaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) (string, error) {
+	return b.paneMarkers[pane.Native], nil
+}
+
+func (b *transactionOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID, contextID string) error {
+	if b.paneMarkers == nil {
+		b.paneMarkers = make(map[string]string)
+	}
+	b.paneMarkers[pane.Native] = contextID
+	if contextID == b.failSetFor {
+		return b.failSetErr
+	}
+	return nil
+}
+
+func (b *transactionOwnershipBackend) ClearPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) error {
+	delete(b.paneMarkers, pane.Native)
+	return nil
 }
 
 type runtimeDiscoverResult struct {

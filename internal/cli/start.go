@@ -153,18 +153,7 @@ func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime 
 			if nodeInfo.PaneID == "" {
 				continue
 			}
-			backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
-			var backend multiplexer.OwnershipBackend
-			var err error
-			if backendKind == multiplexer.BackendKindHerdr && publication != nil {
-				backend = publication
-			} else {
-				backend, err = multiplexer.OwnershipBackendForKind(backendKind)
-				if err != nil {
-					return fmt.Errorf("selecting ownership backend for pane %s: %w", nodeInfo.PaneID, err)
-				}
-			}
-			if err := backend.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
+			if err := publication.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
 				return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
 			}
 		}
@@ -178,7 +167,11 @@ func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime 
 	if herdrRuntime != nil {
 		return herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, prepare, commit) == nil
 	}
-	if err := prepare(nil); err != nil {
+	publication := herdrruntime.NewFinalPublication()
+	if err := prepare(publication); err != nil {
+		if rollbackErr := publication.Rollback(); rollbackErr != nil {
+			log.Printf("postman: WARNING: failed to roll back fresh node ownership publication: %v\n", rollbackErr)
+		}
 		return false
 	}
 	commit()
@@ -494,35 +487,16 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
 	prepareStartupNodes := func(publication *herdrruntime.FinalPublication) error {
-		if herdrRuntime != nil && herdrRuntime.OwnsSession(sessionName) {
-			if err := publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true); err != nil {
-				return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
-			}
-		} else if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
+		if err := publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true); err != nil {
 			return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 		}
 		// Claim discovered panes with this daemon's context ID.
 		for _, nodeInfo := range nodes {
-			backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
-			var backend multiplexer.OwnershipBackend
-			var backendErr error
-			if backendKind == multiplexer.BackendKindHerdr && publication != nil {
-				backend = publication
-			} else {
-				backend, backendErr = multiplexer.OwnershipBackendForKind(backendKind)
-			}
-			if backendErr != nil {
-				log.Printf(
-					"postman: WARNING: failed to select ownership backend for pane %s: %v\n",
-					nodeInfo.PaneID, backendErr,
-				)
+			if nodeInfo.PaneID == "" {
 				continue
 			}
-			if err := backend.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
-				log.Printf(
-					"postman: WARNING: failed to claim pane %s: %v\n",
-					nodeInfo.PaneID, err,
-				)
+			if err := publication.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
+				return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
 			}
 		}
 		return nil
@@ -534,9 +508,14 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		if err := herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes, prepareStartupNodes, commitStartupNodes); err != nil {
 			return fmt.Errorf("publishing Herdr startup snapshot: %w", err)
 		}
-	} else if err := prepareStartupNodes(nil); err != nil {
-		return err
 	} else {
+		publication := herdrruntime.NewFinalPublication()
+		if err := prepareStartupNodes(publication); err != nil {
+			if rollbackErr := publication.Rollback(); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %w", err, rollbackErr)
+			}
+			return err
+		}
 		commitStartupNodes()
 	}
 	// Shared node snapshot for background periodic refresh (Issue #139)
