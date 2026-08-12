@@ -239,6 +239,51 @@ edges = [
 	}
 }
 
+func TestHerdrConfigReadConfigUsesInjectedCurrentTimeWithoutSelfValidatingStaleRecords(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+	t.Cleanup(SetHerdrComplianceNowForTest(func() time.Time { return now }))
+
+	fresh := validHerdrGateConfigFor(now)
+	freshConfig := fresh.ReadConfig()
+	freshConfig.Runtime.TabID = "workspace-1:tab-1"
+	freshConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(freshConfig.Policy, freshConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err != nil {
+		t.Fatalf("ValidateHerdrWriteGate(fresh) error = %v", err)
+	}
+
+	stale := validHerdrGateConfigFor(now.Add(-25 * time.Hour))
+	staleConfig := stale.ReadConfig()
+	staleConfig.Runtime.TabID = "workspace-1:tab-1"
+	staleConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(staleConfig.Policy, staleConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err == nil {
+		t.Fatal("ValidateHerdrWriteGate(stale) error = nil, want stale config record to fail closed")
+	}
+}
+
+func validHerdrGateConfigFor(revalidatedAt time.Time) HerdrConfig {
+	decidedAt := revalidatedAt.Add(-time.Hour)
+	return HerdrConfig{
+		Enabled:                     true,
+		SocketPath:                  "/tmp/herdr.sock",
+		SessionName:                 "work",
+		WorkspaceID:                 "workspace-1",
+		AllowedSocketPaths:          []string{"/tmp/herdr.sock"},
+		AllowedSessions:             []string{"work"},
+		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedProtocolVersions:     []string{"1"},
+		AllowedSchemaVersions:       []int{1},
+		ReadEnabled:                 true,
+		WriteEnabled:                true,
+		InputSanitizerReady:         true,
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
+		ComplianceAuthorizedBy:      "test-authority",
+		ComplianceDecisionID:        "test-decision",
+		ComplianceDecidedAt:         decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt:     revalidatedAt.Format(time.RFC3339),
+		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
+	}
+}
+
 func TestLoadConfig_WorkspaceTree(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

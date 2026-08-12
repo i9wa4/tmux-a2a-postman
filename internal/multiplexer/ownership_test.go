@@ -2,7 +2,10 @@ package multiplexer
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
@@ -90,4 +93,83 @@ func TestTmuxBackendSetAndClearPaneOwnerMarker(t *testing.T) {
 	if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("invocations = %#v, want %#v", got, want)
 	}
+}
+
+func TestRegisterOwnershipBackendKeepsConcurrentHerdrBackendsAddressable(t *testing.T) {
+	const backendCount = 1000
+	cleanups := make([]func(), backendCount)
+	var wg sync.WaitGroup
+	for i := 0; i < backendCount; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cleanups[i] = RegisterOwnershipBackend(&testOwnershipBackend{
+				kind:        BackendKindHerdr,
+				sessionName: "session-" + strconv.Itoa(i),
+				owner:       "ctx-" + strconv.Itoa(i) + ":1",
+			})
+		}()
+	}
+	wg.Wait()
+	t.Cleanup(func() {
+		for _, cleanup := range cleanups {
+			if cleanup != nil {
+				cleanup()
+			}
+		}
+	})
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	for i := 0; i < backendCount; i++ {
+		sessionName := "session-" + strconv.Itoa(i)
+		want := "ctx-" + strconv.Itoa(i) + ":1"
+		got, err := backend.SessionOwnerMarker(context.Background(), sessionName)
+		if err != nil {
+			t.Fatalf("SessionOwnerMarker(%q) error = %v", sessionName, err)
+		}
+		if got != want {
+			t.Fatalf("SessionOwnerMarker(%q) = %q, want %q", sessionName, got, want)
+		}
+	}
+}
+
+type testOwnershipBackend struct {
+	kind        BackendKind
+	sessionName string
+	owner       string
+}
+
+func (t *testOwnershipBackend) Kind() BackendKind {
+	return t.kind
+}
+
+func (t *testOwnershipBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
+	if sessionName != t.sessionName {
+		return "", fmt.Errorf("session %q not owned", sessionName)
+	}
+	return t.owner, nil
+}
+
+func (t *testOwnershipBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (t *testOwnershipBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (t *testOwnershipBackend) PaneOwnerMarker(context.Context, ResourceID) (string, error) {
+	return "", fmt.Errorf("pane not owned")
+}
+
+func (t *testOwnershipBackend) SetPaneOwnerMarker(context.Context, ResourceID, string) error {
+	return fmt.Errorf("pane not owned")
+}
+
+func (t *testOwnershipBackend) ClearPaneOwnerMarker(context.Context, ResourceID) error {
+	return fmt.Errorf("pane not owned")
 }

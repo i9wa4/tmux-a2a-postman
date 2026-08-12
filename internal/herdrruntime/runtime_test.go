@@ -390,6 +390,11 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
+	for _, sessionName := range []string{"work", "other"} {
+		if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+			t.Fatalf("CreateSessionDirs(%q) error = %v", sessionName, err)
+		}
+	}
 
 	workClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-1", "workspace-1:pane-1", "ctx-work:1")}
 	workCfg := config.DefaultConfig()
@@ -415,8 +420,13 @@ func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 	if _, _, err := workRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
 		t.Fatalf("Discover(work) error = %v", err)
 	}
-	if _, _, err := otherRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+	otherNodes, _, err := otherRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(other) error = %v", err)
+	}
+	otherNode := otherNodes["other:worker"]
+	if otherNode.PaneID == "" {
+		t.Fatalf("Discover(other) nodes = %#v, want other:worker", otherNodes)
 	}
 
 	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
@@ -431,9 +441,30 @@ func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 	}
 
 	otherRuntime.Close()
+	otherTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-2:pane-1"}}
+	if _, err := controlplane.DefaultHandAdapter(otherTarget); err == nil {
+		t.Fatal("closed Herdr runtime pane adapter remained registered")
+	}
+	if result, err := message.DeliverSystemMessageDirectResult(
+		"20260414-120000-r5678-from-postman-to-worker.md",
+		otherNode,
+		"worker",
+		"postman",
+		contextID,
+		"body",
+		otherCfg,
+		nil,
+		map[string]discovery.NodeInfo{"other:worker": otherNode},
+		nil,
+	); err == nil || result.Delivered {
+		t.Fatalf("DeliverSystemMessageDirectResult(closed other) = %#v, %v; want closed runtime delivery unavailable", result, err)
+	}
 	ownershipBackend, err = multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
 	if err != nil {
 		t.Fatalf("OwnershipBackendForKind(herdr after other close) error = %v", err)
+	}
+	if _, err := ownershipBackend.SessionOwnerMarker(context.Background(), "other"); err == nil {
+		t.Fatal("closed Herdr runtime session owner route remained available")
 	}
 	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "ctx-work:1" {
 		t.Fatalf("SessionOwnerMarker(work after other close) = %q, %v; want ctx-work:1", got, err)
@@ -536,6 +567,8 @@ func validRuntimeHerdrConfig() config.HerdrConfig {
 }
 
 func runtimeHerdrConfigFor(sessionName, workspaceID string) config.HerdrConfig {
+	revalidatedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	decidedAt := revalidatedAt.Add(-time.Hour)
 	return config.HerdrConfig{
 		Enabled:                     true,
 		SocketPath:                  "/tmp/herdr.sock",
@@ -552,8 +585,8 @@ func runtimeHerdrConfigFor(sessionName, workspaceID string) config.HerdrConfig {
 		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
 		ComplianceAuthorizedBy:      "test-authority",
 		ComplianceDecisionID:        "test-decision",
-		ComplianceDecidedAt:         "2026-08-12T00:00:00Z",
-		ComplianceRevalidatedAt:     "2026-08-12T00:00:00Z",
+		ComplianceDecidedAt:         decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt:     revalidatedAt.Format(time.RFC3339),
 		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 	}
 }

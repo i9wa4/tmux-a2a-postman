@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -132,9 +133,32 @@ type HerdrConfig struct {
 	ComplianceCurrentReferences []string `toml:"compliance_current_references"`
 }
 
+var (
+	herdrComplianceNowMu sync.Mutex
+	herdrComplianceNow   = time.Now
+)
+
+func SetHerdrComplianceNowForTest(now func() time.Time) func() {
+	herdrComplianceNowMu.Lock()
+	previous := herdrComplianceNow
+	if now == nil {
+		now = time.Now
+	}
+	herdrComplianceNow = now
+	herdrComplianceNowMu.Unlock()
+	return func() {
+		herdrComplianceNowMu.Lock()
+		herdrComplianceNow = previous
+		herdrComplianceNowMu.Unlock()
+	}
+}
+
 func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
 	decidedAt, _ := time.Parse(time.RFC3339, h.ComplianceDecidedAt)
 	revalidatedAt, _ := time.Parse(time.RFC3339, h.ComplianceRevalidatedAt)
+	herdrComplianceNowMu.Lock()
+	complianceNow := herdrComplianceNow
+	herdrComplianceNowMu.Unlock()
 	return multiplexer.HerdrReadConfig{
 		Enabled: h.Enabled,
 		Runtime: multiplexer.HerdrRuntimeIdentity{
@@ -153,6 +177,7 @@ func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
 			InputSanitizerReady:     h.InputSanitizerReady,
 			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
 			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecision(h.ComplianceDecision), AuthorizedBy: h.ComplianceAuthorizedBy, DecisionID: h.ComplianceDecisionID, DecidedAt: decidedAt, RevalidatedAt: revalidatedAt, CurrentReferences: append([]string(nil), h.ComplianceCurrentReferences...)},
+			ComplianceNow:           complianceNow,
 		},
 	}
 }

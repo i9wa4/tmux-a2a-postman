@@ -989,6 +989,8 @@ func (f *fakeCLIHerdrClient) PaneProcessInfo(context.Context, string) (multiplex
 }
 
 func validCLIHerdrConfig() config.HerdrConfig {
+	revalidatedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	decidedAt := revalidatedAt.Add(-time.Hour)
 	return config.HerdrConfig{
 		Enabled:                 true,
 		SocketPath:              "/tmp/herdr.sock",
@@ -1005,8 +1007,8 @@ func validCLIHerdrConfig() config.HerdrConfig {
 		ComplianceDecision:      string(multiplexer.HerdrComplianceDecisionRecorded),
 		ComplianceAuthorizedBy:  "test-authority",
 		ComplianceDecisionID:    "decision-001",
-		ComplianceDecidedAt:     "2026-08-12T00:00:00Z",
-		ComplianceRevalidatedAt: "2026-08-12T00:00:00Z",
+		ComplianceDecidedAt:     decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt: revalidatedAt.Format(time.RFC3339),
 		ComplianceCurrentReferences: []string{
 			"https://github.com/ogulcancelik/herdr/blob/master/LICENSE",
 		},

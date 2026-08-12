@@ -311,6 +311,7 @@ func TestHerdrProtocolVersion(t *testing.T) {
 }
 
 func validHerdrGatePolicy() HerdrGatePolicy {
+	now := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
 	return HerdrGatePolicy{
 		ReadEnabled:             true,
 		WriteEnabled:            true,
@@ -325,11 +326,11 @@ func validHerdrGatePolicy() HerdrGatePolicy {
 			Decision:          HerdrComplianceDecisionRecorded,
 			AuthorizedBy:      "compliance-authority",
 			DecisionID:        "decision-001",
-			DecidedAt:         time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-			RevalidatedAt:     time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
+			DecidedAt:         now.Add(-time.Hour),
+			RevalidatedAt:     now,
 			CurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 		},
-		ComplianceNow: func() time.Time { return time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) },
+		ComplianceNow: func() time.Time { return now },
 	}
 }
 

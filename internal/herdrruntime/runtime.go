@@ -181,10 +181,6 @@ func (rt *Runtime) Close() {
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	for i := len(rt.cleanups) - 1; i >= 0; i-- {
-		rt.cleanups[i]()
-	}
-	rt.cleanups = nil
 	for paneID, cleanup := range rt.paneCleanups {
 		if cleanup != nil {
 			cleanup()
@@ -193,6 +189,10 @@ func (rt *Runtime) Close() {
 	}
 	rt.registeredPanes = make(map[string]bool)
 	rt.ownershipBackend.clear()
+	for i := len(rt.cleanups) - 1; i >= 0; i-- {
+		rt.cleanups[i]()
+	}
+	rt.cleanups = nil
 }
 
 func (rt *Runtime) backendForPane(tabID, paneID string) multiplexer.HerdrBackend {

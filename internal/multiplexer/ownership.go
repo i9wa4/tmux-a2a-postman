@@ -24,7 +24,10 @@ type OwnershipBackend interface {
 	ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error
 }
 
-var registeredOwnershipBackends sync.Map
+var (
+	registeredOwnershipBackends   sync.Map
+	registeredOwnershipBackendsMu sync.Mutex
+)
 
 func BackendKindFromString(backend string) BackendKind {
 	switch BackendKind(strings.TrimSpace(backend)) {
@@ -50,7 +53,9 @@ func RegisterOwnershipBackend(backend OwnershipBackend) func() {
 	}
 	key := backend.Kind()
 	if key == BackendKindHerdr {
+		registeredOwnershipBackendsMu.Lock()
 		registeredOwnershipBackends.Store(key, append(registeredHerdrOwnershipBackends(), backend))
+		registeredOwnershipBackendsMu.Unlock()
 	} else {
 		registeredOwnershipBackends.Store(key, backend)
 	}
@@ -59,6 +64,8 @@ func RegisterOwnershipBackend(backend OwnershipBackend) func() {
 			registeredOwnershipBackends.Delete(key)
 			return
 		}
+		registeredOwnershipBackendsMu.Lock()
+		defer registeredOwnershipBackendsMu.Unlock()
 		registered := registeredHerdrOwnershipBackends()
 		next := registered[:0]
 		for _, registeredBackend := range registered {
@@ -79,7 +86,9 @@ func OwnershipBackendForKind(backend BackendKind) (OwnershipBackend, error) {
 	case BackendKindTmux, "":
 		return TmuxBackend{}, nil
 	case BackendKindHerdr:
+		registeredOwnershipBackendsMu.Lock()
 		backends := registeredHerdrOwnershipBackends()
+		registeredOwnershipBackendsMu.Unlock()
 		switch len(backends) {
 		case 0:
 			return nil, fmt.Errorf("herdr ownership backend not registered")

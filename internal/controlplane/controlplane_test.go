@@ -430,6 +430,7 @@ func (f *fakeHerdrControlplaneWriteClient) ClearPaneMetadata(context.Context, st
 }
 
 func validHerdrControlplaneConfig() multiplexer.HerdrReadConfig {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
 	return multiplexer.HerdrReadConfig{
 		Enabled: true,
 		Runtime: multiplexer.HerdrRuntimeIdentity{
@@ -449,8 +450,8 @@ func validHerdrControlplaneConfig() multiplexer.HerdrReadConfig {
 			AllowedSchemaVersions:   []int{1},
 			InputSanitizerReady:     true,
 			ComplianceDecision:      multiplexer.HerdrComplianceDecisionRecorded,
-			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "test", DecisionID: "test", DecidedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC), RevalidatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC), CurrentReferences: []string{"test"}},
-			ComplianceNow:           func() time.Time { return time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC) },
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "test", DecisionID: "test", DecidedAt: now.Add(-time.Hour), RevalidatedAt: now, CurrentReferences: []string{"test"}},
+			ComplianceNow:           func() time.Time { return now },
 		},
 	}
 }
