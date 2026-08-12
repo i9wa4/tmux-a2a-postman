@@ -363,7 +363,10 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 func validatedFocusedIDs(snapshot HerdrSessionSnapshot, workspaceID string) (string, string, string) {
 	workspaceOK := false
 	for _, workspace := range snapshot.Workspaces {
-		if workspace.ID == snapshot.FocusedWorkspaceID && workspace.ID == workspaceID {
+		if workspace.ID != workspaceID {
+			continue
+		}
+		if workspace.ID == snapshot.FocusedWorkspaceID {
 			workspaceOK = true
 			break
 		}
