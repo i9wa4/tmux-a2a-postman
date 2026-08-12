@@ -178,6 +178,25 @@ func TestRunStartWithFlags_SourceContractReportsHerdrCollisionsAfterStartupRedis
 	}
 }
 
+func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+	firstFilter := strings.Index(source, "fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)")
+	if firstFilter == -1 {
+		t.Fatal("startup rediscovery activation filter not found")
+	}
+	if !strings.Contains(source[firstFilter:], "herdrRuntime.ReconcileFinalNodes(fresh)") {
+		t.Fatal("startup rediscovery no longer reconciles Herdr routes after activation filtering")
+	}
+
+	secondFilter := strings.Index(source, "freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)")
+	if secondFilter == -1 {
+		t.Fatal("on-demand refresh activation filter not found")
+	}
+	if !strings.Contains(source[secondFilter:], "herdrRuntime.ReconcileFinalNodes(freshNodes)") {
+		t.Fatal("on-demand refresh no longer reconciles Herdr routes after activation filtering")
+	}
+}
+
 func TestRunStartWithFlags_SourceContractUsesProductionHerdrSocketClient(t *testing.T) {
 	source := readRepoFile(t, "internal/cli/start.go")
 

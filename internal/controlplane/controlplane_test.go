@@ -448,8 +448,9 @@ func validHerdrControlplaneConfig() multiplexer.HerdrReadConfig {
 			AllowedProtocolVersions: []string{"1"},
 			AllowedSchemaVersions:   []int{1},
 			InputSanitizerReady:     true,
-			ComplianceDecision:      multiplexer.HerdrComplianceDecisionCommercial,
-			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "test", DecisionID: "test", DecidedAt: time.Now(), RevalidatedAt: time.Now(), CurrentReferences: []string{"test"}},
+			ComplianceDecision:      multiplexer.HerdrComplianceDecisionRecorded,
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "test", DecisionID: "test", DecidedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC), RevalidatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC), CurrentReferences: []string{"test"}},
+			ComplianceNow:           func() time.Time { return time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC) },
 		},
 	}
 }

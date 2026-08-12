@@ -142,10 +142,20 @@ func TestValidateHerdrWriteGateRequiresWriteSpecificGates(t *testing.T) {
 	t.Run("legacy labels never authorize writes", func(t *testing.T) {
 		for _, decision := range []HerdrComplianceDecision{HerdrComplianceDecisionAGPL, HerdrComplianceDecisionCommercial} {
 			policy := validHerdrGatePolicy()
+			policy.ComplianceDecision = decision
 			policy.ComplianceRecord.Decision = decision
 			err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
 			assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 		}
+	})
+
+	t.Run("top-level decision mismatch never authorizes writes", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ComplianceDecision = HerdrComplianceDecisionCommercial
+		policy.ComplianceRecord.Decision = HerdrComplianceDecisionRecorded
+
+		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	})
 
 	t.Run("blank provenance fields never authorize writes", func(t *testing.T) {
@@ -310,6 +320,7 @@ func validHerdrGatePolicy() HerdrGatePolicy {
 		AllowedProtocolVersions: []string{"1"},
 		AllowedSchemaVersions:   []int{1},
 		InputSanitizerReady:     true,
+		ComplianceDecision:      HerdrComplianceDecisionRecorded,
 		ComplianceRecord: HerdrComplianceRecord{
 			Decision:          HerdrComplianceDecisionRecorded,
 			AuthorizedBy:      "compliance-authority",

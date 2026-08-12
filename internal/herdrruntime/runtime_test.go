@@ -187,6 +187,56 @@ func TestRuntimeReconcileFinalNodesPrunesCrossBackendCollisionLoser(t *testing.T
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("cross-backend collision loser Herdr ownership route remained available")
 	}
+	if _, err := ownershipBackend.SessionOwnerMarker(context.Background(), sessionName); err == nil {
+		t.Fatal("final-pruned Herdr session owner read remained available")
+	}
+	if err := ownershipBackend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, 0); err == nil {
+		t.Fatal("final-pruned Herdr session owner set remained available")
+	}
+	if err := ownershipBackend.ClearSessionOwnerMarker(context.Background(), sessionName); err != nil {
+		t.Fatalf("final-pruned Herdr session owner clear error = %v, want teardown-only clear to remain available", err)
+	}
+}
+
+func TestRuntimeReconcileFinalNodesPrunesFilteredHerdrPane(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(initial) error = %v", err)
+	}
+	filteredTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
+	if _, err := controlplane.DefaultHandAdapter(filteredTarget); err != nil {
+		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
+	}
+
+	rt.ReconcileFinalNodes(map[string]discovery.NodeInfo{})
+
+	if _, err := controlplane.DefaultHandAdapter(filteredTarget); err == nil {
+		t.Fatal("activation-filtered Herdr hand adapter remained registered")
+	}
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("activation-filtered Herdr ownership route remained available")
+	}
 }
 
 func TestRuntimeDiscoverErrorClearsStalePaneRegistrations(t *testing.T) {
@@ -273,6 +323,12 @@ func TestRuntimeClearSessionOwnerMarkerSurvivesZeroPaneRediscovery(t *testing.T)
 	if client.clearWorkspaceMetadataWorkspace != "workspace-1" || client.clearWorkspaceMetadataKey == "" {
 		t.Fatalf("clear workspace metadata workspace=%q key=%q, want retained session ownership backend", client.clearWorkspaceMetadataWorkspace, client.clearWorkspaceMetadataKey)
 	}
+	if _, err := ownershipBackend.SessionOwnerMarker(context.Background(), sessionName); err == nil {
+		t.Fatal("zero-pane Herdr session owner read remained available")
+	}
+	if err := ownershipBackend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, 0); err == nil {
+		t.Fatal("zero-pane Herdr session owner set remained available")
+	}
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("stale Herdr pane ownership backend remained routable after zero-pane rediscovery")
 	}
@@ -310,17 +366,77 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
 		t.Fatalf("collisions = %#v, want duplicate Herdr collision", collisions)
 	}
-	if err := rt.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err != nil {
-		t.Fatalf("SetSessionEnabledMarker() duplicate-only Herdr cold start error = %v", err)
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
 	}
-	if client.setWorkspaceMetadataWorkspace != "workspace-1" || client.setWorkspaceMetadataValue == "" {
-		t.Fatalf("set workspace metadata workspace=%q value=%q, want duplicate-only cold start session marker", client.setWorkspaceMetadataWorkspace, client.setWorkspaceMetadataValue)
+	if _, err := ownershipBackend.SessionOwnerMarker(context.Background(), sessionName); err == nil {
+		t.Fatal("duplicate-only Herdr session owner read remained available")
+	}
+	if err := rt.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err == nil {
+		t.Fatal("duplicate-only Herdr session owner set remained available")
+	}
+	if err := ownershipBackend.ClearSessionOwnerMarker(context.Background(), sessionName); err != nil {
+		t.Fatalf("duplicate-only Herdr session owner clear error = %v, want teardown-only clear to remain available", err)
 	}
 	for _, paneID := range []string{"workspace-1:pane-1", "workspace-1:pane-2"} {
 		target := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: paneID}}
 		if _, err := controlplane.DefaultHandAdapter(target); err == nil {
 			t.Fatalf("duplicate Herdr pane %q remained registered", paneID)
 		}
+	}
+}
+
+func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+
+	workClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-1", "workspace-1:pane-1", "ctx-work:1")}
+	workCfg := config.DefaultConfig()
+	workCfg.Herdr = runtimeHerdrConfigFor("work", "workspace-1")
+	workRuntime, err := herdrruntime.New(workCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return workClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(work) error = %v", err)
+	}
+	t.Cleanup(workRuntime.Close)
+
+	otherClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("other", "workspace-2", "workspace-2:tab-1", "workspace-2:pane-1", "ctx-other:1")}
+	otherCfg := config.DefaultConfig()
+	otherCfg.Herdr = runtimeHerdrConfigFor("other", "workspace-2")
+	otherRuntime, err := herdrruntime.New(otherCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return otherClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(other) error = %v", err)
+	}
+
+	if _, _, err := workRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(work) error = %v", err)
+	}
+	if _, _, err := otherRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+		t.Fatalf("Discover(other) error = %v", err)
+	}
+
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "ctx-work:1" {
+		t.Fatalf("SessionOwnerMarker(work) = %q, %v; want ctx-work:1", got, err)
+	}
+	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "other"); err != nil || got != "ctx-other:1" {
+		t.Fatalf("SessionOwnerMarker(other) = %q, %v; want ctx-other:1", got, err)
+	}
+
+	otherRuntime.Close()
+	ownershipBackend, err = multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr after other close) error = %v", err)
+	}
+	if got, err := ownershipBackend.SessionOwnerMarker(context.Background(), "work"); err != nil || got != "ctx-work:1" {
+		t.Fatalf("SessionOwnerMarker(work after other close) = %q, %v; want ctx-work:1", got, err)
 	}
 }
 
@@ -416,14 +532,18 @@ func tempHerdrSocketPath(t *testing.T) string {
 }
 
 func validRuntimeHerdrConfig() config.HerdrConfig {
+	return runtimeHerdrConfigFor("work", "workspace-1")
+}
+
+func runtimeHerdrConfigFor(sessionName, workspaceID string) config.HerdrConfig {
 	return config.HerdrConfig{
 		Enabled:                     true,
 		SocketPath:                  "/tmp/herdr.sock",
-		SessionName:                 "work",
-		WorkspaceID:                 "workspace-1",
+		SessionName:                 sessionName,
+		WorkspaceID:                 workspaceID,
 		AllowedSocketPaths:          []string{"/tmp/herdr.sock"},
-		AllowedSessions:             []string{"work"},
-		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedSessions:             []string{sessionName},
+		AllowedWorkspaceIDs:         []string{workspaceID},
 		AllowedProtocolVersions:     []string{"1"},
 		AllowedSchemaVersions:       []int{1},
 		ReadEnabled:                 true,
@@ -439,26 +559,34 @@ func validRuntimeHerdrConfig() config.HerdrConfig {
 }
 
 func validRuntimeHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
+	return runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-1", "workspace-1:pane-1", "")
+}
+
+func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwner string) multiplexer.HerdrSessionSnapshot {
+	workspaceMetadata := map[string]string{}
+	if sessionOwner != "" {
+		workspaceMetadata["postman.session_owner."+sessionName] = sessionOwner
+	}
 	return multiplexer.HerdrSessionSnapshot{
 		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
 		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
-			ID:       "workspace-1",
-			Metadata: map[string]string{},
+			ID:       workspaceID,
+			Metadata: workspaceMetadata,
 		}},
 		Tabs: []multiplexer.HerdrTabSnapshot{{
-			ID:          "workspace-1:tab-1",
-			WorkspaceID: "workspace-1",
+			ID:          tabID,
+			WorkspaceID: workspaceID,
 			Metadata:    map[string]string{},
 		}},
 		Panes: []multiplexer.HerdrPaneSnapshot{{
-			ID:             "workspace-1:pane-1",
-			WorkspaceID:    "workspace-1",
-			TabID:          "workspace-1:tab-1",
+			ID:             paneID,
+			WorkspaceID:    workspaceID,
+			TabID:          tabID,
 			Metadata:       map[string]string{"postman.node": "worker"},
 			Env:            map[string]string{},
 			ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 			PostmanNode:    "worker",
-			PostmanSession: "work",
+			PostmanSession: sessionName,
 		}},
 	}
 }

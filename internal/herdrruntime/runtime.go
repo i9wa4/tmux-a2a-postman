@@ -135,7 +135,7 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			}
 			nodeKey := rt.cfg.SessionName + ":" + item.LogicalName
 			paneBackend := rt.backendForPane(tabID, item.ID.Native)
-			rt.ownershipBackend.setSessionBackend(paneBackend)
+			rt.ownershipBackend.setClearBackend(paneBackend)
 			if collidedNodeKeys[nodeKey] {
 				continue
 			}
@@ -244,6 +244,7 @@ type ownershipMux struct {
 	mu             sync.RWMutex
 	byPane         map[string]multiplexer.HerdrBackend
 	sessionBackend *multiplexer.HerdrBackend
+	clearBackend   *multiplexer.HerdrBackend
 }
 
 func newOwnershipMux(sessionName string) *ownershipMux {
@@ -259,12 +260,13 @@ func (m *ownershipMux) setPaneBackend(paneID string, backend multiplexer.HerdrBa
 	defer m.mu.Unlock()
 	m.byPane[paneID] = backend
 	m.setSessionBackendLocked(backend)
+	m.setClearBackendLocked(backend)
 }
 
-func (m *ownershipMux) setSessionBackend(backend multiplexer.HerdrBackend) {
+func (m *ownershipMux) setClearBackend(backend multiplexer.HerdrBackend) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.setSessionBackendLocked(backend)
+	m.setClearBackendLocked(backend)
 }
 
 func (m *ownershipMux) setSessionBackendLocked(backend multiplexer.HerdrBackend) {
@@ -272,10 +274,29 @@ func (m *ownershipMux) setSessionBackendLocked(backend multiplexer.HerdrBackend)
 	m.sessionBackend = &sessionBackend
 }
 
+func (m *ownershipMux) setClearBackendLocked(backend multiplexer.HerdrBackend) {
+	clearBackend := backend
+	m.clearBackend = &clearBackend
+}
+
 func (m *ownershipMux) deletePaneBackend(paneID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byPane, paneID)
+	m.rebuildSessionBackendLocked()
+}
+
+func (m *ownershipMux) rebuildSessionBackendLocked() {
+	keys := make([]string, 0, len(m.byPane))
+	for paneID := range m.byPane {
+		keys = append(keys, paneID)
+	}
+	sort.Strings(keys)
+	m.sessionBackend = nil
+	for _, paneID := range keys {
+		m.setSessionBackendLocked(m.byPane[paneID])
+		return
+	}
 }
 
 func (m *ownershipMux) clear() {
@@ -283,6 +304,7 @@ func (m *ownershipMux) clear() {
 	defer m.mu.Unlock()
 	m.byPane = make(map[string]multiplexer.HerdrBackend)
 	m.sessionBackend = nil
+	m.clearBackend = nil
 }
 
 func (m *ownershipMux) backendForSession(sessionName string) (multiplexer.HerdrBackend, error) {
@@ -294,15 +316,19 @@ func (m *ownershipMux) backendForSession(sessionName string) (multiplexer.HerdrB
 	if m.sessionBackend != nil {
 		return *m.sessionBackend, nil
 	}
-	keys := make([]string, 0, len(m.byPane))
-	for paneID := range m.byPane {
-		keys = append(keys, paneID)
-	}
-	sort.Strings(keys)
-	for _, paneID := range keys {
-		return m.byPane[paneID], nil
-	}
 	return multiplexer.HerdrBackend{}, fmt.Errorf("%w: no herdr pane backend registered for session %q", multiplexer.ErrHerdrReadClientMissing, sessionName)
+}
+
+func (m *ownershipMux) backendForSessionClear(sessionName string) (multiplexer.HerdrBackend, error) {
+	if strings.TrimSpace(sessionName) != strings.TrimSpace(m.sessionName) {
+		return multiplexer.HerdrBackend{}, multiplexer.ErrHerdrSessionNameMismatch
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.clearBackend != nil {
+		return *m.clearBackend, nil
+	}
+	return multiplexer.HerdrBackend{}, fmt.Errorf("%w: no herdr session clear backend registered for session %q", multiplexer.ErrHerdrReadClientMissing, sessionName)
 }
 
 func (m *ownershipMux) backendForPane(pane multiplexer.ResourceID) (multiplexer.HerdrBackend, error) {
@@ -335,7 +361,7 @@ func (m *ownershipMux) SetSessionOwnerMarker(ctx context.Context, contextID, ses
 }
 
 func (m *ownershipMux) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
-	backend, err := m.backendForSession(sessionName)
+	backend, err := m.backendForSessionClear(sessionName)
 	if err != nil {
 		return err
 	}

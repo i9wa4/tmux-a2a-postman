@@ -484,6 +484,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		activationNodesLocal := activationNodeNames(cfg)
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
+		if herdrRuntime != nil {
+			herdrRuntime.ReconcileFinalNodes(fresh)
+		}
 		sharedNodes.Store(&fresh)
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
 	})
@@ -693,6 +696,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
+							if herdrRuntime != nil {
+								herdrRuntime.ReconcileFinalNodes(freshNodes)
+							}
 							sharedNodes.Store(&freshNodes)
 							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 						}

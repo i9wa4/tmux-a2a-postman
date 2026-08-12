@@ -131,6 +131,9 @@ func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity
 	if !policy.InputSanitizerReady {
 		return herdrGateError(HerdrAccessPhaseWrite, "input_sanitizer", HerdrGateFailureSanitizerMissing)
 	}
+	if policy.ComplianceDecision != HerdrComplianceDecisionUnset && policy.ComplianceDecision != policy.ComplianceRecord.Decision {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
 	if !isCurrentHerdrComplianceRecord(policy.ComplianceRecord, policy.ComplianceNow) {
 		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	}
