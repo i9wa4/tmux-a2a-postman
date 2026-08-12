@@ -327,19 +327,24 @@ func tempHerdrSocketPath(t *testing.T) string {
 
 func validRuntimeHerdrConfig() config.HerdrConfig {
 	return config.HerdrConfig{
-		Enabled:                 true,
-		SocketPath:              "/tmp/herdr.sock",
-		SessionName:             "work",
-		WorkspaceID:             "workspace-1",
-		AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
-		AllowedSessions:         []string{"work"},
-		AllowedWorkspaceIDs:     []string{"workspace-1"},
-		AllowedProtocolVersions: []string{"1"},
-		AllowedSchemaVersions:   []int{1},
-		ReadEnabled:             true,
-		WriteEnabled:            true,
-		InputSanitizerReady:     true,
-		ComplianceDecision:      string(multiplexer.HerdrComplianceDecisionAGPL),
+		Enabled:                     true,
+		SocketPath:                  "/tmp/herdr.sock",
+		SessionName:                 "work",
+		WorkspaceID:                 "workspace-1",
+		AllowedSocketPaths:          []string{"/tmp/herdr.sock"},
+		AllowedSessions:             []string{"work"},
+		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedProtocolVersions:     []string{"1"},
+		AllowedSchemaVersions:       []int{1},
+		ReadEnabled:                 true,
+		WriteEnabled:                true,
+		InputSanitizerReady:         true,
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionAGPL),
+		ComplianceAuthorizedBy:      "test-authority",
+		ComplianceDecisionID:        "test-decision",
+		ComplianceDecidedAt:         "2026-08-12T00:00:00Z",
+		ComplianceRevalidatedAt:     "2026-08-12T00:00:00Z",
+		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 	}
 }
 
