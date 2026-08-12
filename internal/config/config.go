@@ -145,7 +145,7 @@ func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
 			AllowedSchemaVersions:   h.AllowedSchemaVersions,
 			InputSanitizerReady:     h.InputSanitizerReady,
 			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
-			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecision(h.ComplianceDecision), AuthorizedBy: "config", DecisionID: "config", DecidedAt: time.Now(), RevalidatedAt: time.Now()},
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "config", DecisionID: "config", DecidedAt: time.Now(), RevalidatedAt: time.Now(), CurrentReferences: []string{"config"}},
 		},
 	}
 }
