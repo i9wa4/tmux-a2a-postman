@@ -54,6 +54,7 @@ type herdrHandAdapterKey struct {
 	SocketPath  string
 	SessionName string
 	WorkspaceID string
+	TabID       string
 	PaneID      string
 }
 
@@ -241,6 +242,18 @@ func ReplaceHerdrHandAdaptersForOwner(owner string, adapters map[string]HerdrHan
 }
 
 func ReplaceHerdrHandAdaptersForOwnerCollect(owner string, adapters map[string]HerdrHandAdapter) HerdrHandAdapterReplacement {
+	runtimeAdapters := make(map[multiplexer.HerdrRuntimeIdentity]HerdrHandAdapter, len(adapters))
+	for paneID, adapter := range adapters {
+		runtime := adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime
+		if runtime.PaneID == "" {
+			runtime.PaneID = paneID
+		}
+		runtimeAdapters[runtime] = adapter
+	}
+	return ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner, runtimeAdapters)
+}
+
+func ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(owner string, adapters map[multiplexer.HerdrRuntimeIdentity]HerdrHandAdapter) HerdrHandAdapterReplacement {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		return HerdrHandAdapterReplacement{Cleanup: func() {}, DisplacedCleanup: func() {}}
@@ -260,8 +273,12 @@ func ReplaceHerdrHandAdaptersForOwnerCollect(owner string, adapters map[string]H
 			delete(registeredHerdrHandAdapters, key)
 		}
 	}
-	for paneID, adapter := range adapters {
-		for _, key := range herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID) {
+	for runtime, adapter := range adapters {
+		paneID := runtime.PaneID
+		if paneID == "" {
+			paneID = adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime.PaneID
+		}
+		for _, key := range herdrHandAdapterKeysForRegistration(runtime, paneID) {
 			registeredHerdrHandAdapters[key] = &registeredHerdrHandAdapter{owner: owner, token: token, adapter: adapter}
 		}
 	}
@@ -321,6 +338,7 @@ func herdrHandAdapterKeyForRuntime(runtime multiplexer.HerdrRuntimeIdentity, pan
 		SocketPath:  strings.TrimSpace(runtime.SocketPath),
 		SessionName: strings.TrimSpace(runtime.SessionName),
 		WorkspaceID: strings.TrimSpace(runtime.WorkspaceID),
+		TabID:       strings.TrimSpace(runtime.TabID),
 		PaneID:      strings.TrimSpace(runtime.PaneID),
 	}
 }

@@ -17,9 +17,9 @@ func TestOwnershipMuxReplaceSnapshotBuildsClearBackendFromDeterministicLiveSurvi
 		PaneID:      "workspace-1:pane-a",
 	}}}
 
-	mux.replaceSnapshot(map[string]multiplexer.HerdrBackend{
-		"workspace-1:pane-z": later,
-		"workspace-1:pane-a": survivor,
+	mux.replaceSnapshot(map[herdrOwnershipKey]multiplexer.HerdrBackend{
+		herdrOwnershipKeyForBackend(later, "workspace-1:pane-z"):    later,
+		herdrOwnershipKeyForBackend(survivor, "workspace-1:pane-a"): survivor,
 	}, multiplexer.HerdrBackend{})
 
 	clearBackend, err := mux.backendForSessionClear("work")

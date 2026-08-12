@@ -277,17 +277,17 @@ func (b HerdrBackend) validatePaneContainment(snapshot HerdrSessionSnapshot, tab
 			continue
 		}
 		if pane.WorkspaceID != b.Config.Runtime.WorkspaceID {
-			return fmt.Errorf("%w: pane %q is in workspace %q, want %q", ErrHerdrSnapshotInvalid, pane.ID, pane.WorkspaceID, b.Config.Runtime.WorkspaceID)
+			continue
 		}
 		if pane.TabID != tabID {
-			return fmt.Errorf("%w: pane %q is in tab %q, want %q", ErrHerdrSnapshotInvalid, pane.ID, pane.TabID, tabID)
+			continue
 		}
 		if pane.Stale {
 			return fmt.Errorf("%w: pane %q is stale: %s", ErrHerdrSnapshotInvalid, pane.ID, pane.StaleReason)
 		}
 		return nil
 	}
-	return fmt.Errorf("%w: pane %q is not in latest snapshot", ErrHerdrSnapshotInvalid, paneID)
+	return fmt.Errorf("%w: pane %q is not in configured workspace %q tab %q", ErrHerdrSnapshotInvalid, paneID, b.Config.Runtime.WorkspaceID, tabID)
 }
 
 func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSessionSnapshot) (HerdrDiscoveryResult, error) {

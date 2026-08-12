@@ -388,6 +388,56 @@ func TestDefaultHandAdapterKeepsOverlappingHerdrPaneIDsIsolatedByRuntime(t *test
 	}
 }
 
+func TestDefaultHandAdapterKeepsOverlappingHerdrPaneIDsIsolatedByTab(t *testing.T) {
+	paneID := "shared-native-pane"
+	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.TabID = "workspace-1:tab-1"
+	firstConfig.Runtime.PaneID = paneID
+	firstClient.snapshot.Panes[0].ID = paneID
+	firstClient.snapshot.Panes[0].TabID = "workspace-1:tab-1"
+	firstUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: firstClient},
+		},
+	})
+	t.Cleanup(firstUnregister)
+
+	secondClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	secondConfig := validHerdrControlplaneConfig()
+	secondConfig.Runtime.TabID = "workspace-1:tab-2"
+	secondConfig.Runtime.PaneID = paneID
+	secondClient.snapshot.Tabs = append(secondClient.snapshot.Tabs, multiplexer.HerdrTabSnapshot{ID: "workspace-1:tab-2", WorkspaceID: "workspace-1"})
+	secondClient.snapshot.Panes[0].ID = paneID
+	secondClient.snapshot.Panes[0].TabID = "workspace-1:tab-2"
+	secondUnregister := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: secondConfig, Client: secondClient},
+		},
+	})
+	t.Cleanup(secondUnregister)
+
+	firstTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: firstConfig.Runtime}}
+	firstAdapter, err := DefaultHandAdapter(firstTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(first tab) error = %v", err)
+	}
+	if err := firstAdapter.Deliver(firstTarget, PaneDelivery{Content: "first"}); err != nil {
+		t.Fatalf("Deliver(first tab) error = %v", err)
+	}
+	secondTarget := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: secondConfig.Runtime}}
+	secondAdapter, err := DefaultHandAdapter(secondTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(second tab) error = %v", err)
+	}
+	if err := secondAdapter.Deliver(secondTarget, PaneDelivery{Content: "second"}); err != nil {
+		t.Fatalf("Deliver(second tab) error = %v", err)
+	}
+	if firstClient.writeTextCalls != 1 || secondClient.writeTextCalls != 1 {
+		t.Fatalf("write calls first=%d second=%d, want tab-isolated deliveries", firstClient.writeTextCalls, secondClient.writeTextCalls)
+	}
+}
+
 func TestReplaceHerdrHandAdaptersForOwnerAtomicallySwapsVisibleSet(t *testing.T) {
 	owner := "runtime-owner"
 	firstClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}

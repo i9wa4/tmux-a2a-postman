@@ -198,7 +198,7 @@ func (b HerdrBackend) PaneOwnerMarker(ctx context.Context, pane ResourceID) (str
 		return "", err
 	}
 	for _, snapshotPane := range snapshot.Panes {
-		if snapshotPane.ID == pane.Native {
+		if snapshotPane.ID == pane.Native && snapshotPane.WorkspaceID == b.Config.Runtime.WorkspaceID && snapshotPane.TabID == b.Config.Runtime.TabID {
 			return snapshotPane.Metadata[HerdrPaneContextIDMetadataKey], nil
 		}
 	}

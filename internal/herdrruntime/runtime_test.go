@@ -96,6 +96,109 @@ func TestRuntimeDiscoverRegistersProductionHerdrDeliveryAndOwnership(t *testing.
 	}
 }
 
+func TestRuntimeReconcileKeepsSamePaneIDInDifferentTabsRoutable(t *testing.T) {
+	contextID := "ctx-main"
+	sessionName := "work"
+	paneID := "workspace-1:pane-shared"
+	tabOne := "workspace-1:tab-1"
+	tabTwo := "workspace-1:tab-2"
+	snapshot := runtimeHerdrSnapshotFor(sessionName, "workspace-1", tabOne, paneID, "")
+	snapshot.Tabs = append(snapshot.Tabs, multiplexer.HerdrTabSnapshot{
+		ID:          tabTwo,
+		WorkspaceID: "workspace-1",
+		Metadata:    map[string]string{},
+	})
+	snapshot.Panes[0].Metadata[multiplexer.HerdrPaneContextIDMetadataKey] = "ctx-tab-1"
+	snapshot.Panes = append(snapshot.Panes, multiplexer.HerdrPaneSnapshot{
+		ID:             paneID,
+		WorkspaceID:    "workspace-1",
+		TabID:          tabTwo,
+		Metadata:       map[string]string{"postman.node": "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
+		Env:            map[string]string{},
+		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		PostmanNode:    "critic",
+		PostmanSession: sessionName,
+	})
+	client := &fakeRuntimeHerdrClient{snapshot: snapshot}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes := map[string]discovery.NodeInfo{
+		sessionName + ":worker": {
+			PaneID:           paneID,
+			SessionName:      sessionName,
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  cfg.Herdr.SocketPath,
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       tabOne,
+		},
+		sessionName + ":critic": {
+			PaneID:           paneID,
+			SessionName:      sessionName,
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  cfg.Herdr.SocketPath,
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       tabTwo,
+		},
+	}
+	rt.ReconcileFinalNodes(nodes)
+
+	workerTarget := controlplane.TargetForNode(sessionName+":worker", nodes[sessionName+":worker"])
+	workerAdapter, err := controlplane.DefaultHandAdapter(workerTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(worker) error = %v", err)
+	}
+	if err := workerAdapter.Deliver(workerTarget, controlplane.PaneDelivery{Content: "worker"}); err != nil {
+		t.Fatalf("Deliver(worker) error = %v", err)
+	}
+	criticTarget := controlplane.TargetForNode(sessionName+":critic", nodes[sessionName+":critic"])
+	criticAdapter, err := controlplane.DefaultHandAdapter(criticTarget)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(critic) error = %v", err)
+	}
+	if err := criticAdapter.Deliver(criticTarget, controlplane.PaneDelivery{Content: "critic"}); err != nil {
+		t.Fatalf("Deliver(critic) error = %v", err)
+	}
+	if client.writeTextCalls != 2 {
+		t.Fatalf("writeTextCalls = %d, want both tab-distinct adapters routable", client.writeTextCalls)
+	}
+
+	ownershipBackend := rt.OwnershipBackend()
+	workerPane := multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+		SocketPath:  cfg.Herdr.SocketPath,
+		SessionName: sessionName,
+		WorkspaceID: "workspace-1",
+		TabID:       tabOne,
+		PaneID:      paneID,
+	}, paneID)
+	if got, err := ownershipBackend.PaneOwnerMarker(context.Background(), workerPane); err != nil || got != "ctx-tab-1" {
+		t.Fatalf("PaneOwnerMarker(worker tab) = %q, %v; want ctx-tab-1", got, err)
+	}
+	criticPane := multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+		SocketPath:  cfg.Herdr.SocketPath,
+		SessionName: sessionName,
+		WorkspaceID: "workspace-1",
+		TabID:       tabTwo,
+		PaneID:      paneID,
+	}, paneID)
+	if got, err := ownershipBackend.PaneOwnerMarker(context.Background(), criticPane); err != nil || got != "ctx-tab-2" {
+		t.Fatalf("PaneOwnerMarker(critic tab) = %q, %v; want ctx-tab-2", got, err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), workerPane, contextID); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(worker tab) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), criticPane, contextID); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(critic tab) error = %v", err)
+	}
+}
+
 func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"

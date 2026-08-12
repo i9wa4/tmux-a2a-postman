@@ -457,15 +457,16 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 	if rt == nil {
 		return fmt.Errorf("herdr runtime missing")
 	}
-	paneBackends := make(map[string]multiplexer.HerdrBackend)
-	handAdapters := make(map[string]controlplane.HerdrHandAdapter)
+	paneBackends := make(map[herdrOwnershipKey]multiplexer.HerdrBackend)
+	handAdapters := make(map[multiplexer.HerdrRuntimeIdentity]controlplane.HerdrHandAdapter)
 	for _, nodeInfo := range nodes {
 		if multiplexer.BackendKindFromString(nodeInfo.Backend) != multiplexer.BackendKindHerdr || nodeInfo.PaneID == "" {
 			continue
 		}
 		backend := rt.backendForPane(nodeInfo.HerdrTabID, nodeInfo.PaneID)
-		paneBackends[nodeInfo.PaneID] = backend
-		handAdapters[nodeInfo.PaneID] = controlplane.HerdrHandAdapter{
+		runtime := backend.Config.Runtime
+		paneBackends[herdrOwnershipKeyForRuntime(runtime, nodeInfo.PaneID)] = backend
+		handAdapters[runtime] = controlplane.HerdrHandAdapter{
 			HerdrInteractiveDeliveryAdapter: controlplane.HerdrInteractiveDeliveryAdapter{
 				Backend:        backend,
 				InputSanitizer: notification.PrepareInteractivePaneMessage,
@@ -502,7 +503,7 @@ func (rt *Runtime) ReconcileFinalNodesForTokenAndCommit(generation uint64, nodes
 		}
 	}
 	rt.ownershipBackend.replaceSnapshot(paneBackends, workspaceBackend)
-	replacement := controlplane.ReplaceHerdrHandAdaptersForOwnerCollect(rt.handAdapterOwnerID(), handAdapters)
+	replacement := controlplane.ReplaceHerdrHandAdaptersForOwnerRuntimeCollect(rt.handAdapterOwnerID(), handAdapters)
 	rt.adapterCleanup = replacement.Cleanup
 	if commit != nil {
 		commit()
@@ -614,6 +615,7 @@ type herdrOwnershipKey struct {
 	SocketPath  string
 	SessionName string
 	WorkspaceID string
+	TabID       string
 	PaneID      string
 }
 
@@ -646,18 +648,19 @@ func (m *ownershipMux) clear() {
 	m.runtime = multiplexer.HerdrRuntimeIdentity{}
 }
 
-func (m *ownershipMux) replaceSnapshot(panes map[string]multiplexer.HerdrBackend, workspaceBackend multiplexer.HerdrBackend) {
+func (m *ownershipMux) replaceSnapshot(panes map[herdrOwnershipKey]multiplexer.HerdrBackend, workspaceBackend multiplexer.HerdrBackend) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	snapshot := ownershipSnapshot{byPane: make(map[herdrOwnershipKey]multiplexer.HerdrBackend, len(panes))}
-	keys := make([]string, 0, len(panes))
-	for paneID := range panes {
-		keys = append(keys, paneID)
+	keys := make([]herdrOwnershipKey, 0, len(panes))
+	for key := range panes {
+		keys = append(keys, key)
 	}
-	sort.Strings(keys)
-	for _, paneID := range keys {
-		backend := panes[paneID]
-		snapshot.byPane[herdrOwnershipKeyForBackend(backend, paneID)] = backend
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].String() < keys[j].String()
+	})
+	for _, key := range keys {
+		snapshot.byPane[key] = panes[key]
 	}
 	if len(panes) == 0 {
 		sessionBackend := workspaceBackend
@@ -737,6 +740,10 @@ func (m *ownershipMux) backendForLegacyPaneLocked(paneID string) (multiplexer.He
 
 func herdrOwnershipKeyForBackend(backend multiplexer.HerdrBackend, paneID string) herdrOwnershipKey {
 	runtime := backend.Config.Runtime
+	return herdrOwnershipKeyForRuntime(runtime, paneID)
+}
+
+func herdrOwnershipKeyForRuntime(runtime multiplexer.HerdrRuntimeIdentity, paneID string) herdrOwnershipKey {
 	if runtime.PaneID == "" {
 		runtime.PaneID = paneID
 	}
@@ -744,6 +751,7 @@ func herdrOwnershipKeyForBackend(backend multiplexer.HerdrBackend, paneID string
 		SocketPath:  strings.TrimSpace(runtime.SocketPath),
 		SessionName: strings.TrimSpace(runtime.SessionName),
 		WorkspaceID: strings.TrimSpace(runtime.WorkspaceID),
+		TabID:       strings.TrimSpace(runtime.TabID),
 		PaneID:      strings.TrimSpace(runtime.PaneID),
 	}
 }
@@ -757,8 +765,13 @@ func herdrOwnershipKeyForResource(pane multiplexer.ResourceID) herdrOwnershipKey
 		SocketPath:  strings.TrimSpace(runtime.SocketPath),
 		SessionName: strings.TrimSpace(runtime.SessionName),
 		WorkspaceID: strings.TrimSpace(runtime.WorkspaceID),
+		TabID:       strings.TrimSpace(runtime.TabID),
 		PaneID:      strings.TrimSpace(runtime.PaneID),
 	}
+}
+
+func (k herdrOwnershipKey) String() string {
+	return k.SocketPath + "\x00" + k.SessionName + "\x00" + k.WorkspaceID + "\x00" + k.TabID + "\x00" + k.PaneID
 }
 
 func (m *ownershipMux) SessionOwnerMarker(ctx context.Context, sessionName string) (string, error) {
