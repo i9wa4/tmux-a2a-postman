@@ -505,6 +505,93 @@ func TestHerdrOwnershipCompositeRejectsAmbiguousReducedPaneRuntime(t *testing.T)
 	}
 }
 
+func TestHerdrOwnershipCompositeDoesNotProbeAfterQualifiedPaneMiss(t *testing.T) {
+	paneID := "pane-qualified-miss"
+	first := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime: HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr-qualified-a.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-a",
+			PaneID:      paneID,
+		},
+		paneOwner: "ctx-a",
+	}
+	firstCleanup := RegisterOwnershipBackend(first)
+	t.Cleanup(firstCleanup)
+	second := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		runtime: HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr-qualified-b.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-b",
+			PaneID:      "other-pane",
+		},
+	}
+	secondCleanup := RegisterOwnershipBackend(second)
+	t.Cleanup(secondCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	for _, tt := range []struct {
+		name    string
+		runtime HerdrRuntimeIdentity
+	}{
+		{
+			name: "socket",
+			runtime: HerdrRuntimeIdentity{
+				SocketPath:  "/tmp/herdr-missing.sock",
+				SessionName: "work",
+				WorkspaceID: "workspace-a",
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "session",
+			runtime: HerdrRuntimeIdentity{
+				SessionName: "missing",
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "workspace",
+			runtime: HerdrRuntimeIdentity{
+				SocketPath:  "/tmp/herdr-qualified-a.sock",
+				SessionName: "work",
+				WorkspaceID: "missing",
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "tab",
+			runtime: HerdrRuntimeIdentity{
+				TabID:  "missing-tab",
+				PaneID: paneID,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pane := HerdrPaneIDForRuntime(tt.runtime, paneID)
+			if _, err := backend.PaneOwnerMarker(context.Background(), pane); err == nil {
+				t.Fatal("PaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if err := backend.SetPaneOwnerMarker(context.Background(), pane, "ctx-new"); err == nil {
+				t.Fatal("SetPaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if err := backend.ClearPaneOwnerMarker(context.Background(), pane); err == nil {
+				t.Fatal("ClearPaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if first.paneSetCalls != 0 || first.paneClearCalls != 0 || first.paneOwner != "ctx-a" {
+				t.Fatalf("qualified miss mutated fallback backend set/clear/owner=%d/%d/%q", first.paneSetCalls, first.paneClearCalls, first.paneOwner)
+			}
+		})
+	}
+}
+
 type testOwnershipBackend struct {
 	kind           BackendKind
 	sessionName    string

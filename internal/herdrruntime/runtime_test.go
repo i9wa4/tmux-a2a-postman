@@ -1454,6 +1454,187 @@ func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 	}
 }
 
+func TestRuntimeHerdrOwnershipCompositeResolvesReducedUniquePaneIdentity(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	for _, sessionName := range []string{"work", "other"} {
+		if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+			t.Fatalf("CreateSessionDirs(%q) error = %v", sessionName, err)
+		}
+	}
+
+	const (
+		workPaneID = "workspace-1:pane-reduced"
+		workTabID  = "workspace-1:tab-1"
+	)
+	workSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", workTabID, workPaneID, "ctx-work:1")
+	workSnapshot.Panes[0].Metadata[multiplexer.HerdrPaneContextIDMetadataKey] = "ctx-pane-old"
+	workClient := &fakeRuntimeHerdrClient{snapshot: workSnapshot}
+	workCfg := config.DefaultConfig()
+	workCfg.Herdr = runtimeHerdrConfigFor("work", "workspace-1")
+	workCfg.Herdr.SocketPath = "/tmp/herdr-reduced-work.sock"
+	workCfg.Herdr.AllowedSocketPaths = []string{workCfg.Herdr.SocketPath}
+	workRuntime, err := herdrruntime.New(workCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return workClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(work) error = %v", err)
+	}
+	t.Cleanup(workRuntime.Close)
+
+	otherClient := &fakeRuntimeHerdrClient{snapshot: runtimeHerdrSnapshotFor("other", "workspace-2", "workspace-2:tab-1", "workspace-2:pane-1", "ctx-other:1")}
+	otherCfg := config.DefaultConfig()
+	otherCfg.Herdr = runtimeHerdrConfigFor("other", "workspace-2")
+	otherCfg.Herdr.SocketPath = "/tmp/herdr-reduced-other.sock"
+	otherCfg.Herdr.AllowedSocketPaths = []string{otherCfg.Herdr.SocketPath}
+	otherRuntime, err := herdrruntime.New(otherCfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return otherClient, nil
+	})
+	if err != nil {
+		t.Fatalf("New(other) error = %v", err)
+	}
+	t.Cleanup(otherRuntime.Close)
+
+	workNodes, _, err := workRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover(work) error = %v", err)
+	}
+	workRuntime.ReconcileFinalNodes(workNodes)
+	otherNodes, _, err := otherRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover(other) error = %v", err)
+	}
+	otherRuntime.ReconcileFinalNodes(otherNodes)
+
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	reducedPane := multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+		SocketPath:  workCfg.Herdr.SocketPath,
+		SessionName: "work",
+		WorkspaceID: "workspace-1",
+		PaneID:      workPaneID,
+	}, workPaneID)
+	if got, err := ownershipBackend.PaneOwnerMarker(context.Background(), reducedPane); err != nil || got != "ctx-pane-old" {
+		t.Fatalf("PaneOwnerMarker(reduced unique) = %q, %v; want ctx-pane-old", got, err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), reducedPane, "ctx-pane-new"); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(reduced unique) error = %v", err)
+	}
+	if workClient.setPaneMetadataPane != workPaneID || workClient.setPaneMetadataValue != "ctx-pane-new" {
+		t.Fatalf("work SetPaneMetadata pane/value = %q/%q, want %q/ctx-pane-new", workClient.setPaneMetadataPane, workClient.setPaneMetadataValue, workPaneID)
+	}
+	if otherClient.setPaneMetadataPane != "" {
+		t.Fatalf("other SetPaneMetadata pane = %q, want no reduced unique mutation", otherClient.setPaneMetadataPane)
+	}
+	if err := ownershipBackend.ClearPaneOwnerMarker(context.Background(), reducedPane); err != nil {
+		t.Fatalf("ClearPaneOwnerMarker(reduced unique) error = %v", err)
+	}
+	if workClient.clearPaneMetadataPane != workPaneID || workClient.clearPaneMetadataKey != multiplexer.HerdrPaneContextIDMetadataKey {
+		t.Fatalf("work ClearPaneMetadata pane/key = %q/%q, want %q/%q", workClient.clearPaneMetadataPane, workClient.clearPaneMetadataKey, workPaneID, multiplexer.HerdrPaneContextIDMetadataKey)
+	}
+	if otherClient.clearPaneMetadataPane != "" {
+		t.Fatalf("other ClearPaneMetadata pane = %q, want no reduced unique clear", otherClient.clearPaneMetadataPane)
+	}
+}
+
+func TestRuntimeHerdrOwnershipQualifiedPaneMissesFailClosed(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs(%q) error = %v", sessionName, err)
+	}
+
+	const (
+		paneID      = "workspace-1:pane-qualified"
+		socketPath  = "/tmp/herdr-qualified-runtime.sock"
+		workspaceID = "workspace-1"
+		tabID       = "workspace-1:tab-1"
+	)
+	snapshot := runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, "")
+	snapshot.Panes[0].Metadata[multiplexer.HerdrPaneContextIDMetadataKey] = "ctx-pane-old"
+	client := &fakeRuntimeHerdrClient{snapshot: snapshot}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = runtimeHerdrConfigFor(sessionName, workspaceID)
+	cfg.Herdr.SocketPath = socketPath
+	cfg.Herdr.AllowedSocketPaths = []string{socketPath}
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	rt.ReconcileFinalNodes(nodes)
+	ownershipBackend := rt.OwnershipBackend()
+
+	for _, tt := range []struct {
+		name    string
+		runtime multiplexer.HerdrRuntimeIdentity
+	}{
+		{
+			name: "socket",
+			runtime: multiplexer.HerdrRuntimeIdentity{
+				SocketPath:  "/tmp/herdr-missing.sock",
+				SessionName: sessionName,
+				WorkspaceID: workspaceID,
+				TabID:       tabID,
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "session",
+			runtime: multiplexer.HerdrRuntimeIdentity{
+				SessionName: "missing",
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "workspace",
+			runtime: multiplexer.HerdrRuntimeIdentity{
+				SocketPath:  socketPath,
+				SessionName: sessionName,
+				WorkspaceID: "missing",
+				TabID:       tabID,
+				PaneID:      paneID,
+			},
+		},
+		{
+			name: "tab",
+			runtime: multiplexer.HerdrRuntimeIdentity{
+				TabID:  "missing-tab",
+				PaneID: paneID,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client.setPaneMetadataPane = ""
+			client.setPaneMetadataValue = ""
+			client.clearPaneMetadataPane = ""
+			client.clearPaneMetadataKey = ""
+			pane := multiplexer.HerdrPaneIDForRuntime(tt.runtime, paneID)
+			if _, err := ownershipBackend.PaneOwnerMarker(context.Background(), pane); err == nil {
+				t.Fatal("PaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), pane, "ctx-new"); err == nil {
+				t.Fatal("SetPaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if err := ownershipBackend.ClearPaneOwnerMarker(context.Background(), pane); err == nil {
+				t.Fatal("ClearPaneOwnerMarker(qualified miss) error = nil, want fail-closed miss")
+			}
+			if client.setPaneMetadataPane != "" || client.clearPaneMetadataPane != "" {
+				t.Fatalf("qualified miss mutated pane metadata set/clear=%q/%q", client.setPaneMetadataPane, client.clearPaneMetadataPane)
+			}
+		})
+	}
+}
+
 func TestRuntimeHerdrOwnershipRegistrySkipsEmptyDuplicateAndTeardown(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"
@@ -1739,10 +1920,12 @@ type fakeRuntimeHerdrClient struct {
 	sendKeyCalls   int
 	sendKeyKey     string
 
-	setPaneMetadataPane  string
-	setPaneMetadataKey   string
-	setPaneMetadataValue string
-	setPaneMetadataErr   error
+	setPaneMetadataPane   string
+	setPaneMetadataKey    string
+	setPaneMetadataValue  string
+	setPaneMetadataErr    error
+	clearPaneMetadataPane string
+	clearPaneMetadataKey  string
 
 	setWorkspaceMetadataWorkspace   string
 	setWorkspaceMetadataValue       string
@@ -1817,7 +2000,9 @@ func (f *fakeRuntimeHerdrClient) SetPaneMetadata(_ context.Context, paneID strin
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeRuntimeHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+func (f *fakeRuntimeHerdrClient) ClearPaneMetadata(_ context.Context, paneID string, key string) (multiplexer.HerdrWriteResult, error) {
+	f.clearPaneMetadataPane = paneID
+	f.clearPaneMetadataKey = key
 	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 

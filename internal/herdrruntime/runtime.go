@@ -784,7 +784,7 @@ func (m *ownershipMux) backendForPane(pane multiplexer.ResourceID) (multiplexer.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	backend, ok := m.snapshot.byPane[herdrOwnershipKeyForResource(pane)]
-	if !ok && pane.HerdrRuntime.SocketPath == "" && pane.HerdrRuntime.WorkspaceID == "" {
+	if !ok && !hasHerdrRuntimeQualifier(pane.HerdrRuntime) {
 		backend, ok = m.backendForLegacyPaneLocked(pane.Native)
 	}
 	if !ok {
@@ -841,6 +841,14 @@ func herdrOwnershipKeyForResource(pane multiplexer.ResourceID) herdrOwnershipKey
 		TabID:       strings.TrimSpace(runtime.TabID),
 		PaneID:      strings.TrimSpace(runtime.PaneID),
 	}
+}
+
+func hasHerdrRuntimeQualifier(runtime multiplexer.HerdrRuntimeIdentity) bool {
+	return strings.TrimSpace(runtime.SocketPath) != "" ||
+		strings.TrimSpace(runtime.SessionName) != "" ||
+		strings.TrimSpace(runtime.WorkspaceID) != "" ||
+		strings.TrimSpace(runtime.TabID) != "" ||
+		strings.TrimSpace(runtime.PaneID) != ""
 }
 
 func (k herdrOwnershipKey) String() string {
