@@ -198,6 +198,53 @@ func TestRuntimeDiscoverDoesNotPublishRoutesBeforeFinalReconcile(t *testing.T) {
 	}
 }
 
+func TestRuntimeStartupMarkerPublicationWaitsForFinalReconcile(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	nodeInfo, ok := nodes[sessionName+":worker"]
+	if !ok {
+		t.Fatalf("Discover() nodes = %#v, want work:worker candidate", nodes)
+	}
+	target := controlplane.TargetForNode(sessionName+":worker", nodeInfo)
+	if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+		t.Fatal("Herdr candidate pane route was published before final reconcile")
+	}
+	if err := rt.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err == nil {
+		t.Fatal("SetSessionEnabledMarker() succeeded before final reconcile")
+	}
+
+	rt.ReconcileFinalNodes(nodes)
+	if err := rt.SetSessionEnabledMarker(context.Background(), contextID, sessionName, true); err != nil {
+		t.Fatalf("SetSessionEnabledMarker(after reconcile) error = %v", err)
+	}
+	if client.setWorkspaceMetadataWorkspace != "workspace-1" || client.setWorkspaceMetadataValue == "" {
+		t.Fatalf("session marker workspace=%q value=%q, want Herdr startup marker publication", client.setWorkspaceMetadataWorkspace, client.setWorkspaceMetadataValue)
+	}
+	if _, err := controlplane.DefaultHandAdapter(target); err != nil {
+		t.Fatalf("DefaultHandAdapter(after marker publication) error = %v", err)
+	}
+}
+
 func TestRuntimeReconcileFinalNodesPrunesCrossBackendCollisionLoser(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-main"

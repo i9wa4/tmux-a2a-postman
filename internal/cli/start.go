@@ -369,9 +369,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
-	if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
-		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
-	}
 	startupActivatedSessions := activateStartupSessions(baseDir, contextDir, contextID, sessionName, cfg)
 
 	inboxDir := filepath.Join(sessionDir, "inbox")
@@ -443,6 +440,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
 	if herdrRuntime != nil {
 		herdrRuntime.ReconcileFinalNodes(nodes)
+	}
+	if err := setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true); err != nil {
+		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 	}
 	// Claim discovered panes with this daemon's context ID.
 	for _, nodeInfo := range nodes {

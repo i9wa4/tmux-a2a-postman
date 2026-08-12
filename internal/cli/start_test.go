@@ -808,17 +808,25 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	markerIndex := strings.Index(source, `setSessionEnabledMarkerWithRuntime(ctx, herdrRuntime, contextID, sessionName, true)`)
 	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
 	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
+	reconcileIndex := strings.Index(source, "herdrRuntime.ReconcileFinalNodes(nodes)")
+	claimIndex := strings.Index(source, "// Claim discovered panes with this daemon's context ID.")
 	if markerIndex == -1 {
 		t.Fatal("start.go no longer publishes the enabled-session marker during cold start")
 	}
-	if reclaimIndex == -1 || discoveryIndex == -1 {
+	if reclaimIndex == -1 || discoveryIndex == -1 || reconcileIndex == -1 || claimIndex == -1 {
 		t.Fatal("start.go startup ordering markers changed; update the source contract test")
 	}
-	if markerIndex > reclaimIndex {
-		t.Fatal("start.go still publishes the enabled-session marker after pane-claim reclaim begins")
+	if markerIndex < reclaimIndex {
+		t.Fatal("start.go publishes the enabled-session marker before pane-claim reclaim")
 	}
-	if markerIndex > discoveryIndex {
-		t.Fatal("start.go still publishes the enabled-session marker after startup discovery begins")
+	if markerIndex < discoveryIndex {
+		t.Fatal("start.go publishes the enabled-session marker before startup discovery")
+	}
+	if markerIndex < reconcileIndex {
+		t.Fatal("start.go publishes the enabled-session marker before Herdr final reconciliation")
+	}
+	if markerIndex > claimIndex {
+		t.Fatal("start.go publishes the enabled-session marker after pane ownership claims")
 	}
 }
 

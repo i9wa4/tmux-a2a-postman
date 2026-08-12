@@ -331,10 +331,10 @@ func (m *ownershipMux) deletePaneBackend(paneID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byPane, paneID)
-	m.rebuildSessionBackendLocked()
+	m.rebuildLiveSessionBackendsLocked()
 }
 
-func (m *ownershipMux) rebuildSessionBackendLocked() {
+func (m *ownershipMux) rebuildLiveSessionBackendsLocked() {
 	keys := make([]string, 0, len(m.byPane))
 	for paneID := range m.byPane {
 		keys = append(keys, paneID)
@@ -342,7 +342,9 @@ func (m *ownershipMux) rebuildSessionBackendLocked() {
 	sort.Strings(keys)
 	m.sessionBackend = nil
 	for _, paneID := range keys {
-		m.setSessionBackendLocked(m.byPane[paneID])
+		backend := m.byPane[paneID]
+		m.setSessionBackendLocked(backend)
+		m.setClearBackendLocked(backend)
 		return
 	}
 }
