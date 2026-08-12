@@ -55,6 +55,7 @@ func TestRuntimeDiscoverRegistersProductionHerdrDeliveryAndOwnership(t *testing.
 	if nodeInfo.Backend != string(multiplexer.BackendKindHerdr) || nodeInfo.Runtime != "codex" {
 		t.Fatalf("nodeInfo = %#v, want Herdr codex node", nodeInfo)
 	}
+	rt.ReconcileFinalNodes(nodes)
 
 	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
 	if err != nil {
@@ -112,9 +113,11 @@ func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	}
 	t.Cleanup(rt.Close)
 
-	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(initial) error = %v", err)
 	}
+	rt.ReconcileFinalNodes(nodes)
 	staleTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
 	if _, err := controlplane.DefaultHandAdapter(staleTarget); err != nil {
 		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
@@ -123,9 +126,11 @@ func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	next := validRuntimeHerdrSnapshot()
 	next.Panes[0].ID = "workspace-1:pane-2"
 	client.snapshot = next
-	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+	nodes, _, err = rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(second) error = %v", err)
 	}
+	rt.ReconcileFinalNodes(nodes)
 	if _, err := controlplane.DefaultHandAdapter(staleTarget); err == nil {
 		t.Fatal("stale Herdr pane adapter remained registered after rediscovery")
 	}
@@ -139,6 +144,57 @@ func TestRuntimeDiscoverPrunesStalePaneRegistrations(t *testing.T) {
 	}
 	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("stale Herdr pane ownership backend remained routable")
+	}
+}
+
+func TestRuntimeDiscoverDoesNotPublishRoutesBeforeFinalReconcile(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validRuntimeHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	nodeInfo, ok := nodes[sessionName+":worker"]
+	if !ok {
+		t.Fatalf("Discover() nodes = %#v, want work:worker candidate", nodes)
+	}
+	target := controlplane.TargetForNode(sessionName+":worker", nodeInfo)
+	if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+		t.Fatal("Herdr hand adapter was published before final reconcile")
+	}
+	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(nodeInfo.PaneID), contextID); err == nil {
+		t.Fatal("Herdr pane ownership route was published before final reconcile")
+	}
+	if err := ownershipBackend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, 0); err == nil {
+		t.Fatal("Herdr session ownership route was published before final reconcile")
+	}
+
+	rt.ReconcileFinalNodes(nodes)
+	if _, err := controlplane.DefaultHandAdapter(target); err != nil {
+		t.Fatalf("DefaultHandAdapter(after reconcile) error = %v", err)
+	}
+	if err := ownershipBackend.SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID(nodeInfo.PaneID), contextID); err != nil {
+		t.Fatalf("SetPaneOwnerMarker(after reconcile) error = %v", err)
 	}
 }
 
@@ -161,9 +217,11 @@ func TestRuntimeReconcileFinalNodesPrunesCrossBackendCollisionLoser(t *testing.T
 	}
 	t.Cleanup(rt.Close)
 
-	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(initial) error = %v", err)
 	}
+	rt.ReconcileFinalNodes(nodes)
 	loserTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
 	if _, err := controlplane.DefaultHandAdapter(loserTarget); err != nil {
 		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
@@ -217,9 +275,11 @@ func TestRuntimeReconcileFinalNodesPrunesFilteredHerdrPane(t *testing.T) {
 	}
 	t.Cleanup(rt.Close)
 
-	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(initial) error = %v", err)
 	}
+	rt.ReconcileFinalNodes(nodes)
 	filteredTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
 	if _, err := controlplane.DefaultHandAdapter(filteredTarget); err != nil {
 		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
@@ -258,9 +318,11 @@ func TestRuntimeDiscoverErrorClearsStalePaneRegistrations(t *testing.T) {
 	}
 	t.Cleanup(rt.Close)
 
-	if _, _, err := rt.Discover(context.Background(), baseDir, contextID); err != nil {
+	nodes, _, err := rt.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(initial) error = %v", err)
 	}
+	rt.ReconcileFinalNodes(nodes)
 	staleTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-1"}}
 	if _, err := controlplane.DefaultHandAdapter(staleTarget); err != nil {
 		t.Fatalf("DefaultHandAdapter(initial) error = %v", err)
@@ -363,6 +425,8 @@ func TestRuntimeClearSessionOwnerMarkerSurvivesZeroPaneRediscovery(t *testing.T)
 		t.Fatalf("Discover(empty) error = %v", err)
 	} else if len(nodes) != 0 {
 		t.Fatalf("Discover(empty) nodes = %#v, want none", nodes)
+	} else {
+		rt.ReconcileFinalNodes(nodes)
 	}
 
 	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
@@ -469,13 +533,16 @@ func TestRuntimeHerdrOwnershipRegistryIsolatesMultipleSessions(t *testing.T) {
 		t.Fatalf("New(other) error = %v", err)
 	}
 
-	if _, _, err := workRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+	workNodes, _, err := workRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(work) error = %v", err)
 	}
+	workRuntime.ReconcileFinalNodes(workNodes)
 	otherNodes, _, err := otherRuntime.Discover(context.Background(), baseDir, contextID)
 	if err != nil {
 		t.Fatalf("Discover(other) error = %v", err)
 	}
+	otherRuntime.ReconcileFinalNodes(otherNodes)
 	otherNode := otherNodes["other:worker"]
 	if otherNode.PaneID == "" {
 		t.Fatalf("Discover(other) nodes = %#v, want other:worker", otherNodes)
@@ -556,12 +623,16 @@ func TestRuntimeHerdrOwnershipRegistrySkipsEmptyDuplicateAndTeardown(t *testing.
 		t.Fatalf("New(healthy) error = %v", err)
 	}
 
-	if _, _, err := emptyRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+	emptyNodes, _, err := emptyRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(empty) error = %v", err)
 	}
-	if _, _, err := healthyRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+	emptyRuntime.ReconcileFinalNodes(emptyNodes)
+	healthyNodes, _, err := healthyRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("Discover(healthy) error = %v", err)
 	}
+	healthyRuntime.ReconcileFinalNodes(healthyNodes)
 
 	ownershipBackend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr)
 	if err != nil {

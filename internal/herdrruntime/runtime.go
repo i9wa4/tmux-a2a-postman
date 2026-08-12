@@ -135,7 +135,6 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 		collidedNodeKeys[collision.SessionName+":"+collision.NodeName] = true
 	}
 
-	livePanes := make(map[string]bool)
 	for _, group := range result.Layout.Groups {
 		tabID := group.ID.Native
 		for _, item := range group.Items {
@@ -150,10 +149,6 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 			if collidedNodeKeys[nodeKey] {
 				continue
 			}
-			if !rt.registerPaneBackend(generation, item.ID.Native, paneBackend) {
-				return nil, nil, fmt.Errorf("herdr runtime closed")
-			}
-			livePanes[item.ID.Native] = true
 			nodes[nodeKey] = discovery.NodeInfo{
 				PaneID:           item.ID.Native,
 				SessionName:      rt.cfg.SessionName,
@@ -165,9 +160,6 @@ func (rt *Runtime) Discover(ctx context.Context, baseDir, contextID string) (map
 				HerdrTabID:       tabID,
 			}
 		}
-	}
-	if !rt.reconcilePaneBackends(generation, livePanes) {
-		return nil, nil, fmt.Errorf("herdr runtime closed")
 	}
 	return nodes, collisions, nil
 }
@@ -194,6 +186,9 @@ func (rt *Runtime) ReconcileFinalNodes(nodes map[string]discovery.NodeInfo) {
 			continue
 		}
 		livePanes[nodeInfo.PaneID] = true
+		if !rt.registerPaneBackend(0, nodeInfo.PaneID, rt.backendForPane(nodeInfo.HerdrTabID, nodeInfo.PaneID)) {
+			return
+		}
 	}
 	rt.reconcilePaneBackends(0, livePanes)
 }

@@ -177,10 +177,103 @@ func TestHerdrOwnershipCompositeSkipsEmptySessionMarker(t *testing.T) {
 	}
 }
 
+func TestHerdrOwnershipCompositeSetUsesNonEmptySessionBackend(t *testing.T) {
+	empty := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "",
+	}
+	emptyCleanup := RegisterOwnershipBackend(empty)
+	t.Cleanup(emptyCleanup)
+	healthy := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-old:1",
+	}
+	healthyCleanup := RegisterOwnershipBackend(healthy)
+	t.Cleanup(healthyCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := backend.SetSessionOwnerMarker(context.Background(), "ctx-new", "work", 1234); err != nil {
+		t.Fatalf("SetSessionOwnerMarker(work) error = %v", err)
+	}
+	if empty.setCalls != 0 {
+		t.Fatalf("empty backend set calls = %d, want 0", empty.setCalls)
+	}
+	if healthy.setCalls != 1 || healthy.owner != "ctx-new:1234" {
+		t.Fatalf("healthy set calls=%d owner=%q, want one mutation to selected backend", healthy.setCalls, healthy.owner)
+	}
+}
+
+func TestHerdrOwnershipCompositeClearUsesNonEmptySessionBackend(t *testing.T) {
+	empty := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "",
+	}
+	emptyCleanup := RegisterOwnershipBackend(empty)
+	t.Cleanup(emptyCleanup)
+	healthy := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-old:1",
+	}
+	healthyCleanup := RegisterOwnershipBackend(healthy)
+	t.Cleanup(healthyCleanup)
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := backend.ClearSessionOwnerMarker(context.Background(), "work"); err != nil {
+		t.Fatalf("ClearSessionOwnerMarker(work) error = %v", err)
+	}
+	if empty.clearCalls != 0 {
+		t.Fatalf("empty backend clear calls = %d, want 0", empty.clearCalls)
+	}
+	if healthy.clearCalls != 1 || healthy.owner != "" {
+		t.Fatalf("healthy clear calls=%d owner=%q, want one clear on selected backend", healthy.clearCalls, healthy.owner)
+	}
+}
+
+func TestHerdrOwnershipCompositeClearFallsBackToEmptySurvivor(t *testing.T) {
+	empty := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "",
+	}
+	emptyCleanup := RegisterOwnershipBackend(empty)
+	t.Cleanup(emptyCleanup)
+	healthy := &testOwnershipBackend{
+		kind:        BackendKindHerdr,
+		sessionName: "work",
+		owner:       "ctx-old:1",
+	}
+	healthyCleanup := RegisterOwnershipBackend(healthy)
+	t.Cleanup(healthyCleanup)
+	healthyCleanup()
+
+	backend, err := OwnershipBackendForKind(BackendKindHerdr)
+	if err != nil {
+		t.Fatalf("OwnershipBackendForKind(herdr) error = %v", err)
+	}
+	if err := backend.ClearSessionOwnerMarker(context.Background(), "work"); err != nil {
+		t.Fatalf("ClearSessionOwnerMarker(work) with empty survivor error = %v", err)
+	}
+	if empty.clearCalls != 1 {
+		t.Fatalf("empty survivor clear calls = %d, want 1", empty.clearCalls)
+	}
+}
+
 type testOwnershipBackend struct {
 	kind        BackendKind
 	sessionName string
 	owner       string
+	setCalls    int
+	clearCalls  int
 }
 
 func (t *testOwnershipBackend) Kind() BackendKind {
@@ -194,11 +287,21 @@ func (t *testOwnershipBackend) SessionOwnerMarker(_ context.Context, sessionName
 	return t.owner, nil
 }
 
-func (t *testOwnershipBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+func (t *testOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextID string, sessionName string, pid int) error {
+	if sessionName != t.sessionName {
+		return fmt.Errorf("session %q not owned", sessionName)
+	}
+	t.setCalls++
+	t.owner = contextID + ":" + strconv.Itoa(pid)
 	return nil
 }
 
-func (t *testOwnershipBackend) ClearSessionOwnerMarker(context.Context, string) error {
+func (t *testOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessionName string) error {
+	if sessionName != t.sessionName {
+		return fmt.Errorf("session %q not owned", sessionName)
+	}
+	t.clearCalls++
+	t.owner = ""
 	return nil
 }
 

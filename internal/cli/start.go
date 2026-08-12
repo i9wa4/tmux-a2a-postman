@@ -144,7 +144,6 @@ func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessio
 	}
 	collisions = append(collisions, mergeDiscoveredNodes(fresh, herdrNodes)...)
 	collisions = append(collisions, herdrCollisions...)
-	herdrRuntime.ReconcileFinalNodes(fresh)
 	return fresh, collisions, nil
 }
 

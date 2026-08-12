@@ -429,6 +429,128 @@ func TestDefaultHandAdapterReverseCleanupKeepsOlderOverlappingHerdrRuntime(t *te
 	}
 }
 
+func TestHerdrHandAdapterCleanupDoesNotDeleteExactReplacementAfterObservation(t *testing.T) {
+	paneID := "replacement-exact-pane"
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.SocketPath = "/tmp/herdr-exact-first.sock"
+	firstConfig.Runtime.WorkspaceID = "workspace-exact"
+	firstConfig.Runtime.PaneID = paneID
+	firstConfig.Policy.AllowedSocketPaths = []string{firstConfig.Runtime.SocketPath}
+	firstConfig.Policy.AllowedWorkspaceIDs = []string{firstConfig.Runtime.WorkspaceID}
+	firstCleanup := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+		},
+	})
+	t.Cleanup(firstCleanup)
+
+	replacementClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	replacementClient.snapshot.Workspaces[0].ID = firstConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Tabs[0].WorkspaceID = firstConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Panes[0].WorkspaceID = firstConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Panes[0].ID = paneID
+	replacementCleanup := func() {}
+	exactKey := herdrHandAdapterKeyForRuntime(firstConfig.Runtime, paneID)
+	installedReplacement := false
+	herdrHandAdapterCleanupHook = func(key herdrHandAdapterKey, _ *registeredHerdrHandAdapter) {
+		if installedReplacement || key != exactKey {
+			return
+		}
+		installedReplacement = true
+		replacementCleanup = RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: replacementClient},
+			},
+		})
+	}
+	t.Cleanup(func() {
+		herdrHandAdapterCleanupHook = nil
+		replacementCleanup()
+	})
+
+	firstCleanup()
+	if !installedReplacement {
+		t.Fatal("cleanup hook did not install replacement between observation and removal")
+	}
+
+	target := Target{Hand: HandAttachment{Kind: HandKindHerdr, Address: paneID, HerdrRuntimeID: firstConfig.Runtime}}
+	adapter, err := DefaultHandAdapter(target)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(exact replacement) error = %v", err)
+	}
+	if err := adapter.Deliver(target, PaneDelivery{Content: "replacement"}); err != nil {
+		t.Fatalf("Deliver(exact replacement) error = %v", err)
+	}
+	if replacementClient.writeTextCalls != 1 {
+		t.Fatalf("replacement write calls = %d, want 1", replacementClient.writeTextCalls)
+	}
+}
+
+func TestHerdrHandAdapterCleanupDoesNotDeleteCompatibilityReplacementAfterObservation(t *testing.T) {
+	paneID := "replacement-compat-pane"
+	firstConfig := validHerdrControlplaneConfig()
+	firstConfig.Runtime.SocketPath = "/tmp/herdr-compat-first.sock"
+	firstConfig.Runtime.WorkspaceID = "workspace-compat-first"
+	firstConfig.Runtime.PaneID = paneID
+	firstConfig.Policy.AllowedSocketPaths = []string{firstConfig.Runtime.SocketPath}
+	firstConfig.Policy.AllowedWorkspaceIDs = []string{firstConfig.Runtime.WorkspaceID}
+	firstCleanup := RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{Config: firstConfig, Client: &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}},
+		},
+	})
+	t.Cleanup(firstCleanup)
+
+	replacementConfig := firstConfig
+	replacementConfig.Runtime.SocketPath = "/tmp/herdr-compat-second.sock"
+	replacementConfig.Runtime.WorkspaceID = "workspace-compat-second"
+	replacementConfig.Policy.AllowedSocketPaths = []string{replacementConfig.Runtime.SocketPath}
+	replacementConfig.Policy.AllowedWorkspaceIDs = []string{replacementConfig.Runtime.WorkspaceID}
+	replacementClient := &fakeHerdrControlplaneWriteClient{snapshot: validHerdrControlplaneSnapshot()}
+	replacementClient.snapshot.Workspaces[0].ID = replacementConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Tabs[0].WorkspaceID = replacementConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Panes[0].WorkspaceID = replacementConfig.Runtime.WorkspaceID
+	replacementClient.snapshot.Panes[0].ID = paneID
+	replacementCleanup := func() {}
+	compatKey := herdrHandAdapterKey{SessionName: firstConfig.Runtime.SessionName, PaneID: paneID}
+	installedReplacement := false
+	herdrHandAdapterCleanupHook = func(key herdrHandAdapterKey, _ *registeredHerdrHandAdapter) {
+		if installedReplacement || key != compatKey {
+			return
+		}
+		installedReplacement = true
+		replacementCleanup = RegisterHerdrHandAdapter(paneID, HerdrHandAdapter{
+			HerdrInteractiveDeliveryAdapter: HerdrInteractiveDeliveryAdapter{
+				Backend: multiplexer.HerdrBackend{Config: replacementConfig, Client: replacementClient},
+			},
+		})
+	}
+	t.Cleanup(func() {
+		herdrHandAdapterCleanupHook = nil
+		replacementCleanup()
+	})
+
+	firstCleanup()
+	if !installedReplacement {
+		t.Fatal("cleanup hook did not install compatibility replacement between observation and removal")
+	}
+
+	target := Target{
+		SessionName: firstConfig.Runtime.SessionName,
+		Hand:        HandAttachment{Kind: HandKindHerdr, Address: paneID},
+	}
+	adapter, err := DefaultHandAdapter(target)
+	if err != nil {
+		t.Fatalf("DefaultHandAdapter(compat replacement) error = %v", err)
+	}
+	if err := adapter.Deliver(target, PaneDelivery{Content: "replacement"}); err != nil {
+		t.Fatalf("Deliver(compat replacement) error = %v", err)
+	}
+	if replacementClient.writeTextCalls != 1 {
+		t.Fatalf("replacement write calls = %d, want 1", replacementClient.writeTextCalls)
+	}
+}
+
 func TestHerdrInteractiveDeliveryAdapterRejectsWrongHandKind(t *testing.T) {
 	client := &fakeHerdrControlplaneWriteClient{
 		snapshot: validHerdrControlplaneSnapshot(),

@@ -2466,9 +2466,11 @@ func TestDiscoverNodesContinuesHerdrReconciliationWhenTmuxDiscoveryFails(t *test
 		t.Fatalf("herdrruntime.New() error = %v", err)
 	}
 	t.Cleanup(herdrRuntime.Close)
-	if _, _, err := herdrRuntime.Discover(context.Background(), baseDir, contextID); err != nil {
+	initialNodes, _, err := herdrRuntime.Discover(context.Background(), baseDir, contextID)
+	if err != nil {
 		t.Fatalf("initial Herdr Discover() error = %v", err)
 	}
+	herdrRuntime.ReconcileFinalNodes(initialNodes)
 	target := controlplane.TargetForNode("work:worker", discovery.NodeInfo{
 		PaneID:           "workspace-1:pane-1",
 		SessionName:      "work",
@@ -2507,6 +2509,73 @@ func TestDiscoverNodesContinuesHerdrReconciliationWhenTmuxDiscoveryFails(t *test
 	}
 	if err := herdrRuntime.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
 		t.Fatal("stale Herdr ownership route remained after tmux failure plus Herdr reconciliation")
+	}
+}
+
+func TestDiscoverNodesDoesNotPublishHerdrCollisionLoserDuringFinalization(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeDaemonHerdrClient{snapshot: daemonHerdrSnapshot("")}
+	cfg := config.DefaultConfig()
+	cfg.Nodes = map[string]config.NodeConfig{"worker": {}}
+	cfg.Herdr = daemonHerdrConfig()
+	herdrRuntime, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("herdrruntime.New() error = %v", err)
+	}
+	t.Cleanup(herdrRuntime.Close)
+
+	originalDiscover := discoverNodesWithCollisionsForRuntime
+	discoverNodesWithCollisionsForRuntime = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"work:worker": {
+				PaneID:      "%tmux-winner",
+				SessionName: "work",
+				SessionDir:  sessionDir,
+				Backend:     string(multiplexer.BackendKindTmux),
+			},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesWithCollisionsForRuntime = originalDiscover })
+	rt := &daemonRuntime{
+		baseDir:      baseDir,
+		contextID:    contextID,
+		selfSession:  sessionName,
+		cfg:          cfg,
+		herdrRuntime: herdrRuntime,
+	}
+
+	nodes, collisions, err := rt.discoverNodes()
+	if err != nil {
+		t.Fatalf("discoverNodes() error = %v", err)
+	}
+	if got := nodes["work:worker"].PaneID; got != "%tmux-winner" {
+		t.Fatalf("work:worker pane = %q, want tmux winner", got)
+	}
+	if len(collisions) != 1 || collisions[0].NodeKey != "work:worker" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
+		t.Fatalf("collisions = %#v, want Herdr loser collision", collisions)
+	}
+	loserTarget := controlplane.TargetForNode("work:worker", discovery.NodeInfo{
+		PaneID:           "workspace-1:pane-1",
+		SessionName:      "work",
+		Backend:          string(multiplexer.BackendKindHerdr),
+		HerdrSocketPath:  cfg.Herdr.SocketPath,
+		HerdrWorkspaceID: cfg.Herdr.WorkspaceID,
+		HerdrTabID:       "workspace-1:tab-1",
+	})
+	if _, err := controlplane.DefaultHandAdapter(loserTarget); err == nil {
+		t.Fatal("daemon Herdr collision loser was addressable during finalization")
+	}
+	if err := herdrRuntime.OwnershipBackend().SetPaneOwnerMarker(context.Background(), multiplexer.HerdrPaneID("workspace-1:pane-1"), contextID); err == nil {
+		t.Fatal("daemon Herdr collision loser ownership route was addressable during finalization")
 	}
 }
 

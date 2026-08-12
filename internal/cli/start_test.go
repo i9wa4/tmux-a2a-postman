@@ -13,6 +13,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -126,6 +127,19 @@ func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryE
 	}
 	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
 		t.Fatalf("collisions = %#v, want Herdr-only duplicate collision despite empty tmux discovery", collisions)
+	}
+	for _, paneID := range []string{"workspace-1:pane-1", "workspace-1:pane-2"} {
+		target := controlplane.TargetForNode(sessionName+":worker", discovery.NodeInfo{
+			PaneID:           paneID,
+			SessionName:      sessionName,
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  cfg.Herdr.SocketPath,
+			HerdrWorkspaceID: cfg.Herdr.WorkspaceID,
+			HerdrTabID:       "workspace-1:tab-1",
+		})
+		if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+			t.Fatalf("startup Herdr duplicate candidate %q was addressable before final acceptance", paneID)
+		}
 	}
 }
 

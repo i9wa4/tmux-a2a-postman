@@ -147,8 +147,12 @@ func (h herdrOwnershipBackends) SessionOwnerMarker(ctx context.Context, sessionN
 }
 
 func (h herdrOwnershipBackends) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
+	backends, err := h.sessionMutationBackends(ctx, sessionName)
+	if err != nil {
+		return err
+	}
 	var lastErr error
-	for _, backend := range h {
+	for _, backend := range backends {
 		if err := backend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid); err == nil {
 			return nil
 		} else {
@@ -162,8 +166,12 @@ func (h herdrOwnershipBackends) SetSessionOwnerMarker(ctx context.Context, conte
 }
 
 func (h herdrOwnershipBackends) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
+	backends, err := h.sessionMutationBackends(ctx, sessionName)
+	if err != nil {
+		return err
+	}
 	var lastErr error
-	for _, backend := range h {
+	for _, backend := range backends {
 		if err := backend.ClearSessionOwnerMarker(ctx, sessionName); err == nil {
 			return nil
 		} else {
@@ -174,6 +182,36 @@ func (h herdrOwnershipBackends) ClearSessionOwnerMarker(ctx context.Context, ses
 		return lastErr
 	}
 	return fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) sessionMutationBackends(ctx context.Context, sessionName string) ([]OwnershipBackend, error) {
+	var (
+		nonEmpty []OwnershipBackend
+		empty    []OwnershipBackend
+		lastErr  error
+	)
+	for _, backend := range h {
+		value, err := backend.SessionOwnerMarker(ctx, sessionName)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if value != "" {
+			nonEmpty = append(nonEmpty, backend)
+			continue
+		}
+		empty = append(empty, backend)
+	}
+	switch {
+	case len(nonEmpty) > 0:
+		return nonEmpty, nil
+	case len(empty) > 0:
+		return empty, nil
+	case lastErr != nil:
+		return nil, lastErr
+	default:
+		return nil, fmt.Errorf("herdr ownership backend not registered")
+	}
 }
 
 func (h herdrOwnershipBackends) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {

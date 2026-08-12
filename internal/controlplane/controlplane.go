@@ -54,6 +54,7 @@ type herdrHandAdapterKey struct {
 var (
 	registeredHerdrHandAdapters sync.Map
 	herdrHandAdapterToken       atomic.Uint64
+	herdrHandAdapterCleanupHook func(herdrHandAdapterKey, *registeredHerdrHandAdapter)
 )
 
 type Target struct {
@@ -196,14 +197,17 @@ func RegisterHerdrHandAdapter(paneID string, adapter HerdrHandAdapter) func() {
 	keys := herdrHandAdapterKeysForRegistration(adapter.HerdrInteractiveDeliveryAdapter.Backend.Config.Runtime, paneID)
 	token := herdrHandAdapterToken.Add(1)
 	for _, key := range keys {
-		registeredHerdrHandAdapters.Store(key, registeredHerdrHandAdapter{token: token, adapter: adapter})
+		registeredHerdrHandAdapters.Store(key, &registeredHerdrHandAdapter{token: token, adapter: adapter})
 	}
 	return func() {
 		for _, key := range keys {
 			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
-				current, ok := registered.(registeredHerdrHandAdapter)
+				current, ok := registered.(*registeredHerdrHandAdapter)
 				if ok && current.token == token {
-					registeredHerdrHandAdapters.Delete(key)
+					if herdrHandAdapterCleanupHook != nil {
+						herdrHandAdapterCleanupHook(key, current)
+					}
+					registeredHerdrHandAdapters.CompareAndDelete(key, current)
 				}
 			}
 		}
@@ -395,7 +399,7 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 	case HandKindHerdr:
 		for _, key := range herdrHandAdapterKeysForTarget(target) {
 			if registered, ok := registeredHerdrHandAdapters.Load(key); ok {
-				if registration, ok := registered.(registeredHerdrHandAdapter); ok {
+				if registration, ok := registered.(*registeredHerdrHandAdapter); ok {
 					return registration.adapter, nil
 				}
 			}
