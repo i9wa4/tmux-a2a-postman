@@ -14,9 +14,14 @@ import (
 
 // NodeInfo holds information about a discovered node.
 type NodeInfo struct {
-	PaneID      string
-	SessionName string
-	SessionDir  string
+	PaneID           string
+	SessionName      string
+	SessionDir       string
+	Backend          string
+	Runtime          string
+	HerdrSocketPath  string
+	HerdrWorkspaceID string
+	HerdrTabID       string
 }
 
 // CollisionReport describes a pane collision where two panes share the same nodeKey.

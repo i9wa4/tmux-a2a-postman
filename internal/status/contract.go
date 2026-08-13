@@ -143,6 +143,22 @@ type SessionWindow struct {
 	Nodes []WindowNode `json:"nodes"`
 }
 
+type LayoutNode struct {
+	Name      string            `json:"name"`
+	PaneID    string            `json:"pane_id,omitempty"`
+	Backend   string            `json:"backend,omitempty"`
+	NativeIDs map[string]string `json:"native_ids,omitempty"`
+}
+
+type LayoutGroup struct {
+	Kind      string            `json:"kind"`
+	ID        string            `json:"id,omitempty"`
+	Index     string            `json:"index,omitempty"`
+	Backend   string            `json:"backend,omitempty"`
+	NativeIDs map[string]string `json:"native_ids,omitempty"`
+	Nodes     []LayoutNode      `json:"nodes"`
+}
+
 type SessionQueues struct {
 	PostCount       int `json:"post_count"`
 	InboxCount      int `json:"inbox_count"`
@@ -221,6 +237,7 @@ type SessionStatus struct {
 	WorkspaceTree      *WorkspaceTreeStatus   `json:"workspace_tree,omitempty"`
 	CommandApproval    *CommandApprovalStatus `json:"command_approval,omitempty"`
 	Nodes              []NodeStatus           `json:"nodes"`
+	LayoutGroups       []LayoutGroup          `json:"layout_groups,omitempty"`
 	Windows            []SessionWindow        `json:"windows"`
 }
 

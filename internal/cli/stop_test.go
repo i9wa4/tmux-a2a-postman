@@ -74,9 +74,7 @@ func TestRunStop_StopsDaemonOwningManagedSession(t *testing.T) {
 		waitCh <- child.Wait()
 	}()
 	t.Cleanup(func() {
-		if child.ProcessState == nil || !child.ProcessState.Exited() {
-			_ = child.Process.Kill()
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-waitCh:
 		case <-time.After(2 * time.Second):
@@ -135,9 +133,7 @@ func TestRunStop_StopsDaemonOwnerSession(t *testing.T) {
 		waitCh <- child.Wait()
 	}()
 	t.Cleanup(func() {
-		if child.ProcessState == nil || !child.ProcessState.Exited() {
-			_ = child.Process.Kill()
-		}
+		_ = child.Process.Kill()
 		select {
 		case <-waitCh:
 		case <-time.After(2 * time.Second):
