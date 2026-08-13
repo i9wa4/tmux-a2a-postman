@@ -142,10 +142,20 @@ func TestValidateHerdrWriteGateRequiresWriteSpecificGates(t *testing.T) {
 	t.Run("legacy labels never authorize writes", func(t *testing.T) {
 		for _, decision := range []HerdrComplianceDecision{HerdrComplianceDecisionAGPL, HerdrComplianceDecisionCommercial} {
 			policy := validHerdrGatePolicy()
+			policy.ComplianceDecision = decision
 			policy.ComplianceRecord.Decision = decision
 			err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
 			assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 		}
+	})
+
+	t.Run("top-level decision mismatch never authorizes writes", func(t *testing.T) {
+		policy := validHerdrGatePolicy()
+		policy.ComplianceDecision = HerdrComplianceDecisionCommercial
+		policy.ComplianceRecord.Decision = HerdrComplianceDecisionRecorded
+
+		err := ValidateHerdrWriteGate(policy, validHerdrRuntime(), validHerdrEnvelope())
+		assertHerdrGateError(t, err, HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	})
 
 	t.Run("blank provenance fields never authorize writes", func(t *testing.T) {
@@ -301,6 +311,7 @@ func TestHerdrProtocolVersion(t *testing.T) {
 }
 
 func validHerdrGatePolicy() HerdrGatePolicy {
+	now := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
 	return HerdrGatePolicy{
 		ReadEnabled:             true,
 		WriteEnabled:            true,
@@ -310,15 +321,16 @@ func validHerdrGatePolicy() HerdrGatePolicy {
 		AllowedProtocolVersions: []string{"1"},
 		AllowedSchemaVersions:   []int{1},
 		InputSanitizerReady:     true,
+		ComplianceDecision:      HerdrComplianceDecisionRecorded,
 		ComplianceRecord: HerdrComplianceRecord{
 			Decision:          HerdrComplianceDecisionRecorded,
 			AuthorizedBy:      "compliance-authority",
 			DecisionID:        "decision-001",
-			DecidedAt:         time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-			RevalidatedAt:     time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
+			DecidedAt:         now.Add(-time.Hour),
+			RevalidatedAt:     now,
 			CurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 		},
-		ComplianceNow: func() time.Time { return time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC) },
+		ComplianceNow: func() time.Time { return now },
 	}
 }
 

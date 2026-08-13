@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -235,6 +236,90 @@ edges = [
 		if _, ok := cfg.Nodes[name]; !ok {
 			t.Fatalf("missing materialized node %q in %#v", name, cfg.Nodes)
 		}
+	}
+}
+
+func TestHerdrConfigReadConfigUsesInjectedCurrentTimeWithoutSelfValidatingStaleRecords(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
+	freshConfig := fresh.ReadConfig()
+	freshConfig.Runtime.TabID = "workspace-1:tab-1"
+	freshConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(freshConfig.Policy, freshConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err != nil {
+		t.Fatalf("ValidateHerdrWriteGate(fresh) error = %v", err)
+	}
+
+	stale := validHerdrGateConfigFor(now.Add(-25 * time.Hour)).withComplianceNow(func() time.Time { return now })
+	staleConfig := stale.ReadConfig()
+	staleConfig.Runtime.TabID = "workspace-1:tab-1"
+	staleConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(staleConfig.Policy, staleConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err == nil {
+		t.Fatal("ValidateHerdrWriteGate(stale) error = nil, want stale config record to fail closed")
+	}
+}
+
+func TestHerdrConfigReadConfigClockInjectionIsPerConfigAndConcurrent(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
+	stale := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now.Add(25 * time.Hour) })
+
+	validate := func(cfg HerdrConfig) error {
+		readConfig := cfg.ReadConfig()
+		readConfig.Runtime.TabID = "workspace-1:tab-1"
+		readConfig.Runtime.PaneID = "workspace-1:pane-1"
+		return multiplexer.ValidateHerdrWriteGate(readConfig.Policy, readConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1})
+	}
+
+	type result struct {
+		fresh bool
+		err   error
+	}
+	results := make(chan result, 200)
+	for range 100 {
+		go func() { results <- result{fresh: true, err: validate(fresh)} }()
+		go func() { results <- result{err: validate(stale)} }()
+	}
+	var freshPass, staleFail int
+	for range 200 {
+		got := <-results
+		switch {
+		case got.fresh && got.err == nil:
+			freshPass++
+		case !got.fresh && got.err != nil:
+			staleFail++
+		case got.fresh:
+			t.Fatalf("fresh config validation error = %v", got.err)
+		default:
+			t.Fatal("stale config validation passed, want fail-closed")
+		}
+	}
+	if freshPass != 100 || staleFail != 100 {
+		t.Fatalf("concurrent validation freshPass=%d staleFail=%d, want 100/100", freshPass, staleFail)
+	}
+}
+
+func validHerdrGateConfigFor(revalidatedAt time.Time) HerdrConfig {
+	decidedAt := revalidatedAt.Add(-time.Hour)
+	return HerdrConfig{
+		Enabled:                     true,
+		SocketPath:                  "/tmp/herdr.sock",
+		SessionName:                 "work",
+		WorkspaceID:                 "workspace-1",
+		AllowedSocketPaths:          []string{"/tmp/herdr.sock"},
+		AllowedSessions:             []string{"work"},
+		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedProtocolVersions:     []string{"1"},
+		AllowedSchemaVersions:       []int{1},
+		ReadEnabled:                 true,
+		WriteEnabled:                true,
+		InputSanitizerReady:         true,
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
+		ComplianceAuthorizedBy:      "test-authority",
+		ComplianceDecisionID:        "test-decision",
+		ComplianceDecidedAt:         decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt:     revalidatedAt.Format(time.RFC3339),
+		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 	}
 }
 
@@ -1476,6 +1561,67 @@ func TestMergeConfig_NodeMerge(t *testing.T) {
 	if base.Nodes["new"].Template != "new template" {
 		t.Errorf("new.Template: got %q, want %q", base.Nodes["new"].Template, "new template")
 	}
+}
+
+func TestSetSessionEnabledMarkerWithBackendUsesInjectedBackend(t *testing.T) {
+	backend := &fakeConfigOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", true); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(enable) error = %v", err)
+	}
+	if backend.setSessionCalls != 1 || backend.contextID != "ctx-main" || backend.sessionName != "work" {
+		t.Fatalf("set session marker = calls:%d context:%q session:%q, want injected backend", backend.setSessionCalls, backend.contextID, backend.sessionName)
+	}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", false); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(disable) error = %v", err)
+	}
+	if backend.clearSessionCalls != 1 || backend.clearSessionName != "work" {
+		t.Fatalf("clear session marker = calls:%d session:%q, want injected backend", backend.clearSessionCalls, backend.clearSessionName)
+	}
+}
+
+type fakeConfigOwnershipBackend struct {
+	kind multiplexer.BackendKind
+
+	setSessionCalls   int
+	contextID         string
+	sessionName       string
+	clearSessionCalls int
+	clearSessionName  string
+}
+
+func (f *fakeConfigOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeConfigOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextID, sessionName string, _ int) error {
+	f.setSessionCalls++
+	f.contextID = contextID
+	f.sessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessionName string) error {
+	f.clearSessionCalls++
+	f.clearSessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetPaneOwnerMarker(context.Context, multiplexer.ResourceID, string) error {
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestLoadConfig_IgnoresProjectLocalWhenXDGExists(t *testing.T) {

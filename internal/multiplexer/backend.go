@@ -27,9 +27,10 @@ const (
 )
 
 type ResourceID struct {
-	Backend BackendKind
-	Kind    ResourceKind
-	Native  string
+	Backend      BackendKind
+	Kind         ResourceKind
+	Native       string
+	HerdrRuntime HerdrRuntimeIdentity
 }
 
 func TmuxPaneID(paneID string) ResourceID {

@@ -1,18 +1,26 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/autoping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -41,6 +49,312 @@ func isolateConfigLookup(t *testing.T, root string) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Chdir(root)
+}
+
+func TestMergeDiscoveredNodesReportsCrossBackendCollisionWithoutOverwrite(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "%1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindTmux),
+		},
+	}
+	collisions := mergeDiscoveredNodes(nodes, map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:      "workspace-1:pane-1",
+			SessionName: "work",
+			Backend:     string(multiplexer.BackendKindHerdr),
+		},
+	})
+
+	if got := nodes["work:worker"].PaneID; got != "%1" {
+		t.Fatalf("node pane = %q, want original tmux pane", got)
+	}
+	if len(collisions) != 1 {
+		t.Fatalf("collisions = %#v, want one cross-backend collision", collisions)
+	}
+	if collisions[0].NodeKey != "work:worker" || collisions[0].WinnerPaneID != "%1" || collisions[0].LoserPaneID != "workspace-1:pane-1" {
+		t.Fatalf("collision = %#v, want tmux winner and Herdr loser", collisions[0])
+	}
+}
+
+func TestLogDiscoveredCollisionsReportsHerdrRediscoveryAndManualPingCollisions(t *testing.T) {
+	var buf bytes.Buffer
+	originalOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(originalOutput) })
+
+	collisions := []discovery.CollisionReport{{
+		NodeKey:      "work:worker",
+		WinnerPaneID: "%1",
+		LoserPaneID:  "workspace-1:pane-1",
+	}}
+	activationNodes := map[string]bool{"worker": true}
+
+	logDiscoveredCollisions(collisions, activationNodes)
+	logDiscoveredCollisions(collisions, activationNodes)
+
+	got := buf.String()
+	if strings.Count(got, "pane collision: work:worker: workspace-1:pane-1 displaced by %1") != 2 {
+		t.Fatalf("collision log output = %q, want startup rediscovery and manual PING reports", got)
+	}
+}
+
+func TestDiscoverFreshNodesWithHerdrReportsDuplicateCollisionsWhenTmuxDiscoveryEmpty(t *testing.T) {
+	t.Setenv("PATH", "")
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	client := &fakeCLIHerdrClient{snapshot: validCLIDuplicateHerdrSnapshot()}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, collisions, _, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	if err != nil {
+		t.Fatalf("discoverFreshNodesWithHerdr() error = %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("nodes = %#v, want duplicate Herdr claims to remain unroutable", nodes)
+	}
+	if len(collisions) != 1 || collisions[0].NodeKey != sessionName+":worker" {
+		t.Fatalf("collisions = %#v, want Herdr-only duplicate collision despite empty tmux discovery", collisions)
+	}
+	for _, paneID := range []string{"workspace-1:pane-1", "workspace-1:pane-2"} {
+		target := controlplane.TargetForNode(sessionName+":worker", discovery.NodeInfo{
+			PaneID:           paneID,
+			SessionName:      sessionName,
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  cfg.Herdr.SocketPath,
+			HerdrWorkspaceID: cfg.Herdr.WorkspaceID,
+			HerdrTabID:       "workspace-1:tab-1",
+		})
+		if _, err := controlplane.DefaultHandAdapter(target); err == nil {
+			t.Fatalf("startup Herdr duplicate candidate %q was addressable before final acceptance", paneID)
+		}
+	}
+}
+
+func TestDiscoverFreshNodesWithHerdrReturnsErrorWhenTmuxAndHerdrDiscoveryFail(t *testing.T) {
+	t.Setenv("PATH", "")
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	herdrErr := errors.New("herdr unavailable")
+	client := &fakeCLIHerdrClient{
+		snapshot:    validCLIDuplicateHerdrSnapshot(),
+		snapshotErr: herdrErr,
+	}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	nodes, collisions, _, err := discoverFreshNodesWithHerdr(context.Background(), baseDir, contextID, sessionName, rt)
+	if err == nil {
+		t.Fatal("discoverFreshNodesWithHerdr() error = nil, want combined tmux+Herdr discovery error")
+	}
+	if !strings.Contains(err.Error(), "tmux discovery failed") || !strings.Contains(err.Error(), "herdr discovery failed") {
+		t.Fatalf("error = %v, want both discovery failures preserved", err)
+	}
+	if nodes != nil || collisions != nil {
+		t.Fatalf("nodes=%#v collisions=%#v, want nil results on dual discovery failure", nodes, collisions)
+	}
+}
+
+func TestRunStartWithFlags_SourceContractReportsHerdrCollisionsAfterStartupRediscoveryAndManualPing(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if !strings.Contains(source, "discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)") {
+		t.Fatal("startup/manual rediscovery no longer uses the shared Herdr collision helper")
+	}
+	if !strings.Contains(source, "collisions = append(collisions, herdrCollisions...)") {
+		t.Fatal("Herdr collision reports are no longer appended before rediscovery/manual PING logging")
+	}
+	if strings.Contains(source, "herdrRuntime.Discover(context.Background(), baseDir, contextID)") {
+		t.Fatal("start.go still uses an unbounded background context for Herdr discovery")
+	}
+	if strings.Contains(source, "discErr == nil && len(freshDiscovered) > 0") {
+		t.Fatal("manual PING still skips Herdr discovery when tmux discovery returns zero nodes")
+	}
+}
+
+func TestRunStartWithFlags_SourceContractReconcilesHerdrAfterActivationFiltering(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+	firstFilter := strings.Index(source, "fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)")
+	if firstFilter == -1 {
+		t.Fatal("startup rediscovery activation filter not found")
+	}
+	if !strings.Contains(source[firstFilter:], "publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes)") {
+		t.Fatal("startup rediscovery no longer publishes Herdr routes after activation filtering")
+	}
+
+	secondFilter := strings.Index(source, "freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)")
+	if secondFilter == -1 {
+		t.Fatal("on-demand refresh activation filter not found")
+	}
+	if !strings.Contains(source[secondFilter:], "publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes)") {
+		t.Fatal("on-demand refresh no longer publishes Herdr routes after activation filtering")
+	}
+}
+
+func TestPublishFreshHerdrNodesRejectsStaleCLIRefreshSnapshot(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-main"
+	sessionName := "work"
+	if err := config.CreateSessionDirs(filepath.Join(baseDir, contextID, sessionName)); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+
+	client := &fakeCLIHerdrClient{snapshot: cliHerdrSnapshotFor("workspace-1:pane-old")}
+	cfg := config.DefaultConfig()
+	cfg.Herdr = validCLIHerdrConfig()
+	rt, err := herdrruntime.New(cfg, func(config.HerdrConfig) (multiplexer.HerdrReadClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(rt.Close)
+
+	oldNodes, _, oldToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("old DiscoverForReconcile() error = %v", err)
+	}
+	client.snapshot = cliHerdrSnapshotFor("workspace-1:pane-new")
+	newNodes, _, newToken, err := rt.DiscoverForReconcile(context.Background(), baseDir, contextID)
+	if err != nil {
+		t.Fatalf("new DiscoverForReconcile() error = %v", err)
+	}
+
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	outcome, err := publishFreshHerdrNodes(context.Background(), contextID, rt, newToken, newNodes, &sharedNodes)
+	if err != nil || outcome != freshHerdrPublicationPublished {
+		t.Fatalf("publishFreshHerdrNodes(new) = %v, %v; want published", outcome, err)
+	}
+	outcome, err = publishFreshHerdrNodes(context.Background(), contextID, rt, oldToken, oldNodes, &sharedNodes)
+	if err != nil || outcome != freshHerdrPublicationStale {
+		t.Fatalf("publishFreshHerdrNodes(old) = %v, %v; want stale rejection", outcome, err)
+	}
+
+	loaded := sharedNodes.Load()
+	if loaded == nil {
+		t.Fatal("sharedNodes.Load() = nil")
+	}
+	if got := (*loaded)["work:worker"].PaneID; got != "workspace-1:pane-new" {
+		t.Fatalf("sharedNodes work:worker pane = %q, want newest pane", got)
+	}
+	oldTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-old"}}
+	if _, err := controlplane.DefaultHandAdapter(oldTarget); err == nil {
+		t.Fatal("stale CLI refresh registered old Herdr route")
+	}
+	newTarget := controlplane.Target{Hand: controlplane.HandAttachment{Kind: controlplane.HandKindHerdr, Address: "workspace-1:pane-new"}}
+	if _, err := controlplane.DefaultHandAdapter(newTarget); err != nil {
+		t.Fatalf("new CLI refresh route missing after stale publish attempt: %v", err)
+	}
+}
+
+func TestPublishFreshHerdrNodesNoRuntimeReturnsPrepareFailureAndKeepsSharedNodes(t *testing.T) {
+	claimErr := errors.New("claim failed")
+	backend := &fakeCLIOwnershipBackend{
+		kind:        multiplexer.BackendKindHerdr,
+		paneMarkers: map[string]string{"workspace-1:pane-1": "ctx-old"},
+		failSetFor:  "ctx-new",
+		failSetErr:  claimErr,
+	}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	oldNodes := map[string]discovery.NodeInfo{"work:worker": {PaneID: "workspace-old:pane-1"}}
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	sharedNodes.Store(&oldNodes)
+	fresh := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:           "workspace-1:pane-1",
+			SessionName:      "work",
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  "/tmp/herdr.sock",
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       "workspace-1:tab-1",
+		},
+	}
+
+	outcome, err := publishFreshHerdrNodes(context.Background(), "ctx-new", nil, 0, fresh, &sharedNodes)
+
+	if outcome != freshHerdrPublicationFailed {
+		t.Fatalf("publishFreshHerdrNodes() outcome = %v, want failed", outcome)
+	}
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want claim failure", err)
+	}
+	if got := backend.paneMarkers["workspace-1:pane-1"]; got != "ctx-old" {
+		t.Fatalf("pane marker after failed no-runtime publish = %q, want restored ctx-old", got)
+	}
+	if loaded := sharedNodes.Load(); loaded == nil || (*loaded)["work:worker"].PaneID != "workspace-old:pane-1" {
+		t.Fatalf("sharedNodes after failed no-runtime publish = %#v, want prior snapshot", loaded)
+	}
+}
+
+func TestPublishFreshHerdrNodesNoRuntimeReturnsRollbackFailure(t *testing.T) {
+	claimErr := errors.New("claim failed")
+	rollbackErr := errors.New("rollback failed")
+	backend := &fakeCLIOwnershipBackend{
+		kind:        multiplexer.BackendKindHerdr,
+		paneMarkers: map[string]string{},
+		failSetFor:  "ctx-new",
+		failSetErr:  claimErr,
+		clearErr:    rollbackErr,
+	}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	fresh := map[string]discovery.NodeInfo{
+		"work:worker": {
+			PaneID:           "workspace-1:pane-1",
+			SessionName:      "work",
+			Backend:          string(multiplexer.BackendKindHerdr),
+			HerdrSocketPath:  "/tmp/herdr.sock",
+			HerdrWorkspaceID: "workspace-1",
+			HerdrTabID:       "workspace-1:tab-1",
+		},
+	}
+
+	outcome, err := publishFreshHerdrNodes(context.Background(), "ctx-new", nil, 0, fresh, nil)
+
+	if outcome != freshHerdrPublicationFailed {
+		t.Fatalf("publishFreshHerdrNodes() outcome = %v, want failed", outcome)
+	}
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want claim failure", err)
+	}
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("publishFreshHerdrNodes() error = %v, want rollback failure", err)
+	}
+}
+
+func TestRunStartWithFlags_SourceContractUsesProductionHerdrSocketClient(t *testing.T) {
+	source := readRepoFile(t, "internal/cli/start.go")
+
+	if !strings.Contains(source, "newHerdrRuntimeClient herdrruntime.ClientFactory = herdrruntime.NewSocketClient") {
+		t.Fatal("start.go no longer wires the production Herdr socket client factory")
+	}
+	if strings.Contains(source, "herdr socket client is not configured") {
+		t.Fatal("start.go still contains the disabled Herdr client stub")
+	}
 }
 
 func TestRunStartWithFlags_RejectsDuplicateDaemonForSameSession(t *testing.T) {
@@ -626,20 +940,31 @@ func TestRunStartWithFlags_SourceContractKeepsUnreadInboxAndOwnershipGuard(t *te
 	if strings.Contains(source, "config.IsSessionPIDAlive(baseDir, claimedContext, paneSessionName)") {
 		t.Fatal("start.go still clears foreign pane claims from a raw PID check")
 	}
-	markerIndex := strings.Index(source, `config.SetSessionEnabledMarker(contextID, sessionName, true)`)
+	markerIndex := strings.Index(source, `publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true)`)
 	reclaimIndex := strings.Index(source, "// Reclaim panes from dead daemon contexts (#272)")
 	discoveryIndex := strings.Index(source, "// Discover nodes at startup (before watching, edge-filtered)")
+	reconcileIndex := strings.Index(source, "herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes")
+	claimIndex := strings.Index(source, "// Claim discovered panes with this daemon's context ID.")
 	if markerIndex == -1 {
 		t.Fatal("start.go no longer publishes the enabled-session marker during cold start")
 	}
-	if reclaimIndex == -1 || discoveryIndex == -1 {
+	if reclaimIndex == -1 || discoveryIndex == -1 || reconcileIndex == -1 || claimIndex == -1 {
 		t.Fatal("start.go startup ordering markers changed; update the source contract test")
 	}
-	if markerIndex > reclaimIndex {
-		t.Fatal("start.go still publishes the enabled-session marker after pane-claim reclaim begins")
+	if markerIndex < reclaimIndex {
+		t.Fatal("start.go publishes the enabled-session marker before pane-claim reclaim")
 	}
-	if markerIndex > discoveryIndex {
-		t.Fatal("start.go still publishes the enabled-session marker after startup discovery begins")
+	if markerIndex < discoveryIndex {
+		t.Fatal("start.go publishes the enabled-session marker before startup discovery")
+	}
+	if !strings.Contains(source, "herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes, prepareStartupNodes, commitStartupNodes)") {
+		t.Fatal("start.go publishes the enabled-session marker before Herdr final reconciliation")
+	}
+	if markerIndex > claimIndex {
+		t.Fatal("start.go publishes the enabled-session marker after pane ownership claims")
+	}
+	if strings.Contains(source[claimIndex:reconcileIndex], "failed to claim pane") {
+		t.Fatal("startup pane ownership claims still log and continue instead of rejecting prepare")
 	}
 }
 
@@ -796,5 +1121,161 @@ func assertPathMissing(t *testing.T, path string) {
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("Stat(%q) error = %v, want not exists", path, err)
+	}
+}
+
+type fakeCLIHerdrClient struct {
+	snapshot    multiplexer.HerdrSessionSnapshot
+	snapshotErr error
+}
+
+func (f *fakeCLIHerdrClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}, nil
+}
+
+func (f *fakeCLIHerdrClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	if f.snapshotErr != nil {
+		return multiplexer.HerdrSessionSnapshot{}, f.snapshotErr
+	}
+	return f.snapshot, nil
+}
+
+func (f *fakeCLIHerdrClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {
+	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SendPaneKey(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) SetPaneMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+func (f *fakeCLIHerdrClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+}
+
+type fakeCLIOwnershipBackend struct {
+	kind        multiplexer.BackendKind
+	paneMarkers map[string]string
+	failSetFor  string
+	failSetErr  error
+	clearErr    error
+}
+
+func (f *fakeCLIOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeCLIOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeCLIOwnershipBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) PaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) (string, error) {
+	return f.paneMarkers[pane.Native], nil
+}
+
+func (f *fakeCLIOwnershipBackend) SetPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID, contextID string) error {
+	if f.paneMarkers == nil {
+		f.paneMarkers = make(map[string]string)
+	}
+	f.paneMarkers[pane.Native] = contextID
+	if contextID == f.failSetFor {
+		return f.failSetErr
+	}
+	return nil
+}
+
+func (f *fakeCLIOwnershipBackend) ClearPaneOwnerMarker(_ context.Context, pane multiplexer.ResourceID) error {
+	if f.clearErr != nil {
+		return f.clearErr
+	}
+	delete(f.paneMarkers, pane.Native)
+	return nil
+}
+
+func validCLIHerdrConfig() config.HerdrConfig {
+	revalidatedAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	decidedAt := revalidatedAt.Add(-time.Hour)
+	return config.HerdrConfig{
+		Enabled:                 true,
+		SocketPath:              "/tmp/herdr.sock",
+		SessionName:             "work",
+		WorkspaceID:             "workspace-1",
+		AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
+		AllowedSessions:         []string{"work"},
+		AllowedWorkspaceIDs:     []string{"workspace-1"},
+		AllowedProtocolVersions: []string{"1"},
+		AllowedSchemaVersions:   []int{1},
+		ReadEnabled:             true,
+		WriteEnabled:            true,
+		InputSanitizerReady:     true,
+		ComplianceDecision:      string(multiplexer.HerdrComplianceDecisionRecorded),
+		ComplianceAuthorizedBy:  "test-authority",
+		ComplianceDecisionID:    "decision-001",
+		ComplianceDecidedAt:     decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt: revalidatedAt.Format(time.RFC3339),
+		ComplianceCurrentReferences: []string{
+			"https://github.com/ogulcancelik/herdr/blob/master/LICENSE",
+		},
+	}
+}
+
+func validCLIDuplicateHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
+	return cliHerdrSnapshotWithPanes("workspace-1:pane-1", "workspace-1:pane-2")
+}
+
+func cliHerdrSnapshotFor(paneID string) multiplexer.HerdrSessionSnapshot {
+	return cliHerdrSnapshotWithPanes(paneID)
+}
+
+func cliHerdrSnapshotWithPanes(paneIDs ...string) multiplexer.HerdrSessionSnapshot {
+	panes := make([]multiplexer.HerdrPaneSnapshot, 0, len(paneIDs))
+	for _, paneID := range paneIDs {
+		panes = append(panes, multiplexer.HerdrPaneSnapshot{
+			ID:          paneID,
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+			PostmanNode: "worker",
+			ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		})
+	}
+	return multiplexer.HerdrSessionSnapshot{
+		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
+			ID:       "workspace-1",
+			Metadata: map[string]string{},
+		}},
+		Tabs: []multiplexer.HerdrTabSnapshot{{
+			ID:          "workspace-1:tab-1",
+			WorkspaceID: "workspace-1",
+			Metadata:    map[string]string{},
+		}},
+		Panes: panes,
 	}
 }

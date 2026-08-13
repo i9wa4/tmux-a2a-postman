@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 func TestActivateSessionForPing_ActivatesUnownedForeignSession(t *testing.T) {
@@ -341,6 +343,86 @@ func TestActivateSessionForPing_RejectsSameUserOwnedSession(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(contextDir, targetSession)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("self dotfiles dir exists unexpectedly: %v", err)
 	}
+}
+
+func TestActivateSessionForPing_RejectsHerdrOwnedSession(t *testing.T) {
+	root := t.TempDir()
+	baseDir := filepath.Join(root, "state")
+	contextID := "ctx-self"
+	selfSession := "tmux-a2a-postman"
+	targetSession := "dotfiles"
+	contextDir := filepath.Join(baseDir, contextID)
+	if err := config.CreateMultiSessionDirs(contextDir, selfSession); err != nil {
+		t.Fatalf("CreateMultiSessionDirs(self): %v", err)
+	}
+
+	ownerContext := "ctx-owner"
+	ownerDir := filepath.Join(baseDir, ownerContext, targetSession)
+	if err := os.MkdirAll(ownerDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(ownerDir): %v", err)
+	}
+	if err := config.WriteSessionPIDFile(filepath.Join(ownerDir, "postman.pid"), os.Getpid()); err != nil {
+		t.Fatalf("WriteFile(postman.pid): %v", err)
+	}
+	backend := &fakeActivationHerdrOwnerBackend{owners: map[string]string{
+		targetSession: ownerContext + ":43210",
+	}}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake tmux): %v", err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator --- messenger"}
+
+	_, err := activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetSession, cfg, nil, nil)
+	if err == nil {
+		t.Fatal("activateSessionForPing() error = nil, want Herdr ownership rejection")
+	}
+	if !errors.Is(err, errPingSessionOwned) {
+		t.Fatalf("activateSessionForPing() error = %v, want errPingSessionOwned", err)
+	}
+	if _, err := os.Stat(filepath.Join(contextDir, targetSession)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("self dotfiles dir exists unexpectedly: %v", err)
+	}
+}
+
+type fakeActivationHerdrOwnerBackend struct {
+	owners map[string]string
+}
+
+func (f *fakeActivationHerdrOwnerBackend) Kind() multiplexer.BackendKind {
+	return multiplexer.BackendKindHerdr
+}
+
+func (f *fakeActivationHerdrOwnerBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
+	return f.owners[sessionName], nil
+}
+
+func (f *fakeActivationHerdrOwnerBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (f *fakeActivationHerdrOwnerBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeActivationHerdrOwnerBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeActivationHerdrOwnerBackend) SetPaneOwnerMarker(context.Context, multiplexer.ResourceID, string) error {
+	return nil
+}
+
+func (f *fakeActivationHerdrOwnerBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestActivateSessionForPing_PreservesBareEdgeKeys(t *testing.T) {

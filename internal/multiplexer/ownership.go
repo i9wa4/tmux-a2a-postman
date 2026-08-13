@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -21,6 +22,295 @@ type OwnershipBackend interface {
 	PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error)
 	SetPaneOwnerMarker(ctx context.Context, pane ResourceID, contextID string) error
 	ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error
+}
+
+type HerdrRuntimeOwnershipBackend interface {
+	OwnershipBackend
+	HerdrRuntimeIdentity() HerdrRuntimeIdentity
+}
+type HerdrRuntimeOwnershipIdentitySet interface{ HerdrRuntimeOwnershipIdentities() []HerdrRuntimeIdentity }
+
+var (
+	registeredOwnershipBackends   sync.Map
+	registeredOwnershipBackendsMu sync.Mutex
+)
+
+func BackendKindFromString(backend string) BackendKind {
+	switch BackendKind(strings.TrimSpace(backend)) {
+	case BackendKindHerdr:
+		return BackendKindHerdr
+	default:
+		return BackendKindTmux
+	}
+}
+
+func PaneIDForBackend(backend BackendKind, paneID string) ResourceID {
+	switch backend {
+	case BackendKindHerdr:
+		return HerdrPaneID(paneID)
+	default:
+		return TmuxPaneID(paneID)
+	}
+}
+
+func RegisterOwnershipBackend(backend OwnershipBackend) func() {
+	if backend == nil {
+		return func() {}
+	}
+	key := backend.Kind()
+	if key == BackendKindHerdr {
+		registeredOwnershipBackendsMu.Lock()
+		registeredOwnershipBackends.Store(key, append(registeredHerdrOwnershipBackends(), backend))
+		registeredOwnershipBackendsMu.Unlock()
+	} else {
+		registeredOwnershipBackends.Store(key, backend)
+	}
+	return func() {
+		if key != BackendKindHerdr {
+			registeredOwnershipBackends.Delete(key)
+			return
+		}
+		registeredOwnershipBackendsMu.Lock()
+		defer registeredOwnershipBackendsMu.Unlock()
+		registered := registeredHerdrOwnershipBackends()
+		next := registered[:0]
+		for _, registeredBackend := range registered {
+			if registeredBackend != backend {
+				next = append(next, registeredBackend)
+			}
+		}
+		if len(next) == 0 {
+			registeredOwnershipBackends.Delete(key)
+			return
+		}
+		registeredOwnershipBackends.Store(key, append([]OwnershipBackend(nil), next...))
+	}
+}
+
+func OwnershipBackendForKind(backend BackendKind) (OwnershipBackend, error) {
+	switch backend {
+	case BackendKindTmux, "":
+		return TmuxBackend{}, nil
+	case BackendKindHerdr:
+		registeredOwnershipBackendsMu.Lock()
+		backends := registeredHerdrOwnershipBackends()
+		registeredOwnershipBackendsMu.Unlock()
+		switch len(backends) {
+		case 0:
+			return nil, fmt.Errorf("herdr ownership backend not registered")
+		case 1:
+			if _, ok := backends[0].(HerdrRuntimeOwnershipBackend); ok {
+				return herdrOwnershipBackends(backends), nil
+			}
+			if _, ok := backends[0].(HerdrRuntimeOwnershipIdentitySet); ok {
+				return herdrOwnershipBackends(backends), nil
+			}
+			return backends[0], nil
+		default:
+			return herdrOwnershipBackends(backends), nil
+		}
+	default:
+		return nil, fmt.Errorf("unsupported ownership backend %q", backend)
+	}
+}
+
+func registeredHerdrOwnershipBackends() []OwnershipBackend {
+	registered, ok := registeredOwnershipBackends.Load(BackendKindHerdr)
+	if !ok {
+		return nil
+	}
+	switch backends := registered.(type) {
+	case []OwnershipBackend:
+		return append([]OwnershipBackend(nil), backends...)
+	case OwnershipBackend:
+		return []OwnershipBackend{backends}
+	default:
+		return nil
+	}
+}
+
+type herdrOwnershipBackends []OwnershipBackend
+
+func (h herdrOwnershipBackends) Kind() BackendKind {
+	return BackendKindHerdr
+}
+
+func (h herdrOwnershipBackends) SessionOwnerMarker(ctx context.Context, sessionName string) (string, error) {
+	_, value, err := h.authoritativeSessionBackend(ctx, sessionName)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func (h herdrOwnershipBackends) SetSessionOwnerMarker(ctx context.Context, contextID, sessionName string, pid int) error {
+	backend, _, err := h.authoritativeSessionBackend(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	return backend.SetSessionOwnerMarker(ctx, contextID, sessionName, pid)
+}
+
+func (h herdrOwnershipBackends) ClearSessionOwnerMarker(ctx context.Context, sessionName string) error {
+	backend, _, err := h.authoritativeSessionBackend(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	return backend.ClearSessionOwnerMarker(ctx, sessionName)
+}
+
+func (h herdrOwnershipBackends) authoritativeSessionBackend(ctx context.Context, sessionName string) (OwnershipBackend, string, error) {
+	var (
+		emptyBackend OwnershipBackend
+		lastErr      error
+	)
+	for _, backend := range h {
+		value, err := backend.SessionOwnerMarker(ctx, sessionName)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if value != "" {
+			return backend, value, nil
+		}
+		if emptyBackend == nil {
+			emptyBackend = backend
+		}
+	}
+	if emptyBackend != nil {
+		return emptyBackend, "", nil
+	}
+	if lastErr != nil {
+		return nil, "", lastErr
+	}
+	return nil, "", fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {
+	if backend, selectedPane, ok, err := h.backendForPaneRuntime(pane); err != nil {
+		return "", err
+	} else if ok {
+		return backend.PaneOwnerMarker(ctx, selectedPane)
+	}
+	var lastErr error
+	for _, backend := range h {
+		value, err := backend.PaneOwnerMarker(ctx, pane)
+		if err == nil {
+			return value, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) SetPaneOwnerMarker(ctx context.Context, pane ResourceID, contextID string) error {
+	if backend, selectedPane, ok, err := h.backendForPaneRuntime(pane); err != nil {
+		return err
+	} else if ok {
+		return backend.SetPaneOwnerMarker(ctx, selectedPane, contextID)
+	}
+	var lastErr error
+	for _, backend := range h {
+		if err := backend.SetPaneOwnerMarker(ctx, pane, contextID); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) ClearPaneOwnerMarker(ctx context.Context, pane ResourceID) error {
+	if backend, selectedPane, ok, err := h.backendForPaneRuntime(pane); err != nil {
+		return err
+	} else if ok {
+		return backend.ClearPaneOwnerMarker(ctx, selectedPane)
+	}
+	var lastErr error
+	for _, backend := range h {
+		if err := backend.ClearPaneOwnerMarker(ctx, pane); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("herdr ownership backend not registered")
+}
+
+func (h herdrOwnershipBackends) backendForPaneRuntime(pane ResourceID) (OwnershipBackend, ResourceID, bool, error) {
+	runtime := pane.HerdrRuntime
+	qualified := hasHerdrRuntimeQualifier(runtime)
+	if runtime.PaneID == "" {
+		runtime.PaneID = pane.Native
+	}
+	var (
+		selected     OwnershipBackend
+		selectedPane ResourceID
+		found        bool
+	)
+	for _, backend := range h {
+		runtimeBackend, ok := backend.(HerdrRuntimeOwnershipBackend)
+		if !ok {
+			continue
+		}
+		identities := []HerdrRuntimeIdentity{runtimeBackend.HerdrRuntimeIdentity()}
+		if set, ok := backend.(HerdrRuntimeOwnershipIdentitySet); ok {
+			identities = set.HerdrRuntimeOwnershipIdentities()
+		}
+		if len(identities) == 0 {
+			identities = []HerdrRuntimeIdentity{runtimeBackend.HerdrRuntimeIdentity()}
+		}
+		for _, identity := range identities {
+			if !matchesHerdrRuntimeIdentity(identity, runtime) {
+				continue
+			}
+			if found {
+				return nil, ResourceID{}, false, fmt.Errorf("ambiguous herdr ownership backend for pane %q", pane.Native)
+			}
+			selected = backend
+			selectedPane = pane
+			selectedPane.HerdrRuntime = identity
+			found = true
+		}
+	}
+	if !found && qualified {
+		return nil, ResourceID{}, false, fmt.Errorf("herdr ownership backend not registered for qualified pane %q", pane.Native)
+	}
+	return selected, selectedPane, found, nil
+}
+
+func matchesHerdrRuntimeIdentity(candidate, target HerdrRuntimeIdentity) bool {
+	candidatePaneID := strings.TrimSpace(candidate.PaneID)
+	targetPaneID := strings.TrimSpace(target.PaneID)
+	if targetPaneID == "" || candidatePaneID != targetPaneID {
+		return false
+	}
+	return herdrRuntimeFieldMatches(candidate.SocketPath, target.SocketPath) &&
+		herdrRuntimeFieldMatches(candidate.SessionName, target.SessionName) &&
+		herdrRuntimeFieldMatches(candidate.WorkspaceID, target.WorkspaceID) &&
+		herdrRuntimeFieldMatches(candidate.TabID, target.TabID)
+}
+
+func herdrRuntimeFieldMatches(candidate, target string) bool {
+	target = strings.TrimSpace(target)
+	return target == "" || strings.TrimSpace(candidate) == target
+}
+
+func hasHerdrRuntimeQualifier(runtime HerdrRuntimeIdentity) bool {
+	return strings.TrimSpace(runtime.SocketPath) != "" ||
+		strings.TrimSpace(runtime.SessionName) != "" ||
+		strings.TrimSpace(runtime.WorkspaceID) != "" ||
+		strings.TrimSpace(runtime.TabID) != "" ||
+		strings.TrimSpace(runtime.PaneID) != ""
 }
 
 func (b TmuxBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {

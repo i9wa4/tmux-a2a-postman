@@ -131,6 +131,30 @@ func ValidateHerdrWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity
 	if !policy.InputSanitizerReady {
 		return herdrGateError(HerdrAccessPhaseWrite, "input_sanitizer", HerdrGateFailureSanitizerMissing)
 	}
+	if policy.ComplianceDecision != HerdrComplianceDecisionUnset && policy.ComplianceDecision != policy.ComplianceRecord.Decision {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
+	if !isCurrentHerdrComplianceRecord(policy.ComplianceRecord, policy.ComplianceNow) {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
+	return nil
+}
+
+func validateHerdrWorkspaceWriteGate(policy HerdrGatePolicy, runtime HerdrRuntimeIdentity, envelope HerdrResponseEnvelope) error {
+	if !policy.WriteEnabled {
+		return herdrGateError(HerdrAccessPhaseWrite, "", HerdrGateFailureClosed)
+	}
+	writePolicy := policy
+	writePolicy.ReadScope = HerdrReadScopeDiscovery
+	if err := validateHerdrReadGateForPhase(HerdrAccessPhaseWrite, writePolicy, runtime, envelope); err != nil {
+		return err
+	}
+	if !policy.InputSanitizerReady {
+		return herdrGateError(HerdrAccessPhaseWrite, "input_sanitizer", HerdrGateFailureSanitizerMissing)
+	}
+	if policy.ComplianceDecision != HerdrComplianceDecisionUnset && policy.ComplianceDecision != policy.ComplianceRecord.Decision {
+		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
+	}
 	if !isCurrentHerdrComplianceRecord(policy.ComplianceRecord, policy.ComplianceNow) {
 		return herdrGateError(HerdrAccessPhaseWrite, "compliance_decision", HerdrGateFailureComplianceUnresolved)
 	}
@@ -252,6 +276,13 @@ func containsInt(values []int, value int) bool {
 
 func HerdrPaneID(paneID string) ResourceID {
 	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: paneID}
+}
+
+func HerdrPaneIDForRuntime(runtime HerdrRuntimeIdentity, paneID string) ResourceID {
+	if runtime.PaneID == "" {
+		runtime.PaneID = paneID
+	}
+	return ResourceID{Backend: BackendKindHerdr, Kind: ResourceKindPane, Native: paneID, HerdrRuntime: runtime}
 }
 
 func HerdrWorkspaceID(workspaceID string) ResourceID {
