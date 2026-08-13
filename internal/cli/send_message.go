@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/evidence"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -157,6 +159,13 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	fillsInputRequestID := fs.String("fills-input-request-id", "", "input request id this message fills")
+	evidenceCommand := fs.String("evidence-command", "", "replay evidence command")
+	evidenceCWD := fs.String("evidence-cwd", "", "replay evidence working directory")
+	evidenceEnvAllowlist := fs.String("evidence-env-allowlist", "", "comma-separated replay evidence environment allowlist")
+	evidenceTimeoutSeconds := fs.String("evidence-timeout-seconds", "", "replay evidence timeout in seconds")
+	evidenceSideEffectClass := fs.String("evidence-side-effect-class", "", "replay evidence side effect class: read-only, idempotent, or mutating")
+	evidenceArtifact := fs.String("evidence-artifact", "", "replay evidence artifact path")
+	evidenceHash := fs.String("evidence-hash", "", "replay evidence artifact sha256:<hex>")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -191,6 +200,18 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	if err := validateInputRequestFillFlag("--fills-input-request-id", *fillsInputRequestID); err != nil {
+		return err
+	}
+	evidenceFields := map[string]string{
+		"evidence_command":           *evidenceCommand,
+		"evidence_cwd":               *evidenceCWD,
+		"evidence_env_allowlist":     *evidenceEnvAllowlist,
+		"evidence_timeout_seconds":   *evidenceTimeoutSeconds,
+		"evidence_side_effect_class": *evidenceSideEffectClass,
+		"evidence_artifact":          *evidenceArtifact,
+		"evidence_hash":              *evidenceHash,
+	}
+	if err := validateSendEvidenceFlags(evidenceFields); err != nil {
 		return err
 	}
 	cfg, err := ctx.loadConfig(*configPath)
@@ -407,15 +428,22 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	vars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 	vars["required_reply_completion_gate"] = requiredReplyCompletionGateForPolicy(replyPolicy)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":                filename,
-		"replyPolicy":              replyPolicy,
-		"replyTo":                  *replyTo,
-		"input_request_id":         inputRequestID,
-		"fills_input_request_id":   *fillsInputRequestID,
-		"runtimeContextId":         savedRuntimeContext.Snapshot.SnapshotID,
-		"runtimeContextScope":      savedRuntimeContext.Snapshot.Scope,
-		"runtimeContextCapturedAt": savedRuntimeContext.Snapshot.CapturedAt,
-		"runtimeContextHash":       savedRuntimeContext.Snapshot.ContentHash,
+		"messageId":                  filename,
+		"replyPolicy":                replyPolicy,
+		"replyTo":                    *replyTo,
+		"input_request_id":           inputRequestID,
+		"fills_input_request_id":     *fillsInputRequestID,
+		"evidence_command":           evidenceFields["evidence_command"],
+		"evidence_cwd":               evidenceFields["evidence_cwd"],
+		"evidence_env_allowlist":     evidenceFields["evidence_env_allowlist"],
+		"evidence_timeout_seconds":   evidenceFields["evidence_timeout_seconds"],
+		"evidence_side_effect_class": evidenceFields["evidence_side_effect_class"],
+		"evidence_artifact":          evidenceFields["evidence_artifact"],
+		"evidence_hash":              evidenceFields["evidence_hash"],
+		"runtimeContextId":           savedRuntimeContext.Snapshot.SnapshotID,
+		"runtimeContextScope":        savedRuntimeContext.Snapshot.Scope,
+		"runtimeContextCapturedAt":   savedRuntimeContext.Snapshot.CapturedAt,
+		"runtimeContextHash":         savedRuntimeContext.Snapshot.ContentHash,
 	})
 
 	footer := ""
@@ -932,6 +960,72 @@ func validateInputRequestFillFlag(flagName, inputRequestID string) error {
 		return fmt.Errorf("%s %w", flagName, err)
 	}
 	return nil
+}
+
+func validateSendEvidenceFlags(fields map[string]string) error {
+	any := false
+	for _, value := range fields {
+		if strings.TrimSpace(value) != "" {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return nil
+	}
+
+	required := []string{
+		"evidence_command",
+		"evidence_cwd",
+		"evidence_timeout_seconds",
+		"evidence_side_effect_class",
+		"evidence_artifact",
+		"evidence_hash",
+	}
+	for _, key := range required {
+		if strings.TrimSpace(fields[key]) == "" {
+			return fmt.Errorf("--%s is required when any evidence flag is set", strings.ReplaceAll(key, "_", "-"))
+		}
+	}
+
+	timeoutSeconds, err := parsePositiveEvidenceTimeout(fields["evidence_timeout_seconds"])
+	if err != nil {
+		return err
+	}
+	contract := evidence.ReplayContract{
+		Command:              strings.TrimSpace(fields["evidence_command"]),
+		CWD:                  strings.TrimSpace(fields["evidence_cwd"]),
+		EnvAllowlist:         parseSendEvidenceEnvAllowlist(fields["evidence_env_allowlist"]),
+		Timeout:              time.Duration(timeoutSeconds) * time.Second,
+		SideEffect:           evidence.SideEffectClass(strings.TrimSpace(fields["evidence_side_effect_class"])),
+		ArtifactPath:         strings.TrimSpace(fields["evidence_artifact"]),
+		ExpectedArtifactHash: strings.TrimSpace(fields["evidence_hash"]),
+	}
+	if err := contract.ValidateShape(); err != nil {
+		return fmt.Errorf("invalid evidence replay contract: %w", err)
+	}
+	return nil
+}
+
+func parsePositiveEvidenceTimeout(value string) (int, error) {
+	timeoutSeconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || timeoutSeconds <= 0 {
+		return 0, fmt.Errorf("--evidence-timeout-seconds must be a positive integer")
+	}
+	return timeoutSeconds, nil
+}
+
+func parseSendEvidenceEnvAllowlist(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, strings.TrimSpace(part))
+	}
+	return out
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

@@ -432,7 +432,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
@@ -557,6 +557,20 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "fills_input_request_id", true
 	case "input_request_set_id":
 		return "input_request_set_id", true
+	case "evidence_command":
+		return "evidence_command", true
+	case "evidence_cwd":
+		return "evidence_cwd", true
+	case "evidence_env_allowlist":
+		return "evidence_env_allowlist", true
+	case "evidence_timeout_seconds":
+		return "evidence_timeout_seconds", true
+	case "evidence_side_effect_class":
+		return "evidence_side_effect_class", true
+	case "evidence_artifact":
+		return "evidence_artifact", true
+	case "evidence_hash":
+		return "evidence_hash", true
 	case "branch_id":
 		return "branch_id", true
 	case "completion_rule":
@@ -597,7 +611,7 @@ func managedParamFieldAliases(fieldKey string) []string {
 		return []string{"fills_input_request_id"}
 	case "input_request_set_id":
 		return []string{"input_request_set_id"}
-	case "branch_id", "completion_rule":
+	case "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule":
 		return []string{fieldKey}
 	case "runtimeContextId":
 		return []string{"runtimeContextId", "runtime_context_id"}
