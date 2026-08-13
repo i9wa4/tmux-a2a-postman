@@ -1,0 +1,26 @@
+backfill-verdict-events — emit verdict_event JSONL rows from read archives
+
+Usage:
+  tmux-a2a-postman backfill-verdict-events --session-dir <session-dir>
+  tmux-a2a-postman backfill-verdict-events --archive-dir <read-dir>
+
+Output:
+  One JSON object per terminal archive message.
+
+Backfilled rows:
+  event_type                 verdict_event
+  source                     backfill
+  event_id                   deterministic from archive identity and marker
+  from_node, to_node         parsed from archive frontmatter for any node pair
+  timestamp                  parsed from archive frontmatter
+  marker                     PASS, BLOCKED, NOT APPROVED, or DONE
+  evidence                   explicit empty string for pre-D1a archives
+  model, instruction_version,
+  runtime_context_id         explicit "unknown" for pre-D1a archives
+
+Marker parsing:
+  APPROVED: and PASS: map to marker PASS.
+  BLOCKED:, NOT APPROVED:, and DONE: retain their marker names.
+
+The command does not mutate journal state. Re-running it over the same archives
+emits the same event_id values so downstream import can upsert or dedupe.

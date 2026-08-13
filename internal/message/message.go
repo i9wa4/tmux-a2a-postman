@@ -208,10 +208,10 @@ func EnsureEnvelopeParams(content string, fields map[string]string) string {
 	return envelope.EnsureParams(content, fields)
 }
 
-func approvalDecisionFromContent(content string) (journal.ApprovalDecision, bool) {
+func approvalDecisionFromContent(content string) (journal.ApprovalDecision, string, bool) {
 	body := messageBodyFromContent(content)
 	if body == "" {
-		return "", false
+		return "", "", false
 	}
 	firstLine := body
 	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
@@ -220,11 +220,11 @@ func approvalDecisionFromContent(content string) (journal.ApprovalDecision, bool
 	firstLine = strings.TrimSpace(firstLine)
 	switch {
 	case strings.HasPrefix(firstLine, "APPROVED:"):
-		return journal.ApprovalDecisionApproved, true
+		return journal.ApprovalDecisionApproved, strings.TrimSpace(strings.TrimPrefix(firstLine, "APPROVED:")), true
 	case strings.HasPrefix(firstLine, "NOT APPROVED:"):
-		return journal.ApprovalDecisionRejected, true
+		return journal.ApprovalDecisionRejected, strings.TrimSpace(strings.TrimPrefix(firstLine, "NOT APPROVED:")), true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
@@ -255,7 +255,7 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 			ThreadID: threadID,
 		}, true
 	case sender == "critic" && recipient == "orchestrator":
-		decision, ok := approvalDecisionFromContent(content)
+		decision, _, ok := approvalDecisionFromContent(content)
 		if !ok {
 			return approvalDeliveryEvent{}, false
 		}
@@ -276,7 +276,7 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 		// above, but records via #625's own CommandApproval* event types,
 		// never the older ApprovalDecidedEventType/ApprovalDecisionPayload
 		// pair used by that unrelated hardcoded flow.
-		decision, ok := approvalDecisionFromContent(content)
+		decision, reason, ok := approvalDecisionFromContent(content)
 		if !ok {
 			log.Printf("postman: WARNING: message %s on command approval thread %s did not start with APPROVED:/NOT APPROVED: — not recorded as a decision\n", messageID, threadID)
 			return approvalDeliveryEvent{}, false
@@ -284,8 +284,10 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 		return approvalDeliveryEvent{
 			EventType: journal.CommandApprovalDecidedEventType,
 			Payload: journal.CommandApprovalDecisionPayload{
-				Reviewer: sender,
-				Decision: decision,
+				Reviewer:  sender,
+				Decision:  decision,
+				Reason:    reason,
+				MessageID: messageID,
 			},
 			ThreadID: threadID,
 		}, true
@@ -305,6 +307,12 @@ func recordApprovalEvent(sessionDir, sessionName string, event approvalDeliveryE
 		now,
 	); err != nil {
 		log.Printf("postman: WARNING: journal approval append failed for %s: %v\n", event.EventType, err)
+		return
+	}
+	if event.EventType == journal.CommandApprovalDecidedEventType {
+		if err := journal.SyncCommandApprovalDecisionHistory(sessionDir); err != nil {
+			log.Printf("postman: WARNING: command approval decision history sync failed: %v\n", err)
+		}
 	}
 }
 
@@ -695,7 +703,8 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 			}
 			policyInput.EvidencePresenceGateChecked = true
-			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveAt(evidenceGateObservedAt(postPath))
+			observedAt := evidenceGateObservedAt(sourceSessionDir, sourceSessionName, filename, postPath, time.Now().UTC())
+			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveAt(observedAt)
 			policyInput.CompletionClaim = isCompletionClaim(metadata.Body)
 			policyInput.EvidencePresent = hasEvidenceReplayContract(metadata)
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {

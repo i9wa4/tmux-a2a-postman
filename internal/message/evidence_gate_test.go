@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/evidence"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
 func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
@@ -34,18 +36,76 @@ func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
 	}
 }
 
-func TestEvidenceGateObservedAtUsesFileModTime(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "message.md")
+func TestEvidenceGateObservedAtUsesDaemonObservedJournalEvent(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	manager := journal.NewManager("test-context", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	leaseTime := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	if err := manager.Bootstrap(sessionDir, "test", leaseTime); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+
+	filename := "message.md"
+	path := filepath.Join(sessionDir, "post", filename)
 	if err := os.WriteFile(path, []byte("message"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	want := time.Date(2026, 7, 13, 9, 59, 59, 0, time.UTC)
-	if err := os.Chtimes(path, want, want); err != nil {
+	fileTime := time.Date(2026, 7, 13, 9, 59, 59, 0, time.UTC)
+	if err := os.Chtimes(path, fileTime, fileTime); err != nil {
 		t.Fatalf("Chtimes() error = %v", err)
 	}
+	want := time.Date(2026, 7, 13, 10, 1, 0, 0, time.UTC)
 
-	got := evidenceGateObservedAt(path)
+	got := evidenceGateObservedAt(sessionDir, "test", filename, path, want)
 	if !got.Equal(want) {
 		t.Fatalf("evidenceGateObservedAt() = %s, want %s", got, want)
+	}
+
+	later := evidenceGateObservedAt(sessionDir, "test", filename, path, want.Add(time.Hour))
+	if !later.Equal(want) {
+		t.Fatalf("second evidenceGateObservedAt() = %s, want stable first observation %s", later, want)
+	}
+}
+
+func TestEvidenceGateObservedBeforeActivationIsNotRetroactivelyActiveWhenEnabledLater(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	manager := journal.NewManager("test-context", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 9, 59, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+
+	filename := "message.md"
+	path := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(path, []byte("message"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	beforeActivation := time.Date(2026, 7, 13, 9, 59, 30, 0, time.UTC)
+	activation := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	afterActivation := time.Date(2026, 7, 13, 10, 1, 0, 0, time.UTC)
+
+	observedWhileDisabled := evidenceGateObservedAt(sessionDir, "test", filename, path, beforeActivation)
+	if !observedWhileDisabled.Equal(beforeActivation) {
+		t.Fatalf("disabled-period observation = %s, want %s", observedWhileDisabled, beforeActivation)
+	}
+
+	cfg := &config.Config{
+		EvidencePresenceGateEnabled: true,
+		EvidencePresenceGateAfter:   activation.Format(time.RFC3339Nano),
+	}
+	observedAfterEnabled := evidenceGateObservedAt(sessionDir, "test", filename, path, afterActivation)
+	if !observedAfterEnabled.Equal(beforeActivation) {
+		t.Fatalf("enabled-period observation = %s, want original disabled observation %s", observedAfterEnabled, beforeActivation)
+	}
+	if cfg.EvidencePresenceGateActiveAt(observedAfterEnabled) {
+		t.Fatal("EvidencePresenceGateActiveAt() = true, want false for pre-activation observation")
 	}
 }

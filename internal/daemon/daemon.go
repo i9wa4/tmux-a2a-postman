@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,26 +18,36 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
+	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
 )
 
 const (
 	inboxCheckInterval                            = 30 * time.Second
 	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
 	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
+	defaultVerdictGraceSeconds                    = 3600
+	defaultVerdictDebtCap                         = 3
 )
 
 // daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
 // in milliseconds. Initialized from config at daemon startup; tests may
 // override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
-var daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+var (
+	daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
+	verdictGraceSeconds                    = defaultVerdictGraceSeconds
+	verdictDebtCap                         = defaultVerdictDebtCap
+	verdictExemptUINode                    = "messenger"
+)
 
 type filesystemWatcher interface {
 	Add(string, fswatcher.Op) error
@@ -98,9 +106,18 @@ func frontmatterValue(content, key string) string {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
+		return
 	}
+	recordVerdictEventForMailbox(sessionDir, sessionName, eventType, payload)
+}
+
+func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func syncMailboxProjection(sessionDir string) {
@@ -192,8 +209,14 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	if strings.ContainsAny(request.Filename, "/\\") {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
 	}
+	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send invalid filename: %w", err)
+	}
 	if request.Content == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
+	}
+	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+		return projection.DaemonSubmitResponse{}, err
 	}
 	postDir := filepath.Join(sessionDir, "post")
 	if err := os.MkdirAll(postDir, 0o700); err != nil {
@@ -218,6 +241,28 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 		HandledAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  request.Filename,
 	}, nil
+}
+
+func enforceVerdictGate(sessionDir, sender, filename, content string) error {
+	return verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+		GraceSeconds: verdictGraceSeconds,
+		DebtCap:      verdictDebtCap,
+		ExemptUINode: verdictExemptUINode,
+		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
+			return journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, equivalent, time.Now())
+		},
+	})
+}
+
+func configureVerdictGateFromConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	verdictGraceSeconds = cfg.EffectiveVerdictGraceSeconds(verdictGraceSeconds)
+	verdictDebtCap = cfg.EffectiveVerdictDebtCap(verdictDebtCap)
+	if cfg.UINode != "" {
+		verdictExemptUINode = cfg.UINode
+	}
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -476,6 +521,15 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 		}
 	}
 	if err != nil {
+		if response.RequestID == "" {
+			response.RequestID = request.RequestID
+		}
+		if response.Command == "" {
+			response.Command = request.Command
+		}
+		if response.HandledAt == "" {
+			response.HandledAt = time.Now().UTC().Format(time.RFC3339)
+		}
 		response.Error = err.Error()
 	}
 	if _, writeErr := projection.WriteDaemonSubmitResponse(sessionDir, response); writeErr != nil {
@@ -540,6 +594,8 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	nonDaemonDeliveryBudget       *nonDaemonDeliveryBudget   // Issue #572: bounded concurrency for post/auto-PING/manual-PING delivery
 	clock                         func() time.Time
+	ownershipBackend              multiplexer.OwnershipBackend
+	ownershipBackendForSession    func(string) multiplexer.OwnershipBackend
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -547,6 +603,14 @@ type DaemonState struct {
 // IsSessionEnabled returns true for all sessions (#217).
 func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 	return newDaemonStateWithClock(drainWindowSeconds, contextID, time.Now)
+}
+
+func (ds *DaemonState) SetOwnershipBackend(backend multiplexer.OwnershipBackend) {
+	ds.ownershipBackend = backend
+}
+
+func (ds *DaemonState) SetOwnershipBackendSelector(selector func(string) multiplexer.OwnershipBackend) {
+	ds.ownershipBackendForSession = selector
 }
 
 func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock func() time.Time) *DaemonState {
@@ -692,6 +756,7 @@ func RunDaemonLoop(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	runDaemonLoopWithWatcherEvents(
 		ctx,
@@ -713,6 +778,7 @@ func RunDaemonLoop(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
 }
 
@@ -736,11 +802,13 @@ func runDaemonLoopWithWatcherEvents(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	// Apply configurable queue warning threshold before any workers start.
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
 		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
 	}
+	configureVerdictGateFromConfig(cfg)
 
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause
@@ -763,7 +831,9 @@ func runDaemonLoopWithWatcherEvents(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
+	configureAuditDrawFromConfig(cfg)
 
 	scanTicker := time.NewTicker(time.Duration(cfg.ScanInterval * float64(time.Second)))
 	defer scanTicker.Stop()
@@ -847,14 +917,26 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 }
 
 func (ds *DaemonState) persistSessionEnabledMarker(sessionName string, enabled bool) {
-	// Persist cross-daemon state in tmux server option (best-effort).
-	key := "@a2a_session_on_" + sessionName
+	// Persist cross-daemon state in the configured ownership backend (best-effort).
+	backend := ds.ownershipBackendForSessionName(sessionName)
 	if enabled {
-		val := ds.contextID + ":" + strconv.Itoa(os.Getpid())
-		_ = exec.Command("tmux", "set-option", "-g", key, val).Run()
+		_ = backend.SetSessionOwnerMarker(context.Background(), ds.contextID, sessionName, os.Getpid())
 	} else {
-		_ = exec.Command("tmux", "set-option", "-gu", key).Run()
+		_ = backend.ClearSessionOwnerMarker(context.Background(), sessionName)
 	}
+}
+
+func (ds *DaemonState) ownershipBackendForSessionName(sessionName string) multiplexer.OwnershipBackend {
+	if ds != nil && ds.ownershipBackendForSession != nil {
+		if backend := ds.ownershipBackendForSession(sessionName); backend != nil {
+			return backend
+		}
+	}
+	backend := ds.ownershipBackend
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
+	}
+	return backend
 }
 
 // AutoEnableSessionIfNew enables a session if it has never been configured (Issue #91).

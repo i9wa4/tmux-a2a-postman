@@ -2,6 +2,7 @@ package message
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -240,10 +242,16 @@ func TestDeliverMessage(t *testing.T) {
 	}
 }
 
-func TestDeliverMessageEvidenceGateUsesFileObservationTime(t *testing.T) {
+func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "test")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+	manager := journal.NewManager("test-ctx", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
 	}
 
 	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
@@ -280,15 +288,15 @@ func TestDeliverMessageEvidenceGateUsesFileObservationTime(t *testing.T) {
 		t.Fatalf("DeliverMessage failed: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); err != nil {
-		t.Errorf("message not delivered to inbox: %v", err)
+	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); !os.IsNotExist(err) {
+		t.Fatalf("message delivered despite active gate and missing evidence: %v", err)
 	}
 	matches, err := filepath.Glob(filepath.Join(sessionDir, "dead-letter", "*missing-evidence*"))
 	if err != nil {
 		t.Fatalf("Glob failed: %v", err)
 	}
-	if len(matches) != 0 {
-		t.Fatalf("message was dead-lettered using sender timestamp: %v", matches)
+	if len(matches) != 1 {
+		t.Fatalf("missing-evidence dead letters = %d, want 1: %v", len(matches), matches)
 	}
 }
 
@@ -335,14 +343,17 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("journal.Replay failed: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	if len(events) != 4 {
+		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
 	}
-	if events[2].Type != projection.MailboxProjectionDeadLetteredEventType {
-		t.Fatalf("events[2].Type = %q, want mailbox_projection_dead_lettered", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostObservedEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_observed", events[2].Type)
+	}
+	if events[3].Type != projection.MailboxProjectionDeadLetteredEventType {
+		t.Fatalf("events[3].Type = %q, want mailbox_projection_dead_lettered", events[3].Type)
 	}
 	var payload journal.MailboxEventPayload
-	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
 	}
 	if payload.MessageID != filename || payload.From != "orchestrator" || payload.To != "unknown-node" {
@@ -1436,17 +1447,20 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("journal.Replay failed: %v", err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
+	if len(events) != 5 {
+		t.Fatalf("journal.Replay returned %d events, want 5", len(events))
 	}
-	if events[2].Type != projection.MailboxProjectionPostConsumedEventType {
-		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_consumed", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostObservedEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_observed", events[2].Type)
 	}
-	if events[3].Type != projection.MailboxProjectionDeliveredEventType {
-		t.Fatalf("events[3].Type = %q, want mailbox_projection_delivered", events[3].Type)
+	if events[3].Type != projection.MailboxProjectionPostConsumedEventType {
+		t.Fatalf("events[3].Type = %q, want mailbox_projection_post_consumed", events[3].Type)
+	}
+	if events[4].Type != projection.MailboxProjectionDeliveredEventType {
+		t.Fatalf("events[4].Type = %q, want mailbox_projection_delivered", events[4].Type)
 	}
 	var payload map[string]string
-	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
+	if err := json.Unmarshal(events[4].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
 	}
 	if payload["path"] != filepath.Join("inbox", "worker", filename) {
@@ -1526,21 +1540,24 @@ func TestApprovalDecisionFromContent(t *testing.T) {
 		name    string
 		content string
 		want    journal.ApprovalDecision
+		reason  string
 		ok      bool
 	}{
 		{
 			name: "approved",
 			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
 				"  thread_id: thread-review-01\n---\n\nAPPROVED: looks good\n",
-			want: journal.ApprovalDecisionApproved,
-			ok:   true,
+			want:   journal.ApprovalDecisionApproved,
+			reason: "looks good",
+			ok:     true,
 		},
 		{
 			name: "not approved",
 			content: "---\nparams:\n  from: critic\n  to: orchestrator\n" +
 				"  thread_id: thread-review-01\n---\n\nNOT APPROVED: missing verification\n",
-			want: journal.ApprovalDecisionRejected,
-			ok:   true,
+			want:   journal.ApprovalDecisionRejected,
+			reason: "missing verification",
+			ok:     true,
 		},
 		{
 			name: "plain body is not a decision",
@@ -1552,12 +1569,15 @@ func TestApprovalDecisionFromContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := approvalDecisionFromContent(tt.content)
+			got, reason, ok := approvalDecisionFromContent(tt.content)
 			if ok != tt.ok {
 				t.Fatalf("approvalDecisionFromContent() ok = %v, want %v", ok, tt.ok)
 			}
 			if got != tt.want {
 				t.Fatalf("approvalDecisionFromContent() = %q, want %q", got, tt.want)
+			}
+			if reason != tt.reason {
+				t.Fatalf("approvalDecisionFromContent() reason = %q, want %q", reason, tt.reason)
 			}
 		})
 	}
@@ -1739,6 +1759,31 @@ func TestDeliverMessage_CommandApprovalReplyFromRealCommandApproverNodeRecordsAp
 	if thread.Status != projection.CommandApprovalStatusApproved {
 		t.Fatalf("thread status = %q, want %q", thread.Status, projection.CommandApprovalStatusApproved)
 	}
+
+	history, err := journal.ListCommandApprovalDecisionHistory(requesterSessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory(requester) error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("requester decision history entries = %d, want 1", len(history))
+	}
+	if history[0].ThreadID != threadID || history[0].Decision != journal.ApprovalDecisionApproved || history[0].EffectiveStatus != "approved" {
+		t.Fatalf("requester decision history = %#v, want approved entry for thread %q", history[0], threadID)
+	}
+	if history[0].DecisionMessageID != replyFilename {
+		t.Fatalf("decision message id = %q, want %q", history[0].DecisionMessageID, replyFilename)
+	}
+	if history[0].DecisionReason != "digest reviewed." {
+		t.Fatalf("decision reason = %q, want reply prefix reason", history[0].DecisionReason)
+	}
+
+	reviewerHistory, err := journal.ListCommandApprovalDecisionHistory(reviewerSessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory(reviewer) error = %v", err)
+	}
+	if len(reviewerHistory) != 0 {
+		t.Fatalf("reviewer decision history entries = %d, want 0 because reviewer session has no matching request: %#v", len(reviewerHistory), reviewerHistory)
+	}
 }
 
 // TestDeliverMessage_CommandApprovalReplyFromWrongSenderIsRejected is the
@@ -1868,6 +1913,51 @@ func TestDeliverNotificationWithRetry_RetryUsesRefreshedPaneID(t *testing.T) {
 	}
 }
 
+func TestDeliverSystemMessageDirectResultUsesRegisteredHerdrDelivery(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.NotificationTemplate = "notice {node}"
+	cfg.EnterDelay = 0
+	cfg.TmuxTimeout = 0
+	cfg.Nodes = map[string]config.NodeConfig{"worker": {}}
+	nodeInfo := discovery.NodeInfo{
+		PaneID:      "workspace-1:pane-1",
+		SessionName: "work",
+		SessionDir:  sessionDir,
+		Backend:     string(multiplexer.BackendKindHerdr),
+		Runtime:     "codex",
+	}
+	client := &fakeHerdrMessageWriteClient{snapshot: validHerdrMessageSnapshot()}
+	unregister := controlplane.RegisterHerdrHandAdapter("workspace-1:pane-1", controlplane.HerdrHandAdapter{
+		HerdrInteractiveDeliveryAdapter: controlplane.HerdrInteractiveDeliveryAdapter{
+			Backend: multiplexer.HerdrBackend{
+				Config: validHerdrMessageConfig(),
+				Client: client,
+			},
+		},
+	})
+	t.Cleanup(unregister)
+
+	result, err := DeliverSystemMessageDirectResult("20260414-120000-r1234-from-postman-to-worker.md", nodeInfo, "worker", "postman", "ctx-1", "body", cfg, nil, map[string]discovery.NodeInfo{
+		"work:worker": nodeInfo,
+	}, nil)
+	if err != nil {
+		t.Fatalf("DeliverSystemMessageDirectResult() error = %v", err)
+	}
+	if !result.Delivered {
+		t.Fatal("DeliverSystemMessageDirectResult() delivered = false, want true")
+	}
+	if client.writeTextCalls != 1 || client.writeTextPane != "workspace-1:pane-1" {
+		t.Fatalf("Herdr write calls = %d pane=%q, want notification delivered through registered Herdr adapter", client.writeTextCalls, client.writeTextPane)
+	}
+	if client.sendKeyCalls != 2 || client.sendKeyKey != multiplexer.HerdrKeySubmit {
+		t.Fatalf("Herdr key calls = %d key=%q, want Codex default submit count", client.sendKeyCalls, client.sendKeyKey)
+	}
+}
+
 // TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning verifies that
 // when both delivery attempts fail, a WARNING is logged with node, pane, and session.
 func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T) {
@@ -1909,4 +1999,115 @@ func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T)
 	if !strings.Contains(logOut, "msg=test-fail.md") {
 		t.Errorf("expected msg= in WARNING, got: %s", logOut)
 	}
+}
+
+type fakeHerdrMessageWriteClient struct {
+	snapshot multiplexer.HerdrSessionSnapshot
+
+	writeTextCalls int
+	writeTextPane  string
+	writeTextText  string
+	sendKeyCalls   int
+	sendKeyPane    string
+	sendKeyKey     string
+}
+
+func (f *fakeHerdrMessageWriteClient) Ping(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+	return validHerdrMessageEnvelope(), nil
+}
+
+func (f *fakeHerdrMessageWriteClient) SessionSnapshot(context.Context) (multiplexer.HerdrSessionSnapshot, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) ReadPane(context.Context, string, multiplexer.HerdrPaneReadOptions) (multiplexer.HerdrPaneReadResult, error) {
+	return multiplexer.HerdrPaneReadResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{
+		Envelope: validHerdrMessageEnvelope(),
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{
+			ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}},
+		},
+	}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) WritePaneText(_ context.Context, paneID string, text string) (multiplexer.HerdrWriteResult, error) {
+	f.writeTextCalls++
+	f.writeTextPane = paneID
+	f.writeTextText = text
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) SendPaneKey(_ context.Context, paneID string, key string) (multiplexer.HerdrWriteResult, error) {
+	f.sendKeyCalls++
+	f.sendKeyPane = paneID
+	f.sendKeyKey = key
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) SetWorkspaceMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) ClearWorkspaceMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) SetPaneMetadata(context.Context, string, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func (f *fakeHerdrMessageWriteClient) ClearPaneMetadata(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
+	return multiplexer.HerdrWriteResult{Envelope: validHerdrMessageEnvelope()}, nil
+}
+
+func validHerdrMessageConfig() multiplexer.HerdrReadConfig {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	return multiplexer.HerdrReadConfig{
+		Enabled: true,
+		Runtime: multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  "/tmp/herdr.sock",
+			SessionName: "work",
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+			PaneID:      "workspace-1:pane-1",
+		},
+		Policy: multiplexer.HerdrGatePolicy{
+			ReadEnabled:             true,
+			WriteEnabled:            true,
+			AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
+			AllowedSessions:         []string{"work"},
+			AllowedWorkspaceIDs:     []string{"workspace-1"},
+			AllowedProtocolVersions: []string{"1"},
+			AllowedSchemaVersions:   []int{1},
+			InputSanitizerReady:     true,
+			ComplianceDecision:      multiplexer.HerdrComplianceDecisionRecorded,
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecisionRecorded, AuthorizedBy: "test", DecisionID: "test", DecidedAt: now.Add(-time.Hour), RevalidatedAt: now, CurrentReferences: []string{"test"}},
+			ComplianceNow:           func() time.Time { return now },
+		},
+	}
+}
+
+func validHerdrMessageSnapshot() multiplexer.HerdrSessionSnapshot {
+	return multiplexer.HerdrSessionSnapshot{
+		Envelope: validHerdrMessageEnvelope(),
+		Workspaces: []multiplexer.HerdrWorkspaceSnapshot{{
+			ID: "workspace-1",
+		}},
+		Tabs: []multiplexer.HerdrTabSnapshot{{
+			ID:          "workspace-1:tab-1",
+			WorkspaceID: "workspace-1",
+		}},
+		Panes: []multiplexer.HerdrPaneSnapshot{{
+			ID:          "workspace-1:pane-1",
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+		}},
+	}
+}
+
+func validHerdrMessageEnvelope() multiplexer.HerdrResponseEnvelope {
+	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}
 }

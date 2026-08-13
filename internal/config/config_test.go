@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,7 +15,9 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/template"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
 
 func TestResolveBaseDir(t *testing.T) {
@@ -235,6 +239,90 @@ edges = [
 		if _, ok := cfg.Nodes[name]; !ok {
 			t.Fatalf("missing materialized node %q in %#v", name, cfg.Nodes)
 		}
+	}
+}
+
+func TestHerdrConfigReadConfigUsesInjectedCurrentTimeWithoutSelfValidatingStaleRecords(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
+	freshConfig := fresh.ReadConfig()
+	freshConfig.Runtime.TabID = "workspace-1:tab-1"
+	freshConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(freshConfig.Policy, freshConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err != nil {
+		t.Fatalf("ValidateHerdrWriteGate(fresh) error = %v", err)
+	}
+
+	stale := validHerdrGateConfigFor(now.Add(-25 * time.Hour)).withComplianceNow(func() time.Time { return now })
+	staleConfig := stale.ReadConfig()
+	staleConfig.Runtime.TabID = "workspace-1:tab-1"
+	staleConfig.Runtime.PaneID = "workspace-1:pane-1"
+	if err := multiplexer.ValidateHerdrWriteGate(staleConfig.Policy, staleConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}); err == nil {
+		t.Fatal("ValidateHerdrWriteGate(stale) error = nil, want stale config record to fail closed")
+	}
+}
+
+func TestHerdrConfigReadConfigClockInjectionIsPerConfigAndConcurrent(t *testing.T) {
+	now := time.Date(2031, 4, 5, 6, 7, 8, 0, time.UTC)
+	fresh := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now })
+	stale := validHerdrGateConfigFor(now).withComplianceNow(func() time.Time { return now.Add(25 * time.Hour) })
+
+	validate := func(cfg HerdrConfig) error {
+		readConfig := cfg.ReadConfig()
+		readConfig.Runtime.TabID = "workspace-1:tab-1"
+		readConfig.Runtime.PaneID = "workspace-1:pane-1"
+		return multiplexer.ValidateHerdrWriteGate(readConfig.Policy, readConfig.Runtime, multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1})
+	}
+
+	type result struct {
+		fresh bool
+		err   error
+	}
+	results := make(chan result, 200)
+	for range 100 {
+		go func() { results <- result{fresh: true, err: validate(fresh)} }()
+		go func() { results <- result{err: validate(stale)} }()
+	}
+	var freshPass, staleFail int
+	for range 200 {
+		got := <-results
+		switch {
+		case got.fresh && got.err == nil:
+			freshPass++
+		case !got.fresh && got.err != nil:
+			staleFail++
+		case got.fresh:
+			t.Fatalf("fresh config validation error = %v", got.err)
+		default:
+			t.Fatal("stale config validation passed, want fail-closed")
+		}
+	}
+	if freshPass != 100 || staleFail != 100 {
+		t.Fatalf("concurrent validation freshPass=%d staleFail=%d, want 100/100", freshPass, staleFail)
+	}
+}
+
+func validHerdrGateConfigFor(revalidatedAt time.Time) HerdrConfig {
+	decidedAt := revalidatedAt.Add(-time.Hour)
+	return HerdrConfig{
+		Enabled:                     true,
+		SocketPath:                  "/tmp/herdr.sock",
+		SessionName:                 "work",
+		WorkspaceID:                 "workspace-1",
+		AllowedSocketPaths:          []string{"/tmp/herdr.sock"},
+		AllowedSessions:             []string{"work"},
+		AllowedWorkspaceIDs:         []string{"workspace-1"},
+		AllowedProtocolVersions:     []string{"1"},
+		AllowedSchemaVersions:       []int{1},
+		ReadEnabled:                 true,
+		WriteEnabled:                true,
+		InputSanitizerReady:         true,
+		ComplianceDecision:          string(multiplexer.HerdrComplianceDecisionRecorded),
+		ComplianceAuthorizedBy:      "test-authority",
+		ComplianceDecisionID:        "test-decision",
+		ComplianceDecidedAt:         decidedAt.Format(time.RFC3339),
+		ComplianceRevalidatedAt:     revalidatedAt.Format(time.RFC3339),
+		ComplianceCurrentReferences: []string{"https://github.com/ogulcancelik/herdr/blob/master/LICENSE"},
 	}
 }
 
@@ -462,6 +550,12 @@ func TestLoadConfig_Default(t *testing.T) {
 	if cfg.UINode != "messenger" {
 		t.Errorf("default UINode: got %q, want %q", cfg.UINode, "messenger")
 	}
+	if cfg.VerdictGraceSeconds != 3600 {
+		t.Errorf("default VerdictGraceSeconds: got %v, want 3600", cfg.VerdictGraceSeconds)
+	}
+	if cfg.VerdictDebtCap != 3 {
+		t.Errorf("default VerdictDebtCap: got %d, want 3", cfg.VerdictDebtCap)
+	}
 	if cfg.HasExplicitUINodeSetting() {
 		t.Error("default UINode should not be treated as an explicit operator setting")
 	}
@@ -491,6 +585,20 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 	if cfg.NodeDefaults.EnterCount != 2 {
 		t.Errorf("NodeDefaults.EnterCount: got %v, want 2", cfg.NodeDefaults.EnterCount)
+	}
+}
+
+func TestLoadConfig_AuditDrawDefaults(t *testing.T) {
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig with empty path failed: %v", err)
+	}
+
+	if cfg.AuditReviewProbabilityFloor != 0.05 {
+		t.Errorf("default AuditReviewProbabilityFloor: got %v, want 0.05", cfg.AuditReviewProbabilityFloor)
+	}
+	if cfg.AuditTarget != "" {
+		t.Errorf("default AuditTarget: got %q, want empty", cfg.AuditTarget)
 	}
 }
 
@@ -1210,116 +1318,175 @@ func TestResolveNodesDir(t *testing.T) {
 
 func TestGetTmuxPaneName(t *testing.T) {
 	t.Run("TMUX_PANE set uses targeted lookup", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		argsFile := filepath.Join(tmpDir, "args.txt")
-		fakeTmux := filepath.Join(tmpDir, "tmux")
-		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-pane-title'\n"
-		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		origPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmpDir+":"+origPath)
+		fake := tmuxtest.Install(
+			t,
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-t", "%42", "-p", "#{pane_title}"},
+				Stdout: "test-pane-title\n",
+			}),
+		)
 		t.Setenv("TMUX_PANE", "%42")
 
 		got := GetTmuxPaneName()
 		if got != "test-pane-title" {
 			t.Errorf("GetTmuxPaneName() = %q, want %q", got, "test-pane-title")
 		}
-		argsData, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("ReadFile args failed: %v", err)
+		want := []string{
+			"display-message -t %42 -p #{pane_title}",
 		}
-		args := strings.TrimSpace(string(argsData))
-		if !strings.Contains(args, "-t") {
-			t.Errorf("tmux args %q: want '-t' for targeted path", args)
-		}
-		if !strings.Contains(args, "%42") {
-			t.Errorf("tmux args %q: want '%%42' for targeted path", args)
+		if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invocations = %#v, want %#v", got, want)
 		}
 	})
 
 	t.Run("TMUX_PANE unset uses untargeted fallback", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		argsFile := filepath.Join(tmpDir, "args.txt")
-		fakeTmux := filepath.Join(tmpDir, "tmux")
-		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-pane-title'\n"
-		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		origPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmpDir+":"+origPath)
+		fake := tmuxtest.Install(
+			t,
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-p", "#{pane_id}"},
+				Stdout: "%7\n",
+			}),
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-t", "%7", "-p", "#{pane_title}"},
+				Stdout: "test-pane-title\n",
+			}),
+		)
 		t.Setenv("TMUX_PANE", "")
 
 		got := GetTmuxPaneName()
 		if got != "test-pane-title" {
 			t.Errorf("GetTmuxPaneName() = %q, want %q", got, "test-pane-title")
 		}
-		argsData, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("ReadFile args failed: %v", err)
+		want := []string{
+			"display-message -p #{pane_id}",
+			"display-message -t %7 -p #{pane_title}",
 		}
-		args := strings.TrimSpace(string(argsData))
-		if strings.Contains(args, "-t") {
-			t.Errorf("tmux args %q: should NOT contain '-t' for untargeted path", args)
+		if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invocations = %#v, want %#v", got, want)
 		}
 	})
 }
 
 func TestGetTmuxSessionName(t *testing.T) {
 	t.Run("TMUX_PANE set uses targeted lookup", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		argsFile := filepath.Join(tmpDir, "args.txt")
-		fakeTmux := filepath.Join(tmpDir, "tmux")
-		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-session'\n"
-		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		origPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmpDir+":"+origPath)
+		fake := tmuxtest.Install(
+			t,
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-t", "%7", "-p", "#{session_name}"},
+				Stdout: "test-session\n",
+			}),
+		)
 		t.Setenv("TMUX_PANE", "%7")
 
 		got := GetTmuxSessionName()
 		if got != "test-session" {
 			t.Errorf("GetTmuxSessionName() = %q, want %q", got, "test-session")
 		}
-		argsData, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("ReadFile args failed: %v", err)
+		want := []string{
+			"display-message -t %7 -p #{session_name}",
 		}
-		args := strings.TrimSpace(string(argsData))
-		if !strings.Contains(args, "-t") {
-			t.Errorf("tmux args %q: want '-t' for targeted path", args)
-		}
-		if !strings.Contains(args, "%7") {
-			t.Errorf("tmux args %q: want '%%7' for targeted path", args)
+		if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invocations = %#v, want %#v", got, want)
 		}
 	})
 
 	t.Run("TMUX_PANE unset uses untargeted fallback", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		argsFile := filepath.Join(tmpDir, "args.txt")
-		fakeTmux := filepath.Join(tmpDir, "tmux")
-		script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\necho 'test-session'\n"
-		if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-			t.Fatalf("WriteFile failed: %v", err)
-		}
-		origPath := os.Getenv("PATH")
-		t.Setenv("PATH", tmpDir+":"+origPath)
+		fake := tmuxtest.Install(
+			t,
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-p", "#{pane_id}"},
+				Stdout: "%8\n",
+			}),
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-t", "%8", "-p", "#{session_name}"},
+				Stdout: "test-session\n",
+			}),
+		)
 		t.Setenv("TMUX_PANE", "")
 
 		got := GetTmuxSessionName()
 		if got != "test-session" {
 			t.Errorf("GetTmuxSessionName() = %q, want %q", got, "test-session")
 		}
-		argsData, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatalf("ReadFile args failed: %v", err)
+		want := []string{
+			"display-message -p #{pane_id}",
+			"display-message -t %8 -p #{session_name}",
 		}
-		args := strings.TrimSpace(string(argsData))
-		if strings.Contains(args, "-t") {
-			t.Errorf("tmux args %q: should NOT contain '-t' for untargeted path", args)
+		if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invocations = %#v, want %#v", got, want)
 		}
 	})
+}
+
+func TestGetTmuxPaneID(t *testing.T) {
+	t.Run("TMUX_PANE set uses targeted identity", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%42")
+
+		if got := GetTmuxPaneID(); got != "%42" {
+			t.Fatalf("GetTmuxPaneID() = %q, want %%42", got)
+		}
+	})
+
+	t.Run("TMUX_PANE unset resolves current pane first", func(t *testing.T) {
+		fake := tmuxtest.Install(
+			t,
+			tmuxtest.WithCommand(tmuxtest.Command{
+				Args:   []string{"display-message", "-p", "#{pane_id}"},
+				Stdout: "%43\n",
+			}),
+		)
+		t.Setenv("TMUX_PANE", "")
+
+		if got := GetTmuxPaneID(); got != "%43" {
+			t.Fatalf("GetTmuxPaneID() = %q, want %%43", got)
+		}
+		want := []string{
+			"display-message -p #{pane_id}",
+		}
+		if got := fake.Invocations(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("invocations = %#v, want %#v", got, want)
+		}
+	})
+}
+
+func TestCurrentTmuxIdentityRejectsNonCanonicalTMUXPane(t *testing.T) {
+	tests := []string{
+		"postman",
+		"postman:1.0",
+		"1.0",
+		"%42 ",
+		" %42",
+		"%",
+		"%abc",
+		"%42;display-message",
+	}
+
+	for _, paneID := range tests {
+		t.Run(paneID, func(t *testing.T) {
+			t.Setenv("TMUX_PANE", paneID)
+
+			_, err := CurrentTmuxIdentity()
+			if err == nil {
+				t.Fatal("CurrentTmuxIdentity() error = nil, want lookup failure")
+			}
+			var identityErr multiplexer.IdentityError
+			if !errors.As(err, &identityErr) {
+				t.Fatalf("CurrentTmuxIdentity() error = %T %v, want IdentityError", err, err)
+			}
+			if identityErr.Field != "pane_id" || identityErr.Failure != multiplexer.IdentityFailureLookupFailed {
+				t.Fatalf("identity error = %#v, want pane_id lookup_failed", identityErr)
+			}
+			if got := GetTmuxPaneID(); got != "" {
+				t.Fatalf("GetTmuxPaneID() = %q, want empty", got)
+			}
+			if got := GetTmuxSessionName(); got != "" {
+				t.Fatalf("GetTmuxSessionName() = %q, want empty", got)
+			}
+			if got := GetTmuxPaneName(); got != "" {
+				t.Fatalf("GetTmuxPaneName() = %q, want empty", got)
+			}
+		})
+	}
 }
 
 func TestMergeConfig_ScalarOverride(t *testing.T) {
@@ -1330,12 +1497,18 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	base.SessionScanInterval = 1.0
 	base.EnterDelay = 0.5
 	base.BaseDir = ""
+	base.VerdictGraceSeconds = 3600
+	base.VerdictDebtCap = 3
 
 	override := &Config{
-		Nodes:               make(map[string]NodeConfig),
-		ScanInterval:        5.0,
-		SessionScanInterval: 0.5,
-		BaseDir:             "/project/base",
+		Nodes:                  make(map[string]NodeConfig),
+		ScanInterval:           5.0,
+		SessionScanInterval:    0.5,
+		BaseDir:                "/project/base",
+		VerdictGraceSeconds:    120,
+		VerdictDebtCap:         1,
+		verdictGraceSecondsSet: true,
+		verdictDebtCapSet:      true,
 	}
 
 	mergeConfig(base, override)
@@ -1349,9 +1522,32 @@ func TestMergeConfig_ScalarOverride(t *testing.T) {
 	if base.BaseDir != "/project/base" {
 		t.Errorf("BaseDir: got %q, want %q", base.BaseDir, "/project/base")
 	}
+	if base.VerdictGraceSeconds != 120 {
+		t.Errorf("VerdictGraceSeconds: got %v, want 120", base.VerdictGraceSeconds)
+	}
+	if base.VerdictDebtCap != 1 {
+		t.Errorf("VerdictDebtCap: got %d, want 1", base.VerdictDebtCap)
+	}
 	// Unset override field should not change base
 	if base.EnterDelay != 0.5 {
 		t.Errorf("EnterDelay: got %v, want 0.5 (unset override should not change base)", base.EnterDelay)
+	}
+}
+
+func TestMergeConfig_VerdictDebtCapExplicitZeroOverride(t *testing.T) {
+	base := DefaultConfig()
+	base.VerdictDebtCap = 3
+
+	override := &Config{
+		Nodes:             make(map[string]NodeConfig),
+		VerdictDebtCap:    0,
+		verdictDebtCapSet: true,
+	}
+
+	mergeConfig(base, override)
+
+	if base.VerdictDebtCap != 0 {
+		t.Errorf("VerdictDebtCap: got %d, want explicit zero override", base.VerdictDebtCap)
 	}
 }
 
@@ -1382,6 +1578,67 @@ func TestMergeConfig_NodeMerge(t *testing.T) {
 	if base.Nodes["new"].Template != "new template" {
 		t.Errorf("new.Template: got %q, want %q", base.Nodes["new"].Template, "new template")
 	}
+}
+
+func TestSetSessionEnabledMarkerWithBackendUsesInjectedBackend(t *testing.T) {
+	backend := &fakeConfigOwnershipBackend{kind: multiplexer.BackendKindHerdr}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", true); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(enable) error = %v", err)
+	}
+	if backend.setSessionCalls != 1 || backend.contextID != "ctx-main" || backend.sessionName != "work" {
+		t.Fatalf("set session marker = calls:%d context:%q session:%q, want injected backend", backend.setSessionCalls, backend.contextID, backend.sessionName)
+	}
+
+	if err := SetSessionEnabledMarkerWithBackend(backend, "ctx-main", "work", false); err != nil {
+		t.Fatalf("SetSessionEnabledMarkerWithBackend(disable) error = %v", err)
+	}
+	if backend.clearSessionCalls != 1 || backend.clearSessionName != "work" {
+		t.Fatalf("clear session marker = calls:%d session:%q, want injected backend", backend.clearSessionCalls, backend.clearSessionName)
+	}
+}
+
+type fakeConfigOwnershipBackend struct {
+	kind multiplexer.BackendKind
+
+	setSessionCalls   int
+	contextID         string
+	sessionName       string
+	clearSessionCalls int
+	clearSessionName  string
+}
+
+func (f *fakeConfigOwnershipBackend) Kind() multiplexer.BackendKind {
+	return f.kind
+}
+
+func (f *fakeConfigOwnershipBackend) SessionOwnerMarker(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetSessionOwnerMarker(_ context.Context, contextID, sessionName string, _ int) error {
+	f.setSessionCalls++
+	f.contextID = contextID
+	f.sessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearSessionOwnerMarker(_ context.Context, sessionName string) error {
+	f.clearSessionCalls++
+	f.clearSessionName = sessionName
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConfigOwnershipBackend) SetPaneOwnerMarker(context.Context, multiplexer.ResourceID, string) error {
+	return nil
+}
+
+func (f *fakeConfigOwnershipBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestLoadConfig_IgnoresProjectLocalWhenXDGExists(t *testing.T) {
