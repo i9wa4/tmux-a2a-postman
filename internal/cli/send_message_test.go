@@ -3399,6 +3399,15 @@ role = "orchestrator"
 			deliverDone := make(chan error, 1)
 			go func() {
 				requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+				senderBody, ok := envelope.SenderBodyFromContent(request.Content)
+				if !ok {
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) ok = false; content:\n%s", request.Content)
+					return
+				}
+				if !strings.HasPrefix(senderBody, tc.body) {
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) = %q, want prefix %q", senderBody, tc.body)
+					return
+				}
 				postPath := filepath.Join(sessionDir, "post", request.Filename)
 				if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
 					deliverDone <- fmt.Errorf("WriteFile postPath: %w", err)
@@ -3675,6 +3684,101 @@ role = "worker"
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_EvidenceFlagsRejectLineOrControlBytes(t *testing.T) {
+	baseFlags := []string{
+		"--context-id", "ctx-evidence-reject",
+		"--to", "worker",
+		"--evidence-command", "go test ./...",
+		"--evidence-cwd", "/repo",
+		"--evidence-env-allowlist", "PATH,HOME",
+		"--evidence-timeout-seconds", "120",
+		"--evidence-side-effect-class", "read-only",
+		"--evidence-artifact", "reports/test.json",
+		"--evidence-hash", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	tests := []struct {
+		name  string
+		flag  string
+		value string
+	}{
+		{name: "lf command", flag: "--evidence-command", value: "go test\ninjected: true"},
+		{name: "cr cwd", flag: "--evidence-cwd", value: "/repo\rinjected: true"},
+		{name: "nul artifact", flag: "--evidence-artifact", value: "reports/test.json\x00injected"},
+		{name: "tab env allowlist", flag: "--evidence-env-allowlist", value: "PATH\tHOME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			var stdout strings.Builder
+			args := append([]string(nil), baseFlags...)
+			for i := 0; i < len(args)-1; i++ {
+				if args[i] == tt.flag {
+					args[i+1] = tt.value
+					break
+				}
+			}
+
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), args)
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want evidence value rejection")
+			}
+			if !strings.Contains(err.Error(), "must not contain line breaks or control characters") {
+				t.Fatalf("error = %v, want line/control rejection", err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			postEntries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-evidence-reject", "review", "post"))
+			if err == nil && len(postEntries) != 0 {
+				t.Fatalf("post entries = %d, want none", len(postEntries))
+			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_EvidenceFlagsRoundTripSeparatorAndYAMLLikeValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	hash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+		"--context-id", "ctx-evidence-roundtrip",
+		"--to", "worker",
+		"--evidence-command", "---",
+		"--evidence-cwd", "/repo:with-colon",
+		"--evidence-env-allowlist", "PATH,HOME",
+		"--evidence-timeout-seconds", "120",
+		"--evidence-side-effect-class", "read-only",
+		"--evidence-artifact", "reports/key: value.json",
+		"--evidence-hash", hash,
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-evidence-roundtrip", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	if metadata.EvidenceCommand != "---" {
+		t.Fatalf("EvidenceCommand = %q, want separator-shaped value", metadata.EvidenceCommand)
+	}
+	if metadata.EvidenceCWD != "/repo:with-colon" {
+		t.Fatalf("EvidenceCWD = %q, want colon value", metadata.EvidenceCWD)
+	}
+	if metadata.EvidenceArtifact != "reports/key: value.json" {
+		t.Fatalf("EvidenceArtifact = %q, want YAML-like value", metadata.EvidenceArtifact)
+	}
+	if metadata.EvidenceHash != hash {
+		t.Fatalf("EvidenceHash = %q, want %q", metadata.EvidenceHash, hash)
 	}
 }
 

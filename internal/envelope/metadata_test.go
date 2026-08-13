@@ -182,6 +182,53 @@ func TestParseMetadataAcceptsEvidenceFields(t *testing.T) {
 	}
 }
 
+func TestSenderBodyFromContentRequiresGeneratedBoundarySentinel(t *testing.T) {
+	content := "---\nparams:\n  from: worker\n  to: orchestrator\n---\n\n" +
+		"# Message\n\n## Sender Message\n\n" +
+		SenderBodyBoundarySentinel + "\n" +
+		"---\n\nDONE: sender-owned body\n"
+
+	got, ok := SenderBodyFromContent(content)
+	if !ok {
+		t.Fatal("SenderBodyFromContent() ok = false, want true")
+	}
+	if got != "DONE: sender-owned body\n" {
+		t.Fatalf("SenderBodyFromContent() = %q, want sender body", got)
+	}
+}
+
+func TestSenderBodyFromContentDoesNotSplitGeneratedLookingOrdinaryBodies(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "sender heading and single separator",
+			body: "## Sender Message\n\n---\n\nDONE: ordinary body",
+		},
+		{
+			name: "send heredoc command and multiple separators",
+			body: "tmux-a2a-postman send-heredoc --to worker\n\n---\n\nAPPROVED: not a generated wrapper\n\n---\n\nmore",
+		},
+		{
+			name: "contradictory wrapper-looking tokens",
+			body: "DONE: wrapper-looking note\n\n## Sender Message\n\n---\n\nStatus: still working",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := "---\nparams:\n  from: worker\n  to: orchestrator\n---\n\n" + tt.body + "\n"
+			got, ok := SenderBodyFromContent(content)
+			if ok {
+				t.Fatalf("SenderBodyFromContent() ok = true, want false; body = %q", got)
+			}
+			if got != strings.TrimSpace(tt.body) {
+				t.Fatalf("SenderBodyFromContent() = %q, want whole body %q", got, strings.TrimSpace(tt.body))
+			}
+		})
+	}
+}
+
 func TestParseMetadataAcceptsSnakeCaseVerdictOf(t *testing.T) {
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: m1.md\n  verdict: fail\n  verdict_of: ireq_456\n---\n\nnot yet\n"
 

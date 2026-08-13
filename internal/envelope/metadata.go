@@ -43,6 +43,8 @@ type Metadata struct {
 	Body                     string
 }
 
+const SenderBodyBoundarySentinel = "<!-- tmux-a2a-postman:sender-body-boundary -->"
+
 type frontmatterScan struct {
 	frontmatter      string
 	body             string
@@ -115,7 +117,7 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 			newlineEnd = lineEnd + 1
 		}
 		line := strings.TrimRight(body[offset:lineEnd], "\r")
-		if strings.TrimSpace(line) == "---" && hasGeneratedSendEnvelopeContext(body[:offset]) {
+		if strings.TrimSpace(line) == "---" && hasSenderBodyBoundarySentinel(body[:offset]) {
 			senderBody := body[newlineEnd:]
 			if strings.HasPrefix(senderBody, "\r\n") {
 				senderBody = senderBody[2:]
@@ -132,13 +134,10 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 	return "", false
 }
 
-func hasGeneratedSendEnvelopeContext(prefix string) bool {
+func hasSenderBodyBoundarySentinel(prefix string) bool {
 	for _, rawLine := range strings.Split(prefix, "\n") {
 		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
-		if line == "## Sender Message" {
-			return true
-		}
-		if strings.HasPrefix(line, "tmux-a2a-postman send-heredoc ") || line == "tmux-a2a-postman send-heredoc" {
+		if line == SenderBodyBoundarySentinel {
 			return true
 		}
 	}

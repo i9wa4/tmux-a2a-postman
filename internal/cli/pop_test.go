@@ -1004,7 +1004,7 @@ func TestRunPop_IncludesRuntimeContextSummaryWhenSnapshotReferenced(t *testing.T
 		"  runtimeContextCapturedAt: " + snapshot.CapturedAt + "\n" +
 		"  runtimeContextHash: " + snapshot.ContentHash + "\n" +
 		"---\n\n" +
-		"## Sender Message\n\n---\n\nRead the archived body before acting.\n"
+		"## Sender Message\n\n" + envelope.SenderBodyBoundarySentinel + "\n---\n\nRead the archived body before acting.\n"
 	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile inbox: %v", err)
 	}

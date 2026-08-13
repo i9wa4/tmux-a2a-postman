@@ -15,6 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
@@ -297,6 +298,88 @@ func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("missing-evidence dead letters = %d, want 1: %v", len(matches), matches)
+	}
+}
+
+func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *testing.T) {
+	tests := []struct {
+		name           string
+		wrapperLine    string
+		senderBody     string
+		wantDeadLetter bool
+	}{
+		{
+			name:        "wrapper terminal token ignored",
+			wrapperLine: "DONE: wrapper-generated text",
+			senderBody:  "Status: still working",
+		},
+		{
+			name:           "sender terminal token enforced",
+			wrapperLine:    "Status: wrapper text",
+			senderBody:     "DONE: sender claim",
+			wantDeadLetter: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionDir := filepath.Join(t.TempDir(), "test")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("config.CreateSessionDirs failed: %v", err)
+			}
+			manager := journal.NewManager("test-ctx", os.Getpid())
+			journal.InstallProcessManager(manager)
+			t.Cleanup(journal.ClearProcessManager)
+			if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+				t.Fatalf("journal bootstrap failed: %v", err)
+			}
+
+			filename := "20260713-100001-from-orchestrator-to-worker.md"
+			postPath := filepath.Join(sessionDir, "post", filename)
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+				"# Message\n\n" + tt.wrapperLine + "\n\n" +
+				envelope.SenderBodyBoundarySentinel + "\n---\n\n" +
+				tt.senderBody + "\n"
+			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+				"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+			}
+			adjacency := map[string][]string{
+				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
+			}
+			cfg := &config.Config{
+				EnterDelay:                  0.1,
+				TmuxTimeout:                 1.0,
+				EvidencePresenceGateEnabled: true,
+				EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+			}
+			if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+				t.Fatalf("DeliverMessage failed: %v", err)
+			}
+
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+			deadPath := filepath.Join(sessionDir, "dead-letter", "20260713-100001-from-orchestrator-to-worker-dl-missing-evidence.md")
+			if tt.wantDeadLetter {
+				if _, err := os.Stat(deadPath); err != nil {
+					t.Fatalf("dead letter missing: %v", err)
+				}
+				if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+					t.Fatalf("message delivered to inbox despite sender claim: %v", err)
+				}
+				return
+			}
+			if _, err := os.Stat(inboxPath); err != nil {
+				t.Fatalf("message not delivered to inbox: %v", err)
+			}
+			if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+				t.Fatalf("message dead-lettered despite non-terminal sender body: %v", err)
+			}
+		})
 	}
 }
 

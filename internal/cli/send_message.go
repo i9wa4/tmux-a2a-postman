@@ -352,7 +352,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n" + envelope.SenderBodyBoundarySentinel + "\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 	runtimeSnapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
@@ -964,10 +964,12 @@ func validateInputRequestFillFlag(flagName, inputRequestID string) error {
 
 func validateSendEvidenceFlags(fields map[string]string) error {
 	any := false
-	for _, value := range fields {
+	for key, value := range fields {
+		if err := validateSendEvidenceParamValue(key, value); err != nil {
+			return err
+		}
 		if strings.TrimSpace(value) != "" {
 			any = true
-			break
 		}
 	}
 	if !any {
@@ -1003,6 +1005,15 @@ func validateSendEvidenceFlags(fields map[string]string) error {
 	}
 	if err := contract.ValidateShape(); err != nil {
 		return fmt.Errorf("invalid evidence replay contract: %w", err)
+	}
+	return nil
+}
+
+func validateSendEvidenceParamValue(key, value string) error {
+	for _, r := range value {
+		if r == '\n' || r == '\r' || r == 0 || r < 0x20 || r == 0x7f {
+			return fmt.Errorf("--%s must not contain line breaks or control characters", strings.ReplaceAll(key, "_", "-"))
+		}
 	}
 	return nil
 }
