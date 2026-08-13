@@ -850,15 +850,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				}
 				if scan.Trigger == "" {
 					if compactionAbsenceAuthoritative(state, compactionScope) {
-						state.LastCompactionTrigger = ""
-						state.LastCompactionMarkerIdentity = ""
-						state.LastCompactionHash = 0
-						state.LastCompactionMarkers = 0
-						state.LastCompactionMarkerHash = 0
-						state.LastCompactionScope = ""
-						state.LastCompactionSuffix = compactionSuffixIdentity{}
-						state.LastCompactionPrefixHash = 0
-						state.LastCompactionPrefixLines = 0
+						clearCompactionState(&state)
 						t.clearNodeCompactionMemory(nodeKey)
 					} else {
 						// Preserve handled history across transient visible/recent absence.
@@ -899,15 +891,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				state.LastCompactionTrigger = scan.Trigger
 				t.rememberNodeCompaction(nodeKey, state)
 			} else if compactionAbsenceAuthoritative(state, compactionScope) {
-				state.LastCompactionTrigger = ""
-				state.LastCompactionMarkerIdentity = ""
-				state.LastCompactionHash = 0
-				state.LastCompactionMarkers = 0
-				state.LastCompactionMarkerHash = 0
-				state.LastCompactionScope = ""
-				state.LastCompactionSuffix = compactionSuffixIdentity{}
-				state.LastCompactionPrefixHash = 0
-				state.LastCompactionPrefixLines = 0
+				clearCompactionState(&state)
 				t.clearNodeCompactionMemory(nodeKey)
 			}
 		}

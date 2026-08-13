@@ -3054,11 +3054,20 @@ func TestCheckPaneCapture_RecreatedPaneAuthoritativeMarkerFreeHistoryClearsNodeM
 	state := tracker.paneCaptureState["%11"]
 	_, memoryExists = tracker.nodeCompactionMemory[nodeKey]
 	tracker.mu.Unlock()
-	if !state.LastCompactionPingAt.Equal(firstPingAt) {
-		t.Fatalf("LastCompactionPingAt = %v, want retained %v", state.LastCompactionPingAt, firstPingAt)
+	if !state.LastCompactionPingAt.IsZero() {
+		t.Fatalf("LastCompactionPingAt = %v, want cleared", state.LastCompactionPingAt)
 	}
 	if state.LastCompactionTrigger != "" {
 		t.Fatalf("LastCompactionTrigger = %q, want cleared", state.LastCompactionTrigger)
+	}
+	if state.LastCompactionDeliveryPending {
+		t.Fatal("LastCompactionDeliveryPending = true, want cleared")
+	}
+	if state.LastCompactionDeliveredIdentity != "" {
+		t.Fatalf("LastCompactionDeliveredIdentity = %q, want cleared", state.LastCompactionDeliveredIdentity)
+	}
+	if state.LastCompactionDeliveredKey != "" {
+		t.Fatalf("LastCompactionDeliveredKey = %q, want cleared", state.LastCompactionDeliveredKey)
 	}
 	if state.LastCompactionMarkerIdentity != "" {
 		t.Fatalf("LastCompactionMarkerIdentity = %q, want cleared", state.LastCompactionMarkerIdentity)
@@ -3098,16 +3107,16 @@ func TestCheckPaneCapture_RecreatedPaneAuthoritativeMarkerFreeHistoryClearsNodeM
 	if err := os.WriteFile(historyPath, []byte(markerHistory), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := tracker.checkPaneCapture(cfg, nodes); len(got) != 0 {
-		t.Fatalf("same marker inside cooldown targets = %d, want 0", len(got))
+	if got := tracker.checkPaneCapture(cfg, nodes); len(got) != 1 {
+		t.Fatalf("same marker inside cooldown targets = %d, want 1 after authoritative absence clears compaction episode", len(got))
 	}
 
-	now = firstPingAt.Add(compactionPingCooldown + time.Second)
-	if err := os.WriteFile(visiblePath, []byte("visible marker returns after cooldown"), 0o644); err != nil {
+	now = now.Add(time.Second)
+	if err := os.WriteFile(visiblePath, []byte("visible marker remains after immediate reappearance"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := tracker.checkPaneCapture(cfg, nodes); len(got) != 1 {
-		t.Fatalf("same marker after cooldown targets = %d, want 1", len(got))
+	if got := tracker.checkPaneCapture(cfg, nodes); len(got) != 0 {
+		t.Fatalf("same marker after immediate reappearance targets = %d, want 0 for exact-once re-emit", len(got))
 	}
 }
 
