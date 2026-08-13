@@ -1013,7 +1013,7 @@ func validateSendEvidenceFlags(fields map[string]string) error {
 		ArtifactPath:         strings.TrimSpace(fields["evidence_artifact"]),
 		ExpectedArtifactHash: strings.TrimSpace(fields["evidence_hash"]),
 	}
-	if err := contract.ValidateShape(); err != nil {
+	if err := contract.Validate(contract.CWD); err != nil {
 		return fmt.Errorf("invalid evidence replay contract: %w", err)
 	}
 	return nil

@@ -14,6 +14,13 @@ func TestContainedArtifactPathRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestContainedArtifactPathRejectsAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	if _, err := ContainedArtifactPath(root, filepath.Join(root, "artifact.txt")); err == nil {
+		t.Fatal("ContainedArtifactPath() error = nil, want absolute path rejection")
+	}
+}
+
 func TestContainedArtifactPathRejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

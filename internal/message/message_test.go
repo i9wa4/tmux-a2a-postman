@@ -426,6 +426,112 @@ func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *test
 	}
 }
 
+func TestDeliverMessageEvidenceGateRejectsUncontainedEvidenceArtifact(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifactPath  func(root string) string
+		setupArtifact func(t *testing.T, root string)
+	}{
+		{
+			name: "absolute path",
+			artifactPath: func(root string) string {
+				return filepath.Join(root, "reports", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, "reports"), 0o755); err != nil {
+					t.Fatalf("Mkdir reports: %v", err)
+				}
+			},
+		},
+		{
+			name: "traversal",
+			artifactPath: func(root string) string {
+				return "../outside/test.json"
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(filepath.Dir(root), "outside"), 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+			},
+		},
+		{
+			name: "symlink escape",
+			artifactPath: func(root string) string {
+				return filepath.Join("escape", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				outside := filepath.Join(filepath.Dir(root), "outside")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+					t.Fatalf("Symlink escape: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sessionDir := filepath.Join(tmpDir, "test")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("config.CreateSessionDirs failed: %v", err)
+			}
+			manager := journal.NewManager("test-ctx", os.Getpid())
+			journal.InstallProcessManager(manager)
+			t.Cleanup(journal.ClearProcessManager)
+			if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+				t.Fatalf("journal bootstrap failed: %v", err)
+			}
+
+			evidenceRoot := filepath.Join(tmpDir, "evidence-root")
+			if err := os.Mkdir(evidenceRoot, 0o755); err != nil {
+				t.Fatalf("Mkdir evidence root: %v", err)
+			}
+			tt.setupArtifact(t, evidenceRoot)
+
+			filename := "20260713-100001-from-orchestrator-to-worker.md"
+			postPath := filepath.Join(sessionDir, "post", filename)
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n  evidence_command: go test ./...\n  evidence_cwd: " + evidenceRoot + "\n  evidence_timeout_seconds: 120\n  evidence_side_effect_class: read-only\n  evidence_artifact: " + tt.artifactPath(evidenceRoot) + "\n  evidence_hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n\n" +
+				envelope.SenderBodyBoundaryForMessageID(filename) + "\n---\n\nDONE: complete\n"
+			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+				"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+			}
+			adjacency := map[string][]string{
+				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
+			}
+			cfg := &config.Config{
+				EnterDelay:                  0.1,
+				TmuxTimeout:                 1.0,
+				EvidencePresenceGateEnabled: true,
+				EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+			}
+			if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+				t.Fatalf("DeliverMessage failed: %v", err)
+			}
+
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+			deadPath := filepath.Join(sessionDir, "dead-letter", "20260713-100001-from-orchestrator-to-worker-dl-missing-evidence.md")
+			if _, err := os.Stat(deadPath); err != nil {
+				t.Fatalf("dead letter missing: %v", err)
+			}
+			if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+				t.Fatalf("message delivered to inbox despite uncontained evidence artifact: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	sessionDir := t.TempDir()
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

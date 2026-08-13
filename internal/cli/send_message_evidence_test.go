@@ -252,9 +252,10 @@ role = "orchestrator"
 				"--to", "orchestrator",
 			}
 			if tc.evidenceFlags {
+				evidenceRoot := createEvidenceRootForSendTest(t)
 				args = append(args,
 					"--evidence-command", "go test ./...",
-					"--evidence-cwd", "/repo",
+					"--evidence-cwd", evidenceRoot,
 					"--evidence-env-allowlist", "PATH,HOME",
 					"--evidence-timeout-seconds", "120",
 					"--evidence-side-effect-class", "read-only",

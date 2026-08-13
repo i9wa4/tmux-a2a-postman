@@ -13,6 +13,10 @@ import (
 )
 
 func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("Mkdir reports: %v", err)
+	}
 	partial := envelope.Metadata{
 		EvidenceCommand:  "go test ./...",
 		EvidenceArtifact: "reports/test.json",
@@ -24,7 +28,7 @@ func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
 
 	complete := envelope.Metadata{
 		EvidenceCommand:         "go test ./...",
-		EvidenceCWD:             "/repo",
+		EvidenceCWD:             root,
 		EvidenceEnvAllowlist:    "PATH, HOME",
 		EvidenceTimeoutSeconds:  "120",
 		EvidenceSideEffectClass: string(evidence.SideEffectIdempotent),
@@ -37,9 +41,13 @@ func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
 }
 
 func TestHasEvidenceReplayContractBoundsTimeoutSeconds(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("Mkdir reports: %v", err)
+	}
 	base := envelope.Metadata{
 		EvidenceCommand:         "go test ./...",
-		EvidenceCWD:             "/repo",
+		EvidenceCWD:             root,
 		EvidenceSideEffectClass: string(evidence.SideEffectReadOnly),
 		EvidenceArtifact:        "reports/test.json",
 		EvidenceHash:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -59,6 +67,42 @@ func TestHasEvidenceReplayContractBoundsTimeoutSeconds(t *testing.T) {
 			metadata.EvidenceTimeoutSeconds = tt.timeout
 			if got := hasEvidenceReplayContract(metadata); got != tt.want {
 				t.Fatalf("hasEvidenceReplayContract() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasEvidenceReplayContractRejectsUncontainedArtifactPath(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("Mkdir reports: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatalf("Symlink escape: %v", err)
+	}
+
+	base := envelope.Metadata{
+		EvidenceCommand:         "go test ./...",
+		EvidenceCWD:             root,
+		EvidenceTimeoutSeconds:  "120",
+		EvidenceSideEffectClass: string(evidence.SideEffectReadOnly),
+		EvidenceHash:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	tests := []struct {
+		name     string
+		artifact string
+	}{
+		{name: "absolute", artifact: filepath.Join(root, "reports", "test.json")},
+		{name: "traversal", artifact: "../outside/test.json"},
+		{name: "symlink escape", artifact: filepath.Join("escape", "test.json")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := base
+			metadata.EvidenceArtifact = tt.artifact
+			if hasEvidenceReplayContract(metadata) {
+				t.Fatal("hasEvidenceReplayContract() = true, want false for uncontained artifact path")
 			}
 		})
 	}

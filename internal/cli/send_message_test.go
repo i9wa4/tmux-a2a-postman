@@ -135,6 +135,15 @@ func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) c
 	}
 }
 
+func createEvidenceRootForSendTest(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("MkdirAll evidence root: %v", err)
+	}
+	return root
+}
+
 func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	tmpDir := t.TempDir()
 	var stdout strings.Builder
@@ -3524,11 +3533,12 @@ role = "worker"
 }
 
 func TestRunSendHeredoc_EvidenceFlagsRejectLineOrControlBytes(t *testing.T) {
+	evidenceRoot := createEvidenceRootForSendTest(t)
 	baseFlags := []string{
 		"--context-id", "ctx-evidence-reject",
 		"--to", "worker",
 		"--evidence-command", "go test ./...",
-		"--evidence-cwd", "/repo",
+		"--evidence-cwd", evidenceRoot,
 		"--evidence-env-allowlist", "PATH,HOME",
 		"--evidence-timeout-seconds", "120",
 		"--evidence-side-effect-class", "read-only",
@@ -3575,16 +3585,92 @@ func TestRunSendHeredoc_EvidenceFlagsRejectLineOrControlBytes(t *testing.T) {
 	}
 }
 
+func TestRunSendHeredoc_EvidenceFlagsRejectUncontainedArtifactPath(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifactPath  func(root string) string
+		setupArtifact func(t *testing.T, root string)
+	}{
+		{
+			name: "absolute path",
+			artifactPath: func(root string) string {
+				return filepath.Join(root, "reports", "test.json")
+			},
+		},
+		{
+			name: "traversal",
+			artifactPath: func(root string) string {
+				return "../outside/test.json"
+			},
+		},
+		{
+			name: "symlink escape",
+			artifactPath: func(root string) string {
+				return filepath.Join("escape", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				outside := filepath.Join(filepath.Dir(root), "outside")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+					t.Fatalf("Symlink escape: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			evidenceRoot := createEvidenceRootForSendTest(t)
+			if tt.setupArtifact != nil {
+				tt.setupArtifact(t, evidenceRoot)
+			}
+			var stdout strings.Builder
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+				"--context-id", "ctx-evidence-uncontained",
+				"--to", "worker",
+				"--evidence-command", "go test ./...",
+				"--evidence-cwd", evidenceRoot,
+				"--evidence-env-allowlist", "PATH,HOME",
+				"--evidence-timeout-seconds", "120",
+				"--evidence-side-effect-class", "read-only",
+				"--evidence-artifact", tt.artifactPath(evidenceRoot),
+				"--evidence-hash", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want uncontained artifact rejection")
+			}
+			if !strings.Contains(err.Error(), "invalid evidence replay contract") {
+				t.Fatalf("error = %v, want replay contract rejection", err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			postEntries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-evidence-uncontained", "review", "post"))
+			if err == nil && len(postEntries) != 0 {
+				t.Fatalf("post entries = %d, want none", len(postEntries))
+			}
+		})
+	}
+}
+
 func TestRunSendHeredoc_EvidenceFlagsRoundTripSeparatorAndYAMLLikeValues(t *testing.T) {
 	tmpDir := t.TempDir()
 	var stdout strings.Builder
 	hash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	evidenceRoot := filepath.Join(t.TempDir(), "repo:with-colon")
+	if err := os.MkdirAll(filepath.Join(evidenceRoot, "reports"), 0o755); err != nil {
+		t.Fatalf("MkdirAll evidence root: %v", err)
+	}
 
 	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
 		"--context-id", "ctx-evidence-roundtrip",
 		"--to", "worker",
 		"--evidence-command", "---",
-		"--evidence-cwd", "/repo:with-colon",
+		"--evidence-cwd", evidenceRoot,
 		"--evidence-env-allowlist", "PATH,HOME",
 		"--evidence-timeout-seconds", "120",
 		"--evidence-side-effect-class", "read-only",
@@ -3607,7 +3693,7 @@ func TestRunSendHeredoc_EvidenceFlagsRoundTripSeparatorAndYAMLLikeValues(t *test
 	if metadata.EvidenceCommand != "---" {
 		t.Fatalf("EvidenceCommand = %q, want separator-shaped value", metadata.EvidenceCommand)
 	}
-	if metadata.EvidenceCWD != "/repo:with-colon" {
+	if metadata.EvidenceCWD != evidenceRoot {
 		t.Fatalf("EvidenceCWD = %q, want colon value", metadata.EvidenceCWD)
 	}
 	if metadata.EvidenceArtifact != "reports/key: value.json" {
@@ -3637,12 +3723,13 @@ func TestRunSendHeredoc_EvidenceScalarsRoundTripThroughBothReaders(t *testing.T)
 	for _, value := range values {
 		t.Run(value, func(t *testing.T) {
 			tmpDir := t.TempDir()
+			evidenceRoot := createEvidenceRootForSendTest(t)
 			var stdout strings.Builder
 			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
 				"--context-id", "ctx-evidence-scalar",
 				"--to", "worker",
 				"--evidence-command", value,
-				"--evidence-cwd", "/repo",
+				"--evidence-cwd", evidenceRoot,
 				"--evidence-env-allowlist", "PATH,HOME",
 				"--evidence-timeout-seconds", "120",
 				"--evidence-side-effect-class", "read-only",
@@ -3679,9 +3766,10 @@ func TestRunSendHeredoc_EvidenceScalarsRoundTripThroughBothReaders(t *testing.T)
 }
 
 func TestValidateSendEvidenceFlagsBoundsTimeoutSeconds(t *testing.T) {
+	evidenceRoot := createEvidenceRootForSendTest(t)
 	base := map[string]string{
 		"evidence_command":           "go test ./...",
-		"evidence_cwd":               "/repo",
+		"evidence_cwd":               evidenceRoot,
 		"evidence_env_allowlist":     "PATH,HOME",
 		"evidence_timeout_seconds":   "3600",
 		"evidence_side_effect_class": "read-only",

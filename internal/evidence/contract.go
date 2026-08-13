@@ -130,6 +130,9 @@ func ContainedArtifactPath(root, artifact string) (string, error) {
 	if strings.TrimSpace(artifact) == "" {
 		return "", fmt.Errorf("artifact path is required")
 	}
+	if filepath.IsAbs(artifact) {
+		return "", fmt.Errorf("artifact path must be relative to the artifact root")
+	}
 
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -140,10 +143,7 @@ func ContainedArtifactPath(root, artifact string) (string, error) {
 		return "", fmt.Errorf("resolving artifact root symlinks: %w", err)
 	}
 
-	candidate := artifact
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(rootEval, candidate)
-	}
+	candidate := filepath.Join(rootEval, artifact)
 	candidateAbs, err := filepath.Abs(candidate)
 	if err != nil {
 		return "", fmt.Errorf("resolving artifact path: %w", err)

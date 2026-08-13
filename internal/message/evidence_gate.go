@@ -30,7 +30,7 @@ func hasEvidenceReplayContract(metadata envelope.Metadata) bool {
 	if !ok {
 		return false
 	}
-	return contract.ValidateShape() == nil
+	return contract.Validate(contract.CWD) == nil
 }
 
 func evidenceReplayContractFromMetadata(metadata envelope.Metadata) (evidence.ReplayContract, bool) {
