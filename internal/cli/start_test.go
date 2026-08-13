@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
+	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -915,6 +917,123 @@ func TestSendCompactionPings_DeliversPingToDetectedNode(t *testing.T) {
 	}
 	if got.Reason != "discovered" || got.ResolutionReason != "compaction" {
 		t.Fatalf("compaction-resolved state = %#v", got)
+	}
+}
+
+func TestSendCompactionPings_MarksTerminalOutcomeForDeliveryPaths(t *testing.T) {
+	type outcome struct {
+		nodeKey           string
+		lifecycleIdentity string
+		markerIdentity    string
+	}
+
+	tests := []struct {
+		name          string
+		nodes         map[string]discovery.NodeInfo
+		reserve       func(string, discovery.NodeInfo) (*autoping.Reservation, bool)
+		sendResult    controlplane.SystemMessageResult
+		sendErr       error
+		wantDelivered []outcome
+		wantFailed    []outcome
+		wantSendCount int
+	}{
+		{
+			name: "delivered",
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {PaneID: "%11", SessionName: "review"},
+			},
+			reserve:       func(string, discovery.NodeInfo) (*autoping.Reservation, bool) { return nil, true },
+			sendResult:    controlplane.SystemMessageResult{Delivered: true},
+			wantDelivered: []outcome{{nodeKey: "review:worker", lifecycleIdentity: "life-1", markerIdentity: "marker-1"}},
+			wantSendCount: 1,
+		},
+		{
+			name: "undelivered",
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {PaneID: "%11", SessionName: "review"},
+			},
+			reserve:       func(string, discovery.NodeInfo) (*autoping.Reservation, bool) { return nil, true },
+			sendResult:    controlplane.SystemMessageResult{Delivered: false},
+			wantFailed:    []outcome{{nodeKey: "review:worker", lifecycleIdentity: "life-1", markerIdentity: "marker-1"}},
+			wantSendCount: 1,
+		},
+		{
+			name: "send error",
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {PaneID: "%11", SessionName: "review"},
+			},
+			reserve:       func(string, discovery.NodeInfo) (*autoping.Reservation, bool) { return nil, true },
+			sendErr:       errors.New("boom"),
+			wantFailed:    []outcome{{nodeKey: "review:worker", lifecycleIdentity: "life-1", markerIdentity: "marker-1"}},
+			wantSendCount: 1,
+		},
+		{
+			name: "reservation skip",
+			nodes: map[string]discovery.NodeInfo{
+				"review:worker": {PaneID: "%11", SessionName: "review"},
+			},
+			reserve:       func(string, discovery.NodeInfo) (*autoping.Reservation, bool) { return nil, false },
+			wantFailed:    []outcome{{nodeKey: "review:worker", lifecycleIdentity: "life-1", markerIdentity: "marker-1"}},
+			wantSendCount: 0,
+		},
+		{
+			name:          "missing node",
+			nodes:         map[string]discovery.NodeInfo{},
+			reserve:       func(string, discovery.NodeInfo) (*autoping.Reservation, bool) { return nil, true },
+			wantFailed:    []outcome{{nodeKey: "review:worker", lifecycleIdentity: "life-1", markerIdentity: "marker-1"}},
+			wantSendCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalReserve := reserveCompactionPingAutoWake
+			originalSend := sendCompactionPingToNode
+			originalDelivered := markCompactionPingDelivered
+			originalFailed := markCompactionPingDeliveryFailed
+			t.Cleanup(func() {
+				reserveCompactionPingAutoWake = originalReserve
+				sendCompactionPingToNode = originalSend
+				markCompactionPingDelivered = originalDelivered
+				markCompactionPingDeliveryFailed = originalFailed
+			})
+
+			var gotDelivered []outcome
+			var gotFailed []outcome
+			sendCount := 0
+			reserveCompactionPingAutoWake = tt.reserve
+			sendCompactionPingToNode = func(nodeInfo discovery.NodeInfo, contextID, nodeName, tmpl string, cfg *config.Config, activeNodes []string, livenessMap map[string]bool, adjacency map[string][]string, nodes map[string]discovery.NodeInfo, options ping.SendOptions) (controlplane.SystemMessageResult, error) {
+				sendCount++
+				if !options.CompactionTriggered {
+					t.Fatal("CompactionTriggered option = false, want true")
+				}
+				return tt.sendResult, tt.sendErr
+			}
+			markCompactionPingDelivered = func(_ *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+				gotDelivered = append(gotDelivered, outcome{nodeKey: nodeKey, lifecycleIdentity: lifecycleIdentity, markerIdentity: markerIdentity})
+			}
+			markCompactionPingDeliveryFailed = func(_ *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+				gotFailed = append(gotFailed, outcome{nodeKey: nodeKey, lifecycleIdentity: lifecycleIdentity, markerIdentity: markerIdentity})
+			}
+
+			sendCompactionPings("ctx-compaction", &config.Config{}, idle.NewIdleTracker(), tt.nodes, []idle.CompactionPingTarget{{
+				NodeKey:           "review:worker",
+				Runtime:           "claude",
+				Trigger:           "claude:conversation-compaction",
+				LifecycleIdentity: "life-1",
+				MarkerIdentity:    "marker-1",
+			}})
+
+			if sendCount != tt.wantSendCount {
+				t.Fatalf("send count = %d, want %d", sendCount, tt.wantSendCount)
+			}
+			if got, want := fmt.Sprint(gotDelivered), fmt.Sprint(tt.wantDelivered); got != want {
+				t.Fatalf("delivered outcomes = %s, want %s", got, want)
+			}
+			if got, want := fmt.Sprint(gotFailed), fmt.Sprint(tt.wantFailed); got != want {
+				t.Fatalf("failed outcomes = %s, want %s", got, want)
+			}
+		})
 	}
 }
 

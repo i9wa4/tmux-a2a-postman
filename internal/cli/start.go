@@ -38,6 +38,17 @@ import (
 
 var newHerdrRuntimeClient herdrruntime.ClientFactory = herdrruntime.NewSocketClient
 
+var (
+	reserveCompactionPingAutoWake = reserveDirectPingAutoWake
+	sendCompactionPingToNode      = ping.SendPingToNodeWithOptions
+	markCompactionPingDelivered   = func(tracker *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+		tracker.MarkCompactionPingDelivered(nodeKey, lifecycleIdentity, markerIdentity)
+	}
+	markCompactionPingDeliveryFailed = func(tracker *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+		tracker.MarkCompactionPingDeliveryFailed(nodeKey, lifecycleIdentity, markerIdentity)
+	}
+)
+
 // safeGo starts a goroutine with panic recovery (Issue #57).
 func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 	go func() {
@@ -224,30 +235,34 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 	for _, target := range targets {
 		nodeInfo, ok := nodes[target.NodeKey]
 		if !ok {
+			markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+			log.Printf("postman: compaction-triggered PING skipped for %s: discovered node is no longer present\n", target.NodeKey)
 			continue
 		}
 		func() {
-			reservation, shouldSend := reserveDirectPingAutoWake(target.NodeKey, nodeInfo)
+			reservation, shouldSend := reserveCompactionPingAutoWake(target.NodeKey, nodeInfo)
 			if !shouldSend {
-				idleTracker.MarkCompactionPingDeliveryFailed(target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				log.Printf("postman: compaction-triggered PING skipped for %s: matching auto-PING already in flight\n", target.NodeKey)
 				return
 			}
-			defer reservation.Release()
+			if reservation != nil {
+				defer reservation.Release()
+			}
 
 			options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
-			result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
+			result, err := sendCompactionPingToNode(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
 			if err != nil {
-				idleTracker.MarkCompactionPingDeliveryFailed(target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
 				return
 			}
 			if result.Delivered {
-				idleTracker.MarkCompactionPingDelivered(target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+				markCompactionPingDelivered(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
 			}
 			if !result.Delivered {
-				idleTracker.MarkCompactionPingDeliveryFailed(target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 			}
 			log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
 		}()
