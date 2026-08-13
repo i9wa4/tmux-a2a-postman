@@ -76,12 +76,12 @@ type Config struct {
 	ReplyCommand                   string                          `toml:"reply_command"`
 	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
-	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
+	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
+	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
+	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"` // Optional explicit hierarchy for tree aliases
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
-	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
-	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
 	Herdr                          HerdrConfig                     `toml:"herdr"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
