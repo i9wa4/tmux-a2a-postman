@@ -115,6 +115,21 @@ func SenderBodyFromContent(content string) (string, bool) {
 	return strings.TrimSpace(body), false
 }
 
+func SenderBodyFromTrustedContent(content, trustedMessageID string) (string, bool) {
+	_, body, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
+		return strings.TrimSpace(content), true
+	}
+	boundary := SenderBodyBoundaryForMessageID(trustedMessageID)
+	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body, boundary); ok {
+		return senderBody, true
+	}
+	if senderBody, ok := senderBodyAfterLegacyGeneratedEnvelopeSeparator(body); ok {
+		return senderBody, true
+	}
+	return strings.TrimSpace(body), true
+}
+
 func rawBodyFromContent(content string) (string, bool) {
 	_, body, ok, err := ScanFrontmatter(content)
 	if err != nil {
@@ -147,6 +162,44 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body, boundary string) (string, b
 			return senderBody, true
 		}
 		previousLine = strings.TrimSpace(line)
+		if newlineEnd == len(body) {
+			break
+		}
+		offset = newlineEnd
+	}
+	return "", false
+}
+
+func senderBodyAfterLegacyGeneratedEnvelopeSeparator(body string) (string, bool) {
+	messageHeadingSeen := false
+	senderHeadingSeen := false
+	offset := 0
+	for offset <= len(body) {
+		lineEnd := len(body)
+		newlineEnd := len(body)
+		if idx := strings.IndexByte(body[offset:], '\n'); idx >= 0 {
+			lineEnd = offset + idx
+			newlineEnd = lineEnd + 1
+		}
+		line := strings.TrimSpace(strings.TrimRight(body[offset:lineEnd], "\r"))
+		switch line {
+		case "# Message":
+			messageHeadingSeen = true
+		case "## Sender Message":
+			if messageHeadingSeen {
+				senderHeadingSeen = true
+			}
+		case "---":
+			if senderHeadingSeen {
+				senderBody := body[newlineEnd:]
+				if strings.HasPrefix(senderBody, "\r\n") {
+					senderBody = senderBody[2:]
+				} else if strings.HasPrefix(senderBody, "\n") {
+					senderBody = senderBody[1:]
+				}
+				return senderBody, true
+			}
+		}
 		if newlineEnd == len(body) {
 			break
 		}

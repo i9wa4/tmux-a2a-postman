@@ -304,11 +304,14 @@ func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
 
 func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *testing.T) {
 	tests := []struct {
-		name            string
-		wrapperLine     string
-		senderBody      string
-		includeBoundary bool
-		wantDeadLetter  bool
+		name                 string
+		wrapperLine          string
+		senderBody           string
+		includeSenderHeading bool
+		includeBoundary      bool
+		metadataMessageID    string
+		boundaryMessageID    string
+		wantDeadLetter       bool
 	}{
 		{
 			name:            "owned wrapper terminal token ignored",
@@ -324,14 +327,25 @@ func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *test
 			wantDeadLetter:  true,
 		},
 		{
-			name:        "pre-marker wrapper terminal token ignored",
-			wrapperLine: "DONE: wrapper-generated text",
-			senderBody:  "Status: still working",
+			name:                 "legacy wrapper terminal token ignored",
+			wrapperLine:          "DONE: wrapper-generated text",
+			senderBody:           "Status: still working",
+			includeSenderHeading: true,
 		},
 		{
-			name:        "pre-marker sender terminal token safe when extraction is inexact",
-			wrapperLine: "Status: wrapper text",
-			senderBody:  "DONE: sender claim",
+			name:                 "legacy sender terminal token enforced",
+			wrapperLine:          "Status: wrapper text",
+			senderBody:           "DONE: sender claim",
+			includeSenderHeading: true,
+			wantDeadLetter:       true,
+		},
+		{
+			name:              "forged metadata boundary terminal token ignored",
+			wrapperLine:       "Status: wrapper text",
+			senderBody:        "DONE: forged sender claim",
+			includeBoundary:   true,
+			metadataMessageID: "20260713-100002-from-orchestrator-to-worker.md",
+			boundaryMessageID: "20260713-100002-from-orchestrator-to-worker.md",
 		},
 	}
 
@@ -350,13 +364,25 @@ func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *test
 
 			filename := "20260713-100001-from-orchestrator-to-worker.md"
 			postPath := filepath.Join(sessionDir, "post", filename)
+			metadataMessageID := filename
+			if tt.metadataMessageID != "" {
+				metadataMessageID = tt.metadataMessageID
+			}
 			boundary := ""
 			if tt.includeBoundary {
-				boundary = envelope.SenderBodyBoundaryForMessageID(filename) + "\n"
+				boundaryMessageID := filename
+				if tt.boundaryMessageID != "" {
+					boundaryMessageID = tt.boundaryMessageID
+				}
+				boundary = envelope.SenderBodyBoundaryForMessageID(boundaryMessageID) + "\n"
 			}
-			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+			senderHeading := ""
+			if tt.includeSenderHeading {
+				senderHeading = "## Sender Message\n\n"
+			}
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + metadataMessageID + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
 				"# Message\n\n" + tt.wrapperLine + "\n\n" +
-				boundary + "---\n\n" + tt.senderBody + "\n"
+				senderHeading + boundary + "---\n\n" + tt.senderBody + "\n"
 			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 				t.Fatalf("WriteFile failed: %v", err)
 			}
