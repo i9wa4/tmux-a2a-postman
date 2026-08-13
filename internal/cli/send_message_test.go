@@ -14,7 +14,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
 
 func shellSensitiveBodyForSendTest() string {
@@ -52,6 +54,46 @@ func runSendHeredocWithBody(t *testing.T, body string, args []string) error {
 	return withSendHeredocBody(t, body, func() error {
 		return RunSendHeredoc(args)
 	})
+}
+
+func appendSendVerdictDebt(t *testing.T, sessionDir, sessionName, requester, filler, inputRequestID string, now time.Time) {
+	t.Helper()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", sessionName, 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	requestMessageID := inputRequestID + "-request.md"
+	requestContent := "---\nparams:\n" +
+		"  from: " + requester + "\n" +
+		"  to: " + filler + "\n" +
+		"  messageId: " + requestMessageID + "\n" +
+		"  replyPolicy: required\n" +
+		"  input_request_id: " + inputRequestID + "\n" +
+		"---\n\nrequest\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: requestMessageID,
+		From:      requester,
+		To:        filler,
+		Content:   requestContent,
+	}, now); err != nil {
+		t.Fatalf("AppendEvent request: %v", err)
+	}
+	fillMessageID := inputRequestID + "-fill.md"
+	fillContent := "---\nparams:\n" +
+		"  from: " + filler + "\n" +
+		"  to: " + requester + "\n" +
+		"  messageId: " + fillMessageID + "\n" +
+		"  replyPolicy: none\n" +
+		"  fills_input_request_id: " + inputRequestID + "\n" +
+		"---\n\nfill\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: fillMessageID,
+		From:      filler,
+		To:        requester,
+		Content:   fillContent,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent fill: %v", err)
+	}
 }
 
 func captureSendHeredocWithBody(t *testing.T, body string, args []string) (string, string, error) {
@@ -119,6 +161,76 @@ func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "hello from context") {
 		t.Fatalf("sent message missing configured stdin body:\n%s", string(content))
+	}
+}
+
+func TestRunSendHeredocWithContextUsesCurrentIdentityResolver(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	identityCalls := 0
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("hello from identity"), &stdout)
+	ctx.currentIdentity = func() (multiplexer.CurrentIdentity, error) {
+		identityCalls++
+		return multiplexer.CurrentIdentity{
+			Backend:     multiplexer.BackendKindTmux,
+			SessionName: "identity-session",
+			NodeName:    "identity-sender",
+			Pane:        multiplexer.TmuxPaneID("%77"),
+			NativeIDs: map[string]string{
+				"pane_id":      "%77",
+				"session_name": "identity-session",
+				"pane_title":   "identity-sender",
+			},
+		}, nil
+	}
+	ctx.getTmuxPaneName = func() string {
+		t.Fatal("getTmuxPaneName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxSessionName = func() string {
+		t.Fatal("getTmuxSessionName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxPaneID = func() string {
+		t.Fatal("getTmuxPaneID should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.loadConfig = func(string) (*config.Config, error) {
+		return &config.Config{
+			BaseDir: tmpDir,
+			Edges:   []string{"identity-sender --- worker"},
+		}, nil
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-send-current-identity",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	if identityCalls != 1 {
+		t.Fatalf("currentIdentity calls = %d, want 1", identityCalls)
+	}
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.Session != "identity-session" || payload.From != "identity-sender" {
+		t.Fatalf("send output identity fields = %#v", payload)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-send-current-identity", "identity-session")
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	summary, err := runtimecontext.LoadSummary(sessionDir, metadata.RuntimeContextID, time.Now())
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	if summary.Fields.Tmux == nil || summary.Fields.Tmux.PaneID != "%77" {
+		t.Fatalf("runtime context tmux fields = %#v, want pane %%77", summary.Fields.Tmux)
 	}
 }
 
@@ -3061,6 +3173,9 @@ role = "worker"
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
 	}
+	if request.Sender != "messenger" {
+		t.Fatalf("request.Sender = %q, want messenger", request.Sender)
+	}
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
@@ -3222,6 +3337,55 @@ role = "worker"
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_DirectPathEnforcesVerdictGate(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
+	if config.ContextOwnsSession(tmpDir, "ctx-direct-verdict-gate", "test-session") {
+		t.Fatal("ContextOwnsSession() = true, want direct post path")
+	}
+
+	err := runSendHeredocWithBody(t, "new direct work", []string{
+		"--config", configPath,
+		"--context-id", "ctx-direct-verdict-gate",
+		"--to", "worker",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("RunSendHeredoc() error = nil, want direct-path verdict gate rejection")
+	}
+	if !strings.Contains(err.Error(), "verdict debt 1 above verdict_debt_cap=0") {
+		t.Fatalf("RunSendHeredoc() error = %v, want debt-cap verdict gate rejection", err)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post file written despite verdict gate rejection: found %d entries", len(postEntries))
 	}
 }
 

@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,10 +18,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
@@ -106,11 +106,18 @@ func frontmatterValue(content, key string) string {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 		return
 	}
 	recordVerdictEventForMailbox(sessionDir, sessionName, eventType, payload)
+}
+
+func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+		return err
+	}
+	return nil
 }
 
 func syncMailboxProjection(sessionDir string) {
@@ -587,6 +594,8 @@ type DaemonState struct {
 	lastDeliveryMu                sync.RWMutex               // Issue #211: Mutex for lastDeliveryBySenderRecipient
 	nonDaemonDeliveryBudget       *nonDaemonDeliveryBudget   // Issue #572: bounded concurrency for post/auto-PING/manual-PING delivery
 	clock                         func() time.Time
+	ownershipBackend              multiplexer.OwnershipBackend
+	ownershipBackendForSession    func(string) multiplexer.OwnershipBackend
 }
 
 // NewDaemonState creates a new DaemonState instance (Issue #71).
@@ -594,6 +603,14 @@ type DaemonState struct {
 // IsSessionEnabled returns true for all sessions (#217).
 func NewDaemonState(drainWindowSeconds float64, contextID string) *DaemonState {
 	return newDaemonStateWithClock(drainWindowSeconds, contextID, time.Now)
+}
+
+func (ds *DaemonState) SetOwnershipBackend(backend multiplexer.OwnershipBackend) {
+	ds.ownershipBackend = backend
+}
+
+func (ds *DaemonState) SetOwnershipBackendSelector(selector func(string) multiplexer.OwnershipBackend) {
+	ds.ownershipBackendForSession = selector
 }
 
 func newDaemonStateWithClock(drainWindowSeconds float64, contextID string, clock func() time.Time) *DaemonState {
@@ -739,6 +756,7 @@ func RunDaemonLoop(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	runDaemonLoopWithWatcherEvents(
 		ctx,
@@ -760,6 +778,7 @@ func RunDaemonLoop(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
 }
 
@@ -783,6 +802,7 @@ func runDaemonLoopWithWatcherEvents(
 	idleTracker *idle.IdleTracker,
 	sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo],
 	selfSession string,
+	herdrRuntime *herdrruntime.Runtime,
 ) {
 	// Apply configurable queue warning threshold before any workers start.
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
@@ -811,6 +831,7 @@ func runDaemonLoopWithWatcherEvents(
 		idleTracker,
 		sharedNodes,
 		selfSession,
+		herdrRuntime,
 	)
 	configureAuditDrawFromConfig(cfg)
 
@@ -896,14 +917,26 @@ func (ds *DaemonState) SetSessionEnabled(sessionName string, enabled bool) {
 }
 
 func (ds *DaemonState) persistSessionEnabledMarker(sessionName string, enabled bool) {
-	// Persist cross-daemon state in tmux server option (best-effort).
-	key := "@a2a_session_on_" + sessionName
+	// Persist cross-daemon state in the configured ownership backend (best-effort).
+	backend := ds.ownershipBackendForSessionName(sessionName)
 	if enabled {
-		val := ds.contextID + ":" + strconv.Itoa(os.Getpid())
-		_ = exec.Command("tmux", "set-option", "-g", key, val).Run()
+		_ = backend.SetSessionOwnerMarker(context.Background(), ds.contextID, sessionName, os.Getpid())
 	} else {
-		_ = exec.Command("tmux", "set-option", "-gu", key).Run()
+		_ = backend.ClearSessionOwnerMarker(context.Background(), sessionName)
 	}
+}
+
+func (ds *DaemonState) ownershipBackendForSessionName(sessionName string) multiplexer.OwnershipBackend {
+	if ds != nil && ds.ownershipBackendForSession != nil {
+		if backend := ds.ownershipBackendForSession(sessionName); backend != nil {
+			return backend
+		}
+	}
+	backend := ds.ownershipBackend
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
+	}
+	return backend
 }
 
 // AutoEnableSessionIfNew enables a session if it has never been configured (Issue #91).

@@ -260,6 +260,33 @@ func TestDispatch_InspectCommandApprovalsPrependsContextAndConfig(t *testing.T) 
 	}
 }
 
+func TestDispatch_BackfillVerdictEventsDoesNotPrependRuntimeContext(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"backfill-verdict-events",
+		[]string{"--session-dir", "/tmp/session"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			BackfillVerdictEvents: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman backfill-verdict-events" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman backfill-verdict-events")
+	}
+	wantArgs := []string{"--session-dir", "/tmp/session"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("backfill-verdict-events args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_ExecuteBashPrependsContextAndConfig(t *testing.T) {
 	var gotArgs []string
 

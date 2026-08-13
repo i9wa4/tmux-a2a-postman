@@ -423,6 +423,52 @@ func TestSendToPane_RejectsEmptyNotificationBody(t *testing.T) {
 	}
 }
 
+func TestTmuxPaneSenderSanitizesInteractiveDelivery(t *testing.T) {
+	var setBuffer string
+	notifier := NewPaneNotifier(0)
+	notifier.sleep = func(time.Duration) {}
+	notifier.runTmux = func(args ...string) error {
+		switch args[0] {
+		case "set-buffer":
+			setBuffer = args[1]
+		case "paste-buffer":
+			if args[1] != "-t" || args[2] != "%99" {
+				t.Fatalf("paste-buffer args = %#v, want target %%99", args)
+			}
+		case "send-keys":
+			if args[1] != "-t" || args[2] != "%99" || args[3] != "C-m" {
+				t.Fatalf("send-keys args = %#v, want C-m to %%99", args)
+			}
+		default:
+			t.Fatalf("unexpected tmux command args = %#v", args)
+		}
+		return nil
+	}
+
+	err := (TmuxPaneSender{Notifier: notifier}).DeliverPane(PaneDelivery{
+		PaneID:         "%99",
+		Message:        "hello \x1b[31mred\x1b[0m",
+		EnterCount:     1,
+		BypassCooldown: true,
+	})
+	if err != nil {
+		t.Fatalf("DeliverPane() error = %v", err)
+	}
+
+	if strings.Contains(setBuffer, "\x1b") {
+		t.Fatalf("set-buffer contained raw escape sequence: %q", setBuffer)
+	}
+	if !strings.Contains(setBuffer, "hello red") {
+		t.Fatalf("set-buffer = %q, want stripped message text", setBuffer)
+	}
+	if !strings.HasPrefix(setBuffer, "<!-- message start -->\n") {
+		t.Fatalf("set-buffer missing start sentinel: %q", setBuffer)
+	}
+	if !strings.HasSuffix(setBuffer, "\n<!-- end of message -->") {
+		t.Fatalf("set-buffer missing end sentinel: %q", setBuffer)
+	}
+}
+
 func TestPaneNotifierCooldownIsInstanceScoped(t *testing.T) {
 	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
 	notifierA, callsA := paneNotifierForTest(now, time.Minute)
