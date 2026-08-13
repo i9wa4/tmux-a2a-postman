@@ -44,6 +44,8 @@ type Config struct {
 	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
 	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
+	AuditReviewProbabilityFloor      float64 `toml:"audit_review_probability_floor"`        // Nonzero minimum audit draw probability for accepted fills
+	AuditTarget                      string  `toml:"audit_target"`                          // Optional node that receives sampled audit review requests
 	MinDeliveryGapSeconds            float64 `toml:"min_delivery_gap_seconds"`              // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING

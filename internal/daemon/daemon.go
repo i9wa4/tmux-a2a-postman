@@ -108,7 +108,9 @@ func frontmatterValue(content, key string) string {
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
 	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
+		return
 	}
+	recordVerdictEventForMailbox(sessionDir, sessionName, eventType, payload)
 }
 
 func recordMailboxProjectionPayloadError(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
@@ -831,6 +833,7 @@ func runDaemonLoopWithWatcherEvents(
 		selfSession,
 		herdrRuntime,
 	)
+	configureAuditDrawFromConfig(cfg)
 
 	scanTicker := time.NewTicker(time.Duration(cfg.ScanInterval * float64(time.Second)))
 	defer scanTicker.Stop()

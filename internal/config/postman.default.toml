@@ -81,6 +81,8 @@ input_request_stale_seconds = 3600 # Status projection threshold for stale unfil
 verdict_grace_seconds = 3600       # Grace period for requester verdict stamps after filled reply-required input requests
 verdict_debt_cap = 3               # Maximum unstamped fills before new reply-required sends are refused (<0 = disabled)
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
+audit_review_probability_floor = 0.05 # Nonzero minimum audit draw probability for accepted fills
+audit_target = ""                 # Optional sampled audit target; defaults to configured command_approver_node when available
 
 # Pane capture settings (hybrid idle detection)
 pane_capture_enabled = true

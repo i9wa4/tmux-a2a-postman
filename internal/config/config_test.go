@@ -585,6 +585,20 @@ func TestLoadConfig_Default(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_AuditDrawDefaults(t *testing.T) {
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig with empty path failed: %v", err)
+	}
+
+	if cfg.AuditReviewProbabilityFloor != 0.05 {
+		t.Errorf("default AuditReviewProbabilityFloor: got %v, want 0.05", cfg.AuditReviewProbabilityFloor)
+	}
+	if cfg.AuditTarget != "" {
+		t.Errorf("default AuditTarget: got %q, want empty", cfg.AuditTarget)
+	}
+}
+
 func TestLoadConfig_DaemonSubmitWorkerLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
