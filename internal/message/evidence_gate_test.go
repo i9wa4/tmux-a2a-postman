@@ -137,3 +137,48 @@ func TestEvidenceGateObservedBeforeActivationIsNotRetroactivelyActiveWhenEnabled
 		t.Fatal("EvidencePresenceGateActiveAt() = true, want false for pre-activation observation")
 	}
 }
+
+func TestEvidenceGateObservedBeforeActivationSurvivesSessionGenerationRollover(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	manager := journal.NewManager("test-context", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 9, 59, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+
+	filename := "message.md"
+	path := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(path, []byte("message"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	beforeActivation := time.Date(2026, 7, 13, 9, 59, 30, 0, time.UTC)
+	activation := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	afterActivation := time.Date(2026, 7, 13, 10, 1, 0, 0, time.UTC)
+
+	observedBeforeRollover := evidenceGateObservedAt(sessionDir, "test", filename, path, beforeActivation)
+	if !observedBeforeRollover.Equal(beforeActivation) {
+		t.Fatalf("pre-rollover observation = %s, want %s", observedBeforeRollover, beforeActivation)
+	}
+
+	restartedManager := journal.NewManager("test-context", os.Getpid()+1)
+	journal.InstallProcessManager(restartedManager)
+	if err := restartedManager.Bootstrap(sessionDir, "test", afterActivation); err != nil {
+		t.Fatalf("Bootstrap() after restart error = %v", err)
+	}
+
+	cfg := &config.Config{
+		EvidencePresenceGateEnabled: true,
+		EvidencePresenceGateAfter:   activation.Format(time.RFC3339Nano),
+	}
+	observedAfterRollover := evidenceGateObservedAt(sessionDir, "test", filename, path, afterActivation)
+	if !observedAfterRollover.Equal(beforeActivation) {
+		t.Fatalf("post-rollover observation = %s, want original pre-activation observation %s", observedAfterRollover, beforeActivation)
+	}
+	if cfg.EvidencePresenceGateActiveAt(observedAfterRollover) {
+		t.Fatal("EvidencePresenceGateActiveAt() = true, want false for pre-activation observation after rollover")
+	}
+}

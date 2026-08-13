@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -117,24 +116,18 @@ func evidenceGateObservedAt(sessionDir, sessionName, filename, path string, now 
 		equivalent,
 		now.UTC(),
 	); err != nil {
-		return now.UTC()
+		return time.Time{}
 	}
 	if observedAt, ok := evidenceGateRecordedObservedAt(sessionDir, sessionName, observedPayload); ok {
 		return observedAt
 	}
-	return now.UTC()
+	return time.Time{}
 }
 
 func evidenceGateRecordedObservedAt(sessionDir, sessionName string, want journal.MailboxEventPayload) (time.Time, bool) {
-	state, ok := currentEvidenceGateSessionState(sessionDir)
-	if !ok {
-		return time.Time{}, false
-	}
 	var observedAt time.Time
 	err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
 		if event.Type != projection.MailboxProjectionPostObservedEventType ||
-			event.SessionKey != state.SessionKey ||
-			event.Generation != state.Generation ||
 			event.TmuxSessionName != sessionName {
 			return nil
 		}
@@ -158,21 +151,6 @@ func evidenceGateRecordedObservedAt(sessionDir, sessionName string, want journal
 		return time.Time{}, false
 	}
 	return observedAt, true
-}
-
-func currentEvidenceGateSessionState(sessionDir string) (journal.SessionState, bool) {
-	data, err := os.ReadFile(journal.SessionStatePath(sessionDir))
-	if err != nil {
-		return journal.SessionState{}, false
-	}
-	var state journal.SessionState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return journal.SessionState{}, false
-	}
-	if state.SessionKey == "" || state.Generation <= 0 {
-		return journal.SessionState{}, false
-	}
-	return state, true
 }
 
 func decodeEvidenceGateObservedPayload(event journal.Event) (journal.MailboxEventPayload, bool) {
