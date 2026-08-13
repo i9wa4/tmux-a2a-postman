@@ -14,7 +14,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
 
 func shellSensitiveBodyForSendTest() string {
@@ -159,6 +161,76 @@ func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "hello from context") {
 		t.Fatalf("sent message missing configured stdin body:\n%s", string(content))
+	}
+}
+
+func TestRunSendHeredocWithContextUsesCurrentIdentityResolver(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	identityCalls := 0
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("hello from identity"), &stdout)
+	ctx.currentIdentity = func() (multiplexer.CurrentIdentity, error) {
+		identityCalls++
+		return multiplexer.CurrentIdentity{
+			Backend:     multiplexer.BackendKindTmux,
+			SessionName: "identity-session",
+			NodeName:    "identity-sender",
+			Pane:        multiplexer.TmuxPaneID("%77"),
+			NativeIDs: map[string]string{
+				"pane_id":      "%77",
+				"session_name": "identity-session",
+				"pane_title":   "identity-sender",
+			},
+		}, nil
+	}
+	ctx.getTmuxPaneName = func() string {
+		t.Fatal("getTmuxPaneName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxSessionName = func() string {
+		t.Fatal("getTmuxSessionName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxPaneID = func() string {
+		t.Fatal("getTmuxPaneID should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.loadConfig = func(string) (*config.Config, error) {
+		return &config.Config{
+			BaseDir: tmpDir,
+			Edges:   []string{"identity-sender --- worker"},
+		}, nil
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-send-current-identity",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	if identityCalls != 1 {
+		t.Fatalf("currentIdentity calls = %d, want 1", identityCalls)
+	}
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.Session != "identity-session" || payload.From != "identity-sender" {
+		t.Fatalf("send output identity fields = %#v", payload)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-send-current-identity", "identity-session")
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	summary, err := runtimecontext.LoadSummary(sessionDir, metadata.RuntimeContextID, time.Now())
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	if summary.Fields.Tmux == nil || summary.Fields.Tmux.PaneID != "%77" {
+		t.Fatalf("runtime context tmux fields = %#v, want pane %%77", summary.Fields.Tmux)
 	}
 }
 
