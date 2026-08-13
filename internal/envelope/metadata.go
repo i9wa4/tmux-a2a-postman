@@ -2,8 +2,11 @@ package envelope
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Metadata struct {
@@ -44,6 +47,14 @@ type Metadata struct {
 }
 
 const SenderBodyBoundarySentinel = "<!-- tmux-a2a-postman:sender-body-boundary -->"
+
+func SenderBodyBoundaryForMessageID(messageID string) string {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ""
+	}
+	return "<!-- tmux-a2a-postman:sender-body-boundary:" + messageID + " -->"
+}
 
 type frontmatterScan struct {
 	frontmatter      string
@@ -89,11 +100,16 @@ func BodyFromContent(content string) string {
 }
 
 func SenderBodyFromContent(content string) (string, bool) {
-	body, ok := rawBodyFromContent(content)
-	if !ok {
+	frontmatter, body, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
 		return strings.TrimSpace(content), false
 	}
-	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body); ok {
+	metadata, err := DecodeEnvelopeMetadata(frontmatter, body)
+	if err != nil {
+		return strings.TrimSpace(body), false
+	}
+	boundary := SenderBodyBoundaryForMessageID(metadata.MessageID)
+	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body, boundary); ok {
 		return senderBody, true
 	}
 	return strings.TrimSpace(body), false
@@ -107,8 +123,12 @@ func rawBodyFromContent(content string) (string, bool) {
 	return body, ok
 }
 
-func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
+func senderBodyAfterGeneratedEnvelopeSeparator(body, boundary string) (string, bool) {
+	if boundary == "" {
+		return "", false
+	}
 	offset := 0
+	previousLine := ""
 	for offset <= len(body) {
 		lineEnd := len(body)
 		newlineEnd := len(body)
@@ -117,7 +137,7 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 			newlineEnd = lineEnd + 1
 		}
 		line := strings.TrimRight(body[offset:lineEnd], "\r")
-		if strings.TrimSpace(line) == "---" && hasSenderBodyBoundarySentinel(body[:offset]) {
+		if strings.TrimSpace(line) == "---" && previousLine == boundary {
 			senderBody := body[newlineEnd:]
 			if strings.HasPrefix(senderBody, "\r\n") {
 				senderBody = senderBody[2:]
@@ -126,22 +146,13 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 			}
 			return senderBody, true
 		}
+		previousLine = strings.TrimSpace(line)
 		if newlineEnd == len(body) {
 			break
 		}
 		offset = newlineEnd
 	}
 	return "", false
-}
-
-func hasSenderBodyBoundarySentinel(prefix string) bool {
-	for _, rawLine := range strings.Split(prefix, "\n") {
-		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
-		if line == SenderBodyBoundarySentinel {
-			return true
-		}
-	}
-	return false
 }
 
 func ParseMetadata(content string) (Metadata, error) {
@@ -200,19 +211,19 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 			case "verdictOf", "verdict_of":
 				metadata.VerdictOf = value
 			case "evidence_command":
-				metadata.EvidenceCommand = value
+				metadata.EvidenceCommand = decodeEvidenceParamValue(value)
 			case "evidence_cwd":
-				metadata.EvidenceCWD = value
+				metadata.EvidenceCWD = decodeEvidenceParamValue(value)
 			case "evidence_env_allowlist":
-				metadata.EvidenceEnvAllowlist = value
+				metadata.EvidenceEnvAllowlist = decodeEvidenceParamValue(value)
 			case "evidence_timeout_seconds":
-				metadata.EvidenceTimeoutSeconds = value
+				metadata.EvidenceTimeoutSeconds = decodeEvidenceParamValue(value)
 			case "evidence_side_effect_class":
-				metadata.EvidenceSideEffectClass = value
+				metadata.EvidenceSideEffectClass = decodeEvidenceParamValue(value)
 			case "evidence_artifact":
-				metadata.EvidenceArtifact = value
+				metadata.EvidenceArtifact = decodeEvidenceParamValue(value)
 			case "evidence_hash":
-				metadata.EvidenceHash = value
+				metadata.EvidenceHash = decodeEvidenceParamValue(value)
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
@@ -419,7 +430,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		if fieldKey, ok := managedParamFieldKey(key); ok {
 			existing[fieldKey] = true
 			if value := managedParamFieldValue(fields, fieldKey); value != "" {
-				updatedLine := paramsIndent + key + ": " + value
+				updatedLine := paramsIndent + key + ": " + encodeManagedParamValue(fieldKey, value)
 				if lines[idx] != updatedLine {
 					lines[idx] = updatedLine
 					changed = true
@@ -436,7 +447,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		if value == "" || existing[key] {
 			continue
 		}
-		insert = append(insert, paramsIndent+key+": "+value)
+		insert = append(insert, paramsIndent+key+": "+encodeManagedParamValue(key, value))
 	}
 	if len(insert) == 0 {
 		if !changed {
@@ -450,6 +461,36 @@ func EnsureParams(content string, fields map[string]string) string {
 	updated = append(updated, insert...)
 	updated = append(updated, lines[paramsIndex+1:]...)
 	return content[:scan.frontmatterStart] + strings.Join(updated, "\n") + content[scan.closeStart:]
+}
+
+func encodeManagedParamValue(key, value string) string {
+	if isEvidenceParamKey(key) {
+		return strconv.Quote(value)
+	}
+	return value
+}
+
+func decodeEvidenceParamValue(value string) string {
+	var decoded string
+	if err := yaml.Unmarshal([]byte(value), &decoded); err == nil {
+		return decoded
+	}
+	return value
+}
+
+func isEvidenceParamKey(key string) bool {
+	switch key {
+	case "evidence_command",
+		"evidence_cwd",
+		"evidence_env_allowlist",
+		"evidence_timeout_seconds",
+		"evidence_side_effect_class",
+		"evidence_artifact",
+		"evidence_hash":
+		return true
+	default:
+		return false
+	}
 }
 
 func ParamsReplyPolicyUsesPlaceholder(content string) bool {
@@ -589,9 +630,14 @@ func managedParamFieldKey(key string) (string, bool) {
 
 func managedParamFieldValue(fields map[string]string, fieldKey string) string {
 	for _, key := range managedParamFieldAliases(fieldKey) {
-		if value := strings.TrimSpace(fields[key]); value != "" {
+		value := fields[key]
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if isEvidenceParamKey(fieldKey) {
 			return value
 		}
+		return strings.TrimSpace(value)
 	}
 	return ""
 }

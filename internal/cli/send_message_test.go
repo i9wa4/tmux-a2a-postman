@@ -1883,6 +1883,130 @@ role = "worker"
 	}
 }
 
+func TestRunSendMessage_CustomTemplateOwnedBoundaryDrivesEvidenceGate(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantDeadLetter bool
+	}{
+		{name: "wrapper done sender nonclaim", body: "Status: still working\n"},
+		{name: "sender done", body: "DONE: complete\n", wantDeadLetter: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Chdir(tmpDir)
+			t.Setenv("HOME", tmpDir)
+			t.Setenv("XDG_CONFIG_HOME", tmpDir)
+			configPath := filepath.Join(tmpDir, "postman.toml")
+			configContent := `[postman]
+edges = ["messenger --- worker"]
+draft_template = """---
+params:
+  contextId: {context_id}
+  from: {sender}
+  to: {recipient}
+  messageId: {message_id}
+  replyPolicy: {reply_policy}
+  timestamp: {timestamp}
+  tmuxSession: {session_name}
+---
+
+# Message
+
+DONE: wrapper-generated text
+
+<!-- write here -->
+"""
+
+[messenger]
+role = "messenger"
+
+[worker]
+role = "worker"
+`
+			if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+				t.Fatalf("WriteFile config: %v", err)
+			}
+			installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+			ctxID := "ctx-custom-boundary"
+			sessionDir := filepath.Join(tmpDir, ctxID, "test-session")
+			manager := journal.NewManager(ctxID, os.Getpid())
+			journal.InstallProcessManager(manager)
+			t.Cleanup(journal.ClearProcessManager)
+
+			stdout, _, err := captureCommandOutput(t, func() error {
+				return runSendHeredocWithBody(t, tt.body, []string{
+					"--config", configPath,
+					"--context-id", ctxID,
+					"--to", "worker",
+				})
+			})
+			if err != nil {
+				t.Fatalf("RunSendMessage: %v", err)
+			}
+			payload := decodeSendOutputForTest(t, stdout)
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			if err := manager.Bootstrap(sessionDir, "test-session", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+				t.Fatalf("journal bootstrap failed: %v", err)
+			}
+			postPath := filepath.Join(sessionDir, "post", payload.Sent)
+			contentBytes, err := os.ReadFile(postPath)
+			if err != nil {
+				t.Fatalf("ReadFile post: %v", err)
+			}
+			senderBody, exact := envelope.SenderBodyFromContent(string(contentBytes))
+			if !exact {
+				t.Fatalf("SenderBodyFromContent() exact = false; content:\n%s", contentBytes)
+			}
+			if !strings.HasPrefix(senderBody, tt.body) {
+				t.Fatalf("SenderBodyFromContent() = %q, want prefix %q", senderBody, tt.body)
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test-session:worker":    {PaneID: "%1", SessionName: "test-session", SessionDir: sessionDir},
+				"test-session:messenger": {PaneID: "%2", SessionName: "test-session", SessionDir: sessionDir},
+			}
+			adjacency := map[string][]string{
+				"messenger": {"worker"},
+				"worker":    {"messenger"},
+			}
+			cfg := &config.Config{
+				EnterDelay:                  0.1,
+				TmuxTimeout:                 1.0,
+				EvidencePresenceGateEnabled: true,
+				EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+			}
+			if err := messagedelivery.DeliverMessage(postPath, ctxID, nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+				t.Fatalf("DeliverMessage failed: %v", err)
+			}
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", payload.Sent)
+			matches, err := filepath.Glob(filepath.Join(sessionDir, "dead-letter", "*missing-evidence*"))
+			if err != nil {
+				t.Fatalf("Glob failed: %v", err)
+			}
+			if tt.wantDeadLetter {
+				if len(matches) != 1 {
+					t.Fatalf("missing-evidence dead letters = %d, want 1: %v", len(matches), matches)
+				}
+				if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+					t.Fatalf("message delivered despite sender claim: %v", err)
+				}
+				return
+			}
+			if len(matches) != 0 {
+				t.Fatalf("missing-evidence dead letters = %d, want 0: %v", len(matches), matches)
+			}
+			if _, err := os.Stat(inboxPath); err != nil {
+				t.Fatalf("message not delivered to inbox: %v", err)
+			}
+		})
+	}
+}
+
 func TestRunSendMessage_StoresReplyPolicyMetadataAndReplyToFooter(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -3779,6 +3903,93 @@ func TestRunSendHeredoc_EvidenceFlagsRoundTripSeparatorAndYAMLLikeValues(t *test
 	}
 	if metadata.EvidenceHash != hash {
 		t.Fatalf("EvidenceHash = %q, want %q", metadata.EvidenceHash, hash)
+	}
+}
+
+func TestRunSendHeredoc_EvidenceScalarsRoundTripThroughBothReaders(t *testing.T) {
+	values := []string{
+		"true",
+		"null",
+		"[one, two]",
+		"{a: b}",
+		"# comment",
+		"&anchor value",
+		"*alias",
+		"| block",
+		"> block",
+		" leading",
+		"trailing ",
+		" key: value ",
+	}
+	hash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			var stdout strings.Builder
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+				"--context-id", "ctx-evidence-scalar",
+				"--to", "worker",
+				"--evidence-command", value,
+				"--evidence-cwd", "/repo",
+				"--evidence-env-allowlist", "PATH,HOME",
+				"--evidence-timeout-seconds", "120",
+				"--evidence-side-effect-class", "read-only",
+				"--evidence-artifact", "reports/test.json",
+				"--evidence-hash", hash,
+			})
+			if err != nil {
+				t.Fatalf("runSendHeredocWithContext: %v", err)
+			}
+
+			payload := decodeSendOutputForTest(t, stdout.String())
+			content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-evidence-scalar", "review", "post", payload.Sent))
+			if err != nil {
+				t.Fatalf("ReadFile sent message: %v", err)
+			}
+			metadata, err := envelope.ParseMetadata(string(content))
+			if err != nil {
+				t.Fatalf("ParseMetadata: %v", err)
+			}
+			if metadata.EvidenceCommand != value {
+				t.Fatalf("ParseMetadata EvidenceCommand = %q, want %q", metadata.EvidenceCommand, value)
+			}
+
+			frontmatter := frontmatterFromContent(string(content))
+			params, ok := frontmatter["params"].(map[string]any)
+			if !ok {
+				t.Fatalf("frontmatter params = %#v, want map", frontmatter["params"])
+			}
+			if got := params["evidence_command"]; got != value {
+				t.Fatalf("YAML evidence_command = %#v, want %q", got, value)
+			}
+		})
+	}
+}
+
+func TestValidateSendEvidenceFlagsBoundsTimeoutSeconds(t *testing.T) {
+	base := map[string]string{
+		"evidence_command":           "go test ./...",
+		"evidence_cwd":               "/repo",
+		"evidence_env_allowlist":     "PATH,HOME",
+		"evidence_timeout_seconds":   "3600",
+		"evidence_side_effect_class": "read-only",
+		"evidence_artifact":          "reports/test.json",
+		"evidence_hash":              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	if err := validateSendEvidenceFlags(base); err != nil {
+		t.Fatalf("validateSendEvidenceFlags(maximum) error = %v", err)
+	}
+	for _, timeout := range []string{"3601", "9223372036854775807"} {
+		t.Run(timeout, func(t *testing.T) {
+			fields := make(map[string]string, len(base))
+			for key, value := range base {
+				fields[key] = value
+			}
+			fields["evidence_timeout_seconds"] = timeout
+			if err := validateSendEvidenceFlags(fields); err == nil {
+				t.Fatalf("validateSendEvidenceFlags(%q) error = nil, want timeout rejection", timeout)
+			}
+		})
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,7 +54,7 @@ func evidenceReplayContractFromMetadata(metadata envelope.Metadata) (evidence.Re
 		return evidence.ReplayContract{}, false
 	}
 
-	timeoutSeconds, err := strconv.Atoi(strings.TrimSpace(metadata.EvidenceTimeoutSeconds))
+	timeout, err := evidence.ParseReplayTimeoutSeconds(metadata.EvidenceTimeoutSeconds)
 	if err != nil {
 		return evidence.ReplayContract{}, true
 	}
@@ -63,7 +62,7 @@ func evidenceReplayContractFromMetadata(metadata envelope.Metadata) (evidence.Re
 		Command:              strings.TrimSpace(metadata.EvidenceCommand),
 		CWD:                  strings.TrimSpace(metadata.EvidenceCWD),
 		EnvAllowlist:         parseEvidenceEnvAllowlist(metadata.EvidenceEnvAllowlist),
-		Timeout:              time.Duration(timeoutSeconds) * time.Second,
+		Timeout:              timeout,
 		SideEffect:           evidence.SideEffectClass(strings.TrimSpace(metadata.EvidenceSideEffectClass)),
 		ArtifactPath:         strings.TrimSpace(metadata.EvidenceArtifact),
 		ExpectedArtifactHash: strings.TrimSpace(metadata.EvidenceHash),

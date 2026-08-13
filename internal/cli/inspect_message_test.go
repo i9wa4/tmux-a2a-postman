@@ -194,8 +194,7 @@ func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing
 		"",
 		"## Sender Message",
 		"",
-		envelope.SenderBodyBoundarySentinel,
-		"",
+		envelope.SenderBodyBoundaryForMessageID(filename),
 		"---",
 		"",
 	}, "\n") + senderBody

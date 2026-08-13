@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -352,7 +351,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n" + envelope.SenderBodyBoundarySentinel + "\n---\n\n" + sendBodyPlaceholder + "\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n{sender_body_boundary}\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 	runtimeSnapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
@@ -379,6 +378,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, recipient), "<recipient>", recipient),
 		"message_id":                     filename,
+		"sender_body_boundary":           envelope.SenderBodyBoundaryForMessageID(filename),
 		"reply_policy":                   generatedReplyPolicyMarker,
 		"reply_to":                       *replyTo,
 		"input_request_id":               inputRequestIDMarker,
@@ -468,7 +468,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 		footer = template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 	}
-	content = renderSendBody(content, stripped, footer)
+	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
 	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
@@ -803,7 +803,7 @@ func contactSectionForViewpoint(cfg *config.Config, topology workspacetree.Topol
 	return strings.Join(contactLines, "\n")
 }
 
-func renderSendBody(content, body, footer string) string {
+func renderSendBody(content, body, footer, senderBodyBoundary string) string {
 	idx := strings.Index(content, sendBodyPlaceholder)
 	if idx < 0 {
 		if footer == "" {
@@ -825,10 +825,20 @@ func renderSendBody(content, body, footer string) string {
 		}
 		header += footer
 	}
+	if senderBodyBoundary != "" && !strings.HasSuffix(strings.TrimSpace(header), senderBodyBoundary) {
+		if header != "" {
+			header += "\n\n"
+		}
+		header += senderBodyBoundary
+	}
 	if header == "" {
 		return "---\n\n" + body + suffix
 	}
-	return header + "\n\n---\n\n" + body + suffix
+	separatorPrefix := "\n\n"
+	if senderBodyBoundary != "" && strings.HasSuffix(strings.TrimSpace(header), senderBodyBoundary) {
+		separatorPrefix = "\n"
+	}
+	return header + separatorPrefix + "---\n\n" + body + suffix
 }
 
 func trimTrailingBodySeparator(content string) string {
@@ -990,7 +1000,7 @@ func validateSendEvidenceFlags(fields map[string]string) error {
 		}
 	}
 
-	timeoutSeconds, err := parsePositiveEvidenceTimeout(fields["evidence_timeout_seconds"])
+	timeout, err := parsePositiveEvidenceTimeout(fields["evidence_timeout_seconds"])
 	if err != nil {
 		return err
 	}
@@ -998,7 +1008,7 @@ func validateSendEvidenceFlags(fields map[string]string) error {
 		Command:              strings.TrimSpace(fields["evidence_command"]),
 		CWD:                  strings.TrimSpace(fields["evidence_cwd"]),
 		EnvAllowlist:         parseSendEvidenceEnvAllowlist(fields["evidence_env_allowlist"]),
-		Timeout:              time.Duration(timeoutSeconds) * time.Second,
+		Timeout:              timeout,
 		SideEffect:           evidence.SideEffectClass(strings.TrimSpace(fields["evidence_side_effect_class"])),
 		ArtifactPath:         strings.TrimSpace(fields["evidence_artifact"]),
 		ExpectedArtifactHash: strings.TrimSpace(fields["evidence_hash"]),
@@ -1018,12 +1028,12 @@ func validateSendEvidenceParamValue(key, value string) error {
 	return nil
 }
 
-func parsePositiveEvidenceTimeout(value string) (int, error) {
-	timeoutSeconds, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || timeoutSeconds <= 0 {
-		return 0, fmt.Errorf("--evidence-timeout-seconds must be a positive integer")
+func parsePositiveEvidenceTimeout(value string) (time.Duration, error) {
+	timeout, err := evidence.ParseReplayTimeoutSeconds(value)
+	if err != nil {
+		return 0, fmt.Errorf("--evidence-timeout-seconds invalid: %w", err)
 	}
-	return timeoutSeconds, nil
+	return timeout, nil
 }
 
 func parseSendEvidenceEnvAllowlist(raw string) []string {

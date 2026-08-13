@@ -262,7 +262,8 @@ func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
 
 	filename := "20260713-095959-from-orchestrator-to-worker.md"
 	postPath := filepath.Join(sessionDir, "post", filename)
-	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-07-13T10:00:01Z\n---\n\nDONE\n"
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+		envelope.SenderBodyBoundaryForMessageID(filename) + "\n---\n\nDONE\n"
 	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
@@ -303,21 +304,34 @@ func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
 
 func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *testing.T) {
 	tests := []struct {
-		name           string
-		wrapperLine    string
-		senderBody     string
-		wantDeadLetter bool
+		name            string
+		wrapperLine     string
+		senderBody      string
+		includeBoundary bool
+		wantDeadLetter  bool
 	}{
 		{
-			name:        "wrapper terminal token ignored",
+			name:            "owned wrapper terminal token ignored",
+			wrapperLine:     "DONE: wrapper-generated text",
+			senderBody:      "Status: still working",
+			includeBoundary: true,
+		},
+		{
+			name:            "owned sender terminal token enforced",
+			wrapperLine:     "Status: wrapper text",
+			senderBody:      "DONE: sender claim",
+			includeBoundary: true,
+			wantDeadLetter:  true,
+		},
+		{
+			name:        "pre-marker wrapper terminal token ignored",
 			wrapperLine: "DONE: wrapper-generated text",
 			senderBody:  "Status: still working",
 		},
 		{
-			name:           "sender terminal token enforced",
-			wrapperLine:    "Status: wrapper text",
-			senderBody:     "DONE: sender claim",
-			wantDeadLetter: true,
+			name:        "pre-marker sender terminal token safe when extraction is inexact",
+			wrapperLine: "Status: wrapper text",
+			senderBody:  "DONE: sender claim",
 		},
 	}
 
@@ -336,10 +350,13 @@ func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *test
 
 			filename := "20260713-100001-from-orchestrator-to-worker.md"
 			postPath := filepath.Join(sessionDir, "post", filename)
-			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+			boundary := ""
+			if tt.includeBoundary {
+				boundary = envelope.SenderBodyBoundaryForMessageID(filename) + "\n"
+			}
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
 				"# Message\n\n" + tt.wrapperLine + "\n\n" +
-				envelope.SenderBodyBoundarySentinel + "\n---\n\n" +
-				tt.senderBody + "\n"
+				boundary + "---\n\n" + tt.senderBody + "\n"
 			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
 				t.Fatalf("WriteFile failed: %v", err)
 			}

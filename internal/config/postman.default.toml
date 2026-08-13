@@ -262,7 +262,7 @@ params:
 
 ## Sender Message
 
-<!-- tmux-a2a-postman:sender-body-boundary -->
+{sender_body_boundary}
 ---
 
 <!-- write here -->

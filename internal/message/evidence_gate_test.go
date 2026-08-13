@@ -36,6 +36,34 @@ func TestHasEvidenceReplayContractRequiresCompleteShape(t *testing.T) {
 	}
 }
 
+func TestHasEvidenceReplayContractBoundsTimeoutSeconds(t *testing.T) {
+	base := envelope.Metadata{
+		EvidenceCommand:         "go test ./...",
+		EvidenceCWD:             "/repo",
+		EvidenceSideEffectClass: string(evidence.SideEffectReadOnly),
+		EvidenceArtifact:        "reports/test.json",
+		EvidenceHash:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	tests := []struct {
+		name    string
+		timeout string
+		want    bool
+	}{
+		{name: "maximum", timeout: "3600", want: true},
+		{name: "just over maximum", timeout: "3601"},
+		{name: "extreme", timeout: "9223372036854775807"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := base
+			metadata.EvidenceTimeoutSeconds = tt.timeout
+			if got := hasEvidenceReplayContract(metadata); got != tt.want {
+				t.Fatalf("hasEvidenceReplayContract() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEvidenceGateObservedAtUsesDaemonObservedJournalEvent(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

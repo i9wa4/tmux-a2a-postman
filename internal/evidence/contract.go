@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +19,10 @@ const (
 	SideEffectIdempotent SideEffectClass = "idempotent"
 	SideEffectMutating   SideEffectClass = "mutating"
 )
+
+const MaxReplayTimeout = time.Hour
+
+const MaxReplayTimeoutSeconds = int(MaxReplayTimeout / time.Second)
 
 type ReplayContract struct {
 	Command              string
@@ -49,6 +54,9 @@ func (c ReplayContract) ValidateShape() error {
 	if c.Timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
 	}
+	if c.Timeout > MaxReplayTimeout {
+		return fmt.Errorf("timeout must be at most %s", MaxReplayTimeout)
+	}
 	if !validSideEffect(c.SideEffect) {
 		return fmt.Errorf("side_effect_class must be one of read-only, idempotent, mutating")
 	}
@@ -64,6 +72,17 @@ func (c ReplayContract) ValidateShape() error {
 		return err
 	}
 	return nil
+}
+
+func ParseReplayTimeoutSeconds(value string) (time.Duration, error) {
+	timeoutSeconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || timeoutSeconds <= 0 {
+		return 0, fmt.Errorf("timeout_seconds must be a positive integer")
+	}
+	if timeoutSeconds > int64(MaxReplayTimeoutSeconds) {
+		return 0, fmt.Errorf("timeout_seconds must be at most %d", MaxReplayTimeoutSeconds)
+	}
+	return time.Duration(timeoutSeconds) * time.Second, nil
 }
 
 func validateSHA256Hash(value, field string) error {
