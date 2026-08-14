@@ -10,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
@@ -75,7 +76,9 @@ func evaluateEscalationTrips(snapshot status.SessionStatus, cfg *config.Config, 
 				continue
 			}
 			observed := threshold
-			if node.ScreenProgress != nil && node.ScreenProgress.LastCaptureAt != "" {
+			if node.ScreenProgress != nil && node.ScreenProgress.StaleDurationSeconds > 0 {
+				observed = node.ScreenProgress.StaleDurationSeconds
+			} else if node.ScreenProgress != nil && node.ScreenProgress.LastCaptureAt != "" {
 				observed = inputRequestAgeSeconds(node.ScreenProgress.LastCaptureAt, now)
 			}
 			if observed >= threshold {
@@ -130,8 +133,9 @@ func (rt *daemonRuntime) maybePushEscalation(now time.Time) {
 	if key == rt.lastEscalationPushKey {
 		return
 	}
-	rt.lastEscalationPushKey = key
-	rt.pushEscalationNotification(trips)
+	if rt.pushEscalationNotification(trips) {
+		rt.lastEscalationPushKey = key
+	}
 }
 
 func (rt *daemonRuntime) runtimeEscalationSnapshot(now time.Time) status.SessionStatus {
@@ -154,7 +158,7 @@ func (rt *daemonRuntime) runtimeEscalationSnapshot(now time.Time) status.Session
 		nodeInfo := rt.nodes[nodeKey]
 		nodeName := ping.ExtractSimpleName(nodeKey)
 		node := status.NodeStatus{
-			Name:       nodeName,
+			Name:       nodeKey,
 			PaneID:     nodeInfo.PaneID,
 			InboxCount: countRuntimeMarkdown(filepath.Join(nodeInfo.SessionDir, "inbox", nodeName)),
 		}
@@ -162,20 +166,27 @@ func (rt *daemonRuntime) runtimeEscalationSnapshot(now time.Time) status.Session
 		snapshot.Nodes = append(snapshot.Nodes, node)
 	}
 
-	attachRuntimeInputRequests(&snapshot, rt.sessionDir, rt.selfSession, now, int(rt.cfg.InputRequestStaleSeconds))
-	attachRuntimePaneState(&snapshot, rt.idleTracker.GetPaneActivityStatus(rt.cfg))
+	attachRuntimeInputRequests(&snapshot, rt.nodes, now, int(rt.cfg.InputRequestStaleSeconds))
+	if rt.idleTracker != nil {
+		attachRuntimePaneActivity(&snapshot, rt.idleTracker.GetPaneActivityEvidence(rt.cfg), now)
+	}
 	return snapshot
 }
 
-func attachRuntimeInputRequests(snapshot *status.SessionStatus, sessionDir, sessionName string, now time.Time, staleAfterSeconds int) {
-	projected, ok, err := projection.ProjectMessageInputRequestStateAt(sessionDir, sessionName, now, staleAfterSeconds)
-	if err != nil || !ok {
-		return
-	}
+func attachRuntimeInputRequests(snapshot *status.SessionStatus, nodes map[string]discovery.NodeInfo, now time.Time, staleAfterSeconds int) {
 	for idx := range snapshot.Nodes {
-		name := snapshot.Nodes[idx].Name
-		snapshot.Nodes[idx].InputRequired = runtimeStatusInputRequests(projected.InputRequired, name, "inbound")
-		snapshot.Nodes[idx].WaitingOnInput = runtimeStatusInputRequests(projected.WaitingOnInput, name, "outbound")
+		nodeKey := snapshot.Nodes[idx].Name
+		nodeInfo, ok := nodes[nodeKey]
+		if !ok {
+			continue
+		}
+		nodeName := ping.ExtractSimpleName(nodeKey)
+		projected, ok, err := projection.ProjectMessageInputRequestStateAt(nodeInfo.SessionDir, sessionNameForNodeKey(nodeKey, nodeInfo), now, staleAfterSeconds)
+		if err != nil || !ok {
+			continue
+		}
+		snapshot.Nodes[idx].InputRequired = runtimeStatusInputRequests(projected.InputRequired, nodeName, "inbound")
+		snapshot.Nodes[idx].WaitingOnInput = runtimeStatusInputRequests(projected.WaitingOnInput, nodeName, "outbound")
 	}
 }
 
@@ -205,27 +216,51 @@ func runtimeStatusInputRequests(inputRequests []projection.InputRequestDetail, n
 	return result
 }
 
-func attachRuntimePaneState(snapshot *status.SessionStatus, paneStates map[string]string) {
+func attachRuntimePaneActivity(snapshot *status.SessionStatus, paneStates map[string]idle.PaneActivityExport, now time.Time) {
 	for idx := range snapshot.Nodes {
 		paneID := snapshot.Nodes[idx].PaneID
 		if paneID == "" {
 			continue
 		}
-		snapshot.Nodes[idx].PaneState = paneStates[paneID]
+		paneState, ok := paneStates[paneID]
+		if !ok {
+			continue
+		}
+		snapshot.Nodes[idx].PaneState = paneState.Status
+		progress := &status.ScreenProgressEvidence{
+			EvidenceState:     paneState.Status,
+			ScreenFingerprint: paneState.ScreenFingerprint,
+		}
+		if !paneState.LastCaptureAt.IsZero() {
+			progress.LastCaptureAt = paneState.LastCaptureAt.Format(time.RFC3339Nano)
+			progress.StaleDurationSeconds = durationSecondsSince(paneState.LastCaptureAt, now)
+		}
+		if !paneState.LastChangeAt.IsZero() {
+			progress.LastScreenChangeAt = paneState.LastChangeAt.Format(time.RFC3339Nano)
+		}
+		snapshot.Nodes[idx].ScreenProgress = progress
 	}
 }
 
-func (rt *daemonRuntime) pushEscalationNotification(trips []escalationTrip) {
-	if rt == nil || rt.cfg == nil || rt.sendPaneNotification == nil {
-		return
+func durationSecondsSince(then, now time.Time) int {
+	seconds := int(now.Sub(then).Seconds())
+	if seconds < 0 {
+		return 0
 	}
-	uiNode, ok := runtimeUINode(rt.cfg, rt.nodes)
+	return seconds
+}
+
+func (rt *daemonRuntime) pushEscalationNotification(trips []escalationTrip) bool {
+	if rt == nil || rt.cfg == nil || rt.sendPaneNotification == nil {
+		return false
+	}
+	uiNode, ok := runtimeUINode(rt.cfg, rt.nodes, rt.selfSession)
 	if !ok || uiNode.PaneID == "" {
-		return
+		return false
 	}
 	message := escalationNotificationMessage(trips)
 	if strings.TrimSpace(message) == "" {
-		return
+		return false
 	}
 	if err := rt.sendPaneNotification(
 		uiNode.PaneID,
@@ -240,11 +275,12 @@ func (rt *daemonRuntime) pushEscalationNotification(trips []escalationTrip) {
 		if rt.events != nil {
 			rt.events <- statusEscalationErrorEvent(err)
 		}
-		return
+		return false
 	}
 	if rt.events != nil {
 		rt.events <- statusEscalationPushedEvent(trips)
 	}
+	return true
 }
 
 func escalationEnterDelay(cfg *config.Config, nodeName string) time.Duration {
@@ -265,7 +301,7 @@ func escalationEnterCount(cfg *config.Config, nodeName string) int {
 	})
 }
 
-func runtimeUINode(cfg *config.Config, nodes map[string]discovery.NodeInfo) (struct {
+func runtimeUINode(cfg *config.Config, nodes map[string]discovery.NodeInfo, selfSession string) (struct {
 	NodeKey string
 	discovery.NodeInfo
 }, bool,
@@ -276,8 +312,15 @@ func runtimeUINode(cfg *config.Config, nodes map[string]discovery.NodeInfo) (str
 			discovery.NodeInfo
 		}{}, false
 	}
-	for nodeKey, nodeInfo := range nodes {
-		if ping.ExtractSimpleName(nodeKey) == cfg.UINode {
+	uiNode := strings.TrimSpace(cfg.UINode)
+	nodeKeys := make([]string, 0, len(nodes))
+	for nodeKey := range nodes {
+		nodeKeys = append(nodeKeys, nodeKey)
+	}
+	sort.Strings(nodeKeys)
+	for _, nodeKey := range nodeKeys {
+		nodeInfo := nodes[nodeKey]
+		if nodeKey == uiNode || (sessionNameForNodeKey(nodeKey, nodeInfo) == selfSession && ping.ExtractSimpleName(nodeKey) == uiNode) {
 			return struct {
 				NodeKey string
 				discovery.NodeInfo
@@ -288,6 +331,17 @@ func runtimeUINode(cfg *config.Config, nodes map[string]discovery.NodeInfo) (str
 		NodeKey string
 		discovery.NodeInfo
 	}{}, false
+}
+
+func sessionNameForNodeKey(nodeKey string, nodeInfo discovery.NodeInfo) string {
+	if nodeInfo.SessionName != "" {
+		return nodeInfo.SessionName
+	}
+	sessionName, _, found := strings.Cut(nodeKey, ":")
+	if found {
+		return sessionName
+	}
+	return ""
 }
 
 func escalationNotificationMessage(trips []escalationTrip) string {
@@ -311,7 +365,7 @@ func escalationNotificationMessage(trips []escalationTrip) string {
 func escalationTripKey(trips []escalationTrip) string {
 	parts := make([]string, 0, len(trips))
 	for _, trip := range trips {
-		parts = append(parts, fmt.Sprintf("%s/%s/%d/%d/%s", trip.Kind, trip.Node, trip.Observed, trip.Threshold, trip.Detail))
+		parts = append(parts, fmt.Sprintf("%s/%s/%d/%s", trip.Kind, trip.Node, trip.Threshold, trip.Detail))
 	}
 	return strings.Join(parts, "|")
 }

@@ -211,6 +211,24 @@ func (t *IdleTracker) GetPaneActivityStatus(cfg *config.Config) map[string]strin
 	return result
 }
 
+// GetPaneActivityEvidence returns pane activity with capture timestamps.
+func (t *IdleTracker) GetPaneActivityEvidence(cfg *config.Config) map[string]PaneActivityExport {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	result := make(map[string]PaneActivityExport, len(t.paneCaptureState))
+	now := t.now()
+	for paneID, state := range t.paneCaptureState {
+		result[paneID] = PaneActivityExport{
+			Status:            statusForState(state, now, cfg),
+			LastChangeAt:      state.LastChangeAt,
+			LastCaptureAt:     state.LastCaptureAt,
+			ScreenFingerprint: fmt.Sprintf("%08x", state.LastHash),
+		}
+	}
+	return result
+}
+
 // ExportPaneActivityToFile writes pane activity status to a JSON file.
 // Issue #120: Export state for get-status-oneline.
 // Issue #123: Enriched format — writes map[string]PaneActivityExport instead of map[string]string.

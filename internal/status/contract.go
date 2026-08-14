@@ -39,10 +39,11 @@ type ConventionMeterStatus struct {
 }
 
 type ScreenProgressEvidence struct {
-	EvidenceState      string `json:"evidence_state"`
-	LastCaptureAt      string `json:"last_capture_at,omitempty"`
-	LastScreenChangeAt string `json:"last_screen_change_at,omitempty"`
-	ScreenFingerprint  string `json:"screen_fingerprint,omitempty"`
+	EvidenceState        string `json:"evidence_state"`
+	LastCaptureAt        string `json:"last_capture_at,omitempty"`
+	LastScreenChangeAt   string `json:"last_screen_change_at,omitempty"`
+	StaleDurationSeconds int    `json:"stale_duration_seconds,omitempty"`
+	ScreenFingerprint    string `json:"screen_fingerprint,omitempty"`
 }
 
 type StatusItem struct {
