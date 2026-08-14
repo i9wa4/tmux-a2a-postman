@@ -246,9 +246,9 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 }
 
 // buildCommandApprovalStatus surfaces any configured-but-unresolvable
-// command_approver_node so get-status makes the fail-open condition visible
-// (#626/#629), mirroring config.ValidateConfig's warning rule without depending
-// on its message wording.
+// command_approver_node so get-status makes the blocking fail-closed condition
+// visible, mirroring config.ValidateConfig's warning rule without depending on
+// its message wording.
 func buildCommandApprovalStatus(cfg *config.Config) *status.CommandApprovalStatus {
 	if cfg == nil {
 		return nil
@@ -258,7 +258,7 @@ func buildCommandApprovalStatus(cfg *config.Config) *status.CommandApprovalStatu
 		unresolved = append(unresolved, status.CommandApprovalUnresolvedApprover{
 			Field:   "command_approver_node",
 			Value:   name,
-			Message: fmt.Sprintf("command_approver_node %q does not match any configured node; command approval is failing open", name),
+			Message: fmt.Sprintf("command_approver_node %q does not match any configured node; blocking command approval is failing closed", name),
 		})
 	}
 	deprecated := make([]status.CommandApprovalDeprecatedApprover, 0, len(cfg.DeprecatedCommandApproverNodes))

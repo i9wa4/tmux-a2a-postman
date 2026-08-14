@@ -20,7 +20,7 @@ import (
 // expected frontmatter and thread id instructions.
 func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testing.T) {
 	baseDir := t.TempDir()
-	reviewerSessionDir := filepath.Join(baseDir, "ctx-626", "reviewer-session")
+	reviewerSessionDir := filepath.Join(baseDir, "ctx-626", "worker-session")
 	if err := config.CreateSessionDirs(reviewerSessionDir); err != nil {
 		t.Fatalf("config.CreateSessionDirs(reviewer) failed: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 	original := discoverNodesForCommandApprovalDeliveryFn
 	discoverNodesForCommandApprovalDeliveryFn = func(baseDir, contextID, selfSession string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
 		return map[string]discovery.NodeInfo{
-			"orchestrator": {PaneID: "%2", SessionName: "reviewer-session", SessionDir: reviewerSessionDir},
+			"worker-session:orchestrator": {PaneID: "%2", SessionName: "worker-session", SessionDir: reviewerSessionDir},
 		}, nil, nil
 	}
 	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = original })
@@ -43,7 +43,9 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 	now := time.Date(2026, time.July, 8, 1, 0, 0, 0, time.UTC)
 	threadID := "command-approval-aabbccdd11223344"
 
-	deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", threadID, "sha256:deadbeef", "verify release build", false, now)
+	if err := deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", threadID, "sha256:deadbeef", "verify release build", false, now); err != nil {
+		t.Fatalf("deliverCommandApprovalRequest() error = %v", err)
+	}
 
 	draftEntries, err := os.ReadDir(filepath.Join(reviewerSessionDir, "draft"))
 	if err != nil {
@@ -90,12 +92,59 @@ func TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir(t *testi
 	}
 }
 
-// TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort guards the
-// no-op-not-crash behavior when the command_approver_node isn't currently
-// discoverable: delivery must log and return without writing anything or
-// panicking, since the approval request has already been journaled by the
-// caller regardless of delivery outcome.
-func TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort(t *testing.T) {
+// TestCommandApproverStatusAndDeliveryAgreeWithinRequesterSession verifies
+// #695's configuration/status and runtime-delivery agreement: the same bare
+// Mermaid-designated approver is healthy in status and resolves to the
+// requester's session-qualified discovery key for delivery.
+func TestCommandApproverStatusAndDeliveryAgreeWithinRequesterSession(t *testing.T) {
+	baseDir := t.TempDir()
+	reviewerSessionDir := filepath.Join(baseDir, "ctx-695", "worker-session")
+	if err := config.CreateSessionDirs(reviewerSessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(reviewer) failed: %v", err)
+	}
+
+	cfg := &config.Config{
+		CommandApproverNode: "orchestrator",
+		Nodes:               map[string]config.NodeConfig{"orchestrator": {}},
+	}
+	approver, valid := cfg.ResolveCommandApproverNode()
+	if approver != "orchestrator" || !valid {
+		t.Fatalf("ResolveCommandApproverNode() = (%q, %v), want (orchestrator, true)", approver, valid)
+	}
+	if status := buildCommandApprovalStatus(cfg); status != nil {
+		t.Fatalf("buildCommandApprovalStatus() = %#v, want nil for a resolvable configured approver", status)
+	}
+
+	original := discoverNodesForCommandApprovalDeliveryFn
+	discoverNodesForCommandApprovalDeliveryFn = func(baseDir, contextID, selfSession string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"worker-session:orchestrator": {
+				PaneID:      "%2",
+				SessionName: "worker-session",
+				SessionDir:  reviewerSessionDir,
+			},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = original })
+
+	policy := resolvedCommandApprovalPolicy{Requester: "worker", Mode: "blocking", Label: "protected"}
+	if err := deliverCommandApprovalRequest(cfg, baseDir, "ctx-695", "worker-session", policy, approver, "command-approval-status-delivery", "sha256:deadbeef", "", false, time.Now()); err != nil {
+		t.Fatalf("deliverCommandApprovalRequest() error = %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(reviewerSessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir(post) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post/ has %d entries, want 1", len(entries))
+	}
+}
+
+// TestDeliverCommandApprovalRequest_UnknownNodeReturnsError guards #680:
+// when the configured command_approver_node is not currently discoverable,
+// delivery must report that fact so blocking mode can fail closed after the
+// approval request is journaled.
+func TestDeliverCommandApprovalRequest_UnknownNodeReturnsError(t *testing.T) {
 	baseDir := t.TempDir()
 
 	original := discoverNodesForCommandApprovalDeliveryFn
@@ -105,10 +154,44 @@ func TestDeliverCommandApprovalRequest_UnknownNodeIsBestEffort(t *testing.T) {
 	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = original })
 
 	policy := resolvedCommandApprovalPolicy{Requester: "worker", Mode: "blocking", Label: "protected"}
-	deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", "command-approval-x", "sha256:x", "", false, time.Now())
+	err := deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-626", "worker-session", policy, "orchestrator", "command-approval-x", "sha256:x", "", false, time.Now())
+	if err == nil {
+		t.Fatal("deliverCommandApprovalRequest() error = nil, want missing approver error")
+	}
+	if !strings.Contains(err.Error(), `command_approver_node "orchestrator" not found among discovered nodes`) {
+		t.Fatalf("deliverCommandApprovalRequest() error = %v", err)
+	}
 	// No panic and no filesystem assertion needed: absence of a reviewer
 	// session directory under baseDir is itself proof nothing was written.
 	if _, err := os.Stat(filepath.Join(baseDir, "ctx-626")); !os.IsNotExist(err) {
 		t.Fatalf("expected no session directories to be created, stat error = %v", err)
+	}
+}
+
+// TestDeliverCommandApprovalRequest_DoesNotRouteBareApproverAcrossSessions
+// verifies that a bare command_approver_node remains scoped to the requester
+// session. Cross-session delivery requires an explicitly qualified node name.
+func TestDeliverCommandApprovalRequest_DoesNotRouteBareApproverAcrossSessions(t *testing.T) {
+	baseDir := t.TempDir()
+
+	original := discoverNodesForCommandApprovalDeliveryFn
+	discoverNodesForCommandApprovalDeliveryFn = func(baseDir, contextID, selfSession string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"other-session:orchestrator": {
+				PaneID:      "%2",
+				SessionName: "other-session",
+				SessionDir:  filepath.Join(baseDir, contextID, "other-session"),
+			},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = original })
+
+	policy := resolvedCommandApprovalPolicy{Requester: "worker", Mode: "blocking", Label: "protected"}
+	err := deliverCommandApprovalRequest(&config.Config{}, baseDir, "ctx-680", "worker-session", policy, "orchestrator", "command-approval-x", "sha256:x", "", false, time.Now())
+	if err == nil {
+		t.Fatal("deliverCommandApprovalRequest() error = nil, want missing same-session approver error")
+	}
+	if _, err := os.Stat(filepath.Join(baseDir, "ctx-680")); !os.IsNotExist(err) {
+		t.Fatalf("expected no cross-session delivery, stat error = %v", err)
 	}
 }

@@ -154,15 +154,14 @@ func ValidateConfig(cfg *Config) []ValidationError {
 	}
 
 	// Rule 5: command_approver_node resolvability check (severity: warning, #626).
-	// An unresolvable command_approver_node is never a load error — the unified
-	// fail-open rule means command approval simply stays permissive in that
-	// case — but it MUST be loud (a typo here silently disables blocking
-	// mode otherwise) and auditable, per the decided requirements.
+	// An unresolvable command_approver_node is never a load error, but it MUST
+	// be loud and auditable: a configured unresolved approver makes blocking
+	// command approval fail closed at execution time.
 	if name := strings.TrimSpace(cfg.CommandApproverNode); name != "" {
 		if _, exists := cfg.Nodes[name]; !exists {
 			errors = append(errors, ValidationError{
 				Field:    "command_approver_node",
-				Message:  fmt.Sprintf("command_approver_node %q does not match any configured node; command approval will fail open until this is fixed", name),
+				Message:  fmt.Sprintf("command_approver_node %q does not match any configured node; blocking command approval will fail closed until this is fixed", name),
 				Severity: "warning",
 			})
 		}

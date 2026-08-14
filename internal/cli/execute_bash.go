@@ -158,21 +158,23 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
 	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode()
+	approverConfigured := strings.TrimSpace(cfg.CommandApproverNode) != ""
 
-	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, validReviewer, ctx.now())
+	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, approverConfigured, validReviewer, ctx.now())
 	if err != nil {
 		return err
 	}
-	if !evaluation.Allowed {
-		// Reached only when validReviewer is true: evaluateCommandApproval
-		// short-circuits to Allowed:true whenever no valid command_approver_node is
-		// configured, so commandApproverNode here is always the trusted,
-		// config-resolved node name (#626 B1) — never a requester-supplied
-		// value.
+	if !evaluation.Allowed && validReviewer {
+		// Only a config-resolved reviewer may receive a trusted approval request.
+		// A configured but unresolvable blocking reviewer remains locally blocked
+		// below, without recording or delivering a request that names the raw
+		// configuration value.
 		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
-		deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now())
+		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
+			evaluation.Reason = err.Error()
+		}
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -438,13 +440,15 @@ func validateCommandApprovalThreadID(threadID string) error {
 // mode. This must never be conflated with an actual recorded approval.
 const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
 
-func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
+func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, approverConfigured, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
 	if !validReviewer {
-		// #626 decided requirement 1 (unified fail-open rule): unless a
-		// valid command_approver_node is configured, every command is treated as
-		// approved across all three modes, including blocking. This is
-		// evaluated before any projection lookup so a missing/unresolvable
-		// command_approver_node never depends on prior approval state.
+		if approverConfigured && policy.Mode == "blocking" {
+			return commandApprovalEvaluation{Decision: "unresolved_command_approver", Allowed: false, Reason: "configured command_approver_node is not resolvable; blocking approval fails closed"}, nil
+		}
+		// An unset approver, or a non-blocking policy with an unresolvable one,
+		// fails open. A configured unresolvable blocking approver returned above
+		// fails closed. This is evaluated before any projection lookup so an
+		// unresolved command_approver_node never depends on prior approval state.
 		return commandApprovalEvaluation{
 			Decision: commandApprovalDecisionAutoApprovedNoReviewer,
 			Allowed:  true,

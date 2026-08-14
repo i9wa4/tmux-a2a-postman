@@ -85,7 +85,7 @@ type Config struct {
 	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
 	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"` // Optional explicit hierarchy for tree aliases
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
-	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
+	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node; unset = fail-open, configured unresolved blocking approval = fail-closed
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
 	Herdr                          HerdrConfig                     `toml:"herdr"`
 
@@ -199,9 +199,9 @@ type WorkspaceTreeNodeConfig struct {
 // ResolveCommandApproverNode resolves the globally designated command_approver_node
 // (#626/#629). valid reports whether the resolved name matches a node known to
 // this config (the same set edges/workspace_tree validate against). An empty or
-// unresolvable name is never valid — callers MUST fail open in that case rather
-// than treat an invalid name as if it were configured, per the decided unified
-// fail-open rule.
+// unresolvable name is never valid. Callers must distinguish an absent approver
+// from a configured-but-unresolvable one: blocking approval fails closed for the
+// latter, while an absent approver retains the documented fail-open behavior.
 func (cfg *Config) ResolveCommandApproverNode() (name string, valid bool) {
 	if cfg == nil {
 		return "", false
