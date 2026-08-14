@@ -1,8 +1,9 @@
 # Schema and Event Terminology
 
 Schema version 4 is the terminology cutover for the canonical status contract.
-The public commands were already `get-status` and `get-status-oneline`; the
-machine-facing contract now uses status names too.
+Schema version 5 adds per-node convention-meter figures while preserving the
+status terminology. The public commands were already `get-status` and
+`get-status-oneline`; the machine-facing contract now uses status names too.
 
 ## 1. Canonical Surfaces
 
@@ -10,7 +11,7 @@ Current writers and live machine consumers use:
 
 - `status.SessionStatus`, `status.NodeStatus`, `status.AllSessionStatus`, and
   related status-named structs in `internal/status/contract.go`
-- `schema_version: 4`
+- `schema_version: 5`
 - `session_status_snapshot` journal events
 - `session_status_update` TUI events
 - TUI event detail key `status`

@@ -68,11 +68,15 @@ The status payload exposes `queues.post_count`, `queues.inbox_count`,
 `queues.dead_letter_count`, and per-node input-request counts for mailbox
 backlog checks. Per-node state is reported as `nodes[*].visible_state`.
 
-The schema version 4 payload also exposes contextual severity:
+The schema version 5 payload exposes contextual severity:
 `severity`, `severity_source`, `severity_reason`, `compact_severity`,
 `delivery`, `nodes[*].node_local`, `nodes[*].flow`, and `nodes[*].queues`.
 These fields distinguish expected waits from actionable or broken conditions
 without changing the visible-state fields.
+
+It also exposes `nodes[*].convention_meter`, a weak per-node convention
+adherence projection over journaled messages. The meter counts missing
+`verdictOf`, missing completion evidence, and missing reply references.
 
 Replay keeps a narrow read-only reader for pre-v4 `session_health_snapshot`
 archives, but new writers and live machine consumers use status terminology.
@@ -169,3 +173,11 @@ operator involves them. Leaving `ui_node` unset or explicitly empty means no
 startup entry point was chosen, so startup auto-PING may fan out.
 `auto_enable_new_sessions` defaults to true, so a single user daemon can
 discover project sessions that already have configured node panes.
+
+Runtime threshold-push escalation is the scoped exception to the earlier
+deferral of a general escalation channel. The daemon may push a pane
+notification to the configured UI-facing node when configured runtime facts
+cross thresholds: oldest open input request age, dead-letter count, unread
+backlog, or stale-node evidence. This is threshold-push on runtime facts, not a
+general product-policy escalation layer, and all thresholds default to
+disabled.
