@@ -461,6 +461,26 @@ Remaining blockers: none
 POSTMAN_BODY
 ```
 
+When evidence presence gating is active, completion claims can include replay
+evidence in the generated outer envelope:
+
+```sh
+tmux-a2a-postman send-heredoc \
+  --to orchestrator \
+  --evidence-command 'go test ./... -count=1' \
+  --evidence-cwd "$PWD" \
+  --evidence-env-allowlist PATH,HOME \
+  --evidence-timeout-seconds 120 \
+  --evidence-side-effect-class read-only \
+  --evidence-artifact reports/go-test.json \
+  --evidence-hash sha256:<64-hex-digest> <<'POSTMAN_BODY'
+DONE: Requirements satisfied.
+POSTMAN_BODY
+```
+
+If any `--evidence-*` flag is set, all required replay contract fields must be
+present and valid.
+
 After a fill/reply send, check the JSON `fill` and `required_input` fields.
 They show whether the request closed and whether any required input remains
 open. Terminal-looking replies such as `DONE:` also include a `notice` when
@@ -504,6 +524,7 @@ Detailed configuration references:
 - [postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
 - [configuration defaults and merge policy](docs/design/config-ssot.md)
 - [command approval wrapper](docs/command-approvals.md)
+- [evidence replay contract](docs/design/evidence-replay-contract.md)
 - [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
 

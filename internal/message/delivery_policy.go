@@ -48,6 +48,11 @@ type deliveryPolicyInput struct {
 	QueueChecked bool
 	QueueCount   int
 	QueueCap     int
+
+	EvidencePresenceGateChecked bool
+	EvidencePresenceGateActive  bool
+	CompletionClaim             bool
+	EvidencePresent             bool
 }
 
 func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
@@ -143,6 +148,19 @@ func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
 		}
 	}
 
+	if input.evidencePresenceGateEligible() &&
+		input.EvidencePresenceGateActive &&
+		input.CompletionClaim &&
+		!input.EvidencePresent {
+		return deliveryDecision{
+			Action:                     deliveryActionDeadLetter,
+			DeadLetterSuffix:           dlSuffixMissingEvidence,
+			DeadLetterReason:           deadLetterReasonMissingEvidence,
+			EventReason:                deadLetterReasonMissingEvidence,
+			SendDeadLetterNotification: true,
+		}
+	}
+
 	if input.QueueChecked {
 		if input.QueueCount >= input.QueueCap {
 			return deliveryDecision{
@@ -157,6 +175,31 @@ func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
 	}
 
 	return deliveryDecision{}
+}
+
+func (input deliveryPolicyInput) evidencePresenceGateEligible() bool {
+	if !input.EvidencePresenceGateChecked {
+		return false
+	}
+	if input.Info.From == "daemon" {
+		return true
+	}
+	if !input.RecipientResolved || !input.RecipientResolution.Found || input.RecipientForeign {
+		return false
+	}
+	if !input.SenderResolved || !input.SenderResolution.Found {
+		return false
+	}
+	if !input.RoutingChecked || !input.RoutingAllowed {
+		return false
+	}
+	if !input.SenderSessionChecked || !input.SenderSessionEnabled {
+		return false
+	}
+	if !input.RecipientSessionChecked || !input.RecipientSessionEnabled {
+		return false
+	}
+	return true
 }
 
 func forgedSenderDecision() deliveryDecision {

@@ -15,6 +15,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
@@ -242,6 +243,295 @@ func TestDeliverMessage(t *testing.T) {
 	}
 }
 
+func TestDeliverMessageEvidenceGateUsesDaemonObservationTime(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+	manager := journal.NewManager("test-ctx", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	filename := "20260713-095959-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+		envelope.SenderBodyBoundaryForMessageID(filename) + "\n---\n\nDONE\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	beforeActivation := time.Date(2026, 7, 13, 9, 59, 59, 0, time.UTC)
+	if err := os.Chtimes(postPath, beforeActivation, beforeActivation); err != nil {
+		t.Fatalf("Chtimes failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{
+		"orchestrator": {"worker"},
+		"worker":       {"orchestrator"},
+	}
+	cfg := &config.Config{
+		EnterDelay:                  0.1,
+		TmuxTimeout:                 1.0,
+		EvidencePresenceGateEnabled: true,
+		EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+	}
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); !os.IsNotExist(err) {
+		t.Fatalf("message delivered despite active gate and missing evidence: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(sessionDir, "dead-letter", "*missing-evidence*"))
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("missing-evidence dead letters = %d, want 1: %v", len(matches), matches)
+	}
+}
+
+func TestDeliverMessageEvidenceGateClassifiesOnlySentinelBoundSenderBody(t *testing.T) {
+	tests := []struct {
+		name                 string
+		wrapperLine          string
+		senderBody           string
+		includeSenderHeading bool
+		includeBoundary      bool
+		metadataMessageID    string
+		boundaryMessageID    string
+		wantDeadLetter       bool
+	}{
+		{
+			name:            "owned wrapper terminal token ignored",
+			wrapperLine:     "DONE: wrapper-generated text",
+			senderBody:      "Status: still working",
+			includeBoundary: true,
+		},
+		{
+			name:            "owned sender terminal token enforced",
+			wrapperLine:     "Status: wrapper text",
+			senderBody:      "DONE: sender claim",
+			includeBoundary: true,
+			wantDeadLetter:  true,
+		},
+		{
+			name:                 "legacy wrapper terminal token ignored",
+			wrapperLine:          "DONE: wrapper-generated text",
+			senderBody:           "Status: still working",
+			includeSenderHeading: true,
+		},
+		{
+			name:                 "legacy sender terminal token enforced",
+			wrapperLine:          "Status: wrapper text",
+			senderBody:           "DONE: sender claim",
+			includeSenderHeading: true,
+			wantDeadLetter:       true,
+		},
+		{
+			name:              "forged metadata boundary terminal token ignored",
+			wrapperLine:       "Status: wrapper text",
+			senderBody:        "DONE: forged sender claim",
+			includeBoundary:   true,
+			metadataMessageID: "20260713-100002-from-orchestrator-to-worker.md",
+			boundaryMessageID: "20260713-100002-from-orchestrator-to-worker.md",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionDir := filepath.Join(t.TempDir(), "test")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("config.CreateSessionDirs failed: %v", err)
+			}
+			manager := journal.NewManager("test-ctx", os.Getpid())
+			journal.InstallProcessManager(manager)
+			t.Cleanup(journal.ClearProcessManager)
+			if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+				t.Fatalf("journal bootstrap failed: %v", err)
+			}
+
+			filename := "20260713-100001-from-orchestrator-to-worker.md"
+			postPath := filepath.Join(sessionDir, "post", filename)
+			metadataMessageID := filename
+			if tt.metadataMessageID != "" {
+				metadataMessageID = tt.metadataMessageID
+			}
+			boundary := ""
+			if tt.includeBoundary {
+				boundaryMessageID := filename
+				if tt.boundaryMessageID != "" {
+					boundaryMessageID = tt.boundaryMessageID
+				}
+				boundary = envelope.SenderBodyBoundaryForMessageID(boundaryMessageID) + "\n"
+			}
+			senderHeading := ""
+			if tt.includeSenderHeading {
+				senderHeading = "## Sender Message\n\n"
+			}
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + metadataMessageID + "\n  timestamp: 2026-07-13T10:00:01Z\n---\n\n" +
+				"# Message\n\n" + tt.wrapperLine + "\n\n" +
+				senderHeading + boundary + "---\n\n" + tt.senderBody + "\n"
+			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+				"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+			}
+			adjacency := map[string][]string{
+				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
+			}
+			cfg := &config.Config{
+				EnterDelay:                  0.1,
+				TmuxTimeout:                 1.0,
+				EvidencePresenceGateEnabled: true,
+				EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+			}
+			if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+				t.Fatalf("DeliverMessage failed: %v", err)
+			}
+
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+			deadPath := filepath.Join(sessionDir, "dead-letter", "20260713-100001-from-orchestrator-to-worker-dl-missing-evidence.md")
+			if tt.wantDeadLetter {
+				if _, err := os.Stat(deadPath); err != nil {
+					t.Fatalf("dead letter missing: %v", err)
+				}
+				if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+					t.Fatalf("message delivered to inbox despite sender claim: %v", err)
+				}
+				return
+			}
+			if _, err := os.Stat(inboxPath); err != nil {
+				t.Fatalf("message not delivered to inbox: %v", err)
+			}
+			if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+				t.Fatalf("message dead-lettered despite non-terminal sender body: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeliverMessageEvidenceGateRejectsUncontainedEvidenceArtifact(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifactPath  func(root string) string
+		setupArtifact func(t *testing.T, root string)
+	}{
+		{
+			name: "absolute path",
+			artifactPath: func(root string) string {
+				return filepath.Join(root, "reports", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, "reports"), 0o755); err != nil {
+					t.Fatalf("Mkdir reports: %v", err)
+				}
+			},
+		},
+		{
+			name: "traversal",
+			artifactPath: func(root string) string {
+				return "../outside/test.json"
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(filepath.Dir(root), "outside"), 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+			},
+		},
+		{
+			name: "symlink escape",
+			artifactPath: func(root string) string {
+				return filepath.Join("escape", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				outside := filepath.Join(filepath.Dir(root), "outside")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+					t.Fatalf("Symlink escape: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sessionDir := filepath.Join(tmpDir, "test")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("config.CreateSessionDirs failed: %v", err)
+			}
+			manager := journal.NewManager("test-ctx", os.Getpid())
+			journal.InstallProcessManager(manager)
+			t.Cleanup(journal.ClearProcessManager)
+			if err := manager.Bootstrap(sessionDir, "test", time.Date(2026, 7, 13, 10, 0, 1, 0, time.UTC)); err != nil {
+				t.Fatalf("journal bootstrap failed: %v", err)
+			}
+
+			evidenceRoot := filepath.Join(tmpDir, "evidence-root")
+			if err := os.Mkdir(evidenceRoot, 0o755); err != nil {
+				t.Fatalf("Mkdir evidence root: %v", err)
+			}
+			tt.setupArtifact(t, evidenceRoot)
+
+			filename := "20260713-100001-from-orchestrator-to-worker.md"
+			postPath := filepath.Join(sessionDir, "post", filename)
+			content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n  timestamp: 2026-07-13T10:00:01Z\n  evidence_command: go test ./...\n  evidence_cwd: " + evidenceRoot + "\n  evidence_timeout_seconds: 120\n  evidence_side_effect_class: read-only\n  evidence_artifact: " + tt.artifactPath(evidenceRoot) + "\n  evidence_hash: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n---\n\n" +
+				envelope.SenderBodyBoundaryForMessageID(filename) + "\n---\n\nDONE: complete\n"
+			if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+
+			nodes := map[string]discovery.NodeInfo{
+				"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+				"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+			}
+			adjacency := map[string][]string{
+				"orchestrator": {"worker"},
+				"worker":       {"orchestrator"},
+			}
+			cfg := &config.Config{
+				EnterDelay:                  0.1,
+				TmuxTimeout:                 1.0,
+				EvidencePresenceGateEnabled: true,
+				EvidencePresenceGateAfter:   "2026-07-13T10:00:00Z",
+			}
+			if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+				t.Fatalf("DeliverMessage failed: %v", err)
+			}
+
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+			deadPath := filepath.Join(sessionDir, "dead-letter", "20260713-100001-from-orchestrator-to-worker-dl-missing-evidence.md")
+			if _, err := os.Stat(deadPath); err != nil {
+				t.Fatalf("dead letter missing: %v", err)
+			}
+			if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+				t.Fatalf("message delivered to inbox despite uncontained evidence artifact: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	sessionDir := t.TempDir()
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
@@ -285,14 +575,17 @@ func TestDeliverMessage_InvalidRecipient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("journal.Replay failed: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("journal.Replay returned %d events, want 3", len(events))
+	if len(events) != 4 {
+		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
 	}
-	if events[2].Type != projection.MailboxProjectionDeadLetteredEventType {
-		t.Fatalf("events[2].Type = %q, want mailbox_projection_dead_lettered", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostObservedEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_observed", events[2].Type)
+	}
+	if events[3].Type != projection.MailboxProjectionDeadLetteredEventType {
+		t.Fatalf("events[3].Type = %q, want mailbox_projection_dead_lettered", events[3].Type)
 	}
 	var payload journal.MailboxEventPayload
-	if err := json.Unmarshal(events[2].Payload, &payload); err != nil {
+	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
 	}
 	if payload.MessageID != filename || payload.From != "orchestrator" || payload.To != "unknown-node" {
@@ -1386,17 +1679,20 @@ func TestDeliverMessage_AppendsShadowJournalDeliveredEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("journal.Replay failed: %v", err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("journal.Replay returned %d events, want 4", len(events))
+	if len(events) != 5 {
+		t.Fatalf("journal.Replay returned %d events, want 5", len(events))
 	}
-	if events[2].Type != projection.MailboxProjectionPostConsumedEventType {
-		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_consumed", events[2].Type)
+	if events[2].Type != projection.MailboxProjectionPostObservedEventType {
+		t.Fatalf("events[2].Type = %q, want mailbox_projection_post_observed", events[2].Type)
 	}
-	if events[3].Type != projection.MailboxProjectionDeliveredEventType {
-		t.Fatalf("events[3].Type = %q, want mailbox_projection_delivered", events[3].Type)
+	if events[3].Type != projection.MailboxProjectionPostConsumedEventType {
+		t.Fatalf("events[3].Type = %q, want mailbox_projection_post_consumed", events[3].Type)
+	}
+	if events[4].Type != projection.MailboxProjectionDeliveredEventType {
+		t.Fatalf("events[4].Type = %q, want mailbox_projection_delivered", events[4].Type)
 	}
 	var payload map[string]string
-	if err := json.Unmarshal(events[3].Payload, &payload); err != nil {
+	if err := json.Unmarshal(events[4].Payload, &payload); err != nil {
 		t.Fatalf("json.Unmarshal(payload) failed: %v", err)
 	}
 	if payload["path"] != filepath.Join("inbox", "worker", filename) {

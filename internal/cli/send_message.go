@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/evidence"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
@@ -157,6 +158,13 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	fillsInputRequestID := fs.String("fills-input-request-id", "", "input request id this message fills")
+	evidenceCommand := fs.String("evidence-command", "", "replay evidence command")
+	evidenceCWD := fs.String("evidence-cwd", "", "replay evidence working directory")
+	evidenceEnvAllowlist := fs.String("evidence-env-allowlist", "", "comma-separated replay evidence environment allowlist")
+	evidenceTimeoutSeconds := fs.String("evidence-timeout-seconds", "", "replay evidence timeout in seconds")
+	evidenceSideEffectClass := fs.String("evidence-side-effect-class", "", "replay evidence side effect class: read-only, idempotent, or mutating")
+	evidenceArtifact := fs.String("evidence-artifact", "", "replay evidence artifact path")
+	evidenceHash := fs.String("evidence-hash", "", "replay evidence artifact sha256:<hex>")
 	contextID := fs.String("context-id", "", "context ID (optional, auto-detected)")
 	configPath := fs.String("config", "", "config file path (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -191,6 +199,18 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	if err := validateInputRequestFillFlag("--fills-input-request-id", *fillsInputRequestID); err != nil {
+		return err
+	}
+	evidenceFields := map[string]string{
+		"evidence_command":           *evidenceCommand,
+		"evidence_cwd":               *evidenceCWD,
+		"evidence_env_allowlist":     *evidenceEnvAllowlist,
+		"evidence_timeout_seconds":   *evidenceTimeoutSeconds,
+		"evidence_side_effect_class": *evidenceSideEffectClass,
+		"evidence_artifact":          *evidenceArtifact,
+		"evidence_hash":              *evidenceHash,
+	}
+	if err := validateSendEvidenceFlags(evidenceFields); err != nil {
 		return err
 	}
 	cfg, err := ctx.loadConfig(*configPath)
@@ -331,7 +351,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 
 	content := cfg.DraftTemplate
 	if content == "" {
-		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n---\n\n" + sendBodyPlaceholder + "\n"
+		content = "---\nparams:\n  contextId: {context_id}\n  from: {sender}\n  to: {recipient}\n  timestamp: {timestamp}\n  runtimeContextId: {runtime_context_id}\n  runtimeContextScope: {runtime_context_scope}\n  runtimeContextCapturedAt: {runtime_context_captured_at}\n  runtimeContextHash: {runtime_context_hash}\n---\n\n# Message\n\n## Sender Message\n\n{sender_body_boundary}\n---\n\n" + sendBodyPlaceholder + "\n"
 	}
 	generatedReplyPolicyMarker := generatedReplyPolicyPlaceholder(filename)
 	runtimeSnapshot := runtimecontext.BuildSnapshot(runtimecontext.BuildOptions{
@@ -358,6 +378,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"session_dir":                    filepath.Join(baseDir, resolvedContextID, sessionName),
 		"reply_command":                  strings.ReplaceAll(envelope.RenderReplyCommand(cfg.ReplyCommand, resolvedContextID, recipient), "<recipient>", recipient),
 		"message_id":                     filename,
+		"sender_body_boundary":           envelope.SenderBodyBoundaryForMessageID(filename),
 		"reply_policy":                   generatedReplyPolicyMarker,
 		"reply_to":                       *replyTo,
 		"input_request_id":               inputRequestIDMarker,
@@ -407,15 +428,22 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	vars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 	vars["required_reply_completion_gate"] = requiredReplyCompletionGateForPolicy(replyPolicy)
 	content = message.EnsureEnvelopeParams(content, map[string]string{
-		"messageId":                filename,
-		"replyPolicy":              replyPolicy,
-		"replyTo":                  *replyTo,
-		"input_request_id":         inputRequestID,
-		"fills_input_request_id":   *fillsInputRequestID,
-		"runtimeContextId":         savedRuntimeContext.Snapshot.SnapshotID,
-		"runtimeContextScope":      savedRuntimeContext.Snapshot.Scope,
-		"runtimeContextCapturedAt": savedRuntimeContext.Snapshot.CapturedAt,
-		"runtimeContextHash":       savedRuntimeContext.Snapshot.ContentHash,
+		"messageId":                  filename,
+		"replyPolicy":                replyPolicy,
+		"replyTo":                    *replyTo,
+		"input_request_id":           inputRequestID,
+		"fills_input_request_id":     *fillsInputRequestID,
+		"evidence_command":           evidenceFields["evidence_command"],
+		"evidence_cwd":               evidenceFields["evidence_cwd"],
+		"evidence_env_allowlist":     evidenceFields["evidence_env_allowlist"],
+		"evidence_timeout_seconds":   evidenceFields["evidence_timeout_seconds"],
+		"evidence_side_effect_class": evidenceFields["evidence_side_effect_class"],
+		"evidence_artifact":          evidenceFields["evidence_artifact"],
+		"evidence_hash":              evidenceFields["evidence_hash"],
+		"runtimeContextId":           savedRuntimeContext.Snapshot.SnapshotID,
+		"runtimeContextScope":        savedRuntimeContext.Snapshot.Scope,
+		"runtimeContextCapturedAt":   savedRuntimeContext.Snapshot.CapturedAt,
+		"runtimeContextHash":         savedRuntimeContext.Snapshot.ContentHash,
 	})
 
 	footer := ""
@@ -440,7 +468,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 		footer = template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 	}
-	content = renderSendBody(content, stripped, footer)
+	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
 	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
@@ -775,7 +803,7 @@ func contactSectionForViewpoint(cfg *config.Config, topology workspacetree.Topol
 	return strings.Join(contactLines, "\n")
 }
 
-func renderSendBody(content, body, footer string) string {
+func renderSendBody(content, body, footer, senderBodyBoundary string) string {
 	idx := strings.Index(content, sendBodyPlaceholder)
 	if idx < 0 {
 		if footer == "" {
@@ -797,10 +825,20 @@ func renderSendBody(content, body, footer string) string {
 		}
 		header += footer
 	}
+	if senderBodyBoundary != "" && !strings.HasSuffix(strings.TrimSpace(header), senderBodyBoundary) {
+		if header != "" {
+			header += "\n\n"
+		}
+		header += senderBodyBoundary
+	}
 	if header == "" {
 		return "---\n\n" + body + suffix
 	}
-	return header + "\n\n---\n\n" + body + suffix
+	separatorPrefix := "\n\n"
+	if senderBodyBoundary != "" && strings.HasSuffix(strings.TrimSpace(header), senderBodyBoundary) {
+		separatorPrefix = "\n"
+	}
+	return header + separatorPrefix + "---\n\n" + body + suffix
 }
 
 func trimTrailingBodySeparator(content string) string {
@@ -932,6 +970,83 @@ func validateInputRequestFillFlag(flagName, inputRequestID string) error {
 		return fmt.Errorf("%s %w", flagName, err)
 	}
 	return nil
+}
+
+func validateSendEvidenceFlags(fields map[string]string) error {
+	any := false
+	for key, value := range fields {
+		if err := validateSendEvidenceParamValue(key, value); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value) != "" {
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+
+	required := []string{
+		"evidence_command",
+		"evidence_cwd",
+		"evidence_timeout_seconds",
+		"evidence_side_effect_class",
+		"evidence_artifact",
+		"evidence_hash",
+	}
+	for _, key := range required {
+		if strings.TrimSpace(fields[key]) == "" {
+			return fmt.Errorf("--%s is required when any evidence flag is set", strings.ReplaceAll(key, "_", "-"))
+		}
+	}
+
+	timeout, err := parsePositiveEvidenceTimeout(fields["evidence_timeout_seconds"])
+	if err != nil {
+		return err
+	}
+	contract := evidence.ReplayContract{
+		Command:              strings.TrimSpace(fields["evidence_command"]),
+		CWD:                  strings.TrimSpace(fields["evidence_cwd"]),
+		EnvAllowlist:         parseSendEvidenceEnvAllowlist(fields["evidence_env_allowlist"]),
+		Timeout:              timeout,
+		SideEffect:           evidence.SideEffectClass(strings.TrimSpace(fields["evidence_side_effect_class"])),
+		ArtifactPath:         strings.TrimSpace(fields["evidence_artifact"]),
+		ExpectedArtifactHash: strings.TrimSpace(fields["evidence_hash"]),
+	}
+	if err := contract.Validate(contract.CWD); err != nil {
+		return fmt.Errorf("invalid evidence replay contract: %w", err)
+	}
+	return nil
+}
+
+func validateSendEvidenceParamValue(key, value string) error {
+	for _, r := range value {
+		if r == '\n' || r == '\r' || r == 0 || r < 0x20 || r == 0x7f {
+			return fmt.Errorf("--%s must not contain line breaks or control characters", strings.ReplaceAll(key, "_", "-"))
+		}
+	}
+	return nil
+}
+
+func parsePositiveEvidenceTimeout(value string) (time.Duration, error) {
+	timeout, err := evidence.ParseReplayTimeoutSeconds(value)
+	if err != nil {
+		return 0, fmt.Errorf("--evidence-timeout-seconds invalid: %w", err)
+	}
+	return timeout, nil
+}
+
+func parseSendEvidenceEnvAllowlist(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, strings.TrimSpace(part))
+	}
+	return out
 }
 
 // getNodeTemplate retrieves the template for a given node from config,

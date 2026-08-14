@@ -34,6 +34,7 @@ const (
 	deadLetterReasonSenderSessionDisabled    = "sender session disabled"
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 	deadLetterReasonForeignSession           = "foreign session"
+	deadLetterReasonMissingEvidence          = "missing-evidence"
 )
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
@@ -48,6 +49,7 @@ const (
 	DlSuffixTTLExpired       = "-dl-ttl-expired"
 	dlSuffixForeignSession   = "-dl-foreign-session"
 	dlSuffixForgedSender     = "-dl-forged-sender"
+	dlSuffixMissingEvidence  = "-dl-missing-evidence"
 )
 
 // inboxQueueCap is the maximum number of messages allowed in a recipient inbox
@@ -685,9 +687,27 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			log.Printf("postman: WARNING: failed to read message for envelope validation %s: %v\n", filename, readErr)
 		} else {
 			messageContent = string(rawBytes)
-			envFrom, envTo, parseErr := parseEnvelopeFromTo(string(rawBytes))
+			metadata, parseErr := ParseEnvelopeMetadata(string(rawBytes))
+			envFrom, envTo := "", ""
+			if parseErr == nil {
+				envFrom, envTo = metadata.From, metadata.To
+			}
 			policyInput.EnvelopeChecked = true
 			policyInput.EnvelopeMismatch = parseErr != nil || envFrom != info.From || envTo != info.To
+			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+				if decision.SendDeadLetterNotification {
+					sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+				}
+				emitDeliveryDecisionEvent(events, decision, info, filename)
+				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
+			}
+			policyInput.EvidencePresenceGateChecked = true
+			observedAt := evidenceGateObservedAt(sourceSessionDir, sourceSessionName, filename, postPath, time.Now().UTC())
+			policyInput.EvidencePresenceGateActive = cfg.EvidencePresenceGateActiveAt(observedAt)
+			senderBody, senderBodyExact := envelope.SenderBodyFromTrustedContent(messageContent, filename)
+			policyInput.CompletionClaim = senderBodyExact && isCompletionClaim(senderBody)
+			policyInput.EvidencePresent = hasEvidenceReplayContract(metadata)
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 				if decision.SendDeadLetterNotification {
@@ -1051,18 +1071,6 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 	if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {
 		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, writeErr)
 	}
-}
-
-// parseEnvelopeFromTo extracts the from and to fields from the YAML frontmatter
-// of a message file. Frontmatter is the block between the first two "---" delimiters.
-// from and to must appear as indented fields under the params: top-level key.
-// Returns an error if the frontmatter block is absent or if either field is missing.
-func parseEnvelopeFromTo(content string) (from, to string, err error) {
-	metadata, err := ParseEnvelopeMetadata(content)
-	if err != nil {
-		return "", "", err
-	}
-	return metadata.From, metadata.To, nil
 }
 
 // ParseEnvelopeMetadata extracts selected fields from the params block inside
