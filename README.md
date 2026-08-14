@@ -146,7 +146,11 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
 The daemon works without these skills; they only help assistants send first
 messages, inspect live session state, and audit config.
 
-Create tmux panes for a small conversation topology:
+Create tmux panes for a small conversation topology. In postman, the graph is
+the coordination map: nodes are tmux pane titles/agent roles, edges are the
+allowed conversation paths, and `ui_node` marks the role the human talks to
+first. The same graph appears in `postman.md`, so the screenshot and the
+copyable config stay aligned:
 
 ```mermaid
 graph LR
@@ -156,6 +160,17 @@ graph LR
     class messenger ui_node
     classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
+
+````text
+```mermaid
+graph LR
+    messenger --- orchestrator
+    orchestrator --- worker
+    orchestrator --- reviewer
+    class messenger ui_node
+    classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+```
+````
 
 For repeatable agent teams, use
 [yuki-yano/vde-layout](https://github.com/yuki-yano/vde-layout) presets to
@@ -446,6 +461,26 @@ Remaining blockers: none
 POSTMAN_BODY
 ```
 
+When evidence presence gating is active, completion claims can include replay
+evidence in the generated outer envelope:
+
+```sh
+tmux-a2a-postman send-heredoc \
+  --to orchestrator \
+  --evidence-command 'go test ./... -count=1' \
+  --evidence-cwd "$PWD" \
+  --evidence-env-allowlist PATH,HOME \
+  --evidence-timeout-seconds 120 \
+  --evidence-side-effect-class read-only \
+  --evidence-artifact reports/go-test.json \
+  --evidence-hash sha256:<64-hex-digest> <<'POSTMAN_BODY'
+DONE: Requirements satisfied.
+POSTMAN_BODY
+```
+
+If any `--evidence-*` flag is set, all required replay contract fields must be
+present and valid.
+
 After a fill/reply send, check the JSON `fill` and `required_input` fields.
 They show whether the request closed and whether any required input remains
 open. Terminal-looking replies such as `DONE:` also include a `notice` when
@@ -489,6 +524,7 @@ Detailed configuration references:
 - [postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
 - [configuration defaults and merge policy](docs/design/config-ssot.md)
 - [command approval wrapper](docs/command-approvals.md)
+- [evidence replay contract](docs/design/evidence-replay-contract.md)
 - [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
 

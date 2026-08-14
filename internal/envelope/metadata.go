@@ -2,8 +2,11 @@ package envelope
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Metadata struct {
@@ -23,6 +26,13 @@ type Metadata struct {
 	InputRequestSetID        string
 	Verdict                  string
 	VerdictOf                string
+	EvidenceCommand          string
+	EvidenceCWD              string
+	EvidenceEnvAllowlist     string
+	EvidenceTimeoutSeconds   string
+	EvidenceSideEffectClass  string
+	EvidenceArtifact         string
+	EvidenceHash             string
 	BranchID                 string
 	CompletionRule           string
 	RuntimeContextID         string
@@ -34,6 +44,16 @@ type Metadata struct {
 	BlockedScopeID           string
 	BlockedReason            string
 	Body                     string
+}
+
+const SenderBodyBoundarySentinel = "<!-- tmux-a2a-postman:sender-body-boundary -->"
+
+func SenderBodyBoundaryForMessageID(messageID string) string {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return ""
+	}
+	return "<!-- tmux-a2a-postman:sender-body-boundary:" + messageID + " -->"
 }
 
 type frontmatterScan struct {
@@ -80,14 +100,34 @@ func BodyFromContent(content string) string {
 }
 
 func SenderBodyFromContent(content string) (string, bool) {
-	body, ok := rawBodyFromContent(content)
-	if !ok {
+	frontmatter, body, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
 		return strings.TrimSpace(content), false
 	}
-	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body); ok {
+	metadata, err := DecodeEnvelopeMetadata(frontmatter, body)
+	if err != nil {
+		return strings.TrimSpace(body), false
+	}
+	boundary := SenderBodyBoundaryForMessageID(metadata.MessageID)
+	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body, boundary); ok {
 		return senderBody, true
 	}
 	return strings.TrimSpace(body), false
+}
+
+func SenderBodyFromTrustedContent(content, trustedMessageID string) (string, bool) {
+	_, body, ok, err := ScanFrontmatter(content)
+	if !ok || err != nil {
+		return strings.TrimSpace(content), true
+	}
+	boundary := SenderBodyBoundaryForMessageID(trustedMessageID)
+	if senderBody, ok := senderBodyAfterGeneratedEnvelopeSeparator(body, boundary); ok {
+		return senderBody, true
+	}
+	if senderBody, ok := senderBodyAfterLegacyGeneratedEnvelopeSeparator(body); ok {
+		return senderBody, true
+	}
+	return strings.TrimSpace(body), true
 }
 
 func rawBodyFromContent(content string) (string, bool) {
@@ -98,8 +138,12 @@ func rawBodyFromContent(content string) (string, bool) {
 	return body, ok
 }
 
-func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
+func senderBodyAfterGeneratedEnvelopeSeparator(body, boundary string) (string, bool) {
+	if boundary == "" {
+		return "", false
+	}
 	offset := 0
+	previousLine := ""
 	for offset <= len(body) {
 		lineEnd := len(body)
 		newlineEnd := len(body)
@@ -108,7 +152,7 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 			newlineEnd = lineEnd + 1
 		}
 		line := strings.TrimRight(body[offset:lineEnd], "\r")
-		if strings.TrimSpace(line) == "---" && hasGeneratedSendEnvelopeContext(body[:offset]) {
+		if strings.TrimSpace(line) == "---" && previousLine == boundary {
 			senderBody := body[newlineEnd:]
 			if strings.HasPrefix(senderBody, "\r\n") {
 				senderBody = senderBody[2:]
@@ -117,6 +161,7 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 			}
 			return senderBody, true
 		}
+		previousLine = strings.TrimSpace(line)
 		if newlineEnd == len(body) {
 			break
 		}
@@ -125,17 +170,42 @@ func senderBodyAfterGeneratedEnvelopeSeparator(body string) (string, bool) {
 	return "", false
 }
 
-func hasGeneratedSendEnvelopeContext(prefix string) bool {
-	for _, rawLine := range strings.Split(prefix, "\n") {
-		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
-		if line == "## Sender Message" {
-			return true
+func senderBodyAfterLegacyGeneratedEnvelopeSeparator(body string) (string, bool) {
+	messageHeadingSeen := false
+	senderHeadingSeen := false
+	offset := 0
+	for offset <= len(body) {
+		lineEnd := len(body)
+		newlineEnd := len(body)
+		if idx := strings.IndexByte(body[offset:], '\n'); idx >= 0 {
+			lineEnd = offset + idx
+			newlineEnd = lineEnd + 1
 		}
-		if strings.HasPrefix(line, "tmux-a2a-postman send-heredoc ") || line == "tmux-a2a-postman send-heredoc" {
-			return true
+		line := strings.TrimSpace(strings.TrimRight(body[offset:lineEnd], "\r"))
+		switch line {
+		case "# Message":
+			messageHeadingSeen = true
+		case "## Sender Message":
+			if messageHeadingSeen {
+				senderHeadingSeen = true
+			}
+		case "---":
+			if senderHeadingSeen {
+				senderBody := body[newlineEnd:]
+				if strings.HasPrefix(senderBody, "\r\n") {
+					senderBody = senderBody[2:]
+				} else if strings.HasPrefix(senderBody, "\n") {
+					senderBody = senderBody[1:]
+				}
+				return senderBody, true
+			}
 		}
+		if newlineEnd == len(body) {
+			break
+		}
+		offset = newlineEnd
 	}
-	return false
+	return "", false
 }
 
 func ParseMetadata(content string) (Metadata, error) {
@@ -193,6 +263,20 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.Verdict = value
 			case "verdictOf", "verdict_of":
 				metadata.VerdictOf = value
+			case "evidence_command":
+				metadata.EvidenceCommand = decodeEvidenceParamValue(value)
+			case "evidence_cwd":
+				metadata.EvidenceCWD = decodeEvidenceParamValue(value)
+			case "evidence_env_allowlist":
+				metadata.EvidenceEnvAllowlist = decodeEvidenceParamValue(value)
+			case "evidence_timeout_seconds":
+				metadata.EvidenceTimeoutSeconds = decodeEvidenceParamValue(value)
+			case "evidence_side_effect_class":
+				metadata.EvidenceSideEffectClass = decodeEvidenceParamValue(value)
+			case "evidence_artifact":
+				metadata.EvidenceArtifact = decodeEvidenceParamValue(value)
+			case "evidence_hash":
+				metadata.EvidenceHash = decodeEvidenceParamValue(value)
 			case "branch_id":
 				metadata.BranchID = value
 			case "completion_rule":
@@ -399,7 +483,7 @@ func EnsureParams(content string, fields map[string]string) string {
 		if fieldKey, ok := managedParamFieldKey(key); ok {
 			existing[fieldKey] = true
 			if value := managedParamFieldValue(fields, fieldKey); value != "" {
-				updatedLine := paramsIndent + key + ": " + value
+				updatedLine := paramsIndent + key + ": " + encodeManagedParamValue(fieldKey, value)
 				if lines[idx] != updatedLine {
 					lines[idx] = updatedLine
 					changed = true
@@ -411,12 +495,12 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
 		}
-		insert = append(insert, paramsIndent+key+": "+value)
+		insert = append(insert, paramsIndent+key+": "+encodeManagedParamValue(key, value))
 	}
 	if len(insert) == 0 {
 		if !changed {
@@ -430,6 +514,36 @@ func EnsureParams(content string, fields map[string]string) string {
 	updated = append(updated, insert...)
 	updated = append(updated, lines[paramsIndex+1:]...)
 	return content[:scan.frontmatterStart] + strings.Join(updated, "\n") + content[scan.closeStart:]
+}
+
+func encodeManagedParamValue(key, value string) string {
+	if isEvidenceParamKey(key) {
+		return strconv.Quote(value)
+	}
+	return value
+}
+
+func decodeEvidenceParamValue(value string) string {
+	var decoded string
+	if err := yaml.Unmarshal([]byte(value), &decoded); err == nil {
+		return decoded
+	}
+	return value
+}
+
+func isEvidenceParamKey(key string) bool {
+	switch key {
+	case "evidence_command",
+		"evidence_cwd",
+		"evidence_env_allowlist",
+		"evidence_timeout_seconds",
+		"evidence_side_effect_class",
+		"evidence_artifact",
+		"evidence_hash":
+		return true
+	default:
+		return false
+	}
 }
 
 func ParamsReplyPolicyUsesPlaceholder(content string) bool {
@@ -536,6 +650,20 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "fills_input_request_id", true
 	case "input_request_set_id":
 		return "input_request_set_id", true
+	case "evidence_command":
+		return "evidence_command", true
+	case "evidence_cwd":
+		return "evidence_cwd", true
+	case "evidence_env_allowlist":
+		return "evidence_env_allowlist", true
+	case "evidence_timeout_seconds":
+		return "evidence_timeout_seconds", true
+	case "evidence_side_effect_class":
+		return "evidence_side_effect_class", true
+	case "evidence_artifact":
+		return "evidence_artifact", true
+	case "evidence_hash":
+		return "evidence_hash", true
 	case "branch_id":
 		return "branch_id", true
 	case "completion_rule":
@@ -555,9 +683,14 @@ func managedParamFieldKey(key string) (string, bool) {
 
 func managedParamFieldValue(fields map[string]string, fieldKey string) string {
 	for _, key := range managedParamFieldAliases(fieldKey) {
-		if value := strings.TrimSpace(fields[key]); value != "" {
+		value := fields[key]
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if isEvidenceParamKey(fieldKey) {
 			return value
 		}
+		return strings.TrimSpace(value)
 	}
 	return ""
 }
@@ -576,7 +709,7 @@ func managedParamFieldAliases(fieldKey string) []string {
 		return []string{"fills_input_request_id"}
 	case "input_request_set_id":
 		return []string{"input_request_set_id"}
-	case "branch_id", "completion_rule":
+	case "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule":
 		return []string{fieldKey}
 	case "runtimeContextId":
 		return []string{"runtimeContextId", "runtime_context_id"}

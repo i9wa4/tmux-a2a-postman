@@ -13,6 +13,19 @@ Flags:
   --reply-to <message>    Message id for fallback closure or traceability
   --fills-input-request-id <id>
                           Exact input request id this message fills
+  --evidence-command <cmd>
+                          Replay evidence command
+  --evidence-cwd <dir>    Replay evidence working directory
+  --evidence-env-allowlist <names>
+                          Comma-separated replay evidence environment names
+  --evidence-timeout-seconds <seconds>
+                          Positive replay evidence timeout
+  --evidence-side-effect-class <class>
+                          Replay evidence side effect: read-only, idempotent, mutating
+  --evidence-artifact <path>
+                          Replay evidence artifact path
+  --evidence-hash <sha256:hex>
+                          Replay evidence artifact hash
 
 Body input:
   Use a quoted heredoc delimiter:
@@ -33,6 +46,8 @@ Output:
   {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
   Reply-required sends include "input_request_id".
   Exact replies include "fills_input_request_id".
+  Evidence flags populate outer envelope evidence_* params. If any evidence
+  flag is set, all required replay contract fields must be present and valid.
   Fill/reply sends may also include:
     "fill"                  requested input request, closed state, and reason
     "required_input"        current open required input for the sender

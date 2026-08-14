@@ -128,6 +128,14 @@ func loadCurrentSessionState(sessionDir string) (journal.SessionState, bool) {
 	return state, true
 }
 
+func CurrentSessionIdentity(sessionDir string) (sessionKey string, generation int, ok bool) {
+	state, ok := loadCurrentSessionState(sessionDir)
+	if !ok {
+		return "", 0, false
+	}
+	return state.SessionKey, state.Generation, true
+}
+
 func projectedMailboxStatePayload(raw json.RawMessage) (mailboxStatePayload, bool) {
 	var payload mailboxStatePayload
 	if len(raw) == 0 {

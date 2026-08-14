@@ -1,11 +1,14 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 func installSessionOwnerTmux(t *testing.T, owners map[string]string) {
@@ -115,6 +118,77 @@ func TestFindSessionOwner_IgnoresLiveForeignContextWithoutEnabledMarker(t *testi
 	if got := FindSessionOwner(baseDir, "managed-session", "ctx-self"); got != "" {
 		t.Fatalf("FindSessionOwner() = %q, want empty without enabled-session marker", got)
 	}
+}
+
+func TestFindSessionOwner_UsesRegisteredHerdrEnabledMarker(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLivePID(t, baseDir, "ctx-owner", "daemon-session")
+	if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "managed-session"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(managed-session): %v", err)
+	}
+	installSessionOwnerTmux(t, map[string]string{})
+	backend := &fakeHerdrSessionOwnerBackend{owners: map[string]string{
+		"managed-session": "ctx-owner:43210",
+	}}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	if got := FindSessionOwner(baseDir, "managed-session", "ctx-self"); got != "ctx-owner" {
+		t.Fatalf("FindSessionOwner() = %q, want ctx-owner from Herdr ownership marker", got)
+	}
+}
+
+func TestContextOwnsSession_UsesRegisteredHerdrEnabledMarker(t *testing.T) {
+	baseDir := t.TempDir()
+	writeLivePID(t, baseDir, "ctx-owner", "daemon-session")
+	if err := os.MkdirAll(filepath.Join(baseDir, "ctx-owner", "managed-session"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(managed-session): %v", err)
+	}
+	installSessionOwnerTmux(t, map[string]string{})
+	backend := &fakeHerdrSessionOwnerBackend{owners: map[string]string{
+		"managed-session": "ctx-owner:43210",
+	}}
+	unregister := multiplexer.RegisterOwnershipBackend(backend)
+	t.Cleanup(unregister)
+
+	if !ContextOwnsSession(baseDir, "ctx-owner", "managed-session") {
+		t.Fatal("ContextOwnsSession() = false, want true from Herdr ownership marker")
+	}
+	if ContextOwnsSession(baseDir, "ctx-other", "managed-session") {
+		t.Fatal("ContextOwnsSession() = true for non-owner context, want false")
+	}
+}
+
+type fakeHerdrSessionOwnerBackend struct {
+	owners map[string]string
+}
+
+func (f *fakeHerdrSessionOwnerBackend) Kind() multiplexer.BackendKind {
+	return multiplexer.BackendKindHerdr
+}
+
+func (f *fakeHerdrSessionOwnerBackend) SessionOwnerMarker(_ context.Context, sessionName string) (string, error) {
+	return f.owners[sessionName], nil
+}
+
+func (f *fakeHerdrSessionOwnerBackend) SetSessionOwnerMarker(context.Context, string, string, int) error {
+	return nil
+}
+
+func (f *fakeHerdrSessionOwnerBackend) ClearSessionOwnerMarker(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeHerdrSessionOwnerBackend) PaneOwnerMarker(context.Context, multiplexer.ResourceID) (string, error) {
+	return "", nil
+}
+
+func (f *fakeHerdrSessionOwnerBackend) SetPaneOwnerMarker(context.Context, multiplexer.ResourceID, string) error {
+	return nil
+}
+
+func (f *fakeHerdrSessionOwnerBackend) ClearPaneOwnerMarker(context.Context, multiplexer.ResourceID) error {
+	return nil
 }
 
 func TestContextOwnsSession_LiveDaemonSessionRemainsOwnedWithoutMarker(t *testing.T) {

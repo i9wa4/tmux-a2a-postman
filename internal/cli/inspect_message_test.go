@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 )
 
 func TestRunInspectMessageFindsUnreadMessageWithoutMovingIt(t *testing.T) {
@@ -192,6 +194,7 @@ func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing
 		"",
 		"## Sender Message",
 		"",
+		envelope.SenderBodyBoundaryForMessageID(filename),
 		"---",
 		"",
 	}, "\n") + senderBody

@@ -78,7 +78,11 @@ daemon_submit_worker_limit = 8         # Daemon-submit worker concurrency (1-16;
 node_active_seconds = 300          # <=5min since last pane change: internal active
 node_stale_seconds = 900           # Memory cleanup threshold for pane capture state
 input_request_stale_seconds = 3600 # Status projection threshold for stale unfilled input requests
+verdict_grace_seconds = 3600       # Grace period for requester verdict stamps after filled reply-required input requests
+verdict_debt_cap = 3               # Maximum unstamped fills before new reply-required sends are refused (<0 = disabled)
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
+audit_review_probability_floor = 0.05 # Nonzero minimum audit draw probability for accepted fills
+audit_target = ""                 # Optional sampled audit target; defaults to configured command_approver_node when available
 escalation_check_interval_seconds = 0    # Threshold-push cadence; 0 disables escalation pushes
 escalation_oldest_open_seconds = 0        # Oldest open input request threshold; 0 disables this tripwire
 escalation_dead_letter_count = 0          # Dead-letter count threshold; 0 disables this tripwire
@@ -158,6 +162,15 @@ common_template = ""
 
 # Shell templates are disabled unless explicitly enabled in trusted XDG config.
 allow_shell_templates = false
+
+# Evidence presence gate (Issue #620). Disabled by default so legacy workflows
+# are not dead-lettered when evidence fields are first introduced. Enable only
+# after measured adoption exists from the D4 convention meter or an archive-count
+# proxy. evidence_presence_gate_after is compared with the trusted local message
+# observation time, not sender-controlled envelope timestamps, so older observed
+# messages are not affected retroactively.
+evidence_presence_gate_enabled = false
+# evidence_presence_gate_after = "2026-01-01T00:00:00Z"
 
 # Notification template (when new message arrives)
 notification_template = """Hello, {node}! You've got mail: {filename}. Run `tmux-a2a-postman pop` to claim it and get the archived body path. """
@@ -254,6 +267,7 @@ params:
 
 ## Sender Message
 
+{sender_body_boundary}
 ---
 
 <!-- write here -->

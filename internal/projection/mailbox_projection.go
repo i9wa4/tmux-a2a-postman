@@ -34,6 +34,7 @@ type mailboxProjectionMarker struct {
 const (
 	MailboxProjectionComponent             = "mailbox-projection"
 	MailboxProjectionPostedEventType       = "mailbox_projection_posted"
+	MailboxProjectionPostObservedEventType = "mailbox_projection_post_observed"
 	MailboxProjectionPostConsumedEventType = "mailbox_projection_post_consumed"
 	MailboxProjectionDeliveredEventType    = "mailbox_projection_delivered"
 	MailboxProjectionReadEventType         = "mailbox_projection_read"

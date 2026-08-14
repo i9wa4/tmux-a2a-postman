@@ -40,6 +40,48 @@ type PaneNotifier struct {
 	stderr  io.Writer
 }
 
+type PaneDelivery struct {
+	PaneID         string
+	Message        string
+	EnterDelay     time.Duration
+	TmuxTimeout    time.Duration
+	EnterCount     int
+	BypassCooldown bool
+	VerifyDelay    time.Duration
+	MaxRetries     int
+}
+
+type PaneSender interface {
+	DeliverPane(delivery PaneDelivery) error
+}
+
+type PaneSenderFunc func(delivery PaneDelivery) error
+
+func (f PaneSenderFunc) DeliverPane(delivery PaneDelivery) error {
+	return f(delivery)
+}
+
+type TmuxPaneSender struct {
+	Notifier *PaneNotifier
+}
+
+func (s TmuxPaneSender) DeliverPane(delivery PaneDelivery) error {
+	notifier := s.Notifier
+	if notifier == nil {
+		notifier = defaultPaneNotifier
+	}
+	return notifier.SendToPane(
+		delivery.PaneID,
+		delivery.Message,
+		delivery.EnterDelay,
+		delivery.TmuxTimeout,
+		delivery.EnterCount,
+		delivery.BypassCooldown,
+		delivery.VerifyDelay,
+		delivery.MaxRetries,
+	)
+}
+
 // NewPaneNotifier creates a pane notifier with the given per-pane cooldown.
 func NewPaneNotifier(cooldown time.Duration) *PaneNotifier {
 	return &PaneNotifier{
@@ -78,7 +120,16 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
 // captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
-	return defaultPaneNotifier.SendToPane(paneID, message, enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries)
+	return TmuxPaneSender{}.DeliverPane(PaneDelivery{
+		PaneID:         paneID,
+		Message:        message,
+		EnterDelay:     enterDelay,
+		TmuxTimeout:    tmuxTimeout,
+		EnterCount:     enterCount,
+		BypassCooldown: bypassCooldown,
+		VerifyDelay:    verifyDelay,
+		MaxRetries:     maxRetries,
+	})
 }
 
 // SendToPane sends a message to a tmux pane using this notifier's dependencies and cooldown state.
@@ -108,10 +159,7 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	}
 	n.lastNotified[paneID] = now
 	n.mu.Unlock()
-	// Wrap with protocol sentinels so all pane output is clearly delimited.
-	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
-	// Security: Sanitize message for tmux set-buffer (#301)
-	sanitized, err := sanitizeForTmux(message)
+	sanitized, err := PrepareInteractivePaneMessage(message)
 	if err != nil {
 		n.warnf("⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
 		return err
@@ -311,8 +359,18 @@ func StripVT(s string) (string, error) {
 	return string(buf), nil
 }
 
-// sanitizeForTmux sanitizes a string for safe use with tmux set-buffer
-// by stripping VT/ANSI sequences and invalid UTF-8 (#301).
-func sanitizeForTmux(s string) (string, error) {
+// PrepareInteractivePaneMessage wraps pane delivery with protocol sentinels and
+// strips VT/ANSI sequences before the target backend receives text.
+func PrepareInteractivePaneMessage(message string) (string, error) {
+	if strings.TrimSpace(message) == "" {
+		return "", fmt.Errorf("empty notification body")
+	}
+	message = "<!-- message start -->\n" + message + "\n<!-- end of message -->"
+	return sanitizeForPaneText(message)
+}
+
+// sanitizeForPaneText sanitizes a string for safe interactive pane text by
+// stripping VT/ANSI sequences and invalid UTF-8 (#301).
+func sanitizeForPaneText(s string) (string, error) {
 	return StripVT(s)
 }

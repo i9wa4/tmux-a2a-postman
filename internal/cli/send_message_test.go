@@ -14,7 +14,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
 
 func shellSensitiveBodyForSendTest() string {
@@ -52,6 +54,46 @@ func runSendHeredocWithBody(t *testing.T, body string, args []string) error {
 	return withSendHeredocBody(t, body, func() error {
 		return RunSendHeredoc(args)
 	})
+}
+
+func appendSendVerdictDebt(t *testing.T, sessionDir, sessionName, requester, filler, inputRequestID string, now time.Time) {
+	t.Helper()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", sessionName, 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	requestMessageID := inputRequestID + "-request.md"
+	requestContent := "---\nparams:\n" +
+		"  from: " + requester + "\n" +
+		"  to: " + filler + "\n" +
+		"  messageId: " + requestMessageID + "\n" +
+		"  replyPolicy: required\n" +
+		"  input_request_id: " + inputRequestID + "\n" +
+		"---\n\nrequest\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: requestMessageID,
+		From:      requester,
+		To:        filler,
+		Content:   requestContent,
+	}, now); err != nil {
+		t.Fatalf("AppendEvent request: %v", err)
+	}
+	fillMessageID := inputRequestID + "-fill.md"
+	fillContent := "---\nparams:\n" +
+		"  from: " + filler + "\n" +
+		"  to: " + requester + "\n" +
+		"  messageId: " + fillMessageID + "\n" +
+		"  replyPolicy: none\n" +
+		"  fills_input_request_id: " + inputRequestID + "\n" +
+		"---\n\nfill\n"
+	if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: fillMessageID,
+		From:      filler,
+		To:        requester,
+		Content:   fillContent,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEvent fill: %v", err)
+	}
 }
 
 func captureSendHeredocWithBody(t *testing.T, body string, args []string) (string, string, error) {
@@ -93,6 +135,15 @@ func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) c
 	}
 }
 
+func createEvidenceRootForSendTest(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("MkdirAll evidence root: %v", err)
+	}
+	return root
+}
+
 func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	tmpDir := t.TempDir()
 	var stdout strings.Builder
@@ -119,6 +170,76 @@ func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "hello from context") {
 		t.Fatalf("sent message missing configured stdin body:\n%s", string(content))
+	}
+}
+
+func TestRunSendHeredocWithContextUsesCurrentIdentityResolver(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	identityCalls := 0
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("hello from identity"), &stdout)
+	ctx.currentIdentity = func() (multiplexer.CurrentIdentity, error) {
+		identityCalls++
+		return multiplexer.CurrentIdentity{
+			Backend:     multiplexer.BackendKindTmux,
+			SessionName: "identity-session",
+			NodeName:    "identity-sender",
+			Pane:        multiplexer.TmuxPaneID("%77"),
+			NativeIDs: map[string]string{
+				"pane_id":      "%77",
+				"session_name": "identity-session",
+				"pane_title":   "identity-sender",
+			},
+		}, nil
+	}
+	ctx.getTmuxPaneName = func() string {
+		t.Fatal("getTmuxPaneName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxSessionName = func() string {
+		t.Fatal("getTmuxSessionName should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.getTmuxPaneID = func() string {
+		t.Fatal("getTmuxPaneID should not be called when currentIdentity is set")
+		return ""
+	}
+	ctx.loadConfig = func(string) (*config.Config, error) {
+		return &config.Config{
+			BaseDir: tmpDir,
+			Edges:   []string{"identity-sender --- worker"},
+		}, nil
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-send-current-identity",
+		"--to", "worker",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	if identityCalls != 1 {
+		t.Fatalf("currentIdentity calls = %d, want 1", identityCalls)
+	}
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.Session != "identity-session" || payload.From != "identity-sender" {
+		t.Fatalf("send output identity fields = %#v", payload)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-send-current-identity", "identity-session")
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	summary, err := runtimecontext.LoadSummary(sessionDir, metadata.RuntimeContextID, time.Now())
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	if summary.Fields.Tmux == nil || summary.Fields.Tmux.PaneID != "%77" {
+		t.Fatalf("runtime context tmux fields = %#v, want pane %%77", summary.Fields.Tmux)
 	}
 }
 
@@ -3061,6 +3182,9 @@ role = "worker"
 	if !strings.Contains(request.Filename, "-to-worker.md") {
 		t.Fatalf("request filename missing recipient: %q", request.Filename)
 	}
+	if request.Sender != "messenger" {
+		t.Fatalf("request.Sender = %q, want messenger", request.Sender)
+	}
 	if !strings.Contains(request.Content, "hello through submit") {
 		t.Fatalf("request content missing body:\n%s", request.Content)
 	}
@@ -3225,6 +3349,55 @@ role = "worker"
 	}
 }
 
+func TestRunSendHeredoc_DirectPathEnforcesVerdictGate(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
+
+	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
+	if config.ContextOwnsSession(tmpDir, "ctx-direct-verdict-gate", "test-session") {
+		t.Fatal("ContextOwnsSession() = true, want direct post path")
+	}
+
+	err := runSendHeredocWithBody(t, "new direct work", []string{
+		"--config", configPath,
+		"--context-id", "ctx-direct-verdict-gate",
+		"--to", "worker",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("RunSendHeredoc() error = nil, want direct-path verdict gate rejection")
+	}
+	if !strings.Contains(err.Error(), "verdict debt 1 above verdict_debt_cap=0") {
+		t.Fatalf("RunSendHeredoc() error = %v, want debt-cap verdict gate rejection", err)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post file written despite verdict gate rejection: found %d entries", len(postEntries))
+	}
+}
+
 func TestRunSendMessage_DefaultJSONUsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -3356,6 +3529,267 @@ role = "worker"
 	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
 	if err == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_EvidenceFlagsRejectLineOrControlBytes(t *testing.T) {
+	evidenceRoot := createEvidenceRootForSendTest(t)
+	baseFlags := []string{
+		"--context-id", "ctx-evidence-reject",
+		"--to", "worker",
+		"--evidence-command", "go test ./...",
+		"--evidence-cwd", evidenceRoot,
+		"--evidence-env-allowlist", "PATH,HOME",
+		"--evidence-timeout-seconds", "120",
+		"--evidence-side-effect-class", "read-only",
+		"--evidence-artifact", "reports/test.json",
+		"--evidence-hash", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	tests := []struct {
+		name  string
+		flag  string
+		value string
+	}{
+		{name: "lf command", flag: "--evidence-command", value: "go test\ninjected: true"},
+		{name: "cr cwd", flag: "--evidence-cwd", value: "/repo\rinjected: true"},
+		{name: "nul artifact", flag: "--evidence-artifact", value: "reports/test.json\x00injected"},
+		{name: "tab env allowlist", flag: "--evidence-env-allowlist", value: "PATH\tHOME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			var stdout strings.Builder
+			args := append([]string(nil), baseFlags...)
+			for i := 0; i < len(args)-1; i++ {
+				if args[i] == tt.flag {
+					args[i+1] = tt.value
+					break
+				}
+			}
+
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), args)
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want evidence value rejection")
+			}
+			if !strings.Contains(err.Error(), "must not contain line breaks or control characters") {
+				t.Fatalf("error = %v, want line/control rejection", err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			postEntries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-evidence-reject", "review", "post"))
+			if err == nil && len(postEntries) != 0 {
+				t.Fatalf("post entries = %d, want none", len(postEntries))
+			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_EvidenceFlagsRejectUncontainedArtifactPath(t *testing.T) {
+	tests := []struct {
+		name          string
+		artifactPath  func(root string) string
+		setupArtifact func(t *testing.T, root string)
+	}{
+		{
+			name: "absolute path",
+			artifactPath: func(root string) string {
+				return filepath.Join(root, "reports", "test.json")
+			},
+		},
+		{
+			name: "traversal",
+			artifactPath: func(root string) string {
+				return "../outside/test.json"
+			},
+		},
+		{
+			name: "symlink escape",
+			artifactPath: func(root string) string {
+				return filepath.Join("escape", "test.json")
+			},
+			setupArtifact: func(t *testing.T, root string) {
+				t.Helper()
+				outside := filepath.Join(filepath.Dir(root), "outside")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatalf("Mkdir outside: %v", err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+					t.Fatalf("Symlink escape: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			evidenceRoot := createEvidenceRootForSendTest(t)
+			if tt.setupArtifact != nil {
+				tt.setupArtifact(t, evidenceRoot)
+			}
+			var stdout strings.Builder
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+				"--context-id", "ctx-evidence-uncontained",
+				"--to", "worker",
+				"--evidence-command", "go test ./...",
+				"--evidence-cwd", evidenceRoot,
+				"--evidence-env-allowlist", "PATH,HOME",
+				"--evidence-timeout-seconds", "120",
+				"--evidence-side-effect-class", "read-only",
+				"--evidence-artifact", tt.artifactPath(evidenceRoot),
+				"--evidence-hash", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want uncontained artifact rejection")
+			}
+			if !strings.Contains(err.Error(), "invalid evidence replay contract") {
+				t.Fatalf("error = %v, want replay contract rejection", err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			postEntries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-evidence-uncontained", "review", "post"))
+			if err == nil && len(postEntries) != 0 {
+				t.Fatalf("post entries = %d, want none", len(postEntries))
+			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_EvidenceFlagsRoundTripSeparatorAndYAMLLikeValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	hash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	evidenceRoot := filepath.Join(t.TempDir(), "repo:with-colon")
+	if err := os.MkdirAll(filepath.Join(evidenceRoot, "reports"), 0o755); err != nil {
+		t.Fatalf("MkdirAll evidence root: %v", err)
+	}
+
+	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+		"--context-id", "ctx-evidence-roundtrip",
+		"--to", "worker",
+		"--evidence-command", "---",
+		"--evidence-cwd", evidenceRoot,
+		"--evidence-env-allowlist", "PATH,HOME",
+		"--evidence-timeout-seconds", "120",
+		"--evidence-side-effect-class", "read-only",
+		"--evidence-artifact", "reports/key: value.json",
+		"--evidence-hash", hash,
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+
+	payload := decodeSendOutputForTest(t, stdout.String())
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-evidence-roundtrip", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	if metadata.EvidenceCommand != "---" {
+		t.Fatalf("EvidenceCommand = %q, want separator-shaped value", metadata.EvidenceCommand)
+	}
+	if metadata.EvidenceCWD != evidenceRoot {
+		t.Fatalf("EvidenceCWD = %q, want colon value", metadata.EvidenceCWD)
+	}
+	if metadata.EvidenceArtifact != "reports/key: value.json" {
+		t.Fatalf("EvidenceArtifact = %q, want YAML-like value", metadata.EvidenceArtifact)
+	}
+	if metadata.EvidenceHash != hash {
+		t.Fatalf("EvidenceHash = %q, want %q", metadata.EvidenceHash, hash)
+	}
+}
+
+func TestRunSendHeredoc_EvidenceScalarsRoundTripThroughBothReaders(t *testing.T) {
+	values := []string{
+		"true",
+		"null",
+		"[one, two]",
+		"{a: b}",
+		"# comment",
+		"&anchor value",
+		"*alias",
+		"| block",
+		"> block",
+		" leading",
+		"trailing ",
+		" key: value ",
+	}
+	hash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			evidenceRoot := createEvidenceRootForSendTest(t)
+			var stdout strings.Builder
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("DONE: complete"), &stdout), []string{
+				"--context-id", "ctx-evidence-scalar",
+				"--to", "worker",
+				"--evidence-command", value,
+				"--evidence-cwd", evidenceRoot,
+				"--evidence-env-allowlist", "PATH,HOME",
+				"--evidence-timeout-seconds", "120",
+				"--evidence-side-effect-class", "read-only",
+				"--evidence-artifact", "reports/test.json",
+				"--evidence-hash", hash,
+			})
+			if err != nil {
+				t.Fatalf("runSendHeredocWithContext: %v", err)
+			}
+
+			payload := decodeSendOutputForTest(t, stdout.String())
+			content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-evidence-scalar", "review", "post", payload.Sent))
+			if err != nil {
+				t.Fatalf("ReadFile sent message: %v", err)
+			}
+			metadata, err := envelope.ParseMetadata(string(content))
+			if err != nil {
+				t.Fatalf("ParseMetadata: %v", err)
+			}
+			if metadata.EvidenceCommand != value {
+				t.Fatalf("ParseMetadata EvidenceCommand = %q, want %q", metadata.EvidenceCommand, value)
+			}
+
+			frontmatter := frontmatterFromContent(string(content))
+			params, ok := frontmatter["params"].(map[string]any)
+			if !ok {
+				t.Fatalf("frontmatter params = %#v, want map", frontmatter["params"])
+			}
+			if got := params["evidence_command"]; got != value {
+				t.Fatalf("YAML evidence_command = %#v, want %q", got, value)
+			}
+		})
+	}
+}
+
+func TestValidateSendEvidenceFlagsBoundsTimeoutSeconds(t *testing.T) {
+	evidenceRoot := createEvidenceRootForSendTest(t)
+	base := map[string]string{
+		"evidence_command":           "go test ./...",
+		"evidence_cwd":               evidenceRoot,
+		"evidence_env_allowlist":     "PATH,HOME",
+		"evidence_timeout_seconds":   "3600",
+		"evidence_side_effect_class": "read-only",
+		"evidence_artifact":          "reports/test.json",
+		"evidence_hash":              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	if err := validateSendEvidenceFlags(base); err != nil {
+		t.Fatalf("validateSendEvidenceFlags(maximum) error = %v", err)
+	}
+	for _, timeout := range []string{"3601", "9223372036854775807"} {
+		t.Run(timeout, func(t *testing.T) {
+			fields := make(map[string]string, len(base))
+			for key, value := range base {
+				fields[key] = value
+			}
+			fields["evidence_timeout_seconds"] = timeout
+			if err := validateSendEvidenceFlags(fields); err == nil {
+				t.Fatalf("validateSendEvidenceFlags(%q) error = nil, want timeout rejection", timeout)
+			}
+		})
 	}
 }
 

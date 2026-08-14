@@ -24,14 +24,29 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/daemon"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/ping"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/session"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
+)
+
+var newHerdrRuntimeClient herdrruntime.ClientFactory = herdrruntime.NewSocketClient
+
+var (
+	reserveCompactionPingAutoWake = reserveDirectPingAutoWake
+	sendCompactionPingToNode      = ping.SendPingToNodeWithOptions
+	markCompactionPingDelivered   = func(tracker *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+		tracker.MarkCompactionPingDelivered(nodeKey, lifecycleIdentity, markerIdentity)
+	}
+	markCompactionPingDeliveryFailed = func(tracker *idle.IdleTracker, nodeKey, lifecycleIdentity, markerIdentity string) {
+		tracker.MarkCompactionPingDeliveryFailed(nodeKey, lifecycleIdentity, markerIdentity)
+	}
 )
 
 // safeGo starts a goroutine with panic recovery (Issue #57).
@@ -88,6 +103,123 @@ func activePingNodeNames(nodes map[string]discovery.NodeInfo) []string {
 	return activeNodes
 }
 
+func mergeDiscoveredNodes(dst, src map[string]discovery.NodeInfo) []discovery.CollisionReport {
+	if dst == nil || len(src) == 0 {
+		return nil
+	}
+	var collisions []discovery.CollisionReport
+	for nodeKey, nodeInfo := range src {
+		if existing, exists := dst[nodeKey]; exists && multiplexer.BackendKindFromString(existing.Backend) != multiplexer.BackendKindFromString(nodeInfo.Backend) {
+			collisions = append(collisions, discovery.CollisionReport{
+				NodeKey:      nodeKey,
+				WinnerPaneID: existing.PaneID,
+				LoserPaneID:  nodeInfo.PaneID,
+			})
+			continue
+		}
+		dst[nodeKey] = nodeInfo
+	}
+	return collisions
+}
+
+func logDiscoveredCollisions(collisions []discovery.CollisionReport, activationNodes map[string]bool) {
+	for _, collision := range collisions {
+		if !config.EdgeNodeAllowed(activationNodes, collision.NodeKey) {
+			continue
+		}
+		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
+	}
+}
+
+func discoverFreshNodesWithHerdr(ctx context.Context, baseDir, contextID, sessionName string, herdrRuntime *herdrruntime.Runtime) (map[string]discovery.NodeInfo, []discovery.CollisionReport, uint64, error) {
+	fresh, collisions, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+	if err != nil {
+		if herdrRuntime == nil {
+			return nil, nil, 0, err
+		}
+		log.Printf("⚠️  postman: tmux discovery failed before Herdr refresh: %v\n", err)
+		fresh = make(map[string]discovery.NodeInfo)
+		collisions = nil
+	}
+	if herdrRuntime == nil {
+		return fresh, collisions, 0, nil
+	}
+	herdrNodes, herdrCollisions, herdrToken, herdrErr := herdrRuntime.DiscoverForReconcile(ctx, baseDir, contextID)
+	if herdrErr != nil {
+		log.Printf("⚠️  postman: herdr discovery failed: %v\n", herdrErr)
+		herdrRuntime.ClearPaneRoutesForToken(herdrToken)
+		if err != nil {
+			return nil, nil, herdrToken, fmt.Errorf("tmux discovery failed: %w; herdr discovery failed: %v", err, herdrErr)
+		}
+		return fresh, collisions, herdrToken, nil
+	}
+	collisions = append(collisions, mergeDiscoveredNodes(fresh, herdrNodes)...)
+	collisions = append(collisions, herdrCollisions...)
+	return fresh, collisions, herdrToken, nil
+}
+
+type freshHerdrPublicationOutcome int
+
+const (
+	freshHerdrPublicationPublished freshHerdrPublicationOutcome = iota
+	freshHerdrPublicationStale
+	freshHerdrPublicationFailed
+)
+
+func publishFreshHerdrNodes(ctx context.Context, contextID string, herdrRuntime *herdrruntime.Runtime, herdrToken uint64, fresh map[string]discovery.NodeInfo, sharedNodes *atomic.Pointer[map[string]discovery.NodeInfo]) (freshHerdrPublicationOutcome, error) {
+	prepare := func(publication *herdrruntime.FinalPublication) error {
+		for _, nodeInfo := range fresh {
+			if nodeInfo.PaneID == "" {
+				continue
+			}
+			if err := publication.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
+				return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+			}
+		}
+		return nil
+	}
+	commit := func() {
+		if sharedNodes != nil {
+			sharedNodes.Store(&fresh)
+		}
+	}
+	if herdrRuntime != nil {
+		err := herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrToken, fresh, prepare, commit)
+		switch {
+		case err == nil:
+			return freshHerdrPublicationPublished, nil
+		case errors.Is(err, herdrruntime.ErrStaleFinalReconcileToken):
+			return freshHerdrPublicationStale, nil
+		default:
+			return freshHerdrPublicationFailed, err
+		}
+	}
+	publication := herdrruntime.NewFinalPublication()
+	if err := prepare(publication); err != nil {
+		if rollbackErr := publication.Rollback(); rollbackErr != nil {
+			return freshHerdrPublicationFailed, errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+		}
+		return freshHerdrPublicationFailed, err
+	}
+	commit()
+	return freshHerdrPublicationPublished, nil
+}
+
+func paneResourceForNodeInfo(nodeInfo discovery.NodeInfo) multiplexer.ResourceID {
+	backendKind := multiplexer.BackendKindFromString(nodeInfo.Backend)
+	pane := multiplexer.PaneIDForBackend(backendKind, nodeInfo.PaneID)
+	if backendKind == multiplexer.BackendKindHerdr {
+		return multiplexer.HerdrPaneIDForRuntime(multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  nodeInfo.HerdrSocketPath,
+			SessionName: nodeInfo.SessionName,
+			WorkspaceID: nodeInfo.HerdrWorkspaceID,
+			TabID:       nodeInfo.HerdrTabID,
+			PaneID:      nodeInfo.PaneID,
+		}, nodeInfo.PaneID)
+	}
+	return pane
+}
+
 func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle.IdleTracker, nodes map[string]discovery.NodeInfo, targets []idle.CompactionPingTarget) {
 	if len(targets) == 0 {
 		return
@@ -103,24 +235,34 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 	for _, target := range targets {
 		nodeInfo, ok := nodes[target.NodeKey]
 		if !ok {
+			markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
+			log.Printf("postman: compaction-triggered PING skipped for %s: discovered node is no longer present\n", target.NodeKey)
 			continue
 		}
 		func() {
-			reservation, shouldSend := reserveDirectPingAutoWake(target.NodeKey, nodeInfo)
+			reservation, shouldSend := reserveCompactionPingAutoWake(target.NodeKey, nodeInfo)
 			if !shouldSend {
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				log.Printf("postman: compaction-triggered PING skipped for %s: matching auto-PING already in flight\n", target.NodeKey)
 				return
 			}
-			defer reservation.Release()
+			if reservation != nil {
+				defer reservation.Release()
+			}
 
 			options := ping.SendOptions{CompactionTriggered: true, Runtime: target.Runtime}
-			result, err := ping.SendPingToNodeWithOptions(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
+			result, err := sendCompactionPingToNode(nodeInfo, contextID, target.NodeKey, cfg.DaemonMessageTemplate, cfg, activeNodes, livenessMap, pingAdjacency, nodes, options)
 			if err != nil {
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				log.Printf("postman: compaction-triggered PING failed for %s: %v\n", target.NodeKey, err)
 				return
 			}
 			if result.Delivered {
+				markCompactionPingDelivered(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 				recordDirectPingDelivered(target.NodeKey, nodeInfo, "compaction", time.Now())
+			}
+			if !result.Delivered {
+				markCompactionPingDeliveryFailed(idleTracker, target.NodeKey, target.LifecycleIdentity, target.MarkerIdentity)
 			}
 			log.Printf("postman: compaction-triggered PING sent to %s trigger=%s runtime=%s\n", target.NodeKey, target.Trigger, target.Runtime)
 		}()
@@ -281,14 +423,29 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		defer func() { _ = lockObj.Release() }()
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	herdrRuntime, err := herdrruntime.New(cfg, newHerdrRuntimeClient)
+	if err != nil {
+		return fmt.Errorf("configuring herdr runtime: %w", err)
+	}
+	defer herdrRuntime.Close()
+	var herdrStartupNodes map[string]discovery.NodeInfo
+	var herdrStartupCollisions []discovery.CollisionReport
+	var herdrStartupToken uint64
+	if herdrRuntime != nil {
+		herdrStartupNodes, herdrStartupCollisions, herdrStartupToken, err = herdrRuntime.DiscoverForReconcile(ctx, baseDir, contextID)
+		if err != nil {
+			return fmt.Errorf("discovering herdr runtime: %w", err)
+		}
+	}
+
 	pidPath := filepath.Join(sessionDir, "postman.pid")
 	if err := config.WriteSessionPIDFile(pidPath, os.Getpid()); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(pidPath) }()
-	if err := config.SetSessionEnabledMarker(contextID, sessionName, true); err != nil {
-		return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
-	}
 	startupActivatedSessions := activateStartupSessions(baseDir, contextDir, contextID, sessionName, cfg)
 
 	inboxDir := filepath.Join(sessionDir, "inbox")
@@ -303,9 +460,6 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	} else if removed > 0 {
 		log.Printf("postman: pruned %d expired runtime path(s) at startup\n", removed)
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	// Issue #57: Signal handling logging
 	sigCh := make(chan os.Signal, 1)
@@ -325,6 +479,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	defer func() { _ = watcher.Close() }()
 
 	// Reclaim panes from dead daemon contexts (#272)
+	tmuxBackend := multiplexer.TmuxBackend{}
 	if out, err := exec.Command("tmux", "list-panes", "-a", "-F", "#{pane_id} #{session_name} #{pane_title}").CombinedOutput(); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if line == "" {
@@ -335,16 +490,15 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				continue
 			}
 			paneID, paneSessionName := parts[0], parts[1]
-			claimedOut, claimedErr := exec.Command("tmux", "show-options", "-p", "-v", "-t", paneID, "@a2a_context_id").Output()
+			claimedContext, claimedErr := tmuxBackend.PaneOwnerMarker(ctx, multiplexer.TmuxPaneID(paneID))
 			if claimedErr != nil {
 				continue
 			}
-			claimedContext := strings.TrimSpace(string(claimedOut))
 			if claimedContext == "" || claimedContext == contextID {
 				continue
 			}
 			if !config.ContextOwnsSession(baseDir, claimedContext, paneSessionName) {
-				_ = exec.Command("tmux", "set-option", "-p", "-u", "-t", paneID, "@a2a_context_id").Run()
+				_ = tmuxBackend.ClearPaneOwnerMarker(ctx, multiplexer.TmuxPaneID(paneID))
 			}
 		}
 	}
@@ -357,24 +511,44 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		nodes = make(map[string]discovery.NodeInfo)
 		startupCollisions = nil
 	}
+	startupCollisions = append(startupCollisions, mergeDiscoveredNodes(nodes, herdrStartupNodes)...)
+	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
-	// Claim discovered panes with this daemon's context ID.
-	for _, nodeInfo := range nodes {
-		claimCmd := exec.Command(
-			"tmux", "set-option", "-p", "-t", nodeInfo.PaneID,
-			"@a2a_context_id", contextID,
-		)
-		if err := claimCmd.Run(); err != nil {
-			log.Printf(
-				"postman: WARNING: failed to claim pane %s: %v\n",
-				nodeInfo.PaneID, err,
-			)
+	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
+	prepareStartupNodes := func(publication *herdrruntime.FinalPublication) error {
+		if err := publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true); err != nil {
+			return fmt.Errorf("publishing enabled-session marker for %s: %w", sessionName, err)
 		}
+		// Claim discovered panes with this daemon's context ID.
+		for _, nodeInfo := range nodes {
+			if nodeInfo.PaneID == "" {
+				continue
+			}
+			if err := publication.SetPaneOwnerMarker(ctx, paneResourceForNodeInfo(nodeInfo), contextID); err != nil {
+				return fmt.Errorf("claiming pane %s: %w", nodeInfo.PaneID, err)
+			}
+		}
+		return nil
+	}
+	commitStartupNodes := func() {
+		sharedNodes.Store(&nodes)
+	}
+	if herdrRuntime != nil {
+		if err := herdrRuntime.ReconcileFinalNodesForTokenAndCommit(herdrStartupToken, nodes, prepareStartupNodes, commitStartupNodes); err != nil {
+			return fmt.Errorf("publishing Herdr startup snapshot: %w", err)
+		}
+	} else {
+		publication := herdrruntime.NewFinalPublication()
+		if err := prepareStartupNodes(publication); err != nil {
+			if rollbackErr := publication.Rollback(); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %w", err, rollbackErr)
+			}
+			return err
+		}
+		commitStartupNodes()
 	}
 	// Shared node snapshot for background periodic refresh (Issue #139)
-	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
-	sharedNodes.Store(&nodes)
 
 	// Post-startup background re-discovery: catches panes that set their titles
 	// slightly after daemon start (agent launch scripts run after daemon starts).
@@ -384,24 +558,28 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				log.Printf("🚨 startup-rediscovery panic: %v\n", r)
 			}
 		}()
-		fresh, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
+		fresh, freshCollisions, herdrToken, err := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
 		if err != nil {
 			log.Printf("⚠️  postman: startup re-discovery failed: %v\n", err)
 			return
 		}
 		activationNodesLocal := activationNodeNames(cfg)
+		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
-		sharedNodes.Store(&fresh)
+		outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes)
+		switch {
+		case publishErr != nil:
+			log.Printf("postman: startup re-discovery failed to publish fresh nodes: %v\n", publishErr)
+			return
+		case outcome == freshHerdrPublicationStale:
+			log.Printf("postman: startup re-discovery skipped stale Herdr snapshot (%d nodes)\n", len(fresh))
+			return
+		}
 		log.Printf("postman: startup re-discovery complete (%d nodes)\n", len(fresh))
 	})
 
 	// Log collisions for edge nodes after edge filter
-	for _, collision := range startupCollisions {
-		if !config.EdgeNodeAllowed(activationNodes, collision.NodeKey) {
-			continue
-		}
-		log.Printf("⚠️  postman: pane collision: %s: %s displaced by %s\n", collision.NodeKey, collision.LoserPaneID, collision.WinnerPaneID)
-	}
+	logDiscoveredCollisions(startupCollisions, activationNodes)
 
 	// Watch all discovered session directories
 	watchedDirs := make(map[string]bool)
@@ -499,6 +677,12 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 
 	// Issue #71: Create state management instances
 	daemonState := daemon.NewDaemonState(cfg.StartupDrainWindowSeconds, contextID)
+	daemonState.SetOwnershipBackendSelector(func(session string) multiplexer.OwnershipBackend {
+		if herdrRuntime != nil && herdrRuntime.OwnsSession(session) {
+			return herdrRuntime.OwnershipBackend()
+		}
+		return multiplexer.TmuxBackend{}
+	})
 	daemonState.AutoEnableSessionIfNew(sessionName)
 	for _, activatedSession := range startupActivatedSessions {
 		daemonState.AutoEnableSessionIfNew(activatedSession)
@@ -520,7 +704,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		relayDaemonEventsToTUI(ctx, daemonEvents, tuiEvents, baseDir, contextID, cfg)
 	})
 	safeGo("daemon-loop", daemonEvents, func() {
-		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, daemonEvents, resolvedConfigPath, nil, nil, daemonState, idleTracker, &sharedNodes, sessionName)
+		daemon.RunDaemonLoop(ctx, baseDir, sessionDir, contextID, cfg, watcher, adjacency, nodes, knownNodes, daemonEvents, resolvedConfigPath, nil, nil, daemonState, idleTracker, &sharedNodes, sessionName, herdrRuntime)
 	})
 
 	// Issue #117: Discover all tmux sessions
@@ -579,6 +763,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 				// Issue #47: Handle TUI commands
 				switch cmd.Type {
 				case "send_ping":
+					multiplexer.LockHerdrPublicationRead()
 					cachedPtr := sharedNodes.Load()
 					var freshNodes map[string]discovery.NodeInfo
 					if cachedPtr != nil {
@@ -588,6 +773,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 							freshNodes[k] = v
 						}
 					}
+					multiplexer.UnlockHerdrPublicationRead()
 					// Edge-filter and session-filter nodes (replicate startup logic, main.go:268-274)
 					activationNodesFilter := activationNodeNames(cfg)
 					targetNodes := pingTargetsForSession(freshNodes, cmd.Target)
@@ -595,11 +781,19 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						activationBlocked := false
 						// Attempt a fresh discovery before giving up (catches panes
 						// that set titles after startup or after the last scan).
-						freshDiscovered, _, discErr := discovery.DiscoverNodesWithCollisions(baseDir, contextID, sessionName)
-						if discErr == nil && len(freshDiscovered) > 0 {
+						freshDiscovered, freshCollisions, herdrToken, discErr := discoverFreshNodesWithHerdr(ctx, baseDir, contextID, sessionName, herdrRuntime)
+						if discErr == nil {
+							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
-							sharedNodes.Store(&freshNodes)
-							targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
+							outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes)
+							switch {
+							case publishErr != nil:
+								log.Printf("postman: PING refresh failed to publish fresh nodes: %v\n", publishErr)
+							case outcome == freshHerdrPublicationPublished:
+								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
+							case outcome == freshHerdrPublicationStale:
+								log.Printf("postman: PING refresh skipped stale Herdr snapshot (%d nodes)\n", len(freshNodes))
+							}
 						}
 						if len(targetNodes) == 0 {
 							activatedNodes, activationErr := activateSessionForPing(baseDir, contextDir, contextID, sessionName, cmd.Target, cfg, watcher, watchedDirs)
@@ -607,7 +801,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 							case activationErr == nil:
 								daemonState.SetSessionEnabled(cmd.Target, true)
 								freshNodes = activatedNodes
+								multiplexer.LockHerdrPublicationWrite()
 								sharedNodes.Store(&freshNodes)
+								multiplexer.UnlockHerdrPublicationWrite()
 								targetNodes = pingTargetsForSession(freshNodes, cmd.Target)
 								daemonEvents <- tui.DaemonEvent{
 									Type:    "status_update",

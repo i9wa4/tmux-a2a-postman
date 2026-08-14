@@ -1,18 +1,19 @@
 package config
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
 const (
@@ -38,9 +39,13 @@ type Config struct {
 	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
 	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
 	InputRequestStaleSeconds         float64 `toml:"input_request_stale_seconds"`           // Status projection threshold for stale unfilled input requests
+	VerdictGraceSeconds              float64 `toml:"verdict_grace_seconds"`                 // Grace period for requester verdict stamps after filled reply-required input requests
+	VerdictDebtCap                   int     `toml:"verdict_debt_cap"`                      // Maximum unstamped fills a requester may carry before new reply-required sends are refused
 	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
 	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
 	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
+	AuditReviewProbabilityFloor      float64 `toml:"audit_review_probability_floor"`        // Nonzero minimum audit draw probability for accepted fills
+	AuditTarget                      string  `toml:"audit_target"`                          // Optional node that receives sampled audit review requests
 	MinDeliveryGapSeconds            float64 `toml:"min_delivery_gap_seconds"`              // Duplicate delivery rate limit; 0 = disabled
 	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
 	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING
@@ -76,10 +81,13 @@ type Config struct {
 	ReplyCommand                   string                          `toml:"reply_command"`
 	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
-	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"`           // Optional explicit hierarchy for tree aliases
+	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
+	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
+	WorkspaceTree                  []WorkspaceTreeNodeConfig       `toml:"workspace_tree"` // Optional explicit hierarchy for tree aliases
 	CommandApproval                []CommandApprovalPolicy         `toml:"command_approval"`
 	CommandApproverNode            string                          `toml:"-"` // Mermaid-sourced reviewer node for command approval; unset/unresolvable = fail-open
 	DeprecatedCommandApproverNodes []DeprecatedCommandApproverNode `toml:"-"` // Ignored legacy TOML approver keys surfaced in get-status
+	Herdr                          HerdrConfig                     `toml:"herdr"`
 
 	// Node-specific configurations (loaded from [nodename] sections)
 	Nodes map[string]NodeConfig
@@ -94,6 +102,8 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+	verdictGraceSecondsSet  bool
+	verdictDebtCapSet       bool
 }
 
 type CommandApprovalPolicy struct {
@@ -108,6 +118,64 @@ type CommandApprovalPolicy struct {
 type DeprecatedCommandApproverNode struct {
 	Field string
 	Value string
+}
+
+type HerdrConfig struct {
+	Enabled                     bool     `toml:"enabled"`
+	SocketPath                  string   `toml:"socket_path"`
+	SessionName                 string   `toml:"session_name"`
+	WorkspaceID                 string   `toml:"workspace_id"`
+	AllowedSocketPaths          []string `toml:"allowed_socket_paths"`
+	AllowedSessions             []string `toml:"allowed_sessions"`
+	AllowedWorkspaceIDs         []string `toml:"allowed_workspace_ids"`
+	AllowedProtocolVersions     []string `toml:"allowed_protocol_versions"`
+	AllowedSchemaVersions       []int    `toml:"allowed_schema_versions"`
+	ReadEnabled                 bool     `toml:"read_enabled"`
+	WriteEnabled                bool     `toml:"write_enabled"`
+	InputSanitizerReady         bool     `toml:"input_sanitizer_ready"`
+	ComplianceDecision          string   `toml:"compliance_decision"`
+	ComplianceAuthorizedBy      string   `toml:"compliance_authorized_by"`
+	ComplianceDecisionID        string   `toml:"compliance_decision_id"`
+	ComplianceDecidedAt         string   `toml:"compliance_decided_at"`
+	ComplianceRevalidatedAt     string   `toml:"compliance_revalidated_at"`
+	ComplianceCurrentReferences []string `toml:"compliance_current_references"`
+
+	complianceNow func() time.Time `toml:"-"`
+}
+
+func (h HerdrConfig) withComplianceNow(now func() time.Time) HerdrConfig {
+	h.complianceNow = now
+	return h
+}
+
+func (h HerdrConfig) ReadConfig() multiplexer.HerdrReadConfig {
+	decidedAt, _ := time.Parse(time.RFC3339, h.ComplianceDecidedAt)
+	revalidatedAt, _ := time.Parse(time.RFC3339, h.ComplianceRevalidatedAt)
+	complianceNow := h.complianceNow
+	if complianceNow == nil {
+		complianceNow = time.Now
+	}
+	return multiplexer.HerdrReadConfig{
+		Enabled: h.Enabled,
+		Runtime: multiplexer.HerdrRuntimeIdentity{
+			SocketPath:  h.SocketPath,
+			SessionName: h.SessionName,
+			WorkspaceID: h.WorkspaceID,
+		},
+		Policy: multiplexer.HerdrGatePolicy{
+			ReadEnabled:             h.ReadEnabled,
+			WriteEnabled:            h.WriteEnabled,
+			AllowedSocketPaths:      h.AllowedSocketPaths,
+			AllowedSessions:         h.AllowedSessions,
+			AllowedWorkspaceIDs:     h.AllowedWorkspaceIDs,
+			AllowedProtocolVersions: h.AllowedProtocolVersions,
+			AllowedSchemaVersions:   h.AllowedSchemaVersions,
+			InputSanitizerReady:     h.InputSanitizerReady,
+			ComplianceDecision:      multiplexer.HerdrComplianceDecision(h.ComplianceDecision),
+			ComplianceRecord:        multiplexer.HerdrComplianceRecord{Decision: multiplexer.HerdrComplianceDecision(h.ComplianceDecision), AuthorizedBy: h.ComplianceAuthorizedBy, DecisionID: h.ComplianceDecisionID, DecidedAt: decidedAt, RevalidatedAt: revalidatedAt, CurrentReferences: append([]string(nil), h.ComplianceCurrentReferences...)},
+			ComplianceNow:           complianceNow,
+		},
+	}
 }
 
 // NodeConfig holds per-node configuration.
@@ -351,6 +419,26 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 	return cfg.uiNodeSet
 }
 
+func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictGraceSeconds > 0 || cfg.verdictGraceSecondsSet {
+		return int(cfg.VerdictGraceSeconds)
+	}
+	return fallback
+}
+
+func (cfg *Config) EffectiveVerdictDebtCap(fallback int) int {
+	if cfg == nil {
+		return fallback
+	}
+	if cfg.VerdictDebtCap != 0 || cfg.verdictDebtCapSet {
+		return cfg.VerdictDebtCap
+	}
+	return fallback
+}
+
 func (cfg *Config) CompactionSkillCatalogForRuntime(runtime string) string {
 	if cfg == nil {
 		return ""
@@ -406,6 +494,8 @@ func loadEmbeddedConfig() (*Config, error) {
 		if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
 			return nil, fmt.Errorf("decoding embedded [postman] section: %w", err)
 		}
+		cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+		cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 	}
 
 	// Decode [nodename] sections (everything except reserved sections)
@@ -632,6 +722,10 @@ func mergeConfig(base, override *Config) {
 	if override.InputRequestStaleSeconds != 0 {
 		base.InputRequestStaleSeconds = override.InputRequestStaleSeconds
 	}
+	if override.VerdictGraceSeconds != 0 || override.verdictGraceSecondsSet {
+		base.VerdictGraceSeconds = override.VerdictGraceSeconds
+		base.verdictGraceSecondsSet = base.verdictGraceSecondsSet || override.verdictGraceSecondsSet
+	}
 	if override.MessageTTLSeconds != 0 {
 		base.MessageTTLSeconds = override.MessageTTLSeconds
 	}
@@ -669,6 +763,10 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.RetentionPeriodDays != 0 {
 		base.RetentionPeriodDays = override.RetentionPeriodDays
+	}
+	if override.VerdictDebtCap != 0 || override.verdictDebtCapSet {
+		base.VerdictDebtCap = override.VerdictDebtCap
+		base.verdictDebtCapSet = base.verdictDebtCapSet || override.verdictDebtCapSet
 	}
 	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
 		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
@@ -786,6 +884,8 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
+			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
 		}
 
@@ -1178,11 +1278,27 @@ func enabledSessionOwner(baseDir, sessionName string) string {
 	if sessionName == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "show-options", "-gqv", "@a2a_session_on_"+sessionName).Output()
+	for _, backend := range sessionOwnershipBackends() {
+		if owner := enabledSessionOwnerFromBackend(baseDir, sessionName, backend); owner != "" {
+			return owner
+		}
+	}
+	return ""
+}
+
+func sessionOwnershipBackends() []multiplexer.OwnershipBackend {
+	backends := []multiplexer.OwnershipBackend{multiplexer.TmuxBackend{}}
+	if backend, err := multiplexer.OwnershipBackendForKind(multiplexer.BackendKindHerdr); err == nil && backend != nil {
+		backends = append(backends, backend)
+	}
+	return backends
+}
+
+func enabledSessionOwnerFromBackend(baseDir, sessionName string, backend multiplexer.OwnershipBackend) string {
+	value, err := backend.SessionOwnerMarker(context.Background(), sessionName)
 	if err != nil {
 		return ""
 	}
-	value := strings.TrimSpace(string(out))
 	if value == "" {
 		return ""
 	}
@@ -1299,78 +1415,98 @@ func FindContextSessionName(baseDir, contextID string) string {
 }
 
 func SetSessionEnabledMarker(contextID, sessionName string, enabled bool) error {
+	return SetSessionEnabledMarkerWithBackend(multiplexer.TmuxBackend{}, contextID, sessionName, enabled)
+}
+
+func SetSessionEnabledMarkerWithBackend(backend multiplexer.OwnershipBackend, contextID, sessionName string, enabled bool) error {
 	if sessionName == "" {
 		return fmt.Errorf("session name is empty")
 	}
-	key := "@a2a_session_on_" + sessionName
-	if enabled {
-		if contextID == "" {
-			return fmt.Errorf("context ID is empty")
-		}
-		value := contextID + ":" + strconv.Itoa(os.Getpid())
-		return exec.Command("tmux", "set-option", "-g", key, value).Run()
+	if backend == nil {
+		backend = multiplexer.TmuxBackend{}
 	}
-	return exec.Command("tmux", "set-option", "-gu", key).Run()
+	if enabled {
+		return backend.SetSessionOwnerMarker(context.Background(), contextID, sessionName, os.Getpid())
+	}
+	return backend.ClearSessionOwnerMarker(context.Background(), sessionName)
+}
+
+func CurrentTmuxIdentity() (multiplexer.CurrentIdentity, error) {
+	target, err := currentTmuxIdentityTarget()
+	if err != nil {
+		return multiplexer.CurrentIdentity{}, err
+	}
+	return (multiplexer.TmuxBackend{}).CurrentIdentity(context.Background(), target)
+}
+
+func currentTmuxIdentityTarget() (multiplexer.IdentityTarget, error) {
+	target := multiplexer.IdentityTarget{}
+	if paneID := os.Getenv("TMUX_PANE"); paneID != "" {
+		if !multiplexer.IsCanonicalTmuxPaneID(paneID) {
+			return multiplexer.IdentityTarget{}, multiplexer.IdentityError{
+				Backend: multiplexer.BackendKindTmux,
+				Failure: multiplexer.IdentityFailureLookupFailed,
+				Field:   "pane_id",
+			}
+		}
+		target.Pane = multiplexer.TmuxPaneID(paneID)
+	}
+	return target, nil
 }
 
 // GetTmuxSessionName extracts the tmux session name using tmux command.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxSessionName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{session_name}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{session_name}")
-	output, err := cmd.Output()
+	backend := multiplexer.TmuxBackend{}
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := backend.CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	sessionName, err := backend.CurrentSessionName(context.Background(), pane)
+	if err != nil {
+		return ""
+	}
+	return sessionName
 }
 
 // GetTmuxPaneID returns the current tmux pane ID (e.g. "%42").
 // Uses TMUX_PANE env var when available; falls back to display-message query.
 // Returns empty string if not in tmux or if the command fails.
 func GetTmuxPaneID() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		return paneID
-	}
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_id}")
-	output, err := cmd.Output()
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := (multiplexer.TmuxBackend{}).CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	return pane.Native
 }
 
 // GetTmuxPaneName returns the current tmux pane title.
 // Uses TMUX_PANE env var to target the originating pane, not the currently focused pane.
 // Fails closed (returns empty) if TMUX_PANE is set but targeted lookup fails.
 func GetTmuxPaneName() string {
-	paneID := os.Getenv("TMUX_PANE")
-	if paneID != "" {
-		cmd := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_title}")
-		output, err := cmd.Output()
-		if err != nil {
-			return "" // fail closed
-		}
-		return strings.TrimSpace(string(output))
-	}
-	// TMUX_PANE absent: untargeted fallback (existing behavior)
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_title}")
-	output, err := cmd.Output()
+	backend := multiplexer.TmuxBackend{}
+	target, err := currentTmuxIdentityTarget()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	pane, err := backend.CurrentPaneID(context.Background(), target)
+	if err != nil {
+		return ""
+	}
+	nodeName, err := backend.CurrentNodeName(context.Background(), pane)
+	if err != nil {
+		return ""
+	}
+	return nodeName
 }
 
 // GetNodeConfig returns the effective NodeConfig for the given node name,
