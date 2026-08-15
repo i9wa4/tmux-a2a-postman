@@ -210,8 +210,8 @@ type WorkspaceTreeStatus struct {
 }
 
 // CommandApprovalUnresolvedApprover surfaces a configured-but-unresolvable
-// command_approver_node so a typo that silently disables blocking mode (#626's fail
-// open rule) is loud and auditable rather than a silent no-op.
+// command_approver_node so a typo that causes blocking approval to fail closed
+// is loud and auditable rather than a silent configuration defect.
 type CommandApprovalUnresolvedApprover struct {
 	Field   string `json:"field"`
 	Value   string `json:"value"`
