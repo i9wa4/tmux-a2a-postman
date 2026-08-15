@@ -546,7 +546,11 @@ var syncInboxDirectoryFn = func(inboxDir string) error {
 	if err != nil {
 		return fmt.Errorf("opening inbox for durability sync: %w", err)
 	}
-	defer dir.Close()
+	defer func() {
+		if err := dir.Close(); err != nil {
+			log.Printf("postman: closing inbox directory after durability sync: %v\n", err)
+		}
+	}()
 	if err := dir.Sync(); err != nil {
 		return fmt.Errorf("syncing inbox directory: %w", err)
 	}
@@ -584,25 +588,39 @@ func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delive
 		return SystemMessageResult{}, fmt.Errorf("creating inbox draft: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("postman: removing inbox draft %s: %v\n", tmpPath, err)
+		}
+	}()
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			log.Printf("postman: closing inbox draft after chmod failure: %v\n", closeErr)
+		}
 		return SystemMessageResult{}, fmt.Errorf("setting inbox draft permissions: %w", err)
 	}
 	if _, err := tmp.WriteString(delivery.Content); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			log.Printf("postman: closing inbox draft after write failure: %v\n", closeErr)
+		}
 		return SystemMessageResult{}, fmt.Errorf("writing inbox draft: %w", err)
 	}
 	if err := beforeSystemMessageCommitFn("write"); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			log.Printf("postman: closing inbox draft after pre-write hook failure: %v\n", closeErr)
+		}
 		return SystemMessageResult{}, err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			log.Printf("postman: closing inbox draft after sync failure: %v\n", closeErr)
+		}
 		return SystemMessageResult{}, fmt.Errorf("syncing inbox draft: %w", err)
 	}
 	if err := beforeSystemMessageCommitFn("file-sync"); err != nil {
-		tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			log.Printf("postman: closing inbox draft after file-sync hook failure: %v\n", closeErr)
+		}
 		return SystemMessageResult{}, err
 	}
 	if err := tmp.Close(); err != nil {
@@ -676,12 +694,6 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 		return nil, fmt.Errorf("herdr hand adapter not registered for %q", target.Hand.Address)
 	default:
 		return nil, fmt.Errorf("unsupported hand kind %q", target.Hand.Kind)
-	}
-}
-
-func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := appendMailboxProjectionPayload(sessionDir, sessionName, eventType, visibility, payload); err != nil {
-		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
 }
 
@@ -762,12 +774,6 @@ func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal
 		payload.InputRequestSetID = metadata.InputRequestSetID
 	}
 	return payload
-}
-
-func syncMailboxProjection(sessionDir string) {
-	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
-		log.Printf("postman: WARNING: component=%s event=sync_failed session_dir=%s err=%v\n", projection.MailboxProjectionComponent, sessionDir, err)
-	}
 }
 
 func countInboxMessages(inboxDir string) (int, error) {

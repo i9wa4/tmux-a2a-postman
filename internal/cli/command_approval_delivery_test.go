@@ -176,10 +176,11 @@ func TestDeliverCommandApprovalRequest_RetriesCommittedUnprojectedDeliveryOnce(t
 	t.Cleanup(restoreOpenCurrentWriter)
 	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
 		calls++
-		if calls == 1 {
+		switch calls {
+		case 1:
 			firstFilename = filename
 			firstContent = content
-		} else if calls == 2 {
+		case 2:
 			secondFilename = filename
 			secondContent = content
 		}
